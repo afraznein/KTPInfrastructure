@@ -11,27 +11,52 @@ Endpoints:
   POST /hltv/<port>/command  - Send command to HLTV via FIFO pipe
   POST /hltv/<port>/restart  - Restart specific HLTV instance
   GET  /health               - Health check
+
+v2.0 - 2026-01-18: Added ThreadingHTTPServer and timeouts to prevent hangs
 """
 
 import os
 import json
 import subprocess
+import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 
 API_PORT = 8087
 AUTH_KEY = "KTPVPS2026"
 PIPE_DIR = "/home/hltvserver/cmdpipes"
 VALID_PORTS = range(27020, 27045)
 
+# Timeout for FIFO writes (seconds)
+PIPE_WRITE_TIMEOUT = 5
+
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in separate threads to prevent blocking"""
+    daemon_threads = True  # Threads die when main thread exits
+
+    def server_bind(self):
+        """Set socket options before binding"""
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        super().server_bind()
+
+
 class HLTVHandler(BaseHTTPRequestHandler):
+    # Timeout for reading request (seconds)
+    timeout = 10
+
     def log_message(self, format, *args):
         print(f"[HLTV-API] {args[0]}")
 
     def send_json(self, code, data):
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode())
+        except (BrokenPipeError, ConnectionResetError):
+            # Client disconnected, ignore
+            pass
 
     def do_POST(self):
         # Auth check
@@ -84,20 +109,29 @@ class HLTVHandler(BaseHTTPRequestHandler):
             self.send_json(400, {"error": "Empty command"})
             return
 
-        # Write to FIFO
+        # Write to FIFO with timeout
         pipe_path = f"{PIPE_DIR}/hltv-{port}.pipe"
         if not os.path.exists(pipe_path):
             self.send_json(500, {"error": f"Pipe not found: {pipe_path}"})
             return
 
         try:
-            with open(pipe_path, "w") as f:
-                f.write(command + "\n")
-                f.flush()
+            # Open FIFO in non-blocking mode with timeout
+            # Use os.open to get file descriptor with O_NONBLOCK
+            fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(fd, (command + "\n").encode())
+            finally:
+                os.close(fd)
+
             self.send_json(200, {"success": True, "port": port, "command": command})
             print(f"[HLTV-API] Sent to {port}: {command}")
+        except BlockingIOError:
+            self.send_json(500, {"error": f"Pipe {port} not ready (no reader)"})
+            print(f"[HLTV-API] Pipe {port} blocked - no reader")
         except Exception as e:
             self.send_json(500, {"error": str(e)})
+            print(f"[HLTV-API] Error writing to pipe {port}: {e}")
 
     def handle_restart(self, port):
         """Restart specific HLTV instance via systemctl"""
@@ -140,11 +174,12 @@ class HLTVHandler(BaseHTTPRequestHandler):
         else:
             self.send_json(404, {"error": "Not found"})
 
+
 if __name__ == "__main__":
-    print(f"[HLTV-API] Starting on port {API_PORT}")
+    print(f"[HLTV-API] Starting on port {API_PORT} (threaded)")
     print(f"[HLTV-API] Endpoints:")
     print(f"[HLTV-API]   POST /hltv/<port>/command - Send command to HLTV")
     print(f"[HLTV-API]   POST /hltv/<port>/restart - Restart HLTV instance")
     print(f"[HLTV-API]   GET  /health - Health check")
-    server = HTTPServer(("0.0.0.0", API_PORT), HLTVHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", API_PORT), HLTVHandler)
     server.serve_forever()

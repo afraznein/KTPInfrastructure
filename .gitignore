@@ -1,14 +1,23 @@
+# Credentials and secrets
+*.secret
+*.key
+*.pem
+discord-relay.conf
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
 # Logs
 *.log
 
-# Backups
-*.sql
-*.tar.gz
-
-# Python
-__pycache__/
-*.pyc
-
-# Editor
-*.swp
-*~
+# Backup files
+*.bak
+*.backup

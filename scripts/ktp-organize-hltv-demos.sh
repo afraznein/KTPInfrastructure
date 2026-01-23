@@ -22,6 +22,26 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
 }
 
+# Convert full hostname to short code
+get_short_hostname() {
+    local hostname="$1"
+    case "$hostname" in
+        KTP_Atlanta_1|KTP-Atlanta-1) echo "ATL1" ;;
+        KTP_Atlanta_2|KTP-Atlanta-2) echo "ATL2" ;;
+        KTP_Atlanta_3|KTP-Atlanta-3) echo "ATL3" ;;
+        KTP_Atlanta_4|KTP-Atlanta-4) echo "ATL4" ;;
+        KTP_Atlanta_5|KTP-Atlanta-5) echo "ATL5" ;;
+        KTP_Dallas_1|KTP-Dallas-1) echo "DAL1" ;;
+        KTP_Dallas_2|KTP-Dallas-2) echo "DAL2" ;;
+        KTP_Dallas_3|KTP-Dallas-3) echo "DAL3" ;;
+        KTP_Dallas_4|KTP-Dallas-4) echo "DAL4" ;;
+        KTP_Dallas_5|KTP-Dallas-5) echo "DAL5" ;;
+        ATL[0-9]) echo "$hostname" ;;
+        DAL[0-9]) echo "$hostname" ;;
+        *) echo "$hostname" | sed 's/KTP_//;s/KTP-//;s/_/-/g' | cut -c1-8 ;;
+    esac
+}
+
 log "========== Demo Organization Started =========="
 [ "$DRY_RUN" = true ] && log "DRY RUN MODE - No files will be moved"
 
@@ -42,16 +62,27 @@ for demo in *.dem; do
 
     # NEW FORMAT (v0.10.59+): <matchtype>_<timestamp>-<shorthost>-<hltv_ts>-<map>.dem
     # Example: ktp_1768174986-ATL1-2601111843-dod_armory_b6.dem
-    # Example: scrim_1768174986-DAL2-2601111843-dod_anzio.dem
-    if [[ "$demo" =~ ^([a-z0-9]+)_([0-9]+)-([A-Z]+[0-9]*)-([0-9]+)-(.+)\.dem$ ]]; then
+    if [[ "$demo" =~ ^([a-z0-9]+)_([0-9]+)-([A-Z]+[0-9]+)-([0-9]+)-(.+)\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname="${BASH_REMATCH[3]}"
 
-    # NEW FORMAT 1.3: <matchtype>_1.3-<queueid>-<shorthost>-<hltv_ts>-<map>.dem
+    # NEW FORMAT 1.3 (v0.10.59+): <matchtype>_1.3-<queueid>-<shorthost>-<hltv_ts>-<map>.dem
     # Example: 12man_1.3-5031-ATL2-2601122113-dod_thunder2.dem
-    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([0-9]+)-([A-Z]+[0-9]*)-([0-9]+)-(.+)\.dem$ ]]; then
+    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([0-9]+)-([A-Z]+[0-9]+)-([0-9]+)-(.+)\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname="${BASH_REMATCH[3]}"
+
+    # OLD FORMAT KTP: <matchtype>_KTP-<timestamp>-<map>-<fullhostname>-<hltv_ts>-<map>.dem
+    # Example: ktp_KTP-1768359925-dod_anjou_a4-KTP_Dallas_3-2601132205-dod_anjou_a4.dem
+    elif [[ "$demo" =~ ^([a-z0-9]+)_KTP-[0-9]+-[a-z0-9_]+-([A-Za-z_]+[0-9]+)-[0-9]+-[a-z0-9_]+\.dem$ ]]; then
+        matchtype="${BASH_REMATCH[1]}"
+        hostname=$(get_short_hostname "${BASH_REMATCH[2]}")
+
+    # OLD FORMAT 1.3: <matchtype>_1.3-<queueid>-<map>-<fullhostname>-<hltv_ts>-<map>.dem
+    # Example: 12man_1.3-5037-dod_armory_b6-KTP_Atlanta_1-2601132203-dod_anzio.dem
+    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-[0-9]+-[a-z0-9_]+-([A-Za-z_]+[0-9]+)-[0-9]+-[a-z0-9_]+\.dem$ ]]; then
+        matchtype="${BASH_REMATCH[1]}"
+        hostname=$(get_short_hostname "${BASH_REMATCH[2]}")
     fi
 
     # If we matched a format, organize the file
