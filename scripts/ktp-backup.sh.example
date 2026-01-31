@@ -1,0 +1,20 @@
+#!/bin/bash
+# KTP Backup Script
+# Backs up MySQL database and key configuration files
+#
+# Location: /opt/ktp-backup.sh (on data server)
+# Cron: 0 3 * * 0 /opt/ktp-backup.sh >> /var/log/ktp-backup.log 2>&1
+#
+# Configuration:
+#   Copy this file to ktp-backup.sh and fill in MYSQL_PASS
+
+BACKUP_DIR="/opt/backups"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+MYSQL_PASS=""  # MySQL password for hlstatsx user - fill this in
+
+mkdir -p "$BACKUP_DIR"
+mysqldump -u hlstatsx -p"$MYSQL_PASS" hlstatsx > "$BACKUP_DIR/hlstatsx_$TIMESTAMP.sql"
+tar -czf "$BACKUP_DIR/configs_$TIMESTAMP.tar.gz" /opt/ktp-file-distributor/*.json /opt/hlstatsx/scripts/*.conf /home/dod/distribute/addons/ktpamx/configs/ /etc/systemd/system/ktp-*.service /etc/systemd/system/hlstatsx.service 2>/dev/null
+find "$BACKUP_DIR" -name "*.sql" -mtime +28 -delete
+find "$BACKUP_DIR" -name "*.tar.gz" -mtime +28 -delete
+echo "Backup complete: $TIMESTAMP"

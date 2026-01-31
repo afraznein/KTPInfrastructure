@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+"""
+Setup script to deploy ensure-priority.sh and cron job to game servers.
+Run from local machine with paramiko installed.
+
+Usage: python setup_renice_cron.py
+
+Configuration:
+  Copy this file to setup_renice_cron.py and fill in your server credentials.
+"""
+
+import paramiko
+
+SERVERS = [
+    {'host': '', 'name': 'Cluster1'},  # Game server 1 IP
+    {'host': '', 'name': 'Cluster2'},  # Game server 2 IP
+]
+
+SSH_USER = 'dodserver'
+SSH_PASS = ''  # SSH password
+
+# Simple renice script
+RENICE_SCRIPT = '''#!/bin/bash
+# Ensure all hlds_linux processes run at nice -5
+for pid in $(pgrep hlds_linux 2>/dev/null); do
+  current=$(ps -o ni= -p $pid 2>/dev/null | tr -d ' ')
+  if [ "$current" != "-5" ]; then
+    sudo renice -n -5 -p $pid >/dev/null 2>&1
+  fi
+done
+'''
+
+def setup_renice_cron(host, name):
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    try:
+        ssh.connect(host, username=SSH_USER, password=SSH_PASS, timeout=10)
+        print(f"\n=== {name} ({host}) ===\n")
+
+        # Create the renice script
+        sftp = ssh.open_sftp()
+        with sftp.file('/home/dodserver/ensure-priority.sh', 'w') as f:
+            f.write(RENICE_SCRIPT)
+        sftp.close()
+
+        stdin, stdout, stderr = ssh.exec_command("chmod +x ~/ensure-priority.sh")
+        stdout.read()
+        print("Created ~/ensure-priority.sh")
+
+        # Add to cron (every 5 minutes)
+        stdin, stdout, stderr = ssh.exec_command("crontab -l 2>/dev/null")
+        existing_cron = stdout.read().decode()
+
+        if 'ensure-priority' not in existing_cron:
+            new_cron = existing_cron.rstrip() + "\n# Ensure game server priority\n*/5 * * * * /home/dodserver/ensure-priority.sh\n"
+            stdin, stdout, stderr = ssh.exec_command(f"echo '{new_cron}' | crontab -")
+            stdout.read()
+            print("Added cron job (every 5 minutes)")
+        else:
+            print("Cron job already exists")
+
+        # Show cron
+        stdin, stdout, stderr = ssh.exec_command("crontab -l | grep -A1 'priority'")
+        print(f"Cron: {stdout.read().decode().strip()}")
+
+        ssh.close()
+
+    except Exception as e:
+        print(f"Error: {e}")
+
+if __name__ == '__main__':
+    for server in SERVERS:
+        setup_renice_cron(server['host'], server['name'])

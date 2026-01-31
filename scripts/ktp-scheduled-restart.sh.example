@@ -4,24 +4,27 @@
 #
 # Usage: ktp-scheduled-restart.sh
 # Cron:  0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
+#
+# Configuration:
+#   Copy this file to ktp-scheduled-restart.sh and fill in your credentials.
 
 # ============================================================================
-# Configuration
+# Configuration - FILL THESE IN
 # ============================================================================
-RELAY_URL="https://discord-relay-78814186981.us-central1.run.app/reply"
-EDIT_URL="https://discord-relay-78814186981.us-central1.run.app/edit"
-AUTH_SECRET="ff661895111b948c8d5b6d732a50bbfff58e93798b4d4ecf0fc0d12f6c4db18e"
+RELAY_URL=""         # Discord relay URL (e.g., https://discord-relay-xxx.run.app/reply)
+EDIT_URL=""          # Discord edit URL (e.g., https://discord-relay-xxx.run.app/edit)
+AUTH_SECRET=""       # Discord relay auth secret
 
-# Discord channels (same as HLTV status)
-CHANNEL_KTP="1458222926586446059"          # KTP Discord
-CHANNEL_EXTERNAL="1457951326666489996"     # 1.3 Discord
+# Discord channels
+CHANNEL_KTP=""       # KTP Discord channel ID
+CHANNEL_EXTERNAL=""  # External Discord channel ID (optional)
 
-# Detect server location from IP
+# Server IP to name mapping - add your server IPs here
+# Format: IP) SERVER_NAME="Name" ;;
 SERVER_IP=$(hostname -I | awk '{print $1}')
 case "$SERVER_IP" in
-    74.91.112.182) SERVER_NAME="KTP - Atlanta" ;;
-    74.91.114.195) SERVER_NAME="KTP - Dallas" ;;
-    66.163.114.109) SERVER_NAME="KTP - Denver" ;;
+    # 192.168.1.100) SERVER_NAME="KTP - Cluster1" ;;
+    # 192.168.1.101) SERVER_NAME="KTP - Cluster2" ;;
     *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;
 esac
 
@@ -198,16 +201,6 @@ RUNNING=$(pgrep -c hlds_linux 2>/dev/null || echo "0")
 RUNNING=${RUNNING//[^0-9]/}  # Strip non-numeric chars
 RUNNING=${RUNNING:-0}
 log "Verification: $RUNNING/5 servers running"
-
-# ============================================================================
-# Apply Real-Time Scheduling (reduces CPU steal impact)
-# ============================================================================
-log "Applying chrt -r 20 to all game servers..."
-for pid in $(pgrep -f hlds_linux); do
-    if sudo chrt -r -p 20 "$pid" 2>/dev/null; then
-        log "Applied chrt -r 20 to PID $pid"
-    fi
-done
 
 # Identify any failed ports
 FAILED_PORTS=""

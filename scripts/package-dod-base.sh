@@ -1,0 +1,84 @@
+#!/bin/bash
+# Package DoD Base Game Files
+# Creates a tarball of base DoD content for deployment to servers
+#
+# Usage: ./package-dod-base.sh [source_path] [output_path]
+#
+# This extracts the clean game files from a Steam installation,
+# excluding any KTP-specific files that would be overwritten by our build.
+
+set -e
+
+# Default paths (adjust for your environment)
+# Source is the KTP test server which has proper configs, maps, etc.
+DEFAULT_SOURCE="/mnt/n/Nein_/KTP Git Projects/KTP DoD Server/serverfiles/dod"
+DEFAULT_OUTPUT="./dod-base-files.tar.gz"
+
+SOURCE_PATH="${1:-$DEFAULT_SOURCE}"
+OUTPUT_PATH="${2:-$DEFAULT_OUTPUT}"
+
+echo "========================================"
+echo "DoD Base Game Files Packager"
+echo "========================================"
+echo ""
+echo "Source: $SOURCE_PATH"
+echo "Output: $OUTPUT_PATH"
+echo ""
+
+# Verify source exists
+if [ ! -d "$SOURCE_PATH" ]; then
+    echo "ERROR: Source directory not found: $SOURCE_PATH"
+    echo ""
+    echo "Usage: $0 [source_path] [output_path]"
+    echo ""
+    echo "Example:"
+    echo "  $0 '/mnt/g/SteamLibrary/steamapps/common/Half-Life/dod' './dod-base.tar.gz'"
+    exit 1
+fi
+
+# Create temp directory for filtered content
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
+
+echo "Creating filtered copy..."
+
+# Use rsync to copy with exclusions
+# We EXCLUDE binaries that come from our build (plugins, modules, dlls)
+# We INCLUDE configs, data, scripting includes, maps, models, etc.
+rsync -a --progress \
+    --exclude='addons/ktpamx/plugins/*.amxx' \
+    --exclude='addons/ktpamx/modules/*.so' \
+    --exclude='addons/ktpamx/dlls/*.so' \
+    --exclude='addons/metamod/' \
+    --exclude='rehlds/' \
+    --exclude='addons/ktpamx/logs/' \
+    --exclude='addons/ktpamx/configs/hltv_recorder.ini' \
+    --exclude='addons/ktpamx/configs/discord.ini' \
+    --exclude='configs/servernamedefault.cfg' \
+    --exclude='*.log' \
+    --exclude='*.dem' \
+    --exclude='banned.cfg' \
+    --exclude='listip.cfg' \
+    --exclude='lservercache.dat' \
+    "$SOURCE_PATH/" "$TEMP_DIR/dod/"
+
+echo ""
+echo "Contents summary:"
+echo "  Maps: $(find $TEMP_DIR/dod/maps -name '*.bsp' 2>/dev/null | wc -l) files"
+echo "  Models: $(find $TEMP_DIR/dod/models -type f 2>/dev/null | wc -l) files"
+echo "  Sounds: $(find $TEMP_DIR/dod/sound -type f 2>/dev/null | wc -l) files"
+echo "  Sprites: $(find $TEMP_DIR/dod/sprites -type f 2>/dev/null | wc -l) files"
+echo ""
+
+echo "Creating tarball..."
+tar -czf "$OUTPUT_PATH" -C "$TEMP_DIR" dod
+
+echo ""
+echo "========================================"
+echo "Package created: $OUTPUT_PATH"
+echo "Size: $(ls -lh "$OUTPUT_PATH" | awk '{print $5}')"
+echo "========================================"
+echo ""
+echo "To deploy to a server:"
+echo "  scp $OUTPUT_PATH dodserver@server:~/"
+echo "  ssh dodserver@server 'tar -xzf dod-base-files.tar.gz -C ~/dod-27015/serverfiles/'"

@@ -1,0 +1,20 @@
+; KTP HLTV Recorder Configuration
+; Profile: ONLINE (production)
+;
+; SETUP:
+; 1. Copy this file to hltv_recorder.ini
+; 2. Fill in your data server IP and API key
+; 3. hltv_recorder.ini is gitignored and won't be committed
+
+; HLTV API endpoint (hltv-api.py service on data server)
+; Format: http://[data-server-ip]:8087
+hltv_api_url = "http://<DATA_SERVER_IP>:8087"
+
+; API authentication key
+; Must match the key configured in hltv-api.py
+hltv_api_key = ""
+
+; HLTV server port
+; Used to verify the correct HLTV instance is targeted
+; Update per server instance: 27020, 27021, 27022, etc.
+hltv_port = 27020

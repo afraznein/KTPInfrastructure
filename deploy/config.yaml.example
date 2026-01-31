@@ -1,0 +1,126 @@
+# KTP Server Inventory Configuration
+# Defines clusters, servers, and deployment profiles
+#
+# SETUP:
+# 1. Copy this file to config.yaml
+# 2. Fill in your server IPs and credentials
+# 3. config.yaml is gitignored and won't be committed
+#
+# Alternatively, use environment variables (see .env.example)
+
+# ============================================
+# Cluster Definitions
+# ============================================
+clusters:
+  # Production - Cluster 1
+  cluster1:
+    host: ""                          # Server IP address
+    user: dodserver                   # SSH username
+    password: ""                      # SSH password (or use SSH keys)
+    ports: [27015, 27016, 27017, 27018, 27019]
+    hostname: cluster1                # Used for server naming
+    server_name_prefix: "KTP Cluster1"
+    description: "Production Cluster 1 (5 servers)"
+
+  # Production - Cluster 2
+  cluster2:
+    host: ""                          # Server IP address
+    user: dodserver
+    password: ""
+    ports: [27015, 27016, 27017, 27018, 27019]
+    hostname: cluster2
+    server_name_prefix: "KTP Cluster2"
+    description: "Production Cluster 2 (5 servers)"
+
+  # Test Cluster
+  test:
+    host: ""                          # Set when VPS is provisioned
+    user: dodserver
+    password: ""
+    ports: [27015, 27016, 27017, 27018, 27019]
+    hostname: test
+    server_name_prefix: "KTP Test"
+    test_cluster: true
+    description: "Test Cluster"
+
+# ============================================
+# Deployment Profiles
+# ============================================
+profiles:
+  # Online profile - full features enabled
+  online:
+    discord_enabled: true
+    hlstatsx_enabled: true
+    hltv_api_enabled: true
+    description: "Full online mode with Discord, HLStatsX, and HLTV API"
+
+  # LAN profile - no external dependencies
+  lan:
+    discord_enabled: false
+    hlstatsx_enabled: false
+    hltv_api_enabled: false
+    description: "Offline LAN mode - no external services"
+
+# ============================================
+# Component Paths
+# ============================================
+paths:
+  # Artifact source paths (relative to artifacts/{version}/)
+  engine:
+    - source: engine/hlds_linux
+      dest: serverfiles/hlds_linux
+      chmod: "755"
+    - source: engine/engine_i486.so
+      dest: serverfiles/engine_i486.so
+      chmod: "755"
+
+  ktpamx:
+    - source: ktpamx/dlls/ktpamx_i386.so
+      dest: serverfiles/dod/addons/ktpamx/dlls/ktpamx_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/dodx_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/dodx_ktp_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/fun_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/fun_ktp_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/engine_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/engine_ktp_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/fakemeta_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/fakemeta_ktp_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/reapi_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/reapi_ktp_i386.so
+      chmod: "755"
+    - source: ktpamx/modules/amxxcurl_ktp_i386.so
+      dest: serverfiles/dod/addons/ktpamx/modules/amxxcurl_ktp_i386.so
+      chmod: "755"
+
+  plugins:
+    - source: plugins/KTPMatchHandler.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx
+    - source: plugins/KTPHLTVRecorder.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPHLTVRecorder.amxx
+    - source: plugins/ktp_cvar.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/ktp_cvar.amxx
+    - source: plugins/ktp_file.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/ktp_file.amxx
+    - source: plugins/KTPAdminAudit.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPAdminAudit.amxx
+    - source: plugins/KTPGrenadeLoadout.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPGrenadeLoadout.amxx
+    - source: plugins/KTPGrenadeDamage.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPGrenadeDamage.amxx
+    - source: plugins/KTPPracticeMode.amxx
+      dest: serverfiles/dod/addons/ktpamx/plugins/KTPPracticeMode.amxx
+
+# ============================================
+# Notification Settings
+# ============================================
+notifications:
+  # Discord webhook for deployment notifications (optional)
+  discord_webhook: ""
+  # Notify on success/failure
+  notify_success: true
+  notify_failure: true

@@ -3,11 +3,11 @@
 ## Server Clusters
 
 ### Atlanta (neinatl)
-**VPS:** <ATL_GAME_IP>
-**OS:** Ubuntu (via LinuxGSM)
-**Specs:** 4-core / 3.8GB RAM
+**VPS:** <ATL_GAME_IP> (74.91.112.182)
+**OS:** Ubuntu 22.04 LTS (via LinuxGSM)
+**Specs:** 6-core / 6GB RAM
 **User:** dodserver (password: <DODSERVER_PASSWORD>, passwordless sudo)
-**Netdata:** N/A
+**Netdata:** http://<ATL_GAME_IP>:19999
 
 | Instance | Port | HLTV Port | Status |
 |----------|------|-----------|--------|
@@ -18,9 +18,9 @@
 | Atlanta 5 | 27019 | 27024 | Running |
 
 ### Dallas (neindal)
-**VPS:** <DAL_GAME_IP>
-**OS:** Ubuntu (via LinuxGSM)
-**Specs:** 4-core / 3.8GB RAM
+**VPS:** <DAL_GAME_IP> (74.91.114.195)
+**OS:** Ubuntu 22.04 LTS (via LinuxGSM)
+**Specs:** 6-core / 6GB RAM
 **User:** dodserver (password: <DODSERVER_PASSWORD>, passwordless sudo)
 **Netdata:** http://<DAL_GAME_IP>:19999
 
@@ -39,6 +39,77 @@
 - LinuxGSM installed
 - SteamCMD installed
 - UFW configured for ports
+
+---
+
+## Pingboost Settings
+
+The `-pingboost` startup parameter controls how aggressively the server checks for network packets. Higher values use more CPU but reduce latency.
+
+| Setting | CPU Usage | Best For |
+|---------|-----------|----------|
+| `-pingboost 2` | Lower | Budget VPS with limited cores |
+| `-pingboost 3` | Higher | Servers with 6+ cores and 6GB+ RAM |
+
+**Current Configuration:**
+- **Atlanta (6-core/6GB):** `-pingboost 3`
+- **Dallas (4-core/4GB):** `-pingboost 2`
+
+To change pingboost, edit the instance config:
+```bash
+# Edit the LinuxGSM instance config
+nano ~/dod-27015/lgsm/config-lgsm/dodserver/dodserver.cfg
+
+# Update startparameters line, changing -pingboost value
+# Then restart the server
+./dodserver restart
+```
+
+---
+
+## Building KTP Stack for Ubuntu 22.04 (Docker)
+
+Ubuntu 22.04 uses glibc 2.35, while binaries built on Ubuntu 24.04 require glibc 2.38. If servers crash with `GLIBC_2.38 not found`, you need to rebuild the KTP stack using Docker.
+
+### Building KTPAMXX with Docker
+
+```bash
+# Navigate to KTPAMXX directory
+cd "N:\Nein_\KTP Git Projects\KTPAMXX"
+
+# Build Docker image (one-time)
+docker build -t ktpamxx-builder .
+
+# Run the build
+docker run --rm \
+  -v "N:\Nein_\KTP Git Projects\KTPAMXX:/build/ktpamxx:ro" \
+  -v "N:\Nein_\KTP Git Projects\KTPAMXX\docker-output:/build/output" \
+  ktpamxx-builder /bin/bash /build/ktpamxx/docker-build.sh
+
+# Output: docker-output/ktpamx_i386.so, docker-output/dodx_ktp_i386.so
+```
+
+### Building KTPAmxxCurl with Docker (Static Libraries)
+
+The curl module requires static linking of OpenSSL, zlib, and c-ares for Ubuntu 22.04 compatibility:
+
+```bash
+# Navigate to KTPAmxxCurl directory
+cd "N:\Nein_\KTP Git Projects\KTPAmxxCurl"
+
+# Build Docker image with static libraries (one-time, takes ~5 minutes)
+docker build -t amxxcurl-builder .
+
+# Run the build
+docker run --rm \
+  -v "N:\Nein_\KTP Git Projects\KTPAmxxCurl:/build/amxxcurl:ro" \
+  -v "N:\Nein_\KTP Git Projects\KTPAmxxCurl\docker-output:/build/output" \
+  amxxcurl-builder /bin/bash /build/amxxcurl/docker-build.sh
+
+# Output: docker-output/amxxcurl_ktp_i386.so (~4.5MB with static libs)
+```
+
+**Note:** The statically-linked curl module is larger (~4.5MB vs ~200KB) but has no external dependencies beyond libc.
 
 ---
 
@@ -124,6 +195,45 @@ sudo sysctl -p
 sysctl net.core.rmem_max  # Should show 26214400 (25MB)
 ```
 
+### Lowlatency Kernel (Recommended)
+The Ubuntu lowlatency kernel provides better responsiveness for game servers through kernel preemption, tickless mode, and other optimizations.
+
+**Benefits:**
+- `CONFIG_PREEMPT` - Kernel can be interrupted mid-task for faster response
+- `CONFIG_NO_HZ_FULL` - Eliminates unnecessary timer interrupts (tickless)
+- `CONFIG_HZ=1000` - 1ms timer resolution (vs 4ms on some generic kernels)
+- Reduced jitter and more consistent frame timing
+
+**Installation:**
+```bash
+# Install lowlatency kernel
+sudo apt update
+sudo apt install linux-lowlatency
+
+# Reboot to new kernel
+sudo reboot
+```
+
+**Verification (after reboot):**
+```bash
+# Check kernel version (should show -lowlatency suffix)
+uname -r
+
+# Verify 1000Hz timer
+grep CONFIG_HZ /boot/config-$(uname -r)
+# Should show: CONFIG_HZ=1000
+
+# Check preemption model
+grep CONFIG_PREEMPT /boot/config-$(uname -r)
+# Should show: CONFIG_PREEMPT=y
+```
+
+**Alternative kernels (if lowlatency isn't sufficient):**
+- **Liquorix:** `sudo add-apt-repository ppa:damentz/liquorix && sudo apt install linux-image-liquorix-amd64`
+- **Custom build:** See Ubuntu Wiki for kernel compilation
+
+**Note:** The generic kernel (6.8.0+) already has CONFIG_HZ=1000, but lowlatency adds PREEMPT and tickless optimizations that further reduce latency.
+
 ### Swap Configuration (Recommended)
 Servers without swap risk OOM kills under memory pressure:
 ```bash
@@ -188,6 +298,63 @@ Add entries (adjust paths for each instance):
 */1 * * * * /home/dodserver/dod-27019/dodserver5 monitor >> /home/dodserver/log/monitor.log 2>&1
 ```
 
+### Restart Scripts
+
+Copy restart scripts from an existing KTP game server:
+
+```bash
+# From existing server (e.g., Atlanta):
+scp dodserver@<ATL_GAME_IP>:~/restart-all-servers.sh ~/
+scp dodserver@<ATL_GAME_IP>:~/ktp-scheduled-restart.sh ~/
+scp dodserver@<ATL_GAME_IP>:~/ktp-log-rotation.sh ~/
+
+# Make executable
+chmod +x ~/restart-all-servers.sh ~/ktp-scheduled-restart.sh ~/ktp-log-rotation.sh
+```
+
+**Update ktp-scheduled-restart.sh** with the new server IP:
+```bash
+# Find the case statement and add your server:
+nano ~/ktp-scheduled-restart.sh
+
+# Add your IP:
+case "$SERVER_IP" in
+    74.91.112.125) SERVER_NAME="KTP - Atlanta" ;;
+    74.91.112.182) SERVER_NAME="KTP - Atlanta 2" ;;  # NEW
+    74.91.114.178) SERVER_NAME="KTP - Dallas" ;;
+    *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;
+esac
+```
+
+### Scheduled Restart Cron
+
+Add scheduled restart and log rotation to crontab:
+```bash
+crontab -e
+```
+
+Add entries:
+```
+# Scheduled nightly restart at 3:00 AM ET
+0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
+
+# Log rotation - Weekly Sundays 4 AM
+0 4 * * 0 /home/dodserver/ktp-log-rotation.sh >> /home/dodserver/log/log-rotation.log 2>&1
+```
+
+### Netdata Installation (Root Required)
+
+Install Netdata for monitoring (run as root):
+```bash
+wget -O /tmp/netdata-kickstart.sh https://get.netdata.cloud/kickstart.sh && \
+sh /tmp/netdata-kickstart.sh --nightly-channel \
+  --claim-token <YOUR_CLAIM_TOKEN> \
+  --claim-rooms <YOUR_ROOM_ID> \
+  --claim-url https://app.netdata.cloud
+```
+
+Get your claim token and room ID from https://app.netdata.cloud (Nodes → Add nodes).
+
 ### LinuxGSM "Old Type" tmux Session Bug
 
 **Status:** Patched on all KTP servers (January 2026)
@@ -216,6 +383,59 @@ done
 ```
 
 **Note:** This patch will need to be reapplied after LinuxGSM updates that overwrite the module files. Check monitor logs after any LinuxGSM update for the "old type tmux session" message.
+
+### LinuxGSM Lockfile Missing After Clone/Migration
+
+**Status:** Fixed on Atlanta (January 2026)
+
+When cloning a server or migrating to new hardware, LinuxGSM may report "No lockfile found" errors even though servers are running. This happens because the `-monitoring.lock` files aren't created properly during the initial start after cloning.
+
+**Symptoms:**
+- Monitor log shows: `ERROR: Checking lockfile: No lockfile found`
+- Intermittent errors (some cycles OK, some ERROR)
+- Servers are actually running fine
+
+**Root Cause:**
+LinuxGSM v23.5.0+ uses `${selfname}-monitoring.lock` files (e.g., `dodserver-monitoring.lock`). When servers are cloned or migrated, the initial start may not create these files properly, especially if started via scripts rather than direct LinuxGSM commands.
+
+**Diagnosis:**
+```bash
+# Check if lockfiles exist
+ls -la ~/dod-*/lgsm/lock/*-monitoring.lock
+
+# Check monitor log for errors
+tail -50 ~/log/monitor.log | grep -E 'lockfile|ERROR'
+```
+
+**Fix:**
+Create old-style lockfiles for each running instance. LinuxGSM's migration code will automatically convert them to the new format:
+
+```bash
+# Run on affected server
+for i in 1 2 3 4 5; do
+  port=$((27014 + i))
+  name="dodserver"
+  [ $i -gt 1 ] && name="dodserver$i"
+
+  # Get the running PID for this port
+  pid=$(pgrep -f "hlds_linux.*-port $port")
+
+  if [ -n "$pid" ]; then
+    # Create old-style lockfile (LinuxGSM auto-migrates to -monitoring.lock)
+    echo "$pid" > ~/dod-$port/lgsm/lock/$name.lock
+    echo "Created $name.lock with PID $pid"
+  else
+    echo "WARNING: No process found for port $port"
+  fi
+done
+```
+
+**Verify fix:**
+```bash
+# After next monitor cycle (~1 minute)
+tail -20 ~/log/monitor.log | grep -E 'Checking (lockfile|session)'
+# Should show [  OK  ] for all servers, no ERROR
+```
 
 ---
 
@@ -270,7 +490,7 @@ port="27016"
 clientport="27006"
 ip="<ATL_GAME_IP>"
 servercfg="dodserver.cfg"
-startparameters="-game dod -strictportbind +ip ${ip} -port ${port} +clientport ${clientport} +map ${defaultmap} +servercfgfile ${servercfg} -maxplayers 13 -pingboost 2 +condebug"
+startparameters="-game dod -strictportbind +ip ${ip} -port ${port} +clientport ${clientport} +map ${defaultmap} +servercfgfile ${servercfg} -maxplayers 13 -pingboost 3 +condebug"
 ```
 
 ### Step 3: Copy Server Files
@@ -383,6 +603,7 @@ sleep 5
 - [ ] KTP plugins loaded (check `ktpamx plugins` in console)
 - [ ] Discord integration working
 - [ ] Monitor cron job added
+- [ ] Lockfiles exist after first monitor cycle (`ls ~/dod-*/lgsm/lock/*-monitoring.lock`)
 
 ---
 
@@ -444,7 +665,7 @@ for port in 27015 27016 27017 27018 27019; do
 port="$port"
 clientport="$clientport"
 ip="<SERVER_IP>"
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2"
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 3"
 servercfg="dodserver.cfg"
 EOF
 done
@@ -560,5 +781,43 @@ After game server setup, configure on data server (<DATA_SERVER_IP>):
 2. **HLTV Service:** `systemctl enable --now hltv@2702X`
 3. **HLStatsX:** Add server to `hlstats_Servers` table
 4. **FileDistributor:** Add to `/opt/ktp-file-distributor/servers.json`
+5. **FileDistributor SSH Key:** Copy the FileDistributor SSH key to the new server (see below)
 
 See `KTP_DataServer_Setup.md` for data server details.
+
+### FileDistributor SSH Key Setup (Required)
+
+The KTPFileDistributor service on the data server uses SSH/SFTP to deploy files (maps, plugins, configs) to game servers. New game server clusters must have the FileDistributor's SSH key authorized.
+
+**Symptoms if missing:** FileDistributor shows "Permission denied (publickey)" when distributing files to the new server.
+
+**On the data server (74.91.112.242):**
+
+```bash
+# The FileDistributor uses this specific SSH key
+cat /var/www/fastdl/.ssh/id_rsa.pub
+
+# Copy the key to the new game server
+ssh-copy-id -i /var/www/fastdl/.ssh/id_rsa.pub dodserver@<NEW_SERVER_IP>
+# Enter password: ktp
+
+# Test the connection
+ssh -i /var/www/fastdl/.ssh/id_rsa dodserver@<NEW_SERVER_IP> "echo 'FileDistributor access OK'"
+```
+
+**If the key doesn't exist, generate it:**
+
+```bash
+# Create key directory
+sudo mkdir -p /var/www/fastdl/.ssh
+sudo chown ftpuser:ftpuser /var/www/fastdl/.ssh
+sudo chmod 700 /var/www/fastdl/.ssh
+
+# Generate key as ftpuser (the user FileDistributor runs as)
+sudo -u ftpuser ssh-keygen -t rsa -f /var/www/fastdl/.ssh/id_rsa -N "" -C "filedistributor@neindataatl"
+
+# Copy to game server
+sudo -u ftpuser ssh-copy-id -i /var/www/fastdl/.ssh/id_rsa.pub dodserver@<NEW_SERVER_IP>
+```
+
+**Verify:** After setup, distribute a test file through the FileDistributor web interface or by dropping a file in `/home/dod/distribute/`. All servers should show successful uploads.

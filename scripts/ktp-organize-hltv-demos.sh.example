@@ -3,7 +3,7 @@
 # KTP HLTV Demo Organization Script
 # Organizes demos into: Hostname / MatchType (e.g., ATL1/ktp/)
 # Runs nightly at 4:00 AM EST via cron
-# Web accessible at: http://74.91.112.242/demos/
+# Web accessible at: http://<DATA_SERVER_IP>/demos/
 # =============================================================================
 
 DEMO_DIR="/home/hltvserver/hlds/dod"
@@ -38,7 +38,6 @@ get_short_hostname() {
         KTP_Dallas_5|KTP-Dallas-5) echo "DAL5" ;;
         ATL[0-9]) echo "$hostname" ;;
         DAL[0-9]) echo "$hostname" ;;
-        DEN[0-9]) echo "$hostname" ;;
         *) echo "$hostname" | sed 's/KTP_//;s/KTP-//;s/_/-/g' | cut -c1-8 ;;
     esac
 }
@@ -63,22 +62,13 @@ for demo in *.dem; do
 
     # NEW FORMAT (v0.10.59+): <matchtype>_<timestamp>-<shorthost>-<hltv_ts>-<map>.dem
     # Example: ktp_1768174986-ATL1-2601111843-dod_armory_b6.dem
-    # With h1/h2: ktp_1768174986-ATL1_h1-2601111843-dod_armory_b6.dem
-    if [[ "$demo" =~ ^([a-z0-9]+)_([0-9]+)-([A-Z]+[0-9]+)(_h[12])?-([0-9]+)-(.+)\.dem$ ]]; then
+    if [[ "$demo" =~ ^([a-z0-9]+)_([0-9]+)-([A-Z]+[0-9]+)-([0-9]+)-(.+)\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname="${BASH_REMATCH[3]}"
 
     # NEW FORMAT 1.3 (v0.10.59+): <matchtype>_1.3-<queueid>-<shorthost>-<hltv_ts>-<map>.dem
     # Example: 12man_1.3-5031-ATL2-2601122113-dod_thunder2.dem
-    # With h1/h2: 12man_1.3-5031-ATL2_h1-2601122113-dod_thunder2.dem
-    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([0-9]+)-([A-Z]+[0-9]+)(_h[12])?-([0-9]+)-(.+)\.dem$ ]]; then
-        matchtype="${BASH_REMATCH[1]}"
-        hostname="${BASH_REMATCH[3]}"
-
-    # NEW FORMAT 1.3 NON-STANDARD: <matchtype>_1.3-<textid>-<shorthost>-<hltv_ts>-<map>.dem
-    # Example: 12man_1.3-confirm-ATL2-2601141753-dod_lennon5_b1.dem
-    # Handles: confirm, rdy, abort, and other text identifiers instead of queue ID
-    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([a-zA-Z]+)-([A-Z]+[0-9]+)(_h[12])?-([0-9]+)-(.+)\.dem$ ]]; then
+    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([0-9]+)-([A-Z]+[0-9]+)-([0-9]+)-(.+)\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname="${BASH_REMATCH[3]}"
 
@@ -91,12 +81,6 @@ for demo in *.dem; do
     # OLD FORMAT 1.3: <matchtype>_1.3-<queueid>-<map>-<fullhostname>-<hltv_ts>-<map>.dem
     # Example: 12man_1.3-5037-dod_armory_b6-KTP_Atlanta_1-2601132203-dod_anzio.dem
     elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-[0-9]+-[a-z0-9_]+-([A-Za-z_]+[0-9]+)-[0-9]+-[a-z0-9_]+\.dem$ ]]; then
-        matchtype="${BASH_REMATCH[1]}"
-        hostname=$(get_short_hostname "${BASH_REMATCH[2]}")
-
-    # OLD FORMAT 1.3 NON-STANDARD: <matchtype>_1.3-<textid>-<map>-<fullhostname>-<hltv_ts>-<map>.dem
-    # Handles: confirm, rdy, abort text identifiers in old format
-    elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-[a-zA-Z]+-[a-z0-9_]+-([A-Za-z_]+[0-9]+)-[0-9]+-[a-z0-9_]+\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname=$(get_short_hostname "${BASH_REMATCH[2]}")
     fi

@@ -1,0 +1,27 @@
+; KTP Discord Integration Configuration
+; Profile: ONLINE (production)
+;
+; SETUP:
+; 1. Copy this file to discord.ini
+; 2. Fill in your Discord relay URL and secrets
+; 3. discord.ini is gitignored and won't be committed
+
+; Discord Relay URL (Cloud Run service)
+; Format: https://[service]-[hash]-[region].a.run.app/webhook
+relay_url = ""
+
+; Authentication secret (shared with relay service)
+; Generate with: openssl rand -hex 32
+auth_secret = ""
+
+; Channel IDs for different notification types
+; Get from Discord: Right-click channel -> Copy ID
+
+; Match notifications (start, end, scores)
+match_channel = ""
+
+; Admin alerts (kicks, bans, config changes)
+admin_channel = ""
+
+; Optional: Server status channel
+status_channel = ""

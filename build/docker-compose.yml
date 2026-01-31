@@ -1,0 +1,87 @@
+# KTP Build System - Docker Compose Orchestration
+# Builds all KTP components with proper dependency ordering
+#
+# Usage:
+#   docker-compose build                    # Build all images
+#   docker-compose build ktp-rehlds         # Build specific component
+#
+# After building, use the Makefile to extract artifacts:
+#   make extract-artifacts VERSION=test
+#
+# Environment Variables (set in .env or export):
+#   KTP_PROJECT_ROOT - Path to KTP Git Projects directory
+
+services:
+  # ============================================
+  # Base Image (dependency for all builds)
+  # ============================================
+  ktp-base:
+    build:
+      context: ./base
+      dockerfile: Dockerfile
+    image: ktp-base:latest
+
+  # ============================================
+  # KTPReHLDS - Game Engine
+  # No dependencies on other KTP components
+  # Output: /output/engine/
+  # ============================================
+  ktp-rehlds:
+    build:
+      context: ${KTP_PROJECT_ROOT:-./..}
+      dockerfile: KTPInfrastructure/build/rehlds/Dockerfile
+    image: ktp-rehlds:${VERSION:-latest}
+    depends_on:
+      - ktp-base
+
+  # ============================================
+  # KTPAMXX - Scripting Platform + Compiler
+  # Depends on: KTPhlsdk (included in context)
+  # Output: /output/ktpamx/
+  # ============================================
+  ktp-amxx:
+    build:
+      context: ${KTP_PROJECT_ROOT:-./..}
+      dockerfile: KTPInfrastructure/build/amxx/Dockerfile
+    image: ktp-amxx:${VERSION:-latest}
+    depends_on:
+      - ktp-base
+
+  # ============================================
+  # KTPReAPI - Engine Bridge Module
+  # Output: /output/ktpamx/modules/
+  # ============================================
+  ktp-reapi:
+    build:
+      context: ${KTP_PROJECT_ROOT:-./..}
+      dockerfile: KTPInfrastructure/build/reapi/Dockerfile
+    image: ktp-reapi:${VERSION:-latest}
+    depends_on:
+      - ktp-base
+
+  # ============================================
+  # KTPAmxxCurl - HTTP Module
+  # Output: /output/ktpamx/modules/
+  # ============================================
+  ktp-curl:
+    build:
+      context: ${KTP_PROJECT_ROOT:-./..}
+      dockerfile: KTPInfrastructure/build/curl/Dockerfile
+    image: ktp-curl:${VERSION:-latest}
+    depends_on:
+      - ktp-base
+
+  # ============================================
+  # Plugins - AMX Plugin Compilation
+  # Depends on: ktp-amxx (needs compiler via COPY --from)
+  # Output: /output/plugins/
+  # ============================================
+  ktp-plugins:
+    build:
+      context: ${KTP_PROJECT_ROOT:-./..}
+      dockerfile: KTPInfrastructure/build/plugins/Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+    image: ktp-plugins:${VERSION:-latest}
+    depends_on:
+      - ktp-amxx

@@ -4,6 +4,29 @@
 *.pem
 discord-relay.conf
 
+# Deployment config with credentials (use config.yaml.example as template)
+deploy/config.yaml
+deploy/.env
+
+# Online configs with credentials (use *.example as templates)
+config/online/discord.ini
+config/online/hltv_recorder.ini
+config/online/dodserver.cfg
+
+# Scripts with credentials (use *.example as templates)
+scripts/setup_renice_cron.py
+scripts/draft_day_monitor.py
+scripts/nightly_match_monitor.py
+scripts/ktp-scheduled-restart.sh
+scripts/ktp-organize-hltv-demos.sh
+scripts/hltv-api.py
+scripts/ktp-backup.sh
+
+# Private documentation (contains IPs/credentials)
+ktp_gameserver_setup.md
+ktp_dataserver_setup.md
+infrastructure.md
+
 # Editor files
 *.swp
 *.swo
@@ -21,3 +44,16 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+# Build artifacts
+artifacts/
+
+# Docker environment
+build/.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+COSTS.md
