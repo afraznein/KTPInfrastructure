@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""
+Draft Day Monitor - Captures detailed metrics during high-load events
+Designed to run every minute via cron on the data server
+Logs to /var/log/ktp-draft-monitor/
+
+Usage: python3 draft_day_monitor.py [--test]
+
+Configuration:
+  Copy this file to draft_day_monitor.py and fill in your server credentials.
+"""
+
+import paramiko
+import json
+import os
+import sys
+from datetime import datetime
+
+# Server configurations - fill in your IPs and RAM specs
+SERVERS = [
+    {'host': '', 'name': 'Cluster1', 'ram_mb': 6000},  # Game server 1 IP
+    {'host': '', 'name': 'Cluster2', 'ram_mb': 6000},  # Game server 2 IP
+]
+
+SSH_USER = 'dodserver'
+SSH_PASS = ''  # SSH password
+
+LOG_DIR = '/var/log/ktp-draft-monitor'
+
+def get_server_metrics(ssh):
+    """Collect metrics from a connected server"""
+    metrics = {}
+
+    # Get Netdata CPU data (last minute average)
+    stdin, stdout, stderr = ssh.exec_command(
+        "curl -s 'http://localhost:19999/api/v1/data?chart=system.cpu&after=-60&points=1&group=average&format=json'"
+    )
+    cpu_json = stdout.read().decode()
+    if cpu_json:
+        cpu_data = json.loads(cpu_json)
+        labels = cpu_data.get('labels', [])
+        if cpu_data['data']:
+            row = cpu_data['data'][0]
+            for i, label in enumerate(labels):
+                if label != 'time' and i < len(row):
+                    metrics[f'cpu_{label}'] = row[i] if row[i] else 0
+            metrics['cpu_total'] = sum(v for v in row[1:] if v)
+
+    # Get RAM data
+    stdin, stdout, stderr = ssh.exec_command(
+        "curl -s 'http://localhost:19999/api/v1/data?chart=system.ram&after=-60&points=1&group=average&format=json'"
+    )
+    ram_json = stdout.read().decode()
+    if ram_json:
+        ram_data = json.loads(ram_json)
+        if ram_data['data']:
+            row = ram_data['data'][0]
+            metrics['ram_free'] = row[1] if row[1] else 0
+            metrics['ram_used'] = row[2] if row[2] else 0
+
+    # Get load average
+    stdin, stdout, stderr = ssh.exec_command("cat /proc/loadavg")
+    loadavg = stdout.read().decode().strip().split()
+    if loadavg:
+        metrics['load_1m'] = float(loadavg[0])
+        metrics['load_5m'] = float(loadavg[1])
+        metrics['load_15m'] = float(loadavg[2])
+
+    # Get per-server process stats
+    stdin, stdout, stderr = ssh.exec_command(
+        "ps -eo pid,%cpu,%mem,rss,args | grep hlds_linux | grep -v grep"
+    )
+    processes = stdout.read().decode().strip().split('\n')
+    server_stats = []
+    for proc in processes:
+        if proc:
+            parts = proc.split()
+            if len(parts) >= 4:
+                # Find port number
+                port = 'unknown'
+                for p in parts:
+                    if p.startswith('270') and p.isdigit():
+                        port = p
+                        break
+                server_stats.append({
+                    'port': port,
+                    'cpu': float(parts[1]),
+                    'mem': float(parts[2]),
+                    'rss_kb': int(parts[3])
+                })
+    metrics['game_servers'] = server_stats
+    metrics['server_count'] = len(server_stats)
+
+    # Get UDP errors
+    stdin, stdout, stderr = ssh.exec_command("cat /proc/net/snmp | grep 'Udp:' | tail -1")
+    udp_line = stdout.read().decode().strip()
+    if udp_line:
+        parts = udp_line.split()
+        metrics['udp_rcvbuf_errors'] = int(parts[5]) if len(parts) > 5 else 0
+
+    return metrics
+
+def collect_all_metrics():
+    """Collect metrics from all servers"""
+    timestamp = datetime.now()
+    all_metrics = {
+        'timestamp': timestamp.isoformat(),
+        'epoch': int(timestamp.timestamp()),
+        'servers': {}
+    }
+
+    for server in SERVERS:
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+        try:
+            ssh.connect(server['host'], username=SSH_USER, password=SSH_PASS, timeout=10)
+            metrics = get_server_metrics(ssh)
+            metrics['ram_total_mb'] = server['ram_mb']
+            all_metrics['servers'][server['name']] = metrics
+            ssh.close()
+        except Exception as e:
+            all_metrics['servers'][server['name']] = {'error': str(e)}
+
+    return all_metrics
+
+def write_log(metrics, log_dir):
+    """Write metrics to daily log file"""
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    log_file = os.path.join(log_dir, f'draft-monitor-{date_str}.jsonl')
+
+    with open(log_file, 'a') as f:
+        f.write(json.dumps(metrics) + '\n')
+
+    return log_file
+
+def print_summary(metrics):
+    """Print human-readable summary"""
+    print(f"\n=== Draft Day Monitor - {metrics['timestamp']} ===\n")
+
+    for name, data in metrics['servers'].items():
+        if 'error' in data:
+            print(f"{name}: ERROR - {data['error']}")
+            continue
+
+        steal = data.get('cpu_steal', 0)
+        cpu_total = data.get('cpu_total', 0)
+        ram_used = data.get('ram_used', 0)
+        ram_total = data.get('ram_total_mb', 1)
+        load = data.get('load_1m', 0)
+        server_count = data.get('server_count', 0)
+        udp_errors = data.get('udp_rcvbuf_errors', 0)
+
+        steal_warning = " << HIGH" if steal > 15 else ""
+
+        print(f"{name}:")
+        print(f"  CPU: {cpu_total:.1f}% total, {steal:.1f}% steal{steal_warning}")
+        print(f"  RAM: {ram_used:.0f}MB / {ram_total}MB ({ram_used/ram_total*100:.1f}%)")
+        print(f"  Load: {load:.2f}")
+        print(f"  Game Servers: {server_count}")
+        print(f"  UDP Errors: {udp_errors}")
+
+        if data.get('game_servers'):
+            total_cpu = sum(s['cpu'] for s in data['game_servers'])
+            print(f"  Server CPU Total: {total_cpu:.1f}%")
+        print()
+
+def main():
+    test_mode = '--test' in sys.argv
+
+    metrics = collect_all_metrics()
+
+    if test_mode:
+        print_summary(metrics)
+        print("Test mode - not writing to log")
+        print(f"\nRaw metrics:\n{json.dumps(metrics, indent=2)}")
+    else:
+        # Ensure log directory exists
+        os.makedirs(LOG_DIR, exist_ok=True)
+        log_file = write_log(metrics, LOG_DIR)
+        print(f"Logged to {log_file}")
+
+        # Also print summary for cron email
+        print_summary(metrics)
+
+if __name__ == '__main__':
+    main()
