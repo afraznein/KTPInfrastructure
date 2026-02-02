@@ -57,3 +57,4 @@ __pycache__/
 .venv/
 venv/
 COSTS.md
+provision/clone-ktp-stack.sh

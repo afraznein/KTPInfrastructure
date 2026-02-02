@@ -19,7 +19,7 @@ CHANNEL_EXTERNAL="1457951326666489996"     # 1.3 Discord
 # Detect server location from IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
 case "$SERVER_IP" in
-    74.91.112.182) SERVER_NAME="KTP - Atlanta" ;;
+    74.91.112.182|74.91.121.9) SERVER_NAME="KTP - Atlanta" ;;
     74.91.114.195) SERVER_NAME="KTP - Dallas" ;;
     66.163.114.109) SERVER_NAME="KTP - Denver" ;;
     *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;

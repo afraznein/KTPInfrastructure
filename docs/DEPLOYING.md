@@ -347,6 +347,54 @@ done
 sysctl kernel.nmi_watchdog net.ipv4.tcp_low_latency net.core.busy_poll
 ```
 
+## Critical Post-Deployment Fixes
+
+These fixes MUST be applied before enabling monitor cron jobs.
+
+### LinuxGSM Monitor Old-Type Session Bug (HIGH PRIORITY)
+
+**Problem:** LinuxGSM's `command_monitor.sh` has a bug where "old type tmux session" detection uses substring matching that falsely matches NEW-style sessions. This causes random server restarts during matches.
+
+**Symptoms:**
+- Servers randomly restart during active matches
+- Monitor log shows: `ERROR: Checking session: PIDS with old type tmux session are running`
+- Console logs show `quit` command with no RCON source
+
+**Diagnosis:**
+```bash
+grep -i 'old type\|error' ~/log/monitor.log | tail -20
+```
+
+**Fix (REQUIRED before enabling monitor cron):**
+
+Comment out lines 203-212 in all instances:
+
+```bash
+# Apply to all server instances
+for dir in dod-27015 dod-27016 dod-27017 dod-27018 dod-27019; do
+  sed -i '203,212s/^/# KTP-DISABLED: /' ~/$dir/lgsm/modules/command_monitor.sh
+done
+```
+
+**Verification:**
+```bash
+# Check patch applied
+grep -n "KTP-DISABLED" ~/dod-27015/lgsm/modules/command_monitor.sh | head -5
+```
+
+**IMPORTANT:** This patch must be reapplied after any `./dodserver update-lgsm` command, as LinuxGSM overwrites the modules.
+
+**Automation:** This fix is automatically applied by `clone-ktp-stack.sh` (section 9) during deployment. No manual action needed for new deployments.
+
+**After LinuxGSM Updates:** If you run `./dodserver update-lgsm`, you MUST reapply the patch:
+```bash
+for dir in dod-27015 dod-27016 dod-27017 dod-27018 dod-27019; do
+  sed -i '203,212s/^/# KTP-DISABLED: /' ~/$dir/lgsm/modules/command_monitor.sh
+done
+```
+
+---
+
 ## Troubleshooting
 
 ### Connection Refused

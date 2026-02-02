@@ -159,8 +159,9 @@ net.core.wmem_default=26214400
 # KTP Game Server Performance Tuning
 kernel.nmi_watchdog = 0
 net.ipv4.tcp_low_latency = 1
-net.core.busy_read = 50
-net.core.busy_poll = 50
+net.core.busy_read = 100
+net.core.busy_poll = 100
+net.core.netdev_max_backlog = 5000
 EOF
 
 sysctl -p
@@ -299,6 +300,17 @@ apt-get install -y linux-image-lowlatency linux-headers-lowlatency
 LOWLATENCY_KERNEL=$(ls /boot/vmlinuz-*-lowlatency 2>/dev/null | sort -V | tail -1 | sed 's|/boot/vmlinuz-||')
 if [ -n "$LOWLATENCY_KERNEL" ]; then
     log_info "Lowlatency kernel installed: $LOWLATENCY_KERNEL"
+
+    # Fix GRUB to boot lowlatency kernel by default
+    # Ubuntu 24.04+ puts lowlatency in Advanced submenu, GRUB_DEFAULT=0 boots generic
+    # "1>2" means: submenu 1 (Advanced options), entry 2 (first lowlatency kernel)
+    if ! grep -q 'GRUB_DEFAULT="1>2"' /etc/default/grub; then
+        log_info "Configuring GRUB to boot lowlatency kernel..."
+        sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT="1>2"/' /etc/default/grub
+        update-grub
+        log_info "GRUB configured for lowlatency kernel"
+    fi
+
     log_warn "REBOOT REQUIRED to activate lowlatency kernel!"
 else
     log_warn "Lowlatency kernel installation may have failed"
@@ -314,12 +326,11 @@ for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
     echo performance > "$gov" 2>/dev/null || true
 done
 
-# Disable deep C-states for lower latency (immediate)
-for state in /sys/devices/system/cpu/cpu*/cpuidle/state3/disable; do
-    echo 1 > "$state" 2>/dev/null || true
-done
-for state in /sys/devices/system/cpu/cpu*/cpuidle/state4/disable; do
-    echo 1 > "$state" 2>/dev/null || true
+# Disable ALL C-states for lowest latency (immediate)
+for cpu in /sys/devices/system/cpu/cpu*/cpuidle; do
+    for state in $cpu/state*/disable; do
+        echo 1 > "$state" 2>/dev/null || true
+    done
 done
 
 # Create rc.local for persistence
@@ -332,17 +343,28 @@ for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
     echo performance > "$gov" 2>/dev/null
 done
 
-# Disable deep C-states (C3/C6) for lower latency
-for state in /sys/devices/system/cpu/cpu*/cpuidle/state3/disable; do
-    echo 1 > "$state" 2>/dev/null
+# Disable ALL C-states for lowest latency
+for cpu in /sys/devices/system/cpu/cpu*/cpuidle; do
+    for state in $cpu/state*/disable; do
+        echo 1 > "$state" 2>/dev/null
+    done
 done
-for state in /sys/devices/system/cpu/cpu*/cpuidle/state4/disable; do
-    echo 1 > "$state" 2>/dev/null
-done
+
+# NIC Performance Tuning (if baremetal with ethtool)
+IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+if [ -n "$IFACE" ] && command -v ethtool &>/dev/null; then
+    # Increase ring buffers to max (4096) to handle burst traffic
+    ethtool -G $IFACE rx 4096 tx 4096 2>/dev/null
+    # Lower interrupt coalescing for lower latency
+    ethtool -C $IFACE rx-usecs 1 2>/dev/null
+fi
 
 exit 0
 RCEOF
 chmod +x /etc/rc.local
+
+# Enable rc-local service
+systemctl enable rc-local 2>/dev/null || true
 
 # Add C-state limit to GRUB for full persistence
 if [ -f /etc/default/grub.d/gth.cfg ]; then

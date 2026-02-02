@@ -4,8 +4,16 @@
 #
 # Usage: ./package-dod-base.sh [source_path] [output_path]
 #
-# This extracts the clean game files from a Steam installation,
-# excluding any KTP-specific files that would be overwritten by our build.
+# This packages all game content needed for a complete server:
+#   - maps/*.bsp (all custom maps)
+#   - *.wad (texture files)
+#   - configs/*.cfg (KTP map configs like ktp_donner.cfg)
+#   - models/, sprites/, sound/ (game assets)
+#   - mapcycle.txt, motd.txt
+#   - addons/ktpamx/configs/ (plugin configs)
+#   - addons/ktpamx/data/ (gamedata, lang, GeoIP)
+#
+# Excludes binaries that come from our build (plugins, modules, dlls).
 
 set -e
 
@@ -65,9 +73,13 @@ rsync -a --progress \
 echo ""
 echo "Contents summary:"
 echo "  Maps: $(find $TEMP_DIR/dod/maps -name '*.bsp' 2>/dev/null | wc -l) files"
+echo "  WADs: $(find $TEMP_DIR/dod -maxdepth 1 -name '*.wad' 2>/dev/null | wc -l) files"
+echo "  Configs (dod/configs): $(find $TEMP_DIR/dod/configs -name '*.cfg' 2>/dev/null | wc -l) files"
 echo "  Models: $(find $TEMP_DIR/dod/models -type f 2>/dev/null | wc -l) files"
 echo "  Sounds: $(find $TEMP_DIR/dod/sound -type f 2>/dev/null | wc -l) files"
 echo "  Sprites: $(find $TEMP_DIR/dod/sprites -type f 2>/dev/null | wc -l) files"
+echo "  KTPAMX configs: $(find $TEMP_DIR/dod/addons/ktpamx/configs -type f 2>/dev/null | wc -l) files"
+echo "  KTPAMX data: $(find $TEMP_DIR/dod/addons/ktpamx/data -type f 2>/dev/null | wc -l) files"
 echo ""
 
 echo "Creating tarball..."
