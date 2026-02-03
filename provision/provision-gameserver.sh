@@ -18,9 +18,12 @@
 # 6. Configures firewall (UFW)
 # 7. Optionally installs Netdata monitoring
 # 8. Installs lowlatency kernel
-# 9. CPU performance: governor=performance, C-states C3/C6 disabled
-# 10. File descriptor limits (65535)
-# 11. Installs fail2ban for SSH protection
+# 9. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0)
+# 10. Memory optimizations: THP disabled, KSM disabled, compaction disabled
+# 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass
+# 12. Dirty ratio tuning (vm.dirty_ratio=5)
+# 13. File descriptor limits (65535)
+# 14. Installs fail2ban for SSH protection
 
 set -e
 
@@ -88,8 +91,12 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-if ! grep -q "Ubuntu 22.04" /etc/os-release 2>/dev/null; then
-    log_warn "This script is designed for Ubuntu 22.04"
+# Check for supported Ubuntu versions (22.04 or 24.04)
+if grep -q "Ubuntu 22.04\|Ubuntu 24.04" /etc/os-release 2>/dev/null; then
+    UBUNTU_VERSION=$(grep VERSION_ID /etc/os-release | cut -d'"' -f2)
+    log_info "Detected Ubuntu $UBUNTU_VERSION"
+else
+    log_warn "This script is designed for Ubuntu 22.04 or 24.04"
     if [ "$NON_INTERACTIVE" = false ]; then
         read -p "Continue anyway? (y/n) " -n 1 -r
         echo
@@ -228,7 +235,9 @@ apt-get install -y \
     netcat-openbsd \
     pigz \
     xz-utils \
-    libcurl4:i386
+    libcurl4:i386 \
+    ethtool \
+    iptables
 
 log_info "Dependencies installed"
 
@@ -333,52 +342,164 @@ for cpu in /sys/devices/system/cpu/cpu*/cpuidle; do
     done
 done
 
-# Create rc.local for persistence
+# Apply memory optimizations immediately
+log_info "Applying memory optimizations..."
+echo madvise > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
+echo never > /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null || true
+echo 0 > /proc/sys/vm/compaction_proactiveness 2>/dev/null || true
+echo 0 > /sys/kernel/mm/ksm/run 2>/dev/null || true
+echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms 2>/dev/null || true
+
+# Apply network optimizations immediately
+log_info "Applying network optimizations..."
+IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
+if [ -n "$IFACE" ] && command -v ethtool &>/dev/null; then
+    ethtool -K $IFACE gro off 2>/dev/null || true
+    ethtool -K $IFACE lro off 2>/dev/null || true
+    ethtool -K $IFACE tso off 2>/dev/null || true
+    ethtool -G $IFACE rx 4096 tx 4096 2>/dev/null || true
+    ethtool -C $IFACE rx-usecs 1 2>/dev/null || true
+fi
+
+# Apply conntrack bypass immediately
+if command -v iptables &>/dev/null; then
+    iptables -t raw -D PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null || true
+    iptables -t raw -D OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null || true
+    iptables -t raw -A PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null || true
+    iptables -t raw -A OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null || true
+fi
+
+# Create rc.local for persistence across reboots
 cat > /etc/rc.local << 'RCEOF'
 #!/bin/bash
 # KTP Game Server Performance - applied at boot
+# See: KTPInfrastructure/docs/UBUNTU_OPTIMIZATION_RESEARCH.md
+
+# ============================================
+# CPU Performance
+# ============================================
 
 # Lock CPU to max frequency (performance governor)
 for gov in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
     echo performance > "$gov" 2>/dev/null
 done
 
-# Disable ALL C-states for lowest latency
+# Disable ALL C-states for lowest latency (including C1/C1E)
 for cpu in /sys/devices/system/cpu/cpu*/cpuidle; do
     for state in $cpu/state*/disable; do
         echo 1 > "$state" 2>/dev/null
     done
 done
 
-# NIC Performance Tuning (if baremetal with ethtool)
+# ============================================
+# Memory Optimizations
+# ============================================
+
+# Disable Transparent Hugepages (eliminates khugepaged stalls)
+echo madvise > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null
+echo never > /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null
+
+# Disable proactive memory compaction (reduces random micro-stalls)
+echo 0 > /proc/sys/vm/compaction_proactiveness 2>/dev/null
+
+# Disable KSM memory deduplication (saves CPU cycles)
+echo 0 > /sys/kernel/mm/ksm/run 2>/dev/null
+
+# MGLRU min TTL - keep hot pages in memory longer (kernel 6.1+)
+echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms 2>/dev/null
+
+# ============================================
+# Network Optimizations
+# ============================================
+
 IFACE=$(ip route | grep default | awk '{print $5}' | head -1)
 if [ -n "$IFACE" ] && command -v ethtool &>/dev/null; then
+    # Disable NIC offloading for lower latency (process each packet immediately)
+    ethtool -K $IFACE gro off 2>/dev/null
+    ethtool -K $IFACE lro off 2>/dev/null
+    ethtool -K $IFACE tso off 2>/dev/null
+
     # Increase ring buffers to max (4096) to handle burst traffic
     ethtool -G $IFACE rx 4096 tx 4096 2>/dev/null
+
     # Lower interrupt coalescing for lower latency
     ethtool -C $IFACE rx-usecs 1 2>/dev/null
+fi
+
+# Conntrack bypass for game server ports (eliminates per-packet lookup overhead)
+# Only apply if iptables is available
+if command -v iptables &>/dev/null; then
+    # Clear any existing NOTRACK rules first to avoid duplicates
+    iptables -t raw -D PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null
+    iptables -t raw -D OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null
+
+    # Add fresh rules
+    iptables -t raw -A PREROUTING -p udp --dport 27015:27019 -j NOTRACK
+    iptables -t raw -A OUTPUT -p udp --sport 27015:27019 -j NOTRACK
 fi
 
 exit 0
 RCEOF
 chmod +x /etc/rc.local
 
-# Enable rc-local service
-systemctl enable rc-local 2>/dev/null || true
+# Enable rc-local service - Ubuntu 22.04+ doesn't have this by default
+# Create systemd service file if it doesn't exist
+if [ ! -f /etc/systemd/system/rc-local.service ]; then
+    cat > /etc/systemd/system/rc-local.service << 'SVCEOF'
+[Unit]
+Description=KTP rc.local Compatibility
+ConditionPathExists=/etc/rc.local
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/etc/rc.local start
+TimeoutSec=0
+RemainAfterExit=yes
+GuessMainPID=no
+
+[Install]
+WantedBy=multi-user.target
+SVCEOF
+fi
+
+systemctl daemon-reload
+systemctl enable rc-local
+systemctl start rc-local 2>/dev/null || true
+
+log_info "rc.local service configured and enabled"
 
 # Add C-state limit to GRUB for full persistence
+# Using max_cstate=0 disables ALL C-states including C1/C1E for lowest latency
 if [ -f /etc/default/grub.d/gth.cfg ]; then
     # GTHost provider config
     if ! grep -q "intel_idle.max_cstate" /etc/default/grub.d/gth.cfg; then
-        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=1 processor.max_cstate=1"/' /etc/default/grub.d/gth.cfg
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0"/' /etc/default/grub.d/gth.cfg
         update-grub
     fi
 elif ! grep -q "intel_idle.max_cstate" /etc/default/grub; then
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=1 processor.max_cstate=1"/' /etc/default/grub
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0"/' /etc/default/grub
     update-grub
 fi
 
-log_info "CPU governor set to performance, deep C-states disabled"
+log_info "CPU governor set to performance, ALL C-states disabled (max_cstate=0)"
+
+# ============================================
+# 10.5. Dirty Ratio Tuning
+# ============================================
+log_info "Configuring dirty ratio tuning..."
+
+# Create sysctl config for memory/write behavior
+cat > /etc/sysctl.d/99-ktp-gameserver.conf << 'EOF'
+# KTP Game Server - Dirty ratio tuning
+# Smaller write batches = reduced I/O stutter
+vm.dirty_ratio = 5
+vm.dirty_background_ratio = 5
+EOF
+
+sysctl -p /etc/sysctl.d/99-ktp-gameserver.conf
+
+log_info "Dirty ratio tuning applied"
 
 # ============================================
 # 11. File Descriptor Limits
@@ -444,6 +565,68 @@ EOF
 chmod 440 /etc/sudoers.d/dodserver
 
 # ============================================
+# 15. Create chrt Auto-Apply Service
+# ============================================
+# This ensures real-time scheduling is applied to game servers
+# even when LinuxGSM monitor restarts them after a crash.
+log_info "Creating chrt auto-apply service..."
+
+# Create the script that applies chrt to game servers
+cat > /usr/local/bin/ktp-apply-chrt.sh << 'CHRTSCRIPT'
+#!/bin/bash
+# KTP Game Server Real-Time Scheduling
+# Applies chrt -r 20 to all hlds_linux processes that don't already have it
+#
+# Run by: ktp-chrt.timer (every 30 seconds)
+
+for pid in $(pgrep -f hlds_linux 2>/dev/null); do
+    # Check current scheduling policy
+    # chrt -p returns something like "pid X's current scheduling policy: SCHED_OTHER"
+    # We want SCHED_RR (round-robin real-time)
+    policy=$(chrt -p "$pid" 2>/dev/null | grep -o 'SCHED_[A-Z]*')
+
+    if [ "$policy" != "SCHED_RR" ]; then
+        if chrt -r -p 20 "$pid" 2>/dev/null; then
+            logger -t ktp-chrt "Applied SCHED_RR priority 20 to hlds_linux PID $pid"
+        fi
+    fi
+done
+CHRTSCRIPT
+chmod +x /usr/local/bin/ktp-apply-chrt.sh
+
+# Create systemd service (oneshot)
+cat > /etc/systemd/system/ktp-chrt.service << 'CHRTSVC'
+[Unit]
+Description=KTP Game Server Real-Time Scheduling
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-apply-chrt.sh
+CHRTSVC
+
+# Create systemd timer (runs every 30 seconds)
+cat > /etc/systemd/system/ktp-chrt.timer << 'CHRTTIMER'
+[Unit]
+Description=Apply real-time scheduling to KTP game servers
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+CHRTTIMER
+
+# Enable and start the timer
+systemctl daemon-reload
+systemctl enable ktp-chrt.timer
+systemctl start ktp-chrt.timer
+
+log_info "chrt auto-apply timer enabled (runs every 30 seconds)"
+
+# ============================================
 # Summary
 # ============================================
 echo ""
@@ -459,10 +642,18 @@ echo "Kernel: $LOWLATENCY_KERNEL (lowlatency)"
 echo ""
 echo "Performance optimizations applied:"
 echo "  - CPU governor: performance"
-echo "  - C-states C3/C6: disabled"
+echo "  - C-states: ALL disabled (max_cstate=0)"
 echo "  - NMI watchdog: disabled"
 echo "  - UDP buffers: 25MB"
+echo "  - Dirty ratio: 5% (reduced I/O stutter)"
+echo "  - THP: madvise (disables khugepaged stalls)"
+echo "  - THP defrag: never"
+echo "  - KSM: disabled"
+echo "  - Memory compaction: disabled"
+echo "  - NIC offloading: disabled (GRO/LRO/TSO)"
+echo "  - Conntrack bypass: game ports 27015-27019"
 echo "  - File descriptors: 65535"
+echo "  - Real-time scheduling: chrt -r 20 (auto-applied every 30s)"
 echo "  - fail2ban: enabled"
 echo ""
 echo "IMPORTANT: Reboot required to activate lowlatency kernel!"

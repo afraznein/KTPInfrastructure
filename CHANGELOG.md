@@ -2,6 +2,79 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.2.0] - 2026-02-03
+
+### Performance Optimizations & Ubuntu 24.04 Support
+
+Major expansion of provisioning scripts with all performance optimizations from the bare metal deployment campaign.
+
+### Added
+
+#### Comprehensive Performance Optimizations in `provision-gameserver.sh`
+- **Ubuntu 24.04 support** - Now detects and supports both Ubuntu 22.04 and 24.04
+- **Memory optimizations:**
+  - Transparent Hugepages set to `madvise` (eliminates khugepaged stalls)
+  - THP defrag disabled (`never`)
+  - Proactive memory compaction disabled
+  - KSM memory deduplication disabled
+  - MGLRU min TTL set to 1000ms (keeps hot pages longer)
+- **Network optimizations:**
+  - NIC offloading disabled (GRO/LRO/TSO) for lower latency
+  - Conntrack bypass for game ports 27015-27019
+  - Ring buffer and interrupt coalescing tuning
+- **Dirty ratio tuning** - `vm.dirty_ratio=5` for reduced I/O stutter
+- **C-state control** - ALL C-states disabled (`max_cstate=0`) for lowest latency
+- **rc-local service** - Creates systemd service for Ubuntu 22.04+ compatibility
+
+#### Real-Time Scheduling Automation
+- **ktp-chrt.timer** - Systemd timer that applies `chrt -r 20` every 30 seconds
+- **ktp-apply-chrt.sh** - Script that checks and applies real-time scheduling
+- Handles server restarts automatically - no manual intervention needed
+- Logs changes to syslog (`journalctl -t ktp-chrt`)
+
+#### New Deployment Scripts
+- **scripts/deploy-chrt-service.sh** - Deploy chrt timer to existing servers (run as root)
+
+#### HLTV API Key Support
+- **clone-ktp-stack.sh** - Added `--hltv-api-key` parameter for secure HLTV API authentication
+
+### Changed
+
+- **provision-gameserver.sh** - Major refactoring
+  - Expanded from 13 to 17+ optimization steps
+  - All optimizations now persist across reboots via rc.local
+  - Creates sysctl.d config for persistent dirty ratio tuning
+- **clone-ktp-stack.sh** - Added note about ktp-chrt.timer automatic scheduling
+
+### Documentation
+
+All optimizations are based on research documented in `docs/UBUNTU_OPTIMIZATION_RESEARCH.md`.
+
+---
+
+## [1.1.0] - 2026-02-01
+
+### LinuxGSM Fix & Optimization Research
+
+Added critical LinuxGSM bug fix documentation and Ubuntu optimization research.
+
+### Added
+
+- **docs/UBUNTU_OPTIMIZATION_RESEARCH.md** - Comprehensive 22.04 vs 24.04 comparison
+  - Kernel and scheduler analysis
+  - Network stack optimizations
+  - Memory subsystem tuning
+  - Prioritized recommendations
+
+### Changed
+
+- **ktp_gameserver_setup.md** - Added LinuxGSM monitor bug fix (HIGH PRIORITY)
+  - Documents `command_monitor.sh` patch for lines 203-212
+  - Prevents random server restarts during matches
+  - Must reapply after `./dodserver update-lgsm`
+
+---
+
 ## [1.0.0] - 2026-01-31
 
 ### Initial Release - Complete Infrastructure Automation

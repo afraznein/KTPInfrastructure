@@ -58,3 +58,6 @@ __pycache__/
 venv/
 COSTS.md
 provision/clone-ktp-stack.sh
+
+# Deployment scripts with credentials
+scripts/deploy-chrt-to-servers.py

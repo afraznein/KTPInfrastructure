@@ -58,6 +58,7 @@ show_usage() {
     echo "  --base-port <port>      Starting port number (default: 27015)"
     echo "  --libsteam-api <path>   Path to KTP libsteam_api.so (76KB version)"
     echo "  --hltv-base-port <port> HLTV base port (default: auto based on hostname)"
+    echo "  --hltv-api-key <key>    HLTV API authentication key (production secret)"
     echo ""
     echo "Examples:"
     echo "  $0 /path/to/artifacts --hostname atlanta --ip 74.91.112.182"
@@ -81,6 +82,7 @@ SERVER_IP=""
 NUM_INSTANCES=5
 BASE_PORT=27015
 LIBSTEAM_API_PATH=""
+HLTV_API_KEY=""
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
@@ -116,6 +118,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --hltv-base-port)
             HLTV_BASE_PORT="$2"
+            shift 2
+            ;;
+        --hltv-api-key)
+            HLTV_API_KEY="$2"
             shift 2
             ;;
         *)
@@ -699,6 +705,10 @@ if [ -n "$HLTV_BASE_PORT" ]; then
             else
                 echo "hltv_port = $HLTV_PORT" >> "$HLTV_INI"
             fi
+            # Update hltv_api_key if provided
+            if [ -n "$HLTV_API_KEY" ]; then
+                sed -i "s|^hltv_api_key.*|hltv_api_key = $HLTV_API_KEY|" "$HLTV_INI"
+            fi
             echo "  -> Instance $i (port $PORT): HLTV port $HLTV_PORT"
         else
             log_warn "  Port $PORT: hltv_recorder.ini not found"
@@ -966,6 +976,8 @@ log "Verification: $RUNNING/5 servers running"
 
 # ============================================================================
 # Apply Real-Time Scheduling (reduces CPU steal impact)
+# Note: ktp-chrt.timer handles this automatically every 30s, but we apply
+# it here immediately after restart for faster effect.
 # ============================================================================
 log "Applying chrt -r 20 to all game servers..."
 for pid in $(pgrep -f hlds_linux); do
