@@ -22,7 +22,8 @@
 # 10. Memory optimizations: THP disabled, KSM disabled, compaction disabled
 # 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass
 # 12. Dirty ratio tuning (vm.dirty_ratio=5)
-# 13. File descriptor limits (65535)
+# 13. Network budget tuning (netdev_budget=600)
+# 14. File descriptor limits (65535)
 # 14. Installs fail2ban for SSH protection
 
 set -e
@@ -485,21 +486,26 @@ fi
 log_info "CPU governor set to performance, ALL C-states disabled (max_cstate=0)"
 
 # ============================================
-# 10.5. Dirty Ratio Tuning
+# 10.5. Dirty Ratio & Network Budget Tuning
 # ============================================
-log_info "Configuring dirty ratio tuning..."
+log_info "Configuring dirty ratio and network budget tuning..."
 
-# Create sysctl config for memory/write behavior
+# Create sysctl config for memory/write behavior and network tuning
 cat > /etc/sysctl.d/99-ktp-gameserver.conf << 'EOF'
 # KTP Game Server - Dirty ratio tuning
 # Smaller write batches = reduced I/O stutter
 vm.dirty_ratio = 5
 vm.dirty_background_ratio = 5
+
+# KTP Game Server - Network device budget
+# Higher values allow more packets per softirq cycle, reducing latency spikes
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 4000
 EOF
 
 sysctl -p /etc/sysctl.d/99-ktp-gameserver.conf
 
-log_info "Dirty ratio tuning applied"
+log_info "Dirty ratio and netdev_budget tuning applied"
 
 # ============================================
 # 11. File Descriptor Limits
@@ -646,6 +652,7 @@ echo "  - C-states: ALL disabled (max_cstate=0)"
 echo "  - NMI watchdog: disabled"
 echo "  - UDP buffers: 25MB"
 echo "  - Dirty ratio: 5% (reduced I/O stutter)"
+echo "  - netdev_budget: 600 (packet processing)"
 echo "  - THP: madvise (disables khugepaged stalls)"
 echo "  - THP defrag: never"
 echo "  - KSM: disabled"

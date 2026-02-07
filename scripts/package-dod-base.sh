@@ -44,6 +44,38 @@ if [ ! -d "$SOURCE_PATH" ]; then
     exit 1
 fi
 
+# Safety check: Warn if source has nested dod folder (incorrect source path)
+if [ -d "$SOURCE_PATH/dod" ] && [ -d "$SOURCE_PATH/dod/maps" ]; then
+    echo ""
+    echo "WARNING: Source path appears to have a nested 'dod' folder!"
+    echo "  Source: $SOURCE_PATH"
+    echo "  Found: $SOURCE_PATH/dod/maps/"
+    echo ""
+    echo "This will create an incorrectly structured tarball with dod/dod/..."
+    echo ""
+    echo "The source path should be the 'dod' folder itself, e.g.:"
+    echo "  Correct:   /path/to/serverfiles/dod"
+    echo "  Incorrect: /path/to/serverfiles"
+    echo ""
+    echo "Aborting to prevent deployment issues."
+    exit 1
+fi
+
+# Verify source has expected structure (maps folder exists)
+if [ ! -d "$SOURCE_PATH/maps" ]; then
+    echo ""
+    echo "WARNING: Source path doesn't contain 'maps' folder."
+    echo "  Expected: $SOURCE_PATH/maps/"
+    echo ""
+    echo "Make sure the source path points to the 'dod' folder itself."
+    echo "Continue? (y/N)"
+    read -r confirm
+    if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
 # Create temp directory for filtered content
 TEMP_DIR=$(mktemp -d)
 trap "rm -rf $TEMP_DIR" EXIT
