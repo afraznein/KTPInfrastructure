@@ -193,6 +193,13 @@ if [ ! -d "$HOME/dod-$BASE_PORT/serverfiles" ]; then
     exit 1
 fi
 
+# Verify timezone is America/New_York (required for 3 AM ET cron)
+CURRENT_TZ=$(timedatectl show --property=Timezone --value 2>/dev/null || cat /etc/timezone 2>/dev/null || echo "unknown")
+if [ "$CURRENT_TZ" != "America/New_York" ]; then
+    log_warn "Timezone is '$CURRENT_TZ' but should be 'America/New_York' for scheduled restarts!"
+    log_warn "Fix with: sudo timedatectl set-timezone America/New_York"
+fi
+
 echo "========================================"
 echo "KTP Stack Deployment"
 echo "========================================"
@@ -307,6 +314,17 @@ if [ -n "$DOD_BASE_SOURCE" ]; then
         log_info "  Extracting to instance $i (port $PORT)..."
         # Extract base files - the tarball contains a 'dod' folder
         tar -xzf "$DOD_BASE_TAR" -C "$SERVERFILES/"
+
+        # Safety check: Fix nested dod/dod folder if it exists
+        # This can happen if tarball was created from wrong source path
+        if [ -d "$SERVERFILES/dod/dod" ]; then
+            log_warn "  WARNING: Detected nested dod/dod folder - fixing..."
+            # Move contents up to parent
+            cp -rf "$SERVERFILES/dod/dod/"* "$SERVERFILES/dod/" 2>/dev/null || true
+            # Remove empty nested folder
+            rm -rf "$SERVERFILES/dod/dod"
+            log_info "  Fixed nested folder structure"
+        fi
     done
 
     log_info "Base DoD files deployed"
