@@ -20,8 +20,9 @@ CHANNEL_EXTERNAL="1457951326666489996"     # 1.3 Discord
 SERVER_IP=$(hostname -I | awk '{print $1}')
 case "$SERVER_IP" in
     74.91.112.182|74.91.121.9) SERVER_NAME="KTP - Atlanta" ;;
-    74.91.114.195) SERVER_NAME="KTP - Dallas" ;;
+    74.91.126.55) SERVER_NAME="KTP - Dallas" ;;
     66.163.114.109) SERVER_NAME="KTP - Denver" ;;
+    74.91.123.64) SERVER_NAME="KTPSCRIM - New York" ;;
     *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;
 esac
 

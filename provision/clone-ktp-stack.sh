@@ -19,6 +19,9 @@
 #   --base-port <port>    Starting port number (default: 27015)
 #   --libsteam-api <path> Path to KTP libsteam_api.so (76KB version)
 #   --hltv-base-port <port> HLTV base port for this cluster (default: auto based on hostname)
+#   --sv-password <pwd>     Server join password (sv_password in dodserver.cfg)
+#   --relay-url <url>       Discord relay URL for scheduled restart notifications
+#   --relay-secret <secret> Discord relay auth secret
 #
 # Run as: dodserver user
 #
@@ -59,6 +62,9 @@ show_usage() {
     echo "  --libsteam-api <path>   Path to KTP libsteam_api.so (76KB version)"
     echo "  --hltv-base-port <port> HLTV base port (default: auto based on hostname)"
     echo "  --hltv-api-key <key>    HLTV API authentication key (production secret)"
+    echo "  --sv-password <pwd>     Server join password (sv_password)"
+    echo "  --relay-url <url>       Discord relay URL for restart notifications"
+    echo "  --relay-secret <secret> Discord relay auth secret"
     echo ""
     echo "Examples:"
     echo "  $0 /path/to/artifacts --hostname atlanta --ip 74.91.112.182"
@@ -83,6 +89,9 @@ NUM_INSTANCES=5
 BASE_PORT=27015
 LIBSTEAM_API_PATH=""
 HLTV_API_KEY=""
+SV_PASSWORD=""
+RELAY_URL=""
+RELAY_SECRET=""
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
@@ -124,6 +133,18 @@ while [[ $# -gt 0 ]]; do
             HLTV_API_KEY="$2"
             shift 2
             ;;
+        --sv-password)
+            SV_PASSWORD="$2"
+            shift 2
+            ;;
+        --relay-url)
+            RELAY_URL="$2"
+            shift 2
+            ;;
+        --relay-secret)
+            RELAY_SECRET="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
             show_usage
@@ -135,10 +156,12 @@ done
 # Atlanta: 27020-27024, Dallas: 27025-27029, Denver: 27030-27034
 if [ -z "$HLTV_BASE_PORT" ]; then
     case "$CLUSTER_HOSTNAME" in
-        atlanta) HLTV_BASE_PORT=27020 ;;
-        dallas)  HLTV_BASE_PORT=27025 ;;
-        denver)  HLTV_BASE_PORT=27030 ;;
-        *)       HLTV_BASE_PORT="" ;;  # Unknown cluster, will skip HLTV config
+        atlanta)  HLTV_BASE_PORT=27020 ;;
+        dallas)   HLTV_BASE_PORT=27025 ;;
+        denver)   HLTV_BASE_PORT=27030 ;;
+        newyork)  HLTV_BASE_PORT=27035 ;;
+        chicago)  HLTV_BASE_PORT=27040 ;;
+        *)        HLTV_BASE_PORT="" ;;  # Unknown cluster, will skip HLTV config
     esac
 fi
 
@@ -147,9 +170,9 @@ if [ "$SERVER_NAME_EXPLICIT" = false ]; then
     if [ -n "$CLUSTER_HOSTNAME" ]; then
         # Capitalize first letter of hostname
         DISPLAY_HOSTNAME="$(echo "${CLUSTER_HOSTNAME:0:1}" | tr '[:lower:]' '[:upper:]')${CLUSTER_HOSTNAME:1}"
-        SERVER_NAME_PREFIX="KTP ${DISPLAY_HOSTNAME}"
+        SERVER_NAME_PREFIX="KTP - ${DISPLAY_HOSTNAME}"
     else
-        SERVER_NAME_PREFIX="KTP"
+        SERVER_NAME_PREFIX="KTP DoD Server"
     fi
 fi
 
@@ -469,6 +492,13 @@ for i in $(seq 1 $NUM_INSTANCES); do
     if [ ! -f "$CONFIGS_DIR/plugins.ini" ]; then
         echo "$PLUGINS_INI" > "$CONFIGS_DIR/plugins.ini"
     fi
+    if [ ! -f "$CONFIGS_DIR/dodx.ini" ]; then
+        cat > "$CONFIGS_DIR/dodx.ini" << 'EOF'
+; DODX Module Configuration
+pdata_offset = 4
+EOF
+        echo "  -> Created dodx.ini"
+    fi
 done
 
 log_info "Default configs created"
@@ -483,13 +513,8 @@ for i in $(seq 1 $NUM_INSTANCES); do
     SERVERFILES="$HOME/dod-$PORT/serverfiles"
     DOD_DIR="$SERVERFILES/dod"
 
-    # Build display name: "KTP - Location N" (e.g., "KTP - Denver 1")
-    if [ -n "$CLUSTER_HOSTNAME" ]; then
-        DISPLAY_HOSTNAME="$(echo "${CLUSTER_HOSTNAME:0:1}" | tr '[:lower:]' '[:upper:]')${CLUSTER_HOSTNAME:1}"
-        GAME_HOSTNAME="KTP - $DISPLAY_HOSTNAME $i"
-    else
-        GAME_HOSTNAME="KTP DoD Server $i"
-    fi
+    # Build display name: "PREFIX N" (e.g., "KTP - Denver 1", "KTPSCRIM - New York 1")
+    GAME_HOSTNAME="$SERVER_NAME_PREFIX $i"
 
     # Create configs directory if needed
     mkdir -p "$DOD_DIR/configs"
@@ -524,6 +549,28 @@ done
 log_info "Game server hostnames configured"
 
 # ============================================
+# 6b. Configure sv_password (if provided)
+# ============================================
+if [ -n "$SV_PASSWORD" ]; then
+    log_info "Setting sv_password to \"$SV_PASSWORD\"..."
+
+    for i in $(seq 1 $NUM_INSTANCES); do
+        PORT=$((BASE_PORT + i - 1))
+        DODSERVER_CFG="$HOME/dod-$PORT/serverfiles/dod/dodserver.cfg"
+
+        if [ -f "$DODSERVER_CFG" ]; then
+            if grep -q "^sv_password" "$DODSERVER_CFG" 2>/dev/null; then
+                sed -i "s|^sv_password.*|sv_password \"$SV_PASSWORD\"|" "$DODSERVER_CFG"
+            else
+                echo "sv_password \"$SV_PASSWORD\"" >> "$DODSERVER_CFG"
+            fi
+        fi
+    done
+
+    log_info "sv_password configured"
+fi
+
+# ============================================
 # 7. Configure LinuxGSM Instance Settings
 # ============================================
 log_info "Configuring LinuxGSM instance settings..."
@@ -543,14 +590,8 @@ for i in $(seq 1 $NUM_INSTANCES); do
     # Create instance-specific config
     INSTANCE_CFG="$LGSM_CONFIG_DIR/$EXEC_NAME.cfg"
 
-    # Build server name: "KTP - Branch #" (e.g., "KTP - Denver 1")
-    # Must match the format in servernamedefault.cfg (section 6)
-    if [ -n "$CLUSTER_HOSTNAME" ]; then
-        DISPLAY_HOSTNAME="$(echo "${CLUSTER_HOSTNAME:0:1}" | tr '[:lower:]' '[:upper:]')${CLUSTER_HOSTNAME:1}"
-        LGSM_SERVER_NAME="KTP - $DISPLAY_HOSTNAME $i"
-    else
-        LGSM_SERVER_NAME="KTP DoD Server $i"
-    fi
+    # Build server name to match servernamedefault.cfg (section 6)
+    LGSM_SERVER_NAME="$SERVER_NAME_PREFIX $i"
 
     # Create/update LinuxGSM instance config
     mkdir -p "$LGSM_CONFIG_DIR"
@@ -623,6 +664,9 @@ updateonstart="off"
 # Backup settings
 maxbackups="4"
 maxbackupdays="30"
+
+# Process priority (requires limits.conf nice=-5)
+nice="-5"
 EOF
     if [ -n "$CLUSTER_HOSTNAME" ]; then
         cat >> "$COMMON_CFG" << EOF
@@ -630,6 +674,14 @@ EOF
 # Cluster identification
 # Hostname: $CLUSTER_HOSTNAME
 EOF
+    fi
+else
+    # common.cfg already exists - ensure nice is set
+    if ! grep -q '^nice=' "$COMMON_CFG" 2>/dev/null; then
+        echo '' >> "$COMMON_CFG"
+        echo '# Process priority (requires limits.conf nice=-5)' >> "$COMMON_CFG"
+        echo 'nice="-5"' >> "$COMMON_CFG"
+        log_info "Added nice=-5 to existing common.cfg"
     fi
 fi
 
@@ -716,21 +768,22 @@ if [ -n "$HLTV_BASE_PORT" ]; then
         HLTV_PORT=$((HLTV_BASE_PORT + i - 1))
         HLTV_INI="$HOME/dod-$PORT/serverfiles/dod/addons/ktpamx/configs/hltv_recorder.ini"
 
-        if [ -f "$HLTV_INI" ]; then
-            # Update hltv_port setting
-            if grep -q "^hltv_port" "$HLTV_INI" 2>/dev/null; then
-                sed -i "s|^hltv_port.*|hltv_port = $HLTV_PORT|" "$HLTV_INI"
-            else
-                echo "hltv_port = $HLTV_PORT" >> "$HLTV_INI"
-            fi
-            # Update hltv_api_key if provided
-            if [ -n "$HLTV_API_KEY" ]; then
-                sed -i "s|^hltv_api_key.*|hltv_api_key = $HLTV_API_KEY|" "$HLTV_INI"
-            fi
-            echo "  -> Instance $i (port $PORT): HLTV port $HLTV_PORT"
-        else
-            log_warn "  Port $PORT: hltv_recorder.ini not found"
+        # Determine API key: flag > existing file > default
+        EFFECTIVE_HLTV_KEY="$HLTV_API_KEY"
+        if [ -z "$EFFECTIVE_HLTV_KEY" ] && [ -f "$HLTV_INI" ]; then
+            EFFECTIVE_HLTV_KEY=$(grep -E "^hltv_api_key" "$HLTV_INI" 2>/dev/null | head -1 | sed 's/^hltv_api_key\s*=\s*//' | tr -d '[:space:]')
         fi
+        : "${EFFECTIVE_HLTV_KEY:=KTPVPS2026}"
+
+        # Always create/overwrite with correct per-instance port
+        cat > "$HLTV_INI" << EOF
+; KTP HLTV Recorder Configuration
+hltv_enabled = 1
+hltv_api_url = http://74.91.112.242:8087
+hltv_api_key = $EFFECTIVE_HLTV_KEY
+hltv_port = $HLTV_PORT
+EOF
+        echo "  -> Instance $i (port $PORT): HLTV port $HLTV_PORT"
     done
     log_info "hltv_recorder.ini configured"
 else
@@ -784,7 +837,7 @@ done
 if [ -f "$SCRIPT_SOURCE" ]; then
     cp "$SCRIPT_SOURCE" "$RESTART_SCRIPT"
     chmod +x "$RESTART_SCRIPT"
-    log_info "Deployed ktp-scheduled-restart.sh"
+    log_info "Deployed ktp-scheduled-restart.sh from source"
 elif [ -f "$HOME/ktp-scheduled-restart.sh" ]; then
     log_info "ktp-scheduled-restart.sh already exists"
 else
@@ -813,8 +866,10 @@ CHANNEL_EXTERNAL="1457951326666489996"     # 1.3 Discord
 SERVER_IP=$(hostname -I | awk '{print $1}')
 case "$SERVER_IP" in
     74.91.112.182|74.91.121.9) SERVER_NAME="KTP - Atlanta" ;;
-    74.91.114.195) SERVER_NAME="KTP - Dallas" ;;
+    74.91.126.55) SERVER_NAME="KTP - Dallas" ;;
     66.163.114.109) SERVER_NAME="KTP - Denver" ;;
+    74.91.123.64) SERVER_NAME="KTPSCRIM - New York" ;;
+    172.238.176.101) SERVER_NAME="KTPSCRIM - Chicago" ;;
     *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;
 esac
 
@@ -1049,6 +1104,34 @@ RESTART_SCRIPT_CONTENT
     log_info "Created ktp-scheduled-restart.sh with Discord notifications"
 fi
 
+# Substitute relay URL and auth secret if provided via flags
+if [ -f "$RESTART_SCRIPT" ]; then
+    # Determine relay URL: flag > discord.ini > leave as-is
+    EFFECTIVE_RELAY_URL="$RELAY_URL"
+    EFFECTIVE_RELAY_SECRET="$RELAY_SECRET"
+
+    if [ -z "$EFFECTIVE_RELAY_URL" ]; then
+        # Try to read from discord.ini
+        DISCORD_INI="$HOME/dod-$BASE_PORT/serverfiles/dod/addons/ktpamx/configs/discord.ini"
+        if [ -f "$DISCORD_INI" ]; then
+            EFFECTIVE_RELAY_URL=$(grep -E "^relay_url" "$DISCORD_INI" | head -1 | sed 's/^relay_url\s*=\s*//' | tr -d '[:space:]')
+            EFFECTIVE_RELAY_SECRET=$(grep -E "^auth_secret" "$DISCORD_INI" | head -1 | sed 's/^auth_secret\s*=\s*//' | tr -d '[:space:]')
+        fi
+    fi
+
+    if [ -n "$EFFECTIVE_RELAY_URL" ]; then
+        sed -i "s|YOUR_RELAY_URL_HERE|$EFFECTIVE_RELAY_URL|g" "$RESTART_SCRIPT"
+        # Also update hardcoded URLs if present
+        sed -i "s|https://discord-relay-78814186981.us-central1.run.app/reply|${EFFECTIVE_RELAY_URL}/reply|g" "$RESTART_SCRIPT"
+        sed -i "s|https://discord-relay-78814186981.us-central1.run.app/edit|${EFFECTIVE_RELAY_URL}/edit|g" "$RESTART_SCRIPT"
+        log_info "Updated restart script relay URL"
+    fi
+    if [ -n "$EFFECTIVE_RELAY_SECRET" ]; then
+        sed -i "s|YOUR_AUTH_SECRET_HERE|$EFFECTIVE_RELAY_SECRET|g" "$RESTART_SCRIPT"
+        log_info "Updated restart script auth secret"
+    fi
+fi
+
 # Set up cron job for 3 AM ET daily
 CRON_ENTRY="0 3 * * * $RESTART_SCRIPT >> $HOME/log/scheduled-restart.log 2>&1"
 
@@ -1079,7 +1162,7 @@ fi
 if [ -n "$HLTV_BASE_PORT" ]; then
     echo "HLTV ports: $HLTV_BASE_PORT-$((HLTV_BASE_PORT + NUM_INSTANCES - 1))"
 fi
-echo "Server names: KTP - ${CLUSTER_HOSTNAME:-DoD} 1-$NUM_INSTANCES"
+echo "Server names: $SERVER_NAME_PREFIX 1-$NUM_INSTANCES"
 if [ -n "$DOD_BASE_SOURCE" ]; then
     echo "Base DoD files: Included (maps, WADs, configs, models, sounds)"
 else

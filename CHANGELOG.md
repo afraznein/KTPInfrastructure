@@ -2,6 +2,39 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.3.0] - 2026-02-19
+
+### New York & Chicago Server Support
+
+Extended provisioning and restart scripts for 5-location deployment.
+
+### Changed
+
+#### `clone-ktp-stack.sh`
+- **New York & Chicago HLTV port mapping** - Auto-detects newyork (27035) and chicago (27040) base ports
+- **`--sv-password` flag** - Sets sv_password in dodserver.cfg (for KTPSCRIM servers)
+- **`--relay-url` / `--relay-secret` flags** - Configure Discord relay in scheduled restart script
+- **Relay URL auto-detection** - Falls back to reading from discord.ini if flags not provided
+- **HLTV config always created** - Creates hltv_recorder.ini from scratch instead of patching existing (prevents stale config)
+- **dodx.ini auto-created** - Creates default `pdata_offset = 4` if missing
+- **Server name prefix** - Uses `$SERVER_NAME_PREFIX` consistently (supports "KTPSCRIM" branding)
+- **nice=-5 in common.cfg** - Adds process priority to new and existing installations
+- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55 in restart script name lookup
+
+#### `provision-gameserver.sh`
+- **`mitigations=off`** - Added to GRUB for Spectre/Meltdown performance bypass
+- **`nice=-5` in limits.conf** - Allows dodserver user to use negative nice values
+
+#### `ktp-scheduled-restart.sh`
+- **New York server name** - Added 74.91.123.64 → "KTPSCRIM - New York"
+- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55
+
+### Added
+- **`OLDSERVERS.md`** - Decommissioned server reference (Atlanta VPS, Dallas VPS)
+- **`scripts/profiling-report.py`** - Frame profiler report generator for all servers
+
+---
+
 ## [1.2.0] - 2026-02-03
 
 ### Performance Optimizations & Ubuntu 24.04 Support

@@ -61,3 +61,5 @@ provision/clone-ktp-stack.sh
 
 # Deployment scripts with credentials
 scripts/deploy-chrt-to-servers.py
+scripts/profiling-report.py
+monitoring/ktp-server-monitor.py

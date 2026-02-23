@@ -18,7 +18,7 @@
 # 6. Configures firewall (UFW)
 # 7. Optionally installs Netdata monitoring
 # 8. Installs lowlatency kernel
-# 9. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0)
+# 9. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0), mitigations=off
 # 10. Memory optimizations: THP disabled, KSM disabled, compaction disabled
 # 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass
 # 12. Dirty ratio tuning (vm.dirty_ratio=5)
@@ -475,11 +475,11 @@ log_info "rc.local service configured and enabled"
 if [ -f /etc/default/grub.d/gth.cfg ]; then
     # GTHost provider config
     if ! grep -q "intel_idle.max_cstate" /etc/default/grub.d/gth.cfg; then
-        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0"/' /etc/default/grub.d/gth.cfg
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0 mitigations=off"/' /etc/default/grub.d/gth.cfg
         update-grub
     fi
 elif ! grep -q "intel_idle.max_cstate" /etc/default/grub; then
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0"/' /etc/default/grub
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0 mitigations=off"/' /etc/default/grub
     update-grub
 fi
 
@@ -519,6 +519,7 @@ dodserver soft nofile 65535
 dodserver hard nofile 65535
 dodserver soft nproc 65535
 dodserver hard nproc 65535
+dodserver        -       nice            -5
 EOF
 
 log_info "File descriptor limits increased to 65535"
@@ -658,6 +659,7 @@ echo "  - THP defrag: never"
 echo "  - KSM: disabled"
 echo "  - Memory compaction: disabled"
 echo "  - NIC offloading: disabled (GRO/LRO/TSO)"
+echo "  - Mitigations: off (Spectre/Meltdown disabled for performance)"
 echo "  - Conntrack bypass: game ports 27015-27019"
 echo "  - File descriptors: 65535"
 echo "  - Real-time scheduling: chrt -r 20 (auto-applied every 30s)"
