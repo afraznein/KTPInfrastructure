@@ -201,12 +201,31 @@ RUNNING=${RUNNING:-0}
 log "Verification: $RUNNING/5 servers running"
 
 # ============================================================================
-# Apply Real-Time Scheduling (reduces CPU steal impact)
+# Apply CPU Pinning + Real-Time Scheduling
 # ============================================================================
-log "Applying chrt -r 20 to all game servers..."
+log "Applying CPU pinning + SCHED_FIFO 50 to all game servers..."
+
+# Detect CPU layout: 4 vCPUs = Chicago (shared), 8+ CPUs = baremetal (dedicated)
+NUM_CPUS=$(nproc)
+if [ "$NUM_CPUS" -le 4 ]; then
+    declare -A PORT_CPU_MAP=([27015]=1 [27016]=2 [27017]=3 [27018]=0 [27019]=0)
+else
+    declare -A PORT_CPU_MAP=([27015]=2 [27016]=3 [27017]=5 [27018]=6 [27019]=7)
+fi
+
 for pid in $(pgrep -f hlds_linux); do
-    if sudo chrt -r -p 20 "$pid" 2>/dev/null; then
-        log "Applied chrt -r 20 to PID $pid"
+    port=$(tr '\0' ' ' < /proc/$pid/cmdline 2>/dev/null | grep -oP '(?<=-port )\d+')
+    [ -z "$port" ] && port=$(ps -p "$pid" -o args= 2>/dev/null | grep -oP '(?<=-port )\d+')
+    [ -z "$port" ] && continue
+
+    target_cpu=${PORT_CPU_MAP[$port]}
+    [ -z "$target_cpu" ] && continue
+
+    if sudo taskset -cp "$target_cpu" "$pid" 2>/dev/null; then
+        log "Pinned port $port PID $pid to CPU $target_cpu"
+    fi
+    if sudo chrt -f -p 50 "$pid" 2>/dev/null; then
+        log "Applied SCHED_FIFO 50 to port $port PID $pid"
     fi
 done
 
