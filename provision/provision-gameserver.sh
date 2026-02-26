@@ -20,11 +20,13 @@
 # 8. Installs lowlatency kernel
 # 9. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0), mitigations=off
 # 10. Memory optimizations: THP disabled, KSM disabled, compaction disabled
-# 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass
+# 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass, IRQ affinity
 # 12. Dirty ratio tuning (vm.dirty_ratio=5)
 # 13. Network budget tuning (netdev_budget=600)
 # 14. File descriptor limits (65535)
-# 14. Installs fail2ban for SSH protection
+# 15. Installs fail2ban for SSH protection
+# 16. CPU pinning + SCHED_FIFO scheduling (auto-applied every 30s)
+# 17. CPU isolation: isolcpus + nohz_full + rcu_nocbs (baremetals with 8+ CPUs only)
 
 set -e
 
@@ -439,6 +441,21 @@ if command -v iptables &>/dev/null; then
     iptables -t raw -A OUTPUT -p udp --sport 27015:27019 -j NOTRACK
 fi
 
+# ============================================
+# IRQ Affinity - Steer to Housekeeping CPUs
+# ============================================
+
+# Steer all IRQs to housekeeping CPUs 0,1,4 (bitmask 0x13)
+# Only on baremetals (8+ CPUs) where CPU isolation is active
+if [ $(nproc) -gt 4 ]; then
+    echo 13 > /proc/irq/default_smp_affinity 2>/dev/null
+    for irq_dir in /proc/irq/[0-9]*; do
+        irq=$(basename "$irq_dir")
+        [ "$irq" = "0" ] || [ "$irq" = "2" ] && continue
+        echo 13 > "$irq_dir/smp_affinity" 2>/dev/null || true
+    done
+fi
+
 exit 0
 RCEOF
 chmod +x /etc/rc.local
@@ -473,15 +490,25 @@ log_info "rc.local service configured and enabled"
 # Add C-state limit to GRUB for full persistence
 # Using max_cstate=0 disables ALL C-states including C1/C1E for lowest latency
 if [ -f /etc/default/grub.d/gth.cfg ]; then
-    # GTHost provider config
-    if ! grep -q "intel_idle.max_cstate" /etc/default/grub.d/gth.cfg; then
-        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0 mitigations=off"/' /etc/default/grub.d/gth.cfg
-        update-grub
-    fi
-elif ! grep -q "intel_idle.max_cstate" /etc/default/grub; then
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0 mitigations=off"/' /etc/default/grub
-    update-grub
+    GRUB_CFG="/etc/default/grub.d/gth.cfg"
+else
+    GRUB_CFG="/etc/default/grub"
 fi
+
+if ! grep -q "intel_idle.max_cstate" "$GRUB_CFG"; then
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 intel_idle.max_cstate=0 processor.max_cstate=0 mitigations=off"/' "$GRUB_CFG"
+fi
+
+# Add CPU isolation params for baremetals (8+ CPUs)
+# isolcpus: kernel scheduler won't place tasks on game CPUs
+# nohz_full: suppress timer tick on isolated CPUs when only one task runs
+# rcu_nocbs: offload RCU callbacks to housekeeping CPUs
+if [ "$NUM_CPUS" -gt 4 ] && ! grep -q "isolcpus" "$GRUB_CFG"; then
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 isolcpus=2,3,5,6,7 nohz_full=2,3,5,6,7 rcu_nocbs=2,3,5,6,7"/' "$GRUB_CFG"
+    log_info "Added CPU isolation params (isolcpus, nohz_full, rcu_nocbs)"
+fi
+
+update-grub
 
 log_info "CPU governor set to performance, ALL C-states disabled (max_cstate=0)"
 
@@ -564,39 +591,60 @@ su - "$DODSERVER_USER" -c 'mkdir -p ~/log ~/backups'
 # ============================================
 log_info "Configuring process priority..."
 
-# Add to sudoers for renice and chrt without password
+# Add to sudoers for renice, chrt, and taskset without password
 cat > /etc/sudoers.d/dodserver << 'EOF'
 dodserver ALL=(ALL) NOPASSWD: /usr/bin/renice
 dodserver ALL=(ALL) NOPASSWD: /usr/bin/chrt
+dodserver ALL=(ALL) NOPASSWD: /usr/bin/taskset
 EOF
 chmod 440 /etc/sudoers.d/dodserver
 
 # ============================================
-# 15. Create chrt Auto-Apply Service
+# 15. Create CPU Pinning + SCHED_FIFO Service
 # ============================================
-# This ensures real-time scheduling is applied to game servers
+# This ensures CPU pinning and real-time scheduling is applied to game servers
 # even when LinuxGSM monitor restarts them after a crash.
-log_info "Creating chrt auto-apply service..."
+log_info "Creating CPU pinning + SCHED_FIFO auto-apply service..."
 
-# Create the script that applies chrt to game servers
-cat > /usr/local/bin/ktp-apply-chrt.sh << 'CHRTSCRIPT'
+# Detect CPU layout for the chrt script
+NUM_CPUS=$(nproc)
+if [ "$NUM_CPUS" -le 4 ]; then
+    # KVM VPS (e.g., Chicago): 4 vCPUs, 3 dedicated + 2 shared
+    CPU_MAP_LINE='declare -A PORT_CPU_MAP=([27015]=1 [27016]=2 [27017]=3 [27018]=0 [27019]=0)'
+    CPU_COMMENT='# vCPU layout: 0=sys+27018+27019, 1=27015, 2=27016, 3=27017'
+    log_info "Detected $NUM_CPUS CPUs — using VPS CPU pinning layout"
+else
+    # Baremetal: 8 CPUs (4 cores + HT), 5 dedicated game CPUs
+    CPU_MAP_LINE='declare -A PORT_CPU_MAP=([27015]=2 [27016]=3 [27017]=5 [27018]=6 [27019]=7)'
+    CPU_COMMENT='# CPU layout: 0,1,4=sys, 2=27015, 3=27016, 5=27017, 6=27018, 7=27019'
+    log_info "Detected $NUM_CPUS CPUs — using baremetal CPU pinning layout"
+fi
+
+# Create the script that applies CPU pinning + SCHED_FIFO to game servers
+cat > /usr/local/bin/ktp-apply-chrt.sh << CHRTSCRIPT
 #!/bin/bash
-# KTP Game Server Real-Time Scheduling
-# Applies chrt -r 20 to all hlds_linux processes that don't already have it
-#
+# KTP Game Server CPU Pinning + Real-Time Scheduling
 # Run by: ktp-chrt.timer (every 30 seconds)
+$CPU_COMMENT
+$CPU_MAP_LINE
 
-for pid in $(pgrep -f hlds_linux 2>/dev/null); do
-    # Check current scheduling policy
-    # chrt -p returns something like "pid X's current scheduling policy: SCHED_OTHER"
-    # We want SCHED_RR (round-robin real-time)
-    policy=$(chrt -p "$pid" 2>/dev/null | grep -o 'SCHED_[A-Z]*')
+for pid in \$(pgrep -f hlds_linux 2>/dev/null); do
+    port=\$(tr '\\0' ' ' < /proc/\$pid/cmdline 2>/dev/null | grep -oP '(?<=-port )\\d+')
+    [ -z "\$port" ] && port=\$(ps -p "\$pid" -o args= 2>/dev/null | grep -oP '(?<=-port )\\d+')
+    [ -z "\$port" ] && continue
 
-    if [ "$policy" != "SCHED_RR" ]; then
-        if chrt -r -p 20 "$pid" 2>/dev/null; then
-            logger -t ktp-chrt "Applied SCHED_RR priority 20 to hlds_linux PID $pid"
-        fi
-    fi
+    target_cpu=\${PORT_CPU_MAP[\$port]}
+    [ -z "\$target_cpu" ] && continue
+
+    # Pin to designated CPU
+    current=\$(taskset -cp "\$pid" 2>/dev/null | grep -oP '(?<=: ).*')
+    [ "\$current" != "\$target_cpu" ] && taskset -cp "\$target_cpu" "\$pid" 2>/dev/null && \\
+        logger -t ktp-chrt "Pinned port \$port PID \$pid to CPU \$target_cpu"
+
+    # Apply SCHED_FIFO priority 50
+    policy=\$(chrt -p "\$pid" 2>/dev/null | grep -o 'SCHED_[A-Z]*')
+    [ "\$policy" != "SCHED_FIFO" ] && chrt -f -p 50 "\$pid" 2>/dev/null && \\
+        logger -t ktp-chrt "Applied SCHED_FIFO 50 to port \$port PID \$pid"
 done
 CHRTSCRIPT
 chmod +x /usr/local/bin/ktp-apply-chrt.sh
@@ -662,7 +710,10 @@ echo "  - NIC offloading: disabled (GRO/LRO/TSO)"
 echo "  - Mitigations: off (Spectre/Meltdown disabled for performance)"
 echo "  - Conntrack bypass: game ports 27015-27019"
 echo "  - File descriptors: 65535"
-echo "  - Real-time scheduling: chrt -r 20 (auto-applied every 30s)"
+echo "  - CPU pinning: game servers pinned to dedicated CPUs"
+echo "  - Real-time scheduling: SCHED_FIFO priority 50 (auto-applied every 30s)"
+echo "  - CPU isolation: isolcpus + nohz_full + rcu_nocbs (baremetals only)"
+echo "  - IRQ affinity: steered to housekeeping CPUs (baremetals only)"
 echo "  - fail2ban: enabled"
 echo ""
 echo "IMPORTANT: Reboot required to activate lowlatency kernel!"

@@ -2,6 +2,34 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.4.0] - 2026-02-27
+
+### CPU Isolation + Per-Port Pinning
+
+Upgraded all three infrastructure scripts from `chrt -r 20` (SCHED_RR, no CPU affinity) to per-port CPU pinning + `SCHED_FIFO 50` with auto-detection of baremetal vs VPS layout.
+
+### Changed
+
+#### `provision-gameserver.sh`
+- **CPU isolation GRUB params** — Adds `isolcpus=2,3,5,6,7 nohz_full=2,3,5,6,7 rcu_nocbs=2,3,5,6,7` on baremetals (8+ CPUs)
+- **IRQ affinity steering** — Steers all IRQs to housekeeping CPUs 0,1,4 (bitmask 0x13) via rc.local
+- **Per-port CPU pinning** — `ktp-apply-chrt.sh` now pins each game server to a dedicated CPU based on port number
+- **SCHED_FIFO 50** — Upgraded from `SCHED_RR 20` for stricter real-time scheduling
+- **Auto-detect CPU layout** — 8+ CPUs = baremetal (5 dedicated game CPUs), 4 vCPUs = VPS (3 dedicated + 2 shared)
+- **`taskset` in sudoers** — Added alongside existing `renice` and `chrt`
+
+#### `deploy-chrt-service.sh`
+- **Per-port CPU pinning** — Replaced blanket `chrt -r 20` with port-to-CPU mapping + `taskset`
+- **`--chicago` flag** — Selects 4-vCPU layout for KVM VPS servers
+- **SCHED_FIFO 50** — Upgraded from `SCHED_RR 20`
+- **Pinning status check command** — Added to post-deploy instructions
+
+#### `ktp-scheduled-restart.sh`
+- **Per-port CPU pinning after restart** — Applies `taskset` + `SCHED_FIFO 50` immediately after server start
+- **Auto-detect CPU count** — Uses `nproc` to select baremetal vs VPS CPU map
+
+---
+
 ## [1.3.0] - 2026-02-19
 
 ### New York & Chicago Server Support
