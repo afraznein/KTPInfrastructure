@@ -2,6 +2,72 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.0] - 2026-03-08
+
+### Variable Server Count + Co-located HLTV Support
+
+Two new features for flexible deployments and LAN events.
+
+### Added
+
+#### `provision-gameserver.sh`
+- **`--num-servers <N>` flag** — Configure any number of game server instances (default: 5). All port ranges (UFW, conntrack, CPU pinning) are computed dynamically from the count.
+- **`--with-hltv` flag** — Sets up co-located HLTV proxies on the same machine as game servers. Installs HLTV directory structure, config generator, screen-based control script (`hltv-ctl.sh`), Flask API on port 8087, and systemd service. HLTV ports start at `MAX_PORT + 1` (e.g., 6 game servers = HLTV on 27021-27026).
+- **Dynamic CPU pinning** — CPU map is generated based on `NUM_SERVERS` and available CPUs. Baremetal 6th+ server overflows to CPU 4 (housekeeping). VPS 4th+ server shares CPU 0.
+
+#### `ktp-scheduled-restart.sh`
+- **Dynamic port detection** — Scans `~/dod-*` directories at runtime to build port list. No more hardcoded `27015-27019` loops.
+- **Dynamic CPU pinning** — CPU map generated at runtime based on detected server count and `nproc --all`.
+- **Chicago server name** — Added 172.238.176.101 to IP-to-name lookup.
+
+### Changed
+
+#### `provision-gameserver.sh`
+- UFW rules, conntrack bypass (immediate + rc.local), and summary output all use `$GAME_PORT_RANGE` instead of hardcoded `27015:27019`.
+
+#### `clone-ktp-stack.sh`
+- Embedded restart script template now uses dynamic port detection and `SCHED_FIFO 50` (was stale `chrt -r 20`).
+- CPU pinning in embedded template is dynamically generated based on server count.
+- All `/5` references replaced with `/$NUM_SERVERS`.
+
+#### `ktp-scheduled-restart.sh`
+- All `for port in 27015 27016 27017 27018 27019` loops replaced with `for port in "${PORTS[@]}"`.
+- All `/5` and `-eq 5` references replaced with dynamic `$NUM_SERVERS`.
+- Discord status messages use dynamic server count.
+
+---
+
+## [1.4.2] - 2026-03-07
+
+### Filesystem & Bug Fixes
+
+### Added
+
+- **noatime mount option** — `provision-gameserver.sh` now enables `noatime` on all ext2/3/4 filesystems. Eliminates a write I/O for every file read, reducing SSD wear and removing intermittent latency spikes from atime writes hitting SSD garbage collection pauses. Applied immediately via remount and persisted in `/etc/fstab`.
+
+### Fixed
+
+- **`$NUM_CPUS` undefined variable** — `provision-gameserver.sh` used `$NUM_CPUS` for CPU isolation GRUB params before defining it. Added `NUM_CPUS=$(nproc --all)` before the check. Previously this silently skipped CPU isolation on fresh provisions.
+
+---
+
+## [1.4.1] - 2026-03-02
+
+### CPU Pinning Audit Fixes
+
+Fixes discovered during CPU pinning enforcement audit across all 5 servers.
+
+### Fixed
+
+- **Chicago restart script CPU map** — Deployed `ktp-scheduled-restart.sh` on Chicago had `[27018]=1 [27019]=2` (sharing with 27015/27016), conflicting with the timer's intentional `[27018]=0 [27019]=0`. Updated to match the timer.
+- **`nproc` detection bug** — `ktp-scheduled-restart.sh` used `nproc` which returns only available (non-isolated) CPUs. On baremetals with `isolcpus=2,3,5,6,7`, this returned 3 instead of 8, incorrectly selecting the Chicago CPU map. Changed to `nproc --all`.
+
+### Changed
+
+- **scripts/README.md** — Replaced stale `ensure-priority.sh` and `setup_renice_cron.py` entries with `deploy-chrt-service.sh` and `profiling-report.py`. Added `ktp-apply-chrt.sh` to deployment locations table.
+
+---
+
 ## [1.4.0] - 2026-02-27
 
 ### CPU Isolation + Per-Port Pinning

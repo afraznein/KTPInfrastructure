@@ -8,25 +8,29 @@
 #   -y, --yes           Non-interactive mode (accept all defaults, install Netdata)
 #   --no-netdata        Skip Netdata installation (only with -y)
 #   --password <pass>   Set dodserver password (default: ktp)
+#   --num-servers <N>   Number of game server instances (default: 5)
+#   --with-hltv         Set up co-located HLTV proxies + API on the same machine
 #
 # This script:
 # 1. Creates dodserver user
 # 2. Sets timezone and NTP (chrony)
 # 3. Configures UDP buffers and performance sysctls
-# 4. Configures swap
-# 5. Installs LinuxGSM dependencies (32-bit libs, steamcmd)
-# 6. Configures firewall (UFW)
-# 7. Optionally installs Netdata monitoring
-# 8. Installs lowlatency kernel
-# 9. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0), mitigations=off
-# 10. Memory optimizations: THP disabled, KSM disabled, compaction disabled
-# 11. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass, IRQ affinity
-# 12. Dirty ratio tuning (vm.dirty_ratio=5)
-# 13. Network budget tuning (netdev_budget=600)
-# 14. File descriptor limits (65535)
-# 15. Installs fail2ban for SSH protection
-# 16. CPU pinning + SCHED_FIFO scheduling (auto-applied every 30s)
-# 17. CPU isolation: isolcpus + nohz_full + rcu_nocbs (baremetals with 8+ CPUs only)
+# 4. Enables noatime on all filesystems
+# 5. Configures swap
+# 6. Installs LinuxGSM dependencies (32-bit libs, steamcmd)
+# 7. Configures firewall (UFW)
+# 8. Optionally installs Netdata monitoring
+# 9. Installs lowlatency kernel
+# 10. CPU performance: governor=performance, ALL C-states disabled (max_cstate=0), mitigations=off
+# 11. Memory optimizations: THP disabled, KSM disabled, compaction disabled
+# 12. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass, IRQ affinity
+# 13. Dirty ratio tuning (vm.dirty_ratio=5)
+# 14. Network budget tuning (netdev_budget=600)
+# 15. File descriptor limits (65535)
+# 16. Installs fail2ban for SSH protection
+# 17. CPU pinning + SCHED_FIFO scheduling (auto-applied every 30s)
+# 18. CPU isolation: isolcpus + nohz_full + rcu_nocbs (baremetals with 8+ CPUs only)
+# 19. (Optional) Co-located HLTV: proxies, control script, API, systemd service
 
 set -e
 
@@ -36,6 +40,8 @@ set -e
 NON_INTERACTIVE=false
 INSTALL_NETDATA=true
 DODSERVER_PASSWORD="ktp"
+NUM_SERVERS=5
+WITH_HLTV=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,6 +57,14 @@ while [[ $# -gt 0 ]]; do
             DODSERVER_PASSWORD="$2"
             shift 2
             ;;
+        --num-servers)
+            NUM_SERVERS="$2"
+            shift 2
+            ;;
+        --with-hltv)
+            WITH_HLTV=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
             exit 1
@@ -64,6 +78,18 @@ done
 DODSERVER_USER="dodserver"
 TIMEZONE="America/New_York"
 SWAP_SIZE="2G"
+
+# Derived port ranges
+BASE_PORT=27015
+MAX_PORT=$((BASE_PORT + NUM_SERVERS - 1))
+GAME_PORT_RANGE="$BASE_PORT:$MAX_PORT"
+
+# HLTV port range (starts after last game port)
+if [ "$WITH_HLTV" = true ]; then
+    HLTV_BASE_PORT=$((MAX_PORT + 1))
+    HLTV_MAX_PORT=$((HLTV_BASE_PORT + NUM_SERVERS - 1))
+    HLTV_PORT_RANGE="$HLTV_BASE_PORT:$HLTV_MAX_PORT"
+fi
 
 # For non-interactive apt
 export DEBIAN_FRONTEND=noninteractive
@@ -179,7 +205,34 @@ sysctl -p
 log_info "UDP buffers set to 25MB, performance sysctls applied"
 
 # ============================================
-# 5. Configure Swap
+# 5. Enable noatime on All Filesystems
+# ============================================
+log_info "Enabling noatime on all filesystems..."
+
+# noatime eliminates a write I/O for every file read (no access time updates).
+# Reduces SSD wear and eliminates intermittent I/O latency spikes from atime writes
+# hitting SSD garbage collection pauses.
+
+# Update fstab: add noatime to all ext2/ext3/ext4 mount entries
+if grep -qP 'ext[234]' /etc/fstab; then
+    cp /etc/fstab /etc/fstab.bak.provision
+    # Add noatime to "defaults" entries
+    sed -i '/ext[234]/{s/defaults/defaults,noatime/}' /etc/fstab
+    # Add noatime to entries with "errors=" but no "defaults" (e.g., Chicago)
+    sed -i '/ext[234]/{/noatime/!s/errors=/noatime,errors=/}' /etc/fstab
+    log_info "Updated /etc/fstab with noatime"
+fi
+
+# Remount all ext filesystems with noatime immediately
+mount -o remount,noatime / 2>/dev/null || true
+for mp in $(mount | grep 'type ext[234]' | awk '{print $3}' | grep -v '^/$'); do
+    mount -o remount,noatime "$mp" 2>/dev/null || true
+done
+
+log_info "noatime enabled on all filesystems"
+
+# ============================================
+# 6. Configure Swap
 # ============================================
 log_info "Configuring swap..."
 
@@ -202,7 +255,7 @@ else
 fi
 
 # ============================================
-# 6. Install Dependencies
+# 7. Install Dependencies
 # ============================================
 log_info "Installing system dependencies..."
 
@@ -245,15 +298,21 @@ apt-get install -y \
 log_info "Dependencies installed"
 
 # ============================================
-# 7. Configure Firewall (UFW)
+# 8. Configure Firewall (UFW)
 # ============================================
 log_info "Configuring firewall..."
 
 apt-get install -y ufw
 
 ufw allow 22/tcp comment "SSH"
-ufw allow 27015:27019/udp comment "DoD Game Servers"
-ufw allow 27015:27019/tcp comment "DoD RCON"
+ufw allow $GAME_PORT_RANGE/udp comment "DoD Game Servers"
+ufw allow $GAME_PORT_RANGE/tcp comment "DoD RCON"
+
+# HLTV ports (if co-located)
+if [ "$WITH_HLTV" = true ]; then
+    ufw allow $HLTV_PORT_RANGE/udp comment "HLTV Proxies"
+    ufw allow 8087/tcp comment "HLTV API"
+fi
 
 # Netdata port - ask or use default based on mode
 if [ "$NON_INTERACTIVE" = true ]; then
@@ -275,7 +334,7 @@ ufw --force enable
 ufw status
 
 # ============================================
-# 8. Install Netdata (Optional)
+# 9. Install Netdata (Optional)
 # ============================================
 if [ "$NON_INTERACTIVE" = false ]; then
     read -p "Install Netdata monitoring? (y/n) " -n 1 -r
@@ -302,7 +361,7 @@ else
 fi
 
 # ============================================
-# 9. Install Lowlatency Kernel
+# 10. Install Lowlatency Kernel
 # ============================================
 log_info "Installing lowlatency kernel for better game server performance..."
 
@@ -329,7 +388,7 @@ else
 fi
 
 # ============================================
-# 10. CPU Performance Optimizations
+# 11. CPU Performance Optimizations
 # ============================================
 log_info "Configuring CPU performance optimizations..."
 
@@ -366,10 +425,17 @@ fi
 
 # Apply conntrack bypass immediately
 if command -v iptables &>/dev/null; then
-    iptables -t raw -D PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null || true
-    iptables -t raw -D OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null || true
-    iptables -t raw -A PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null || true
-    iptables -t raw -A OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null || true
+    iptables -t raw -D PREROUTING -p udp --dport $GAME_PORT_RANGE -j NOTRACK 2>/dev/null || true
+    iptables -t raw -D OUTPUT -p udp --sport $GAME_PORT_RANGE -j NOTRACK 2>/dev/null || true
+    iptables -t raw -A PREROUTING -p udp --dport $GAME_PORT_RANGE -j NOTRACK 2>/dev/null || true
+    iptables -t raw -A OUTPUT -p udp --sport $GAME_PORT_RANGE -j NOTRACK 2>/dev/null || true
+    # HLTV conntrack bypass (if co-located)
+    if [ "$WITH_HLTV" = true ]; then
+        iptables -t raw -D PREROUTING -p udp --dport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
+        iptables -t raw -D OUTPUT -p udp --sport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
+        iptables -t raw -A PREROUTING -p udp --dport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
+        iptables -t raw -A OUTPUT -p udp --sport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
+    fi
 fi
 
 # Create rc.local for persistence across reboots
@@ -433,12 +499,12 @@ fi
 # Only apply if iptables is available
 if command -v iptables &>/dev/null; then
     # Clear any existing NOTRACK rules first to avoid duplicates
-    iptables -t raw -D PREROUTING -p udp --dport 27015:27019 -j NOTRACK 2>/dev/null
-    iptables -t raw -D OUTPUT -p udp --sport 27015:27019 -j NOTRACK 2>/dev/null
+    iptables -t raw -D PREROUTING -p udp --dport GAME_PORT_RANGE_PLACEHOLDER -j NOTRACK 2>/dev/null
+    iptables -t raw -D OUTPUT -p udp --sport GAME_PORT_RANGE_PLACEHOLDER -j NOTRACK 2>/dev/null
 
     # Add fresh rules
-    iptables -t raw -A PREROUTING -p udp --dport 27015:27019 -j NOTRACK
-    iptables -t raw -A OUTPUT -p udp --sport 27015:27019 -j NOTRACK
+    iptables -t raw -A PREROUTING -p udp --dport GAME_PORT_RANGE_PLACEHOLDER -j NOTRACK
+    iptables -t raw -A OUTPUT -p udp --sport GAME_PORT_RANGE_PLACEHOLDER -j NOTRACK
 fi
 
 # ============================================
@@ -459,6 +525,19 @@ fi
 exit 0
 RCEOF
 chmod +x /etc/rc.local
+
+# Substitute dynamic port range into rc.local (heredoc is single-quoted, so variables don't expand)
+sed -i "s|GAME_PORT_RANGE_PLACEHOLDER|$GAME_PORT_RANGE|g" /etc/rc.local
+
+# Add HLTV conntrack bypass to rc.local if co-located
+if [ "$WITH_HLTV" = true ]; then
+    sed -i "/NOTRACK$/a\\
+    # HLTV conntrack bypass\\
+    iptables -t raw -D PREROUTING -p udp --dport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null\\
+    iptables -t raw -D OUTPUT -p udp --sport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null\\
+    iptables -t raw -A PREROUTING -p udp --dport $HLTV_PORT_RANGE -j NOTRACK\\
+    iptables -t raw -A OUTPUT -p udp --sport $HLTV_PORT_RANGE -j NOTRACK" /etc/rc.local
+fi
 
 # Enable rc-local service - Ubuntu 22.04+ doesn't have this by default
 # Create systemd service file if it doesn't exist
@@ -503,6 +582,7 @@ fi
 # isolcpus: kernel scheduler won't place tasks on game CPUs
 # nohz_full: suppress timer tick on isolated CPUs when only one task runs
 # rcu_nocbs: offload RCU callbacks to housekeeping CPUs
+NUM_CPUS=$(nproc --all)
 if [ "$NUM_CPUS" -gt 4 ] && ! grep -q "isolcpus" "$GRUB_CFG"; then
     sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 isolcpus=2,3,5,6,7 nohz_full=2,3,5,6,7 rcu_nocbs=2,3,5,6,7"/' "$GRUB_CFG"
     log_info "Added CPU isolation params (isolcpus, nohz_full, rcu_nocbs)"
@@ -606,18 +686,45 @@ chmod 440 /etc/sudoers.d/dodserver
 # even when LinuxGSM monitor restarts them after a crash.
 log_info "Creating CPU pinning + SCHED_FIFO auto-apply service..."
 
-# Detect CPU layout for the chrt script
+# Detect CPU layout and generate CPU pinning map dynamically
 NUM_CPUS=$(nproc)
+
+# Build CPU map based on server count and available CPUs
 if [ "$NUM_CPUS" -le 4 ]; then
-    # KVM VPS (e.g., Chicago): 4 vCPUs, 3 dedicated + 2 shared
-    CPU_MAP_LINE='declare -A PORT_CPU_MAP=([27015]=1 [27016]=2 [27017]=3 [27018]=0 [27019]=0)'
-    CPU_COMMENT='# vCPU layout: 0=sys+27018+27019, 1=27015, 2=27016, 3=27017'
-    log_info "Detected $NUM_CPUS CPUs — using VPS CPU pinning layout"
+    # KVM VPS (e.g., Chicago): 4 vCPUs
+    # CPUs 1-3 dedicated, overflow shares CPU 0
+    VPS_DEDICATED_CPUS=(1 2 3)
+    CPU_MAP_ENTRIES=""
+    CPU_COMMENT="# vCPU layout: 0=sys"
+    for i in $(seq 1 $NUM_SERVERS); do
+        port=$((BASE_PORT + i - 1))
+        if [ $((i - 1)) -lt ${#VPS_DEDICATED_CPUS[@]} ]; then
+            cpu=${VPS_DEDICATED_CPUS[$((i - 1))]}
+        else
+            cpu=0
+        fi
+        CPU_MAP_ENTRIES="$CPU_MAP_ENTRIES[$port]=$cpu "
+        CPU_COMMENT="$CPU_COMMENT, $cpu=$port"
+    done
+    CPU_MAP_LINE="declare -A PORT_CPU_MAP=($CPU_MAP_ENTRIES)"
+    log_info "Detected $NUM_CPUS CPUs — using VPS CPU pinning layout ($NUM_SERVERS servers)"
 else
-    # Baremetal: 8 CPUs (4 cores + HT), 5 dedicated game CPUs
-    CPU_MAP_LINE='declare -A PORT_CPU_MAP=([27015]=2 [27016]=3 [27017]=5 [27018]=6 [27019]=7)'
-    CPU_COMMENT='# CPU layout: 0,1,4=sys, 2=27015, 3=27016, 5=27017, 6=27018, 7=27019'
-    log_info "Detected $NUM_CPUS CPUs — using baremetal CPU pinning layout"
+    # Baremetal: 8 CPUs (4 cores + HT), isolated: 2,3,5,6,7
+    BM_DEDICATED_CPUS=(2 3 5 6 7)
+    CPU_MAP_ENTRIES=""
+    CPU_COMMENT="# CPU layout: 0,1,4=sys"
+    for i in $(seq 1 $NUM_SERVERS); do
+        port=$((BASE_PORT + i - 1))
+        if [ $((i - 1)) -lt ${#BM_DEDICATED_CPUS[@]} ]; then
+            cpu=${BM_DEDICATED_CPUS[$((i - 1))]}
+        else
+            cpu=4  # Overflow to least-busy housekeeping CPU
+        fi
+        CPU_MAP_ENTRIES="$CPU_MAP_ENTRIES[$port]=$cpu "
+        CPU_COMMENT="$CPU_COMMENT, $cpu=$port"
+    done
+    CPU_MAP_LINE="declare -A PORT_CPU_MAP=($CPU_MAP_ENTRIES)"
+    log_info "Detected $NUM_CPUS CPUs — using baremetal CPU pinning layout ($NUM_SERVERS servers)"
 fi
 
 # Create the script that applies CPU pinning + SCHED_FIFO to game servers
@@ -682,6 +789,254 @@ systemctl start ktp-chrt.timer
 log_info "chrt auto-apply timer enabled (runs every 30 seconds)"
 
 # ============================================
+# 16. Co-located HLTV Setup (Optional)
+# ============================================
+if [ "$WITH_HLTV" = true ]; then
+    log_info "Setting up co-located HLTV proxies..."
+
+    # Install Python dependencies for HLTV API
+    apt-get install -y python3-venv screen
+
+    HLTV_HOME="/home/$DODSERVER_USER"
+    HLTV_DIR="$HLTV_HOME/hltv/hlds"
+    HLTV_CONFIGS="$HLTV_HOME/hltv/configs"
+    HLTV_DEMOS="$HLTV_HOME/hltv/demos"
+
+    su - "$DODSERVER_USER" -c "mkdir -p $HLTV_DIR/dod $HLTV_CONFIGS $HLTV_DEMOS"
+
+    # Create HLTV config generator
+    cat > "$HLTV_HOME/hltv/generate-hltv-configs.sh" << HLTVCFGSCRIPT
+#!/bin/bash
+# Generate HLTV config files for co-located HLTV instances
+
+HLTV_DIR="$HLTV_DIR"
+NUM_INSTANCES=$NUM_SERVERS
+BASE_PORT=$HLTV_BASE_PORT
+ADMIN_PASS=\${1:-"ktphltvadmin"}
+PROXY_PASS=\${2:-"ktppxypwd"}
+
+for i in \$(seq 1 \$NUM_INSTANCES); do
+    PORT=\$((BASE_PORT + i - 1))
+    GAME_PORT=\$((27015 + i - 1))
+    CONFIG="$HLTV_CONFIGS/hltv-\$PORT.cfg"
+
+    cat > "\$CONFIG" << EOF
+// HLTV Instance \$i - Port \$PORT
+// Connected to game server on port \$GAME_PORT
+
+hostname "KTP HLTV \$i"
+port \$PORT
+
+// Admin access
+adminpassword "\$ADMIN_PASS"
+
+// Proxy settings
+proxypassword "\$PROXY_PASS"
+maxclients 32
+
+// Recording
+demodelay 30
+demotimeout 60
+
+// Performance
+rate 20000
+updaterate 200
+cmdrate 40
+
+// Connect to local game server
+autoconnect 127.0.0.1:\$GAME_PORT
+EOF
+    echo "Created: \$CONFIG"
+done
+HLTVCFGSCRIPT
+    chmod +x "$HLTV_HOME/hltv/generate-hltv-configs.sh"
+    chown "$DODSERVER_USER:$DODSERVER_USER" "$HLTV_HOME/hltv/generate-hltv-configs.sh"
+
+    # Generate default configs
+    su - "$DODSERVER_USER" -c "$HLTV_HOME/hltv/generate-hltv-configs.sh"
+
+    # Create HLTV control script (screen-based)
+    cat > "$HLTV_HOME/hltv/hltv-ctl.sh" << 'HLTVCTLSCRIPT'
+#!/bin/bash
+# HLTV Control Script (co-located)
+
+HLTV_DIR="$(dirname "$0")/hlds"
+CONFIGS_DIR="$(dirname "$0")/configs"
+ACTION=$1
+INSTANCE=$2
+
+start_instance() {
+    local port=$1
+    local config="$CONFIGS_DIR/hltv-$port.cfg"
+
+    if [ ! -f "$config" ]; then
+        echo "Config not found: $config"
+        return 1
+    fi
+
+    cd "$HLTV_DIR"
+    screen -dmS "hltv-$port" ./hltv +exec "$config"
+    echo "Started HLTV on port $port"
+}
+
+stop_instance() {
+    local port=$1
+    screen -S "hltv-$port" -X quit 2>/dev/null
+    echo "Stopped HLTV on port $port"
+}
+
+status_instance() {
+    local port=$1
+    if screen -list | grep -q "hltv-$port"; then
+        echo "Port $port: RUNNING"
+    else
+        echo "Port $port: STOPPED"
+    fi
+}
+
+case "$ACTION" in
+    start)
+        if [ -n "$INSTANCE" ]; then
+            start_instance $INSTANCE
+        else
+            for cfg in $CONFIGS_DIR/hltv-*.cfg; do
+                port=$(basename $cfg .cfg | cut -d- -f2)
+                start_instance $port
+                sleep 1
+            done
+        fi
+        ;;
+    stop)
+        if [ -n "$INSTANCE" ]; then
+            stop_instance $INSTANCE
+        else
+            for cfg in $CONFIGS_DIR/hltv-*.cfg; do
+                port=$(basename $cfg .cfg | cut -d- -f2)
+                stop_instance $port
+            done
+        fi
+        ;;
+    status)
+        for cfg in $CONFIGS_DIR/hltv-*.cfg; do
+            port=$(basename $cfg .cfg | cut -d- -f2)
+            status_instance $port
+        done
+        ;;
+    restart)
+        $0 stop $INSTANCE
+        sleep 2
+        $0 start $INSTANCE
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status} [port]"
+        exit 1
+        ;;
+esac
+HLTVCTLSCRIPT
+    chmod +x "$HLTV_HOME/hltv/hltv-ctl.sh"
+    chown "$DODSERVER_USER:$DODSERVER_USER" "$HLTV_HOME/hltv/hltv-ctl.sh"
+
+    # Create HLTV API (Flask app)
+    python3 -m venv "$HLTV_HOME/hltv/api-venv"
+    "$HLTV_HOME/hltv/api-venv/bin/pip" install flask gunicorn >/dev/null 2>&1
+
+    cat > "$HLTV_HOME/hltv/hltv-api.py" << 'HLTVAPIPY'
+#!/usr/bin/env python3
+"""KTP HLTV API - Co-located Version"""
+
+import os
+import subprocess
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+API_KEY = os.environ.get('HLTV_API_KEY', 'KTPVPS2026')
+
+def send_hltv_command(port, command):
+    """Send command to HLTV via screen."""
+    screen_name = f"hltv-{port}"
+    try:
+        subprocess.run(
+            ['screen', '-S', screen_name, '-X', 'stuff', f'{command}\n'],
+            check=True, timeout=5
+        )
+        return True
+    except Exception:
+        return False
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status': 'ok'})
+
+@app.route('/record', methods=['POST'])
+def start_recording():
+    auth = request.headers.get('Authorization', '')
+    if auth != f'Bearer {API_KEY}':
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json or {}
+    port = data.get('port', 27020)
+    filename = data.get('filename', 'demo')
+    if send_hltv_command(port, f'record {filename}'):
+        return jsonify({'status': 'recording', 'filename': filename})
+    return jsonify({'error': 'Failed to send command'}), 500
+
+@app.route('/stoprecording', methods=['POST'])
+def stop_recording():
+    auth = request.headers.get('Authorization', '')
+    if auth != f'Bearer {API_KEY}':
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json or {}
+    port = data.get('port', 27020)
+    if send_hltv_command(port, 'stoprecording'):
+        return jsonify({'status': 'stopped'})
+    return jsonify({'error': 'Failed to send command'}), 500
+
+@app.route('/connect', methods=['POST'])
+def connect_server():
+    auth = request.headers.get('Authorization', '')
+    if auth != f'Bearer {API_KEY}':
+        return jsonify({'error': 'Unauthorized'}), 401
+    data = request.json or {}
+    port = data.get('port', 27020)
+    server = data.get('server', '')
+    if not server:
+        return jsonify({'error': 'Server address required'}), 400
+    if send_hltv_command(port, f'connect {server}'):
+        return jsonify({'status': 'connecting', 'server': server})
+    return jsonify({'error': 'Failed to send command'}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8087)
+HLTVAPIPY
+    chown -R "$DODSERVER_USER:$DODSERVER_USER" "$HLTV_HOME/hltv"
+
+    # Create systemd service for HLTV API
+    cat > /etc/systemd/system/hltv-api.service << HLTVSVC
+[Unit]
+Description=KTP HLTV API (co-located)
+After=network.target
+
+[Service]
+Type=simple
+User=$DODSERVER_USER
+WorkingDirectory=$HLTV_HOME/hltv
+Environment="HLTV_API_KEY=KTPVPS2026"
+ExecStart=$HLTV_HOME/hltv/api-venv/bin/gunicorn -w 2 -b 0.0.0.0:8087 hltv-api:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+HLTVSVC
+
+    systemctl daemon-reload
+    systemctl enable hltv-api
+
+    log_info "HLTV setup complete: $NUM_SERVERS instances (ports $HLTV_BASE_PORT-$HLTV_MAX_PORT), API on 8087"
+    log_warn "HLTV binaries need to be copied manually to $HLTV_DIR"
+    log_warn "Required files: hltv, hltv_i686.so, proxy.so"
+fi
+
+# ============================================
 # Summary
 # ============================================
 echo ""
@@ -694,8 +1049,14 @@ echo "Password: $DODSERVER_PASSWORD"
 echo "Timezone: $TIMEZONE"
 echo "Swap: $SWAP_SIZE"
 echo "Kernel: $LOWLATENCY_KERNEL (lowlatency)"
+echo "Game servers: $NUM_SERVERS (ports $GAME_PORT_RANGE)"
+if [ "$WITH_HLTV" = true ]; then
+    echo "HLTV proxies: $NUM_SERVERS (ports $HLTV_PORT_RANGE)"
+    echo "HLTV API: port 8087"
+fi
 echo ""
 echo "Performance optimizations applied:"
+echo "  - Filesystem: noatime (eliminates atime write I/O)"
 echo "  - CPU governor: performance"
 echo "  - C-states: ALL disabled (max_cstate=0)"
 echo "  - NMI watchdog: disabled"
@@ -708,7 +1069,7 @@ echo "  - KSM: disabled"
 echo "  - Memory compaction: disabled"
 echo "  - NIC offloading: disabled (GRO/LRO/TSO)"
 echo "  - Mitigations: off (Spectre/Meltdown disabled for performance)"
-echo "  - Conntrack bypass: game ports 27015-27019"
+echo "  - Conntrack bypass: game ports $GAME_PORT_RANGE"
 echo "  - File descriptors: 65535"
 echo "  - CPU pinning: game servers pinned to dedicated CPUs"
 echo "  - Real-time scheduling: SCHED_FIFO priority 50 (auto-applied every 30s)"
@@ -723,5 +1084,10 @@ echo "  1. Reboot to activate lowlatency kernel: sudo reboot"
 echo "  2. Log in as $DODSERVER_USER: su - $DODSERVER_USER"
 echo "  3. Run install-linuxgsm.sh to install game servers"
 echo "  4. Run clone-ktp-stack.sh to deploy KTP binaries"
+if [ "$WITH_HLTV" = true ]; then
+    echo "  5. Copy HLTV binaries to $HLTV_DIR (hltv, hltv_i686.so, proxy.so)"
+    echo "  6. Start HLTV API: sudo systemctl start hltv-api"
+    echo "  7. Start HLTV proxies: ~/hltv/hltv-ctl.sh start"
+fi
 echo ""
 echo "========================================"

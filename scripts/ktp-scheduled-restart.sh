@@ -1,6 +1,6 @@
 #!/bin/bash
 # KTP Game Server Scheduled Restart Script
-# Restarts all 5 DoD game servers and sends Discord notification
+# Restarts all DoD game servers and sends Discord notification
 #
 # Usage: ktp-scheduled-restart.sh
 # Cron:  0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
@@ -11,6 +11,17 @@
 RELAY_URL="https://discord-relay-78814186981.us-central1.run.app/reply"
 EDIT_URL="https://discord-relay-78814186981.us-central1.run.app/edit"
 AUTH_SECRET="ff661895111b948c8d5b6d732a50bbfff58e93798b4d4ecf0fc0d12f6c4db18e"
+
+# Detect game server instances dynamically from ~/dod-* directories
+PORTS=()
+for dir in ~/dod-2701*; do
+    [ -d "$dir" ] && PORTS+=($(basename "$dir" | sed 's/dod-//'))
+done
+NUM_SERVERS=${#PORTS[@]}
+if [ "$NUM_SERVERS" -eq 0 ]; then
+    echo "ERROR: No dod-* directories found"
+    exit 1
+fi
 
 # Discord channels (same as HLTV status)
 CHANNEL_KTP="1458222926586446059"          # KTP Discord
@@ -23,6 +34,7 @@ case "$SERVER_IP" in
     74.91.126.55) SERVER_NAME="KTP - Dallas" ;;
     66.163.114.109) SERVER_NAME="KTP - Denver" ;;
     74.91.123.64) SERVER_NAME="KTPSCRIM - New York" ;;
+    172.238.176.101) SERVER_NAME="KTPSCRIM - Chicago" ;;
     *) SERVER_NAME="KTP - Unknown ($SERVER_IP)" ;;
 esac
 
@@ -143,7 +155,7 @@ log "Message IDs: KTP=$MSG_ID_KTP, External=$MSG_ID_EXT"
 # ============================================================================
 log "Stopping all servers via LinuxGSM..."
 
-for port in 27015 27016 27017 27018 27019; do
+for port in "${PORTS[@]}"; do
     n=$((port - 27014))
     if [ $n -eq 1 ]; then
         SERVER_EXEC="dodserver"
@@ -176,7 +188,7 @@ log "All servers stopped"
 # ============================================================================
 log "Starting servers..."
 
-for port in 27015 27016 27017 27018 27019; do
+for port in "${PORTS[@]}"; do
     n=$((port - 27014))
     if [ $n -eq 1 ]; then
         SERVER_EXEC="dodserver"
@@ -198,7 +210,7 @@ sleep 5
 RUNNING=$(pgrep -c hlds_linux 2>/dev/null || echo "0")
 RUNNING=${RUNNING//[^0-9]/}  # Strip non-numeric chars
 RUNNING=${RUNNING:-0}
-log "Verification: $RUNNING/5 servers running"
+log "Verification: $RUNNING/$NUM_SERVERS servers running"
 
 # ============================================================================
 # Apply CPU Pinning + Real-Time Scheduling
@@ -206,11 +218,29 @@ log "Verification: $RUNNING/5 servers running"
 log "Applying CPU pinning + SCHED_FIFO 50 to all game servers..."
 
 # Detect CPU layout: 4 vCPUs = Chicago (shared), 8+ CPUs = baremetal (dedicated)
-NUM_CPUS=$(nproc)
+NUM_CPUS=$(nproc --all)
 if [ "$NUM_CPUS" -le 4 ]; then
-    declare -A PORT_CPU_MAP=([27015]=1 [27016]=2 [27017]=3 [27018]=0 [27019]=0)
+    VPS_CPUS=(1 2 3)
+    declare -A PORT_CPU_MAP
+    for i in $(seq 0 $((NUM_SERVERS - 1))); do
+        p=${PORTS[$i]}
+        if [ $i -lt ${#VPS_CPUS[@]} ]; then
+            PORT_CPU_MAP[$p]=${VPS_CPUS[$i]}
+        else
+            PORT_CPU_MAP[$p]=0
+        fi
+    done
 else
-    declare -A PORT_CPU_MAP=([27015]=2 [27016]=3 [27017]=5 [27018]=6 [27019]=7)
+    BM_CPUS=(2 3 5 6 7)
+    declare -A PORT_CPU_MAP
+    for i in $(seq 0 $((NUM_SERVERS - 1))); do
+        p=${PORTS[$i]}
+        if [ $i -lt ${#BM_CPUS[@]} ]; then
+            PORT_CPU_MAP[$p]=${BM_CPUS[$i]}
+        else
+            PORT_CPU_MAP[$p]=4
+        fi
+    done
 fi
 
 for pid in $(pgrep -f hlds_linux); do
@@ -231,8 +261,8 @@ done
 
 # Identify any failed ports
 FAILED_PORTS=""
-if [ "$RUNNING" -ne 5 ]; then
-    for port in 27015 27016 27017 27018 27019; do
+if [ "$RUNNING" -ne "$NUM_SERVERS" ]; then
+    for port in "${PORTS[@]}"; do
         if ! pgrep -f "\-port $port " >/dev/null 2>&1; then
             FAILED_PORTS="$FAILED_PORTS $port"
         fi
@@ -244,13 +274,13 @@ fi
 # ============================================================================
 FOOTER_TIMESTAMP=$(TZ='America/New_York' date '+%m/%d/%Y %I:%M %p EST')
 
-if [ "$RUNNING" -eq 5 ]; then
+if [ "$RUNNING" -eq "$NUM_SERVERS" ]; then
     FINAL_TITLE="$KTP_EMOJI Server Restart Complete"
-    FINAL_DESC="All 5 game servers restarted successfully."
+    FINAL_DESC="All $NUM_SERVERS game servers restarted successfully."
     FINAL_COLOR=$COLOR_GREEN
 elif [ "$RUNNING" -gt 0 ]; then
     FINAL_TITLE="$KTP_EMOJI Server Restart - Partial"
-    FINAL_DESC="$RUNNING/5 servers restarted.\\n**Failed ports:**$FAILED_PORTS"
+    FINAL_DESC="$RUNNING/$NUM_SERVERS servers restarted.\\n**Failed ports:**$FAILED_PORTS"
     FINAL_COLOR=$COLOR_ORANGE
 else
     FINAL_TITLE="$KTP_EMOJI Server Restart Failed"
@@ -266,6 +296,6 @@ if [ -n "$MSG_ID_EXT" ]; then
     edit_discord_embed "$CHANNEL_EXTERNAL" "$MSG_ID_EXT" "$FINAL_TITLE" "$FINAL_DESC" "$FINAL_COLOR" "$SERVER_NAME - $FOOTER_TIMESTAMP"
 fi
 
-log "Scheduled restart complete. $RUNNING/5 servers running."
+log "Scheduled restart complete. $RUNNING/$NUM_SERVERS servers running."
 
 # Cron will be restored by trap on EXIT

@@ -55,32 +55,40 @@ python3 nightly_match_monitor.py --test  # Test mode, doesn't write to log
 python3 nightly_match_monitor.py         # Production mode, writes JSONL
 ```
 
-### ensure-priority.sh
-Ensures all hlds_linux processes run at nice -5 for better FPS stability.
+### deploy-chrt-service.sh
+Deploys a systemd timer that applies CPU pinning + SCHED_FIFO 50 to all `hlds_linux` processes every 30 seconds. Ensures pinning is automatically reapplied after LinuxGSM restarts crashed servers.
 
-**Deployed to:** `/home/dodserver/ensure-priority.sh` (game servers)
-
-**Cron:**
-```
-*/5 * * * * /home/dodserver/ensure-priority.sh
-```
-
-**Why needed:** LinuxGSM ignores the `nice` config parameter. This script runs every 5 minutes to ensure any restarted servers get the correct priority.
-
-### setup_renice_cron.py
-Deployment script to install ensure-priority.sh and cron job on game servers.
-
-**Setup:**
-```bash
-cp setup_renice_cron.py.example setup_renice_cron.py
-# Edit setup_renice_cron.py and fill in SERVERS and SSH_PASS
-```
-
-**Run from:** Local machine with paramiko installed
+**Run as:** root on target game server
 
 **Usage:**
 ```bash
-python setup_renice_cron.py
+sudo ./deploy-chrt-service.sh            # Baremetal (8+ CPUs, 5 dedicated game CPUs)
+sudo ./deploy-chrt-service.sh --chicago   # KVM VPS (4 vCPUs, 3 dedicated + 2 shared)
+```
+
+**Creates:**
+- `/usr/local/bin/ktp-apply-chrt.sh` — Pinning script
+- `/etc/systemd/system/ktp-chrt.service` — Oneshot service
+- `/etc/systemd/system/ktp-chrt.timer` — 30-second timer (starts 60s after boot)
+
+**Verify:**
+```bash
+journalctl -t ktp-chrt -f
+systemctl list-timers | grep ktp-chrt
+```
+
+### profiling-report.py
+Collects and analyzes frame profiling data from all KTP game servers. Parses `[KTP_PROFILE]`, `[KTP_SPIKE]`, `[KTP_SPIKE_READ]`, and `[KTP_PARSEMOVE]` log lines and generates a performance report.
+
+**Requirements:** `pip install paramiko`
+
+**Usage:**
+```bash
+python profiling-report.py                  # All servers, latest logs
+python profiling-report.py --server atlanta  # Single server
+python profiling-report.py --port 27015      # Single port across all servers
+python profiling-report.py --logs 3          # Last 3 log files per port (default)
+python profiling-report.py --spikes-only     # Only show spike data
 ```
 
 ### ktp-scheduled-restart.sh
@@ -184,7 +192,7 @@ Creates a tarball of base DoD game files for deployment to new servers.
 |--------|--------|------|
 | draft_day_monitor.py | Data Server | /opt/ktp-monitoring/ |
 | nightly_match_monitor.py | Data Server | /opt/ktp-monitoring/ |
-| ensure-priority.sh | Game Servers | /home/dodserver/ |
+| ktp-apply-chrt.sh | Game Servers | /usr/local/bin/ (via deploy-chrt-service.sh) |
 | ktp-scheduled-restart.sh | Game Servers | /home/dodserver/ |
 | ktp-organize-hltv-demos.sh | Data Server | /usr/local/bin/ |
 | hltv-api.py | Data Server | /home/hltvserver/ |
