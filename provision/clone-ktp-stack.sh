@@ -1079,7 +1079,7 @@ if [ "\$NUM_CPUS" -le 4 ]; then
         fi
     done
 else
-    BM_CPUS=(2 3 5 6 7)
+    BM_CPUS=(2 5 4 3 7)
     declare -A PORT_CPU_MAP
     for i in \$(seq 0 \$((NUM_SERVERS - 1))); do
         p=\${PORTS[\$i]}

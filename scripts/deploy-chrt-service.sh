@@ -36,8 +36,8 @@ if [ "$CHICAGO" = true ]; then
     COMMENT='# vCPU layout: 0=sys+27018+27019, 1=27015, 2=27016, 3=27017'
 else
     echo "  Using baremetal 8-CPU layout"
-    CPU_MAP='declare -A PORT_CPU_MAP=([27015]=2 [27016]=3 [27017]=5 [27018]=6 [27019]=7)'
-    COMMENT='# CPU layout: 0,1,4=sys, 2=27015, 3=27016, 5=27017, 6=27018, 7=27019'
+    CPU_MAP='declare -A PORT_CPU_MAP=([27015]=2 [27016]=5 [27017]=4 [27018]=3 [27019]=7)'
+    COMMENT='# CPU layout: 0,1=housekeeping, 2=27015(dedicated core), 5=27016, 4=27017, 3=27018, 7=27019'
 fi
 
 # Create the script that applies CPU pinning + SCHED_FIFO to game servers
