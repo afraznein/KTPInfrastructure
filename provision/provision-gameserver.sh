@@ -511,14 +511,14 @@ fi
 # IRQ Affinity - Steer to Housekeeping CPUs
 # ============================================
 
-# Steer all IRQs to housekeeping CPUs 0,1,4 (bitmask 0x13)
+# Steer all IRQs to housekeeping CPUs 0,1 (bitmask 0x03)
 # Only on baremetals (8+ CPUs) where CPU isolation is active
 if [ $(nproc) -gt 4 ]; then
-    echo 13 > /proc/irq/default_smp_affinity 2>/dev/null
+    echo 3 > /proc/irq/default_smp_affinity 2>/dev/null
     for irq_dir in /proc/irq/[0-9]*; do
         irq=$(basename "$irq_dir")
         [ "$irq" = "0" ] || [ "$irq" = "2" ] && continue
-        echo 13 > "$irq_dir/smp_affinity" 2>/dev/null || true
+        echo 3 > "$irq_dir/smp_affinity" 2>/dev/null || true
     done
 fi
 
@@ -584,7 +584,7 @@ fi
 # rcu_nocbs: offload RCU callbacks to housekeeping CPUs
 NUM_CPUS=$(nproc --all)
 if [ "$NUM_CPUS" -gt 4 ] && ! grep -q "isolcpus" "$GRUB_CFG"; then
-    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 isolcpus=2,3,5,6,7 nohz_full=2,3,5,6,7 rcu_nocbs=2,3,5,6,7"/' "$GRUB_CFG"
+    sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"/GRUB_CMDLINE_LINUX_DEFAULT="\1 isolcpus=2,3,4,5,6,7 nohz_full=2,3,4,5,6,7 rcu_nocbs=2,3,4,5,6,7"/' "$GRUB_CFG"
     log_info "Added CPU isolation params (isolcpus, nohz_full, rcu_nocbs)"
 fi
 
