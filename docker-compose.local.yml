@@ -1,27 +1,28 @@
 # KTP Local Development Environment
 #
-# Runs KTP game server(s) locally using the same binaries as production.
-# No Metamod, no jives/hlds:dod runtime — purpose-built from KTP artifacts.
+# Runs the full KTP stack locally — game servers + data server — mirroring
+# production topology in a single compose project.
+#
+# All services share one Docker network so containers resolve each other
+# by service name (ktp-game-1, ktp-game-2, data) via Docker DNS.
 #
 # Prerequisites:
 #   make build                      # compile all KTP components
 #   make extract-artifacts          # extract to artifacts/VERSION/
-#   make local-build                # build runtime image
+#   make local-build                # build runtime + data server images
 #
 # Usage:
-#   make local-up                   # start game server(s)
+#   make local-up                   # start all services
 #   make local-down                 # stop
 #   make local-logs                 # tail logs
-#
-# Or directly:
-#   docker compose -f docker-compose.local.yml up -d
+#   docker compose -f docker-compose.local.yml logs -f data   # data server only
 #
 # Adding custom plugins (e.g., HUD Observer):
-#   Drop .amxx files in local/plugins/ — they're mounted into the container
-#   and copied into the KTPAMXX plugins directory at startup.
+#   Drop .amxx files in local/plugins/ — copied into KTPAMXX plugins dir at startup.
 #
 # Environment variables:
-#   VERSION     - Artifact version to use (default: latest)
+#   VERSION            - Artifact version to use (default: latest)
+#   KTP_PROJECT_ROOT   - Path to parent Git directory (default: ..)
 
 services:
   # ============================================================
@@ -34,19 +35,31 @@ services:
       args:
         VERSION: ${VERSION:-latest}
     image: ktp-gameserver:${VERSION:-latest}
+    depends_on:
+      data:
+        condition: service_started
     environment:
       MAP: dod_anzio
-      MAXPLAYERS: "14"
+      MAXPLAYERS: "13"
       RCON_PASSWORD: "${RCON_PASSWORD:-changeme}"
+      SERVER_HOSTNAME: "KTP Local Dev #1"
+    tty: true
+    stdin_open: true
+    entrypoint: ["bash", "/entrypoint.sh"]
+    command: ["-console", "-norestart"]
     volumes:
-      # Config profile (modules.ini, plugins.ini, dodserver.cfg, etc.)
       - ./config/local:/config:ro
-      # Additional plugins (HUD Observer, etc.) — drop .amxx files here
       - ./local/plugins:/plugins:ro
     ports:
-      - "27015:27015/udp"
-      - "27015:27015/tcp"
+      - "27016:27015/udp"
+      - "27016:27015/tcp"
       - "26900:26900/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f hlds_linux > /dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
 
   # ============================================================
   # Game Server 2 — dod_flash (optional, comment out if not needed)
@@ -54,15 +67,68 @@ services:
   ktp-game-2:
     image: ktp-gameserver:${VERSION:-latest}
     depends_on:
-      - ktp-game-1
+      data:
+        condition: service_started
     environment:
       MAP: dod_flash
-      MAXPLAYERS: "14"
+      MAXPLAYERS: "13"
       RCON_PASSWORD: "${RCON_PASSWORD:-changeme}"
+      SERVER_HOSTNAME: "KTP Local Dev #2"
+    tty: true
+    stdin_open: true
+    entrypoint: ["bash", "/entrypoint.sh"]
+    command: ["-console", "-norestart"]
     volumes:
       - ./config/local:/config:ro
       - ./local/plugins:/plugins:ro
     ports:
-      - "27016:27015/udp"
-      - "27016:27015/tcp"
+      - "27017:27015/udp"
+      - "27017:27015/tcp"
       - "26901:26900/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f hlds_linux > /dev/null"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================
+  # Data Server — MySQL, HLTV proxies, HLStatsX stub,
+  #               HUD Observer backend + frontend (supervisord)
+  # ============================================================
+  data:
+    build:
+      # Context is DoD-hud-observer — its .dockerignore excludes node_modules/.git.
+      # Dockerfile lives there too, with COPY paths relative to its own root.
+      context: ${DOD_HUD_PATH:-../DoD-hud-observer}
+      dockerfile: data-server/Dockerfile
+    image: ktp-dataserver:${VERSION:-latest}
+    volumes:
+      # Backend config (auth key, ports, storage)
+      - ./config/local/config.yaml:/app/config.yaml:ro
+      # HLTV proxy configs (connect to game servers by service name)
+      - ./test-env/data/hltv-1.cfg:/opt/hltv/instance-1/hltv.cfg:ro
+      - ./test-env/data/hltv-2.cfg:/opt/hltv/instance-2/hltv.cfg:ro
+      # HLTV demo recordings (persist across restarts)
+      - ./test-env/data/demos:/opt/hltv/demos
+      # MySQL data (persist across restarts)
+      - ktp-mysql-data:/var/lib/mysql
+    ports:
+      # Frontend (OBS browser source)
+      - "3000:3000"
+      # Backend REST API
+      - "3001:3001"
+      # Socket.IO
+      - "4000:4000"
+      # HTTP ingest from AMXX plugin
+      - "8088:8088"
+      # HLTV proxies
+      - "27020:27020/udp"
+      - "27021:27021/udp"
+      # HLStatsX log receiver
+      - "27500:27500/udp"
+      # MySQL (for debugging)
+      - "3306:3306"
+
+volumes:
+  ktp-mysql-data:

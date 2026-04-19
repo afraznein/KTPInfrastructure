@@ -48,7 +48,7 @@ compile_plugin() {\n\
         cd /compiler\n\
         # Convert line endings\n\
         sed "s/\\r$//" "/build/plugins/$dir/$source" > "$source"\n\
-        ./amxxpc "$source" -i./include -o"/output/plugins/$name.amxx" 2>&1 || echo "  WARNING: $name may have had errors"\n\
+        ./amxxpc "$source" -i./include -i"/build/plugins/$dir" -o"/output/plugins/$name.amxx" 2>&1 || echo "  WARNING: $name may have had errors"\n\
         rm -f "$source"\n\
         if [ -f "/output/plugins/$name.amxx" ]; then\n\
             echo "  -> $name.amxx OK"\n\
