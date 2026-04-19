@@ -158,6 +158,7 @@ KTPInfrastructure/
 ### Build & Deploy Guides
 | Document | Description |
 |----------|-------------|
+| [DEPLOYMENT_TARGETS.md](docs/DEPLOYMENT_TARGETS.md) | **Start here** — distinguishes canonical production/LAN paths from dev conveniences |
 | [BUILDING.md](docs/BUILDING.md) | Docker build system, component builds |
 | [DEPLOYING.md](docs/DEPLOYING.md) | Deployment to production/test clusters |
 | [LAN_SETUP.md](docs/LAN_SETUP.md) | Setting up for LAN events |
