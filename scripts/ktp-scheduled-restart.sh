@@ -268,6 +268,17 @@ for port in "${PORTS[@]}"; do
     cd ~/dod-$port
     if ./$SERVER_EXEC start >/dev/null 2>&1; then
         log "Started $SERVER_EXEC (port $port)"
+        # Belt-and-suspenders: ensure -monitoring.lock exists so monitor cron
+        # will pick up this instance after a crash or OS reboot. LinuxGSM's
+        # command_start.sh creates this itself at its line ~170, but we've
+        # observed it go missing (DAL:27015 2026-04-23). Without the file,
+        # monitor treats the server as "intentionally stopped" and refuses to
+        # restart it. Idempotent — only creates if absent.
+        LOCK=~/dod-$port/lgsm/lock/$SERVER_EXEC-monitoring.lock
+        if [ ! -f "$LOCK" ]; then
+            date +%s > "$LOCK"
+            log "  [$port] created missing $SERVER_EXEC-monitoring.lock"
+        fi
     else
         log "FAILED to start $SERVER_EXEC (port $port)"
     fi
