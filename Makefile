@@ -474,6 +474,8 @@ help:
 	@echo "Local development:"
 	@echo "  make refresh         - Rebuild all KTP components (no-cache) + stamp SOURCE_SHAs"
 	@echo "  make refresh-local   - refresh + rebuild runtime image + bounce local stack"
+	@echo "                         (runs compose down - anonymous volumes are wiped;"
+	@echo "                          named volumes are preserved)"
 	@echo "  make local-build     - Build runtime game server image"
 	@echo "  make build-data      - Build HUD Observer data image only (NO_CACHE=1 to force clean)"
 	@echo "  make local-up        - Start local game server(s) (game only)"
