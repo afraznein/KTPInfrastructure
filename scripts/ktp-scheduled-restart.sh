@@ -238,6 +238,15 @@ for port in "${PORTS[@]}"; do
         [ -f "$new_file" ] || continue
         target="${new_file%.new}"
         if mv -f "$new_file" "$target"; then
+            # KTP: preserve executable bit. SFTP-uploaded .new files default to
+            # 644; `mv` replaces target's permissions with source's, so after the
+            # swap the previously-755 binaries lose +x. Root cause of the
+            # 2026-04-24 outage (fleet-wide loss of +x on hlds_linux caused all
+            # 24 instances to fail startup). Idempotent chmod +x applied to every
+            # swapped file — hlds_linux, engine_i486.so, ktpamx_i386.so, and
+            # dodx_ktp_i386.so all benefit (the .so files don't strictly need +x
+            # but conventionally are 755, matching LinuxGSM's default).
+            chmod +x "$target"
             log "  [$port] swapped: $(basename "$target")"
             SWAP_COUNT=$((SWAP_COUNT + 1))
         else
