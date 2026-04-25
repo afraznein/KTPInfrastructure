@@ -42,9 +42,31 @@ PYTHON := python3
 # Build Targets
 # ============================================
 
-.PHONY: all build build-base build-engine build-amxx build-reapi build-curl build-plugins clean seed-from-latest publish-latest
+.PHONY: all build build-base build-engine build-amxx build-reapi build-curl build-plugins clean seed-from-latest publish-latest lint-configs
 
 all: build
+
+# Guard against `debug` flags slipping into the online (production) plugin
+# load. AMXX's modules.cpp ConfigureDebug clears AMX_FLAG_JITC *globally*
+# the moment any plugin loads with `debug`, so a single stray flag in
+# config/online/plugins.ini takes the JIT off the entire plugin surface
+# on every production server. Policy per Nein (2026-04-24): debug stays on
+# in config/local/plugins.ini for dev, and is dropped from online.
+#
+# Runs as a prerequisite of `build` so the pre-push hook enforces it.
+lint-configs:
+	@hits=$$(grep -nE '^[^;]*\.amxx[[:space:]]+debug' config/online/plugins.ini || true); \
+	if [ -n "$$hits" ]; then \
+		echo ""; \
+		echo "ERROR: \`debug\` flag found in config/online/plugins.ini:"; \
+		echo "$$hits" | sed 's/^/  /'; \
+		echo ""; \
+		echo "  Production plugin loads must not carry \`debug\` — a single"; \
+		echo "  debug-flagged plugin disables the AMXX JIT globally. Move the"; \
+		echo "  flag to config/local/plugins.ini if you need it for development."; \
+		echo ""; \
+		exit 1; \
+	fi
 
 # Seed the dated artifact dir from artifacts/latest/ so single-component builds
 # produce a self-contained snapshot. Safe to call repeatedly.
@@ -68,7 +90,7 @@ publish-latest:
 	fi
 
 # Build everything
-build: build-base
+build: lint-configs build-base
 	@echo "========================================"
 	@echo "Building all KTP components (version: $(VERSION))"
 	@echo "========================================"
