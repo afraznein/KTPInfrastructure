@@ -1,0 +1,362 @@
+{
+  "label": "post-jit",
+  "captured_at_utc": "2026-04-25T23:53:22.612704Z",
+  "description": "Post-JIT activation. KTPMatchHandler 0.10.115 + JIT-active across all KTP plugins (debug flag stripped 2026-04-23, activated at 2026-04-24 03:00 ET restart after the chmod-outage recovery; full matchday now elapsed). Compare against 2026-04-23_pre-jit to isolate interpreted->JIT delta. NY:27019 still on -pingboost 4 perpetual canary; HudObserver retains debug on ATL:27015 / DEN:27019 / NY:27015.",
+  "context": {
+    "fleet_ktp_plugins_with_debug_flag": false,
+    "fleet_ktp_plugins_jit_active": true,
+    "exceptions": {
+      "KTPHudObserver.amxx": "debug flag retained as canary on ATL:27015, DEN:27019, NY:27015"
+    },
+    "ny_27019_note": "perpetual -pingboost 4 canary (Sleep_Never, ~100% CPU, 999 fps target) — post-JIT p50=999.9, sigma=5.99 (vs pre 5.79). Stable.",
+    "atl_27016_normalized": "sigma 30.70 -> 6.90 (-77%), min 842.0 -> 904.7. Pre-JIT anomaly was interpreted Pawn tail latency, confirmed.",
+    "atl_27019_outlier": "sigma 7.27 -> 36.35 in fleet aggregate, but per-hour breakdown shows hours 03-17 normal (sigma 5.8-7.6), hours 18-19 EDT during live match sigma 72-84. Single-event live load, NOT a JIT regression.",
+    "newyork_27015_outlier": "n_post=861 vs n_pre=5561. Instance was mostly down for the post-JIT window. Sample unrepresentative.",
+    "cmd_ready_spike_rate": "0 fleet matches in current console logs (~20h window since 00:00 EDT today). Pre-JIT averaged ~1.5 [KTP_OPCODE] cmd_ready events/day across NY2/NY3. Engine-level threshold check unchanged; AMXX per-function profiler suppressed by debug-flag strip but pre-JIT signal came from same engine-level path."
+  },
+  "fleet_stats": {
+    "n": 138069,
+    "p50": 978.3,
+    "p99": 999.9,
+    "min": 634.3,
+    "max": 999.9,
+    "mean": 976.6540005359639,
+    "stdev": 15.06216321009605,
+    "pct_in_nfo_window": 0.04344204709239583,
+    "pct_within_10": 0.04362311597824276
+  },
+  "per_host_stats": {
+    "atlanta": {
+      "n": 30375,
+      "p50": 979.7,
+      "p99": 986.7,
+      "min": 634.3,
+      "max": 989.4,
+      "mean": 977.5367835390947,
+      "stdev": 17.82224683821314,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "dallas": {
+      "n": 30375,
+      "p50": 981.4,
+      "p99": 989.2,
+      "min": 892.2,
+      "max": 990.1,
+      "mean": 980.1814255144034,
+      "stdev": 7.345738643802453,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0003292181069958848
+    },
+    "denver": {
+      "n": 25532,
+      "p50": 978.9,
+      "p99": 987.2,
+      "min": 888.5,
+      "max": 987.3,
+      "mean": 977.9166379445403,
+      "stdev": 8.331587098310472,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork": {
+      "n": 25159,
+      "p50": 981.6,
+      "p99": 999.9,
+      "min": 827.7,
+      "max": 999.9,
+      "mean": 982.2689971779482,
+      "stdev": 17.69689786032801,
+      "pct_in_nfo_window": 0.2384037521364124,
+      "pct_within_10": 0.23899996025279224
+    },
+    "chicago": {
+      "n": 26628,
+      "p50": 968.9,
+      "p99": 976.9,
+      "min": 864.8,
+      "max": 978.9,
+      "mean": 965.1073043412949,
+      "stdev": 14.50067817783035,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    }
+  },
+  "per_instance_stats": {
+    "atlanta:27015": {
+      "n": 6077,
+      "p50": 980.6,
+      "p99": 987.7,
+      "min": 876.5,
+      "max": 989.4,
+      "mean": 979.9782623004772,
+      "stdev": 8.909988870375456,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "atlanta:27016": {
+      "n": 6076,
+      "p50": 979.3,
+      "p99": 986.6,
+      "min": 904.7,
+      "max": 988.5,
+      "mean": 978.9331961816985,
+      "stdev": 6.9028938213605855,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "atlanta:27017": {
+      "n": 6075,
+      "p50": 979.1,
+      "p99": 986.5,
+      "min": 904.1,
+      "max": 988.3,
+      "mean": 978.6522962962963,
+      "stdev": 7.000548073390138,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "atlanta:27018": {
+      "n": 6074,
+      "p50": 978.5,
+      "p99": 986.1,
+      "min": 895.8,
+      "max": 987.7,
+      "mean": 978.4651465261771,
+      "stdev": 6.816475270997263,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "atlanta:27019": {
+      "n": 6073,
+      "p50": 978.4,
+      "p99": 986.1,
+      "min": 634.3,
+      "max": 987.8,
+      "mean": 971.6521982545694,
+      "stdev": 36.351412159719644,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "chicago:27015": {
+      "n": 6077,
+      "p50": 970.1,
+      "p99": 976.9,
+      "min": 901.9,
+      "max": 978.6,
+      "mean": 969.6993253249958,
+      "stdev": 5.375386025896533,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "chicago:27016": {
+      "n": 6076,
+      "p50": 969.8,
+      "p99": 977.2,
+      "min": 913.4,
+      "max": 978.8,
+      "mean": 969.4119321922318,
+      "stdev": 5.534230734997126,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "chicago:27017": {
+      "n": 6075,
+      "p50": 968.6,
+      "p99": 977.0,
+      "min": 913.0,
+      "max": 978.9,
+      "mean": 968.4868477366255,
+      "stdev": 5.609909796361963,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "chicago:27018": {
+      "n": 6074,
+      "p50": 969.8,
+      "p99": 977.2,
+      "min": 912.8,
+      "max": 978.9,
+      "mean": 969.4454395785314,
+      "stdev": 5.490832583112185,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "chicago:27019": {
+      "n": 2326,
+      "p50": 922.0,
+      "p99": 926.0,
+      "min": 864.8,
+      "max": 926.7,
+      "mean": 921.7104041272571,
+      "stdev": 4.997878665218311,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "dallas:27015": {
+      "n": 6077,
+      "p50": 981.6,
+      "p99": 988.5,
+      "min": 901.5,
+      "max": 990.1,
+      "mean": 981.1232351489223,
+      "stdev": 7.023567126328598,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.001645548790521639
+    },
+    "dallas:27016": {
+      "n": 6076,
+      "p50": 979.0,
+      "p99": 986.6,
+      "min": 894.5,
+      "max": 988.2,
+      "mean": 978.6270078999341,
+      "stdev": 7.120773673528391,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "dallas:27017": {
+      "n": 6075,
+      "p50": 985.7,
+      "p99": 989.3,
+      "min": 899.1,
+      "max": 989.5,
+      "mean": 984.8310452674897,
+      "stdev": 6.638839266667814,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "dallas:27018": {
+      "n": 6074,
+      "p50": 979.0,
+      "p99": 985.8,
+      "min": 898.9,
+      "max": 987.6,
+      "mean": 978.2239545604215,
+      "stdev": 6.788206237793042,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "dallas:27019": {
+      "n": 6073,
+      "p50": 978.7,
+      "p99": 985.8,
+      "min": 892.2,
+      "max": 987.6,
+      "mean": 978.100823316318,
+      "stdev": 6.821029076008837,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "denver:27015": {
+      "n": 6077,
+      "p50": 983.4,
+      "p99": 987.3,
+      "min": 901.5,
+      "max": 987.3,
+      "mean": 982.714941583018,
+      "stdev": 7.333839409061976,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "denver:27016": {
+      "n": 6076,
+      "p50": 975.2,
+      "p99": 983.3,
+      "min": 888.5,
+      "max": 985.0,
+      "mean": 974.9523864384464,
+      "stdev": 7.809960927982715,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "denver:27017": {
+      "n": 6076,
+      "p50": 974.9,
+      "p99": 983.0,
+      "min": 892.3,
+      "max": 984.9,
+      "mean": 974.702271231073,
+      "stdev": 7.673044829878492,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "denver:27018": {
+      "n": 6075,
+      "p50": 980.7,
+      "p99": 984.7,
+      "min": 899.4,
+      "max": 984.8,
+      "mean": 980.2245761316872,
+      "stdev": 7.1550621037992785,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "denver:27019": {
+      "n": 1228,
+      "p50": 974.7,
+      "p99": 981.6,
+      "min": 891.4,
+      "max": 983.4,
+      "mean": 973.3248371335504,
+      "stdev": 8.645254034367726,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork:27015": {
+      "n": 861,
+      "p50": 977.0,
+      "p99": 987.8,
+      "min": 827.7,
+      "max": 989.0,
+      "mean": 938.219512195122,
+      "stdev": 59.81044847710692,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork:27016": {
+      "n": 6076,
+      "p50": 979.6,
+      "p99": 987.0,
+      "min": 905.0,
+      "max": 988.8,
+      "mean": 979.2387425938117,
+      "stdev": 6.917217405969288,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork:27017": {
+      "n": 6075,
+      "p50": 979.0,
+      "p99": 986.5,
+      "min": 895.8,
+      "max": 988.3,
+      "mean": 978.6455637860082,
+      "stdev": 6.921213860852715,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork:27018": {
+      "n": 6074,
+      "p50": 979.1,
+      "p99": 986.2,
+      "min": 888.0,
+      "max": 988.0,
+      "mean": 978.1273625288113,
+      "stdev": 7.312960384576583,
+      "pct_in_nfo_window": 0.0,
+      "pct_within_10": 0.0
+    },
+    "newyork:27019": {
+      "n": 6073,
+      "p50": 999.9,
+      "p99": 999.9,
+      "min": 916.2,
+      "max": 999.9,
+      "mean": 999.3128108019101,
+      "stdev": 5.993307966278847,
+      "pct_in_nfo_window": 0.9876502552280586,
+      "pct_within_10": 0.990120204182447
+    }
+  }
+}
