@@ -18,6 +18,8 @@
 ## Table of Contents
 
 - [Monthly Scope Summary](#monthly-scope-summary)
+- [Architecture Decision Records](#architecture-decision-records)
+  - [ADR-001: Eliminate Metamod (Extension Mode)](#adr-001-eliminate-metamod-extension-mode)
 - [October 2025](#october-2025---foundation) - Foundation
 - [November 2025](#november-2025---platform-development) - Platform Development
 - [December 2025](#december-2025---feature-complete) - Feature Complete
@@ -51,6 +53,103 @@
 | Discord Admin Bot (Python / discord.py) | 1 | KTPAdminBot (added April 2026) |
 | Backend Services | 4 | Discord Relay, KTPFileDistributor, KTPHLStatsX, KTPProfileAggregator (added April 2026) |
 | Discord Bots | 2 | KTPScoreBot-ScoreParser, KTPScoreBot-WeeklyMatches |
+
+---
+
+## Architecture Decision Records
+
+Foundational architectural decisions with the analysis that drove them. These are not month-keyed because they shaped everything that followed; they live in their own section so a future reader (or future me) can find "why is the stack shaped this way" without paging through monthly progress logs.
+
+### ADR-001: Eliminate Metamod (Extension Mode)
+
+**Decision:** KTPAMXX loads as a ReHLDS extension via `rehlds/extensions.ini` instead of as a Metamod plugin. Metamod is not present in any KTP deployment.
+
+**Date:** Foundational (Oct/Nov 2025 — predates the rest of the stack).
+
+**Why:** Wall penetration (bullets passing through surfaces) **breaks** when running ReHLDS + Metamod together — any version of Metamod. This is game-breaking for competitive Day of Defeat where wall bangs are a core mechanic.
+
+| Configuration | Wall Penetration |
+|--------------|------------------|
+| ReHLDS + DoD (no Metamod) | **WORKS** |
+| Vanilla HLDS + Metamod + DoD | **WORKS** |
+| ReHLDS + Metamod + DoD | **BROKEN** |
+
+**Symptoms:** Bullets stop at the first surface. No exit holes, no penetration effects.
+
+#### Debug analysis
+
+Debug logging added to ReHLDS's `PF_traceline_DLL` revealed identical trace inputs but divergent behavior:
+
+**With Metamod (broken):**
+```
+Trace #1: frac=0.0496 ss=0 as=0  (bullet hits wall)
+Trace #2: frac=0.0000 ss=1 as=0  (inside wall)
+Trace #3: frac=0.0600 ss=0 as=0  (exit point found)
+-- DoD stops here --
+```
+
+**Without Metamod (working):**
+```
+Trace #1: frac=0.0496 ss=0 as=0  (bullet hits wall)
+Trace #2: frac=0.0000 ss=1 as=0  (inside wall)
+Trace #3: frac=0.0600 ss=0 as=0  (exit point found)
+Trace #4: frac=0.XXXX ss=0 as=0  (penetration continues)
+Trace #5: frac=0.XXXX ss=0 as=0  (damage calculation)
+```
+
+Trace #1-3 are byte-identical between the two configs — same fractions, same positions, same flags. But DoD makes a different internal decision after trace #3: with Metamod present it stops; without Metamod it continues to traces #4-5 (actual penetration math).
+
+#### What was ruled out
+
+Systematic API-bypass testing:
+
+| Test | Result |
+|------|--------|
+| Bypass individual trace wrappers | Still broken |
+| Bypass ALL trace wrappers | Still broken |
+| Pass original `enginefuncs_t` directly to DoD | Still broken |
+| Pass original `DLL_FUNCTIONS` to engine | Still broken |
+| Pass original `NEW_DLL_FUNCTIONS` to engine | Still broken |
+| All three tables bypassed simultaneously | **Still broken** |
+
+Even with complete API bypass — DoD receiving original ReHLDS functions, engine receiving original DoD functions, no Metamod wrappers in the call chain — wall penetration still fails.
+
+#### Root cause
+
+**The mere presence of Metamod in the DLL loading chain changes DoD's internal state.**
+
+The issue is not in the API tables. It's in the loading process itself:
+
+1. ReHLDS calls `GiveFnptrsToDll` to Metamod (which is presenting itself as the game DLL)
+2. Metamod calls `GiveFnptrsToDll` to the real DoD
+3. DoD receives the enginefuncs table from Metamod's address space
+
+DoD appears to be making decisions based on something other than the function pointers themselves — possibly the address of the table, module addresses, initialization timing, or memory layout assumptions.
+
+Vanilla HLDS + Metamod works because they were developed together and whatever assumptions DoD makes are satisfied. ReHLDS, as a reimplementation, has subtle differences that break that contract.
+
+#### The decision
+
+Bypass Metamod entirely via a KTP-ReHLDS extension loader:
+
+```
+Previous (BROKEN):           Decided (WORKING):
+ReHLDS → Metamod → AMXX      ReHLDS → DoD
+       → DoD                    ↓
+                              KTPAMXX (loaded via extensions.ini)
+```
+
+This discovery is the load-bearing reason the entire KTP architecture is shaped the way it is. Eliminating Metamod isn't a preference — it's a technical requirement for competitive Day of Defeat on ReHLDS.
+
+#### Downstream consequences
+
+Every part of the stack inherited from this decision:
+- **KTPAMXX** had to be forked from AMX Mod X to load as a ReHLDS extension instead of a Metamod plugin (changes AMXX_Attach signature, GetEngineFuncs sourcing, module-load lifecycle).
+- **KTP-ReAPI** had to be forked from ReAPI to use KTPAMXX's `MF_GetEngineFuncs()` instead of Metamod's hook tables.
+- **DODX module** had to learn to use ReHLDS hookchains (`SV_PlayerRunPreThink` etc.) instead of Metamod's PreThink hook.
+- **Linux deployment** became viable for the first time — the traditional AMXX-on-Linux story required Metamod, which broke wall penetration. KTP's extension mode means Linux servers run with full feature parity.
+
+The TECHNICAL_GUIDE describes the resulting architecture (six-layer stack, hookchain interfaces, extension loading sequence). This ADR is the why-it's-that-shape record.
 
 ---
 
