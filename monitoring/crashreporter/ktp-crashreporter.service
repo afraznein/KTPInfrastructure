@@ -3,6 +3,8 @@ Description=KTP crashreporter — gdb backtrace → #ktp-crashes
 Documentation=https://github.com/afraznein/KTPInfrastructure/blob/main/monitoring/crashreporter/README.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,8 +13,6 @@ Group=dodserver
 ExecStart=/usr/local/bin/ktp-report-core
 Restart=on-failure
 RestartSec=10
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Read access to /tmp (cores) and /home/dodserver (binaries) — both default-readable
 # for `dodserver`. /etc/ktp/crashreporter.conf is mode 0640 root:dodserver (see install.sh).

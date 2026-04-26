@@ -10,8 +10,9 @@ Daemon design:
      to Discord Relay's #ktp-crashes channel.
 
 Config: /etc/ktp/crashreporter.conf (bash-style KEY=value).
-  RELAY_URL          - Discord Relay base URL (e.g. https://relay.example/api)
-  RELAY_SECRET       - X-Auth-Key header value
+  RELAY_URL          - Full Discord Relay POST URL (e.g. https://relay.../reply)
+                       Same value the plugins read from discord.ini.
+  RELAY_SECRET       - X-Relay-Auth header value (RELAY_SHARED_SECRET on the relay)
   CRASHES_CHANNEL_ID - Discord channel ID
   KTP_REGION         - Three-letter region code (ATL/DAL/DEN/NY/CHI)
 
@@ -258,9 +259,9 @@ def post_to_discord(cfg: dict, embed: dict, ping_here: bool) -> bool:
         body["allowed_mentions"] = {"parse": ["everyone"]}
     try:
         r = requests.post(
-            f"{cfg['RELAY_URL'].rstrip('/')}/message",
+            cfg["RELAY_URL"],
             json=body,
-            headers={"X-Auth-Key": cfg["RELAY_SECRET"], "Content-Type": "application/json"},
+            headers={"X-Relay-Auth": cfg["RELAY_SECRET"], "Content-Type": "application/json"},
             timeout=15,
         )
         if r.status_code >= 300:

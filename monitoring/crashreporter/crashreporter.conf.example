@@ -1,10 +1,12 @@
 # KTP crashreporter config — install at /etc/ktp/crashreporter.conf, mode 0640 root:dodserver.
 # bash-style KEY=value, no spaces around =, values can be quoted.
 
-# Discord Relay base URL. Same one the plugins POST to.
-RELAY_URL="https://discord-relay-XXXXX.run.app/api"
+# Discord Relay full POST URL (ends in /reply). Same value the KTP plugins
+# read from `<configsdir>/discord.ini::discord_relay_url`.
+RELAY_URL="https://discord-relay-XXXXX.run.app/reply"
 
-# X-Auth-Key header value for the relay.
+# X-Relay-Auth header value (matches the relay's RELAY_SHARED_SECRET env var,
+# same secret in `discord.ini::discord_auth_secret`).
 RELAY_SECRET="REPLACE-WITH-RELAY-SECRET"
 
 # #ktp-crashes channel ID (guild 579024206931689482).

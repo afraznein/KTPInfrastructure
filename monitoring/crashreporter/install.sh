@@ -77,8 +77,17 @@ else
     : "${RELAY_SECRET:=}"
     : "${CRASHES_CHANNEL_ID:=1497957091107668070}"
 
-    if [[ -z "$RELAY_URL" ]]; then read -rp "Discord Relay URL: " RELAY_URL; fi
+    if [[ -z "$RELAY_URL" ]]; then read -rp "Discord Relay URL (full POST URL, ending in /reply): " RELAY_URL; fi
     if [[ -z "$RELAY_SECRET" ]]; then read -rsp "Discord Relay secret: " RELAY_SECRET; echo; fi
+
+    # The plugin discord.ini already gives us the full POST URL (ends in /reply).
+    # Daemon uses RELAY_URL as-is. If a base URL was passed, append /reply for
+    # convenience.
+    case "$RELAY_URL" in
+        */reply|*/reply/) ;;  # already correct
+        */) RELAY_URL="${RELAY_URL}reply" ;;
+        *)  RELAY_URL="${RELAY_URL}/reply" ;;
+    esac
 
     cat > "$CONF" <<EOF
 # KTP crashreporter — installed by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
