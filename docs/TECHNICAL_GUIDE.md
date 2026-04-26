@@ -4,7 +4,7 @@
 
 **No Metamod Required** - Runs on Linux and Windows via ReHLDS Extension Mode
 
-**Last Updated:** 2026-04-26 (per-layer body refresh: all `**Version:**` callouts refreshed across Layer 1-6 + supporting services; modernization-status banner below tracks remaining gaps)
+**Last Updated:** 2026-04-26 (Layer 6 plugin sections rewritten end-to-end — KTPMatchHandler/Cvar/File/AdminAudit refreshed and KTPPracticeMode/GrenadeLoadout/GrenadeDamage/ScoreTracker added; modernization-status banner below tracks remaining gaps)
 
 **Doc home note:** This file (and `DEVELOPMENT_HISTORY.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
 
@@ -14,9 +14,9 @@
 - ✅ GitHub Repositories section refreshed
 - ✅ Wall Penetration Discovery moved to DEVELOPMENT_HISTORY as ADR-001
 - ✅ Per-section `**Version:**` callouts refreshed across Layer 1-6 + supporting infrastructure (engine 920, KTPAMXX 2.7.13, ReAPI 5.29.0.364-ktp, AmxxCurl 1.3.8-ktp, plus all plugin + service versions)
-- ⏳ **Missing component sections:** KTPPracticeMode, KTPGrenadeLoadout, KTPGrenadeDamage, KTPScoreTracker — these plugins exist but lack dedicated subsections under Layer 6. Adding them is content-write, not version-refresh. Deferred to a follow-on pass.
+- ✅ **Layer 6 plugin sections rewritten** (2026-04-26): KTPMatchHandler, KTPCvarChecker, KTPFileChecker, KTPAdminAudit refreshed end-to-end with current behavior; new sections added for KTPPracticeMode, KTPGrenadeLoadout, KTPGrenadeDamage, KTPScoreTracker. Consistent format: terse top-line with collapsible technical detail.
 - ⏳ Inline "(introduced in vX.Y)" markers in section prose are intentionally left as-is — those are historical attribution, not current-version claims.
-- ⏳ Possible split into per-layer docs (ENGINE.md / SCRIPTING.md / MODULES.md / PLUGINS.md / SERVICES.md / ADMIN.md). Multi-session restructure; sequence after the missing-section content lands.
+- ⏳ Possible split into per-layer docs (ENGINE.md / SCRIPTING.md / MODULES.md / PLUGINS.md / SERVICES.md / ADMIN.md). Multi-session restructure; deferred.
 
 [Architecture](#six-layer-architecture) | [Components](#component-documentation) | [Installation](#complete-installation-guide) | [Repositories](#github-repositories)
 
@@ -1209,174 +1209,81 @@ forward dod_stats_flush(id);
 
 #### KTPMatchHandler
 
-**Repository:** [github.com/afraznein/KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler)
-**Version:** 0.10.116
-**License:** MIT
+**Repository:** [github.com/afraznein/KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) — **Version:** 0.10.116 — **License:** MIT
+
+The competitive match orchestrator. Handles workflow (start → confirm → ready → live → half → end), the tech-only pause system, OT, score persistence across map changes, and Discord embeds. Talks to DODX for stats, KTPAntiCheat API for session linkage (Phase 1, v0.10.115+), and the Discord Relay for embeds.
 
 <details>
-<summary><b>Key Features & Recent Updates</b></summary>
+<summary><b>Match workflow & types</b></summary>
 
-#### Performance Architecture (v0.10.97+)
+```
+PRE-START → both teams .confirm
+PENDING   → players .ready (per-type quorum, periodic reminders, .status query)
+START     → match_id minted, warmup stats flushed + reset, KTP_MATCH_START logged,
+            map config exec'd at +50ms (deferred from cmd_ready since 0.10.113 to
+            avoid blocking clc_stringcmd dispatch)
+LIVE      → tech pause active, score tracking per half, KTPAC API announce
+HALF/END  → stats flushed, KTP_MATCH_END logged, Discord summary, AC API end
+OT        → explicit; matches end at a tie with prompt; captain restarts via
+            .ktpOT / .draftOT (5-min rounds, side swap, separate tech budget)
+```
 
-Match start, ready-up, and halftime transitions are deferred across multiple frames to avoid stalling the server:
+| Type        | Command      | Password | Season-gated | Ready quorum | Duration | Map config            |
+|-------------|--------------|----------|--------------|--------------|----------|-----------------------|
+| Competitive | `.ktp`       | Required | Yes          | 6            | Map cfg  | `mapname.cfg`         |
+| Draft       | `.draft`     | No       | No           | 5            | 15 min   | `mapname.cfg`         |
+| 12-Man      | `.12man`     | No       | No           | 5            | 20 or 15 min (menu) | `mapname_12man.cfg` |
+| Scrim       | `.scrim`     | No       | No           | 1            | 20 or 15 min (menu) | `mapname_scrim.cfg` |
+| KTP OT      | `.ktpOT`     | Required | No           | 6            | 5 min    | `competitive.cfg`     |
+| Draft OT    | `.draftOT`   | No       | No           | 5            | 5 min    | `competitive.cfg`     |
 
-| Operation | Technique | Frame Savings |
-|-----------|-----------|---------------|
-| Match start | 3-phase deferred work (state → stats → Discord) | ~160ms → ~60-80ms |
-| Confirm → pending | Deferred to next frame via task | ~15-20ms |
-| Say hook | Fast path: non-command chat returns after 4 bytes | ~99% of traffic skips parsing |
-| Periodic score save | 120s interval, skip I/O when unchanged | Eliminated 5.1ms inter-frame gaps |
-
-#### Score Tracking (v0.10.110)
-
-Score persistence uses `dodx_get_team_score()` (gamerules memory read) instead of `dod_get_team_score()` (message-tracked). In extension mode, DODX's `Client_TeamScore` message handler never receives TeamScore messages, so the message-tracked path always returns 0. The gamerules read is always accurate regardless of message dispatch.
-
-#### Round-State Filtering (v0.10.101)
-
-Three-layer defense against phantom kills during round-freeze periods:
-1. DODX `dodx_set_stats_paused()` native pauses C++ stat accumulation
-2. `KTP_ROUND_FREEZE`/`KTP_ROUND_LIVE` log events for HLStatsX daemon
-3. Event-driven match context setup (replaces fixed delays) with 5s safety timeout
-
-#### Discord Integration
-
-- Live-updating embeds with real-time scores during matches (v0.10.72+)
-- Separate channel routing: competitive, draft, 12man, scrim, default (v0.10.98)
-- OT round scores shown alongside regulation totals (v0.10.105)
-- Roster embed buffer 2048→4096 for 12-player matches (v0.10.105)
-
-#### Match Types
-
-| Type | Command | Password | Ready Req | Half Duration |
-|------|---------|----------|-----------|---------------|
-| Competitive | `.ktp` | Required | 6 | Map config |
-| Draft | `.draft` | None | 5 | 15 minutes |
-| 12-Man | `.12man` | None | 5 | 20 or 15 min (menu) |
-| Scrim | `.scrim` | None | 1 | 20 or 15 min (menu) |
-| KTP OT | `.ktpOT` | Required | 6 | 5 minutes |
-| Draft OT | `.draftOT` | None | 5 | 5 minutes |
-
-OT is explicit: matches end at tie, captains manually start `.ktpOT` or `.draftOT`.
-
-#### Notable Bug Fixes
-
-- **Score persistence** (v0.10.110) — `dod_get_team_score()` returns 0 in extension mode; switched to gamerules read
-- **Timelimit during ready-up** (v0.10.103) — Blocked changelevel caused 2000 lines/sec log spam (NY1 incident: 5.4GB logs)
-- **pfnChangeLevel debounce** (v0.10.82) — 26M+ calls reduced to 1 per intermission
-- **OT recursive loop crash** (v0.10.34) — Hook re-entry during OT round transitions
-- **ClearPluginLibraries crash** (KTPAMXX v2.7.2) — `.changemap` freed executable thunk pages
+12-Man supports a "1.3 Community Discord" branch — captain enters a Queue ID twice for confirmation; match_id becomes `1.3-{queueId}-{map}-{host}`. Auto-DC countdown (v0.10.53+) only fires for competitive modes (`.ktp`/`.ktpOT`/`.draft`/`.draftOT`), 30s, cancel via `.nodc`. Admin recovery: `.forcereset` (ADMIN_RCON, requires confirmation).
 
 </details>
 
 <details>
-<summary><b>Match Workflow System</b></summary>
+<summary><b>Tech-only pause + real-time HUD</b></summary>
+
+Tactical pause (`.pause`/`.tac`) has been disabled since v0.10.35 — only `.tech` is allowed. Each team gets a 300s budget per half (persisted via localinfo across map changes).
 
 ```
-1. PRE-START
-   .ktp <password> → Both teams .confirm
-
-2. PENDING (Ready-Up)
-   Players type .ready (6 per team by default)
-   Periodic reminders every 30 seconds
-   .status to see match status
-
-3. MATCH START
-   - Match ID generated: KTP-{timestamp}-{mapname}
-   - dodx_flush_all_stats() - flush warmup stats
-   - dodx_reset_all_stats() - clear for fresh match
-   - dodx_set_match_id() - set match context
-   - KTP_MATCH_START logged for HLStatsX
-
-4. LIVE COUNTDOWN
-   "Match starting in 3..."
-
-5. MATCH LIVE
-   Map config auto-executes
-   Pause system active
-   Full logging with match ID
-   Score tracking per half
-
-5a. OVERTIME (explicit, v0.10.42+)
-   - Matches end at tie with announcement: "Match tied X-X! Use .ktpOT or .draftOT"
-   - Captain types `.ktpOT <password>` to start explicit OT match
-   - 5-minute rounds, side swaps between OT rounds
-   - First team ahead at round end wins
-   - If still tied, captains run `.ktpOT` again for next OT round
-   - Tech budget resets for OT
-   - OT state persists via localinfo (_ktp_ots, _ktp_otst)
-   - Match type persists via localinfo (_ktp_mtyp)
-
-6. HALF END / MATCH END
-   - dodx_flush_all_stats() - flush match stats
-   - KTP_MATCH_END logged for HLStatsX
-   - Discord notification with scores
-```
-
-#### Match Types
-
-| Type        | Command      | Password | Season Required | Ready Req | Duration | Config               |
-|-------------|--------------|----------|-----------------|-----------|----------|----------------------|
-| Competitive | `.ktp`       | Required | Yes             | 6         | Map config | `mapname.cfg`        |
-| Draft       | `.draft`     | None     | No              | 5         | 15 min   | `mapname.cfg`        |
-| 12-Man      | `.12man`     | None     | No              | 5         | 20 or 15 min (menu) | `mapname_12man.cfg`  |
-| Scrim       | `.scrim`     | None     | No              | 1         | 20 or 15 min (menu) | `mapname_scrim.cfg`  |
-| KTP OT      | `.ktpOT`     | Required | No              | 6         | 5 min    | `competitive.cfg`    |
-| Draft OT    | `.draftOT`   | None     | No              | 5         | 5 min    | `competitive.cfg`    |
-
-#### Season Control
-
-Season status is configured via `ktp.ini`. When season is OFF, `.ktp` is disabled.
-Draft, 12man, and scrim are always available regardless of season status.
-
-#### Score Tracking (v0.8.0+)
-
-- Tracks scores per half via TeamScore hook
-- Persists across map changes via localinfo
-- Discord match end shows final score with half breakdown
-
-</details>
-
-<details>
-<summary><b>Pause System (Tech-Only)</b></summary>
-
-#### Pause Types
-
-| Type          | Status       | Command        | Notes                                    |
-|---------------|-------------|----------------|------------------------------------------|
-| ~~Tactical~~  | **DISABLED** | ~~`.pause`/`.tac`~~ | Disabled since v0.10.35              |
-| **Technical** | Active       | `.tech`        | Uses per-team budget (default 300s/half) |
-
-**Technical Pause Budget:** 5 minutes per team per half (persists across halves via localinfo)
-
-#### Pause Flow with Real-Time HUD
-
-```
-Player types .tech
-        ↓
-5-second countdown ("Pausing in 5...")
-        ↓
-rh_set_server_pause(true)  ← ReAPI native
-        ↓
-GAME FREEZES
-  - Physics stop
-  - Time stops
-  - Players can't move
-        ↓
-KTP-ReHLDS calls SV_UpdatePausedHUD every frame
-        ↓
-KTP-ReAPI forwards to OnPausedHUDUpdate hook
-        ↓
-KTPMatchHandler updates HUD:
-
-  == GAME PAUSED ==
-
-  Type: TECHNICAL
-  By: PlayerName
-
-  Elapsed: 2:34  |  Remaining: 2:26
-
+Player .tech → 5s countdown → rh_set_server_pause(true)   [game freezes]
+                                          ↓
+ReHLDS calls SV_UpdatePausedHUD every frame → ReAPI forward →
+                                          ↓
+KTPMatchHandler renders:
+  == GAME PAUSED ==     Type: TECHNICAL    By: <player>
+  Elapsed: M:SS  |  Remaining: M:SS
   .resume  |  .go
 ```
+
+Pause chat relay merged into `cmd_say_hook` since v0.10.111 — KTPAMXX 2.7.3 dedup blocks the same plugin from registering two handlers for `say`, so the previous separate `handle_pause_chat_relay` was being silently dropped.
+
+</details>
+
+<details>
+<summary><b>Performance & extension-mode quirks</b></summary>
+
+Match start, ready-up, halftime, and the say-hook are all deferred or fast-pathed to keep heavy work out of the per-packet `clc_stringcmd` dispatch:
+
+| Path | Technique | Frame impact |
+|------|-----------|--------------|
+| Match start | 3-phase deferred work (state → stats → Discord) + 50ms map-cfg exec defer (0.10.113) | ~160ms → low single digits |
+| `.confirm` → pending | Deferred to next frame | ~15-20ms saved |
+| Say hook | Non-command chat returns after 4-byte prefix check | ~99% of chat skips parsing |
+| Periodic score save | 120s interval, skip I/O when scores unchanged | Eliminated 5.1ms inter-frame gaps |
+| `cmd_ready` (will_start=0) | Split into 5 profiled helpers in 0.10.114; spikes vanished post-JIT 2026-04-25 | ~163ms → undetectable |
+
+**Score tracking quirk (0.10.110):** in extension mode `dod_get_team_score()` returns 0 — DODX's `Client_TeamScore` message handler never receives messages because dispatch doesn't reach C++ handlers. `dodx_get_team_score()` reads gamerules memory directly and is always live.
+
+**Round-state filtering (0.10.101):** three-layer defense against phantom kills during round-freeze — `dodx_set_stats_paused()` halts C++ accumulation, `KTP_ROUND_FREEZE`/`KTP_ROUND_LIVE` log events guard HLStatsX, and event-driven setup replaces fixed delays with a 5s safety timeout.
+
+**Notable historical fixes:**
+- 0.10.103 — Timelimit during ready-up triggered blocked changelevel storm (NY1 incident: 5.4 GB logs at 2000 lines/sec)
+- 0.10.82 — `pfnChangeLevel` debounce: 26M+ calls reduced to 1 per intermission
+- 0.10.34 — OT recursive loop crash from hook re-entry during round transitions
+- 0.10.111 — Pause chat relay restoration after KTPAMXX 2.7.3 dedup
+- 0.10.115 — KTPAntiCheat Phase 1 (match_id linkage) — silent no-op when `ac.ini` absent
 
 </details>
 
@@ -1384,72 +1291,57 @@ KTPMatchHandler updates HUD:
 
 #### KTPCvarChecker
 
-**Repository:** [github.com/afraznein/KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker)
-**Version:** 7.23
-**License:** GPL v2
+**Repository:** [github.com/afraznein/KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker) — **Version:** 7.23 — **License:** GPL v2 — **Plugin file:** `ktp_cvar.amxx`
+
+Real-time client cvar enforcement. Pure auto-correction + logging — no kicks or bans. Built on KTPAMXX's `client_cvar_changed` forward (which surfaces ReHLDS's `pfnClientCvarChanged` callback to plugins). Flags violations to Discord in 5s batches per player.
 
 <details>
-<summary><b>Real-Time Cvar Enforcement Pipeline</b></summary>
-
-#### Architecture
-
-Pure enforcement anti-cheat — no punishments, just auto-correction and logging. Uses KTPAMXX's `client_cvar_changed` callback for real-time detection:
+<summary><b>Detection pipeline</b></summary>
 
 ```
-KTP Cvar Checker: queries cvars periodically
-     │  Priority (9 cvars): every 2 seconds
-     │  Standard (25 cvars): rotated every 10 seconds (5 per check)
-     ▼
-Game Client: responds with current cvar value
-     ▼
-KTP-ReHLDS: pfnClientCvarChanged callback
-     ▼
-KTPAMXX: client_cvar_changed forward
-     ▼
-KTP Cvar Checker: Trie lookup → validate → defer enforcement → Discord alert
+KTPCvarChecker queries cvars  →  Game client responds  →  ReHLDS pfnClientCvarChanged
+   Priority (9):  every 2s            →  KTPAMXX client_cvar_changed forward
+   Standard (25): 5 per 10s           →  Trie lookup (O(1)) → validate → defer
+   Initial scan:  all 34 in 8-batches    enforcement → batch Discord embed
 ```
 
-#### 34 Monitored Cvars (9 Priority + 25 Standard)
+Trie lookup (v7.21) replaced a 34-entry linear `equal()` scan that ran on every callback (~43/sec/player). Together with the v7.19 deferred enforcement queue (per-cvar bitmask, processed on next frame via `set_task(0.0)`), this resolved the 160-185ms frame freezes seen Feb 2026 when enforcement ran inside the opcode handler.
 
-**Priority (checked every 2 seconds):**
+| Detection class | Worst-case latency |
+|-----------------|--------------------|
+| Priority cvars (9) | < 2 s |
+| Standard cvars (25) | ~50 s |
+| Initial 34-cvar scan | ~2 s (parallel batches of 8) |
 
-| Cvar | Enforcement | Notes |
-|------|-------------|-------|
-| `m_pitch` | Exact: `0.022` or `-0.022` | Inverted mouse allowed |
-| `cl_pitchdown` | Exact: `89` | |
-| `cl_pitchup` | Exact: `89` | |
-| `cl_updaterate` | Range: `100-120` | Matches `sv_maxupdaterate 120` |
-| `cl_cmdrate` | Range: `100-500` | |
-| `rate` | Exact: `100000` | Locked value |
-| `ex_interp` | Range: `0.01-0.05` | Floor prevents teleporting on jitter |
-| `cl_lc` | Exact: `1` | Lag compensation required |
-| `cl_lw` | Exact: `1` | Weapon prediction required |
+Steady-state cost: ~5 queries/sec/player (~160 q/s for 32 players), ~0.4% CPU, ~8 KB/s network.
 
-**Standard (rotated, 5 per 10 seconds):** Graphics (`gl_*`, `r_fullbright`, `r_lightmap`, `texgamma`, `lightgamma`), audio (`s_show`), movement (`m_side`, `cl_pitch*`, `lookspring`), gameplay (`fps_max`, `hud_takesshots`).
+</details>
 
-**Dynamic enforcement:** `hud_takesshots` only enforced during competitive matches (`.ktp`, `.ktpOT`) via `ktp_match_competitive` cvar.
+<details>
+<summary><b>Monitored cvars + special cases</b></summary>
 
-#### Enforcement Pipeline (v7.19+)
+**Priority (every 2s):**
 
-Violations are deferred to prevent frame stalls:
+| Cvar | Rule | Notes |
+|------|------|-------|
+| `m_pitch` | Exact `0.022` or `-0.022` | Inverted mouse allowed |
+| `cl_pitchdown` / `cl_pitchup` | Exact `89` | |
+| `cl_updaterate` | Range `100-120` | Matches fleet `sv_maxupdaterate 120`; client.dll clamps to 102 anyway |
+| `cl_cmdrate` | Range `100-500` | |
+| `rate` | Exact `100000` | Locked (was a range, narrowed in 7.22) |
+| `ex_interp` | Range `0.01-0.05` | Floor prevents teleport-on-jitter; ceiling accommodates SA/EU 140-160ms ping |
+| `cl_lc` / `cl_lw` | Exact `1` | Lag-comp + weapon-prediction required |
 
-1. **`client_cvar_changed` callback** — Trie-based O(1) cvar name lookup (v7.21), replaces 34-entry linear scan
-2. **Deferred enforcement queue** — Per-cvar bitmask accumulates all pending violations, processes on next frame via `set_task(0.0)`. Prevents the 160-185ms frame freeze discovered in Feb 2026 when enforcement ran inside the opcode handler
-3. **Discord grouping** — 5-second batching window collects all violations per player into a single embed, with per-player task IDs to prevent duplicate notifications
+**Standard (rotated, 5 per 10s):** graphics (`gl_*`, `r_fullbright`, `r_lightmap`, `texgamma`, `lightgamma`), audio (`s_show`), movement (`m_side`, `cl_pitch*`, `lookspring`), gameplay (`fps_max`, `hud_takesshots`).
 
-#### Detection Speed
+**Dynamic enforcement:** `hud_takesshots` only enforced during competitive matches (gated by KTPMatchHandler's `ktp_match_competitive` cvar — pointer cached, lazy re-cache if MatchHandler loads after CvarChecker).
 
-| Type | Count | Interval | Worst-Case Detection |
-|------|-------|----------|---------------------|
-| Priority cvars | 9 | Every 2s | < 2 seconds |
-| Standard cvars | 25 | 5 per 10s | ~50 seconds |
-| Initial check | All 34 | Parallel batches of 8 | ~2 seconds |
+**`cl_filterstuffcmd 1` detection:** clients with the filter on silently drop enforcement commands. After 3 failed attempts for the same cvar, the player is warned. Useful diagnostic — clean clients self-heal silently within 2s.
 
-**Performance:** ~5 queries/sec per player (~160 q/s for 32 players, ~0.4% CPU, ~8 KB/s network).
-
-#### cl_filterstuffcmd Detection
-
-If a player has `cl_filterstuffcmd 1`, enforcement commands are silently dropped by the client. After 3 failed enforcement attempts for the same cvar, a warning is shown to the player.
+**Notable historical fixes:**
+- 7.22 — `lightgamma` floor adjusted from `1.81` to `1.809` (IEEE 754: `1.81` stores as `1.80999994`, engine reports `1.809`); `cl_smoothtime` enforcement removed (cosmetic, no competitive advantage)
+- 7.20 — Discord task leak (no task ID) caused doubled notifications on player-slot interleave
+- 7.19 — Deferred enforcement queue (per-cvar bitmask) replaces single-slot defer that lost concurrent violations
 
 </details>
 
@@ -1457,28 +1349,27 @@ If a player has `cl_filterstuffcmd 1`, enforcement commands are silently dropped
 
 #### KTPFileChecker
 
-**Repository:** [github.com/afraznein/KTPFileChecker](https://github.com/afraznein/KTPFileChecker)
-**Version:** 2.7
-**License:** Custom
+**Repository:** [github.com/afraznein/KTPFileChecker](https://github.com/afraznein/KTPFileChecker) — **Version:** 2.7 — **License:** Custom — **Plugin file:** `ktp_file.amxx`
+
+File consistency validation — catches modified player models, amplified sounds, and weapon model exploits at client connect. Sends per-player Discord embeds (not per-file) to avoid spam.
 
 <details>
-<summary><b>File Consistency Checking</b></summary>
+<summary><b>Validation behavior</b></summary>
 
-#### Monitored File Types
+| Type | Examples | Purpose |
+|------|----------|---------|
+| Player models | `axis-inf.mdl`, `us-para.mdl` | Prevent bright/transparent textures |
+| Sounds | `pl_step*.wav`, `headshot1.wav` | Prevent amplified audio |
+| Weapon models | `v_grenade.mdl`, `p_mills.mdl` | Prevent model exploits |
+| Sprites | `crosshairs.spr` | Optional, usually harmless |
 
-| Type          | Examples                        | Purpose                            |
-|---------------|---------------------------------|------------------------------------|
-| Player Models | `axis-inf.mdl`, `us-para.mdl`   | Prevent bright/transparent textures|
-| Sounds        | `pl_step*.wav`, `headshot1.wav` | Prevent amplified audio            |
-| Weapon Models | `v_grenade.mdl`, `p_mills.mdl`  | Prevent model exploits             |
-| Sprites       | `crosshairs.spr`                | Optional, usually harmless         |
+**Two validation modes via `fc_exactweapons`:** `1` enforces an exact file hash match (competitive default); `0` allows files with the same hitbox bounds (public servers). `fc_checkmodels` (added 2.3) toggles model checks independently.
 
-#### Two Validation Modes
+**Server broadcast** (since 2.5) shows only `<player> has an inconsistent game file` — full path + SteamID stays in logs and Discord for admins. Earlier broadcasts leaked file paths to all players.
 
-```cfg
-fc_exactweapons "1"  // Exact file hash match (competitive)
-fc_exactweapons "0"  // Same hitbox bounds allowed (public servers)
-```
+**Notable historical fixes:**
+- 2.6 — Discord slot-reuse race: violation batching now compares SteamID instead of player slot ID, so a quick disconnect-reconnect into the same slot doesn't merge two players' violations into one notification
+- 2.4 — Format string vulnerability (player-controlled name passed as format string in `log_amx`/`log_to_file`/`log_message`) and `server_cmd("say")` injection via single-quoted names — fixed with `"%s"` arg + `client_print` broadcast
 
 </details>
 
@@ -1486,34 +1377,160 @@ fc_exactweapons "0"  // Same hitbox bounds allowed (public servers)
 
 #### KTPAdminAudit
 
-**Repository:** [github.com/afraznein/KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit)
-**Version:** 2.7.13
-**License:** MIT
+**Repository:** [github.com/afraznein/KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit) — **Version:** 2.7.13 — **License:** MIT
+
+Menu-based kick / ban / changemap / restart / quit. All actions Discord-audited. Ties together a few ReHLDS hooks: `RH_SV_Rcon` (RCON command audit), `RH_ExecuteServerStringCmd` (catches LinuxGSM and console-source commands), and `RH_Host_Changelevel_f` (changemap interception).
 
 <details>
-<summary><b>Menu-Based Admin System</b></summary>
+<summary><b>Commands & permissions</b></summary>
 
-#### Features
+| Command | Flag | Notes |
+|---------|------|-------|
+| `.kick` | `c` ADMIN_KICK | Menu-based player select; immune players (`a`) hidden from target list |
+| `.ban` | `d` ADMIN_BAN | Duration menu: 1h / 1d / 1w / permanent |
+| `.changemap` | none | Available to all players; **blocked during active matches** (uses `ktp_is_match_active()`); 5s countdown |
+| `.restart` / `.quit` | `l` ADMIN_RCON | Server control (RCON `quit`/`exit` blocked at engine level — must use `.quit` in-game since 2.7.1) |
 
-- **Menu-based kick/ban** - Interactive player selection (no RCON needed)
-- **Menu-based map change** (v2.6.0+) - Map selection from ktp_maps.ini with 5-second countdown
-- **RCON quit/exit blocking** (v2.7.1+) - RCON quit/exit commands BLOCKED; must use `.quit` in-game
-- **Admin flag permissions** - Requires ADMIN_KICK (c), ADMIN_BAN (d), or ADMIN_RCON (l)
-- **Immunity protection** - Players with ADMIN_IMMUNITY (a) cannot be kicked/banned
-- **Ban duration selection** - 1 hour, 1 day, 1 week, or permanent
-- **Discord audit logging** - Real-time notifications to configured channels
-- **RCON audit logging** (v2.2.0+) - Logs restart commands with source IP via RH_SV_Rcon hook
-- **Console command audit** (v2.3.0+) - Catches all console commands including LinuxGSM via RH_ExecuteServerStringCmd
-- **Admin server commands** (v2.3.0+) - `.restart` / `.quit` with ADMIN_RCON flag
-- **HLTV kick support** (v2.3.0+) - HLTV proxies appear in kick menu
-- **Match protection** - `.changemap` blocked during active matches (requires KTPMatchHandler)
-- **ReHLDS integration** - Uses `ktp_drop_client` native to bypass blocked kick command
+Player drops use `ktp_drop_client` (KTPAMXX native) instead of `kick` — KTP-ReHLDS blocks the `kick` console command outright to prevent untraceable RCON/HLSW kicks. `ktp_drop_client` calls ReHLDS's `DropClient` API directly, keeping the audit trail intact.
 
-#### Why ktp_drop_client?
+HLTV proxies appear in the kick menu (since 2.3) so admins can drop a misbehaving HLTV without console gymnastics.
 
-KTP-ReHLDS blocks the `kick` console command to prevent untraceable RCON/HLSW kicks.
-The `ktp_drop_client` native calls ReHLDS's `DropClient` API directly, bypassing the
-blocked command while still going through the audited plugin system.
+</details>
+
+<details>
+<summary><b>Notable historical fixes</b></summary>
+
+- 2.7.12 — Changelevel hook was returning `HC_SUPERCEDE` for ANY pending changelevel during the countdown lock, including KTPMatchHandler's match-end map change. Now allows changelevel if the requested map matches `g_pendingChangeMap`. Also: ban duration menu read target name without re-checking `is_user_connected`, so a disconnect mid-menu showed whoever now occupied the slot.
+- 2.7.11 — Slot-recycling TOCTOU on kick/ban: between menu pick and action execution a slot could host a different player. Now stores SteamID at selection time and re-validates before action. `STEAM_ID_PENDING`/LAN/BOT bans now warn + fall back to kick instead of silently failing.
+- 2.7.7 — Intermittent (~10%) changemap countdown failure: `set_task()` from inside the changelevel hookchain handler intermittently failed to register. Fixed by calling `start_changelevel_countdown()` directly without hook routing.
+- 2.7.6 — Countdown's `server_cmd("changelevel")` had no `server_exec()`, so the command sat in the buffer forever (Chicago 2 incident, three failed `.changemap` attempts requiring `.quit` to recover).
+- 2.7.4 — `g_changeMapInProgress` lock could get permanently stuck on plugin reload mid-countdown, blocking ALL future changelevels including mapcycle rotation (NY 27015: 3+ hours of 160ms phys spikes from the engine retrying blocked changelevels in the physics loop).
+
+</details>
+
+---
+
+#### KTPPracticeMode
+
+**Repository:** [github.com/afraznein/KTPPracticeMode](https://github.com/afraznein/KTPPracticeMode) — **Version:** 1.4.2 — **License:** GPL v2
+
+Practice mode for warm-up and aim drills. Infinite grenades, spawn-grenade for grenade-less classes, noclip, extended timelimit, and HUD indicator. Auto-exits when the server empties or a match starts (detected via `ktp_is_match_active()` at pre-start phase).
+
+<details>
+<summary><b>Commands & behavior</b></summary>
+
+| Command | Notes |
+|---------|-------|
+| `.practice` / `.prac` | Enter — anyone, when no match is active. Sets `mp_timelimit 99` + `sv_cheats 1`, appends ` - PRACTICE` to hostname, starts HUD + reminder tasks |
+| `.endpractice` / `.endprac` | Manual exit; restores cvars, hostname, and disables noclip on all players |
+| `.noclip` / `.nc` | Toggle (practice-only) |
+| `.grenade` / `.nade` | Spawn a team-appropriate grenade — Allies hand grenade, Axis stick, British Mills bomb |
+
+Auto-exit triggers: server empties (5s polling, excludes bots + HLTV), or a match enters pre-start. On map change, state persists via `_ktp_prac` localinfo and re-announces on the new map.
+
+</details>
+
+<details>
+<summary><b>Grenade refill mechanics & v1.4.0 fix</b></summary>
+
+The 1.4.0 fix is worth understanding because the same DODX pattern applies to KTPGrenadeLoadout: **DoD removes the weapon entity when the last grenade is thrown.** Setting pdata ammo alone creates "invisible" grenades the player can't select. The correct sequence is:
+
+```
+dodx_give_grenade(id, type)        → recreates the weapon slot
+dodx_set_grenade_ammo(id, type, n) → sets the ammo count
+dodx_send_ammox(id)                → syncs the client HUD
+```
+
+Both `.grenade` and the `dod_grenade_explosion` auto-refill handler use this pattern. The 1.4.0 fix also depended on KTPAMXX 2.7.4's DODX fallback init (SV_ActivateServer hook registered too late, leaving CPlayer array uninitialized on first map).
+
+**v1.4.1 (2026-04-20)** added permanent diagnostic logging to both paths — entry state (id/wpnid/practice/connected/alive) and per-native return values — to narrow the still-open ATL2 regression where auto-refill silently stops working after some map changes. Awaiting next organic reproduction.
+
+**Other historical fixes:** 1.3.2 — `client_death` now also calls `dodx_set_user_noclip(0)` instead of just clearing the tracking flag (dead-in-noclip players respawned still flying); hostname restore raised from 0.5s to 1.5s to fire after configs load; British team support added to `.grenade`.
+
+</details>
+
+---
+
+#### KTPGrenadeLoadout
+
+**Repository:** [github.com/afraznein/KTPGrenades](https://github.com/afraznein/KTPGrenades) — **Version:** 1.0.8 — **License:** GPL v2
+
+Per-class grenade count configuration via `<configsdir>/grenade_loadout.ini`. Applied 0.2s after spawn (delay lets the game's default loadout apply first, otherwise it gets overwritten back). Supports classes that don't normally spawn with grenades (sniper, MG, bazooka).
+
+<details>
+<summary><b>Configuration & behavior</b></summary>
+
+```ini
+[allies]    ; sections are cosmetic — class names are globally unique
+garand = 2
+sniper  = 1   ; classes without default grenades supported
+[axis]
+kar     = 2
+[british]
+enfield = 2
+piat    = 0
+```
+
+Cvars: `ktp_grenade_loadout` (1=on), `ktp_grenade_loadout_debug` (verbose per-spawn log; off by default — was the source of a 196ms spike on 12-man round starts before being made opt-in).
+
+**Spawn batching (1.0.5):** all spawns in the same frame are processed in a single task instead of per-player `set_task()` — eliminated 12 `log_amx()` calls per round start.
+
+**Grenade refill pattern (1.0.3):** uses the same `dodx_give_grenade` → `dodx_set_grenade_ammo` → `dodx_send_ammox` sequence as KTPPracticeMode (see above) — without `dodx_give_grenade` first, classes without default grenades got ammo set but no weapon slot and couldn't select them.
+
+**Notable historical fixes:** 1.0.7 INI section parsing removed (sections never enforced — class names globally unique); 1.0.6 INI key copy not clamped to buffer (config keys >31 chars overflowed `key[32]`); 1.0.6 `g_bTaskScheduled` not reset on map change blocked all future spawn processing if a map change happened mid-batch.
+
+</details>
+
+---
+
+#### KTPGrenadeDamage
+
+**Repository:** [github.com/afraznein/KTPGrenades](https://github.com/afraznein/KTPGrenades) — **Version:** 1.0.5 — **License:** GPL v2
+
+Reduces grenade damage by a configurable percentage. Hooks DODX's `dod_damage_pre` forward and returns a modified damage value; DODX heals the victim by the difference.
+
+<details>
+<summary><b>Configuration & weapon coverage</b></summary>
+
+| Cvar | Default | Range |
+|------|---------|-------|
+| `ktp_grenade_dmg` | 1 | 0/1 toggle |
+| `ktp_grenade_dmg_reduce` | 50 | 0-100 (percent) |
+
+Cvar is cached at `plugin_cfg` (1.0.4) — was being read with `get_pcvar_float()` on every grenade damage event in a hot path. RCON changes require a map change to take effect (acceptable for a rarely-changed setting).
+
+Covers all grenade weapon IDs: `DODW_HANDGRENADE` (US), `DODW_STICKGRENADE` (German), `DODW_HANDGRENADE_EX`/`DODW_STICKGRENADE_EX` (variants), `DODW_MILLS_BOMB` (British).
+
+**Friendly fire excluded since 1.0.3** — TK damage was incorrectly being reduced; now skipped when the `TA` flag is set on the damage event. Also: setting reduction to 100% used to leave a minimum-1 damage floor; now correctly returns 0.
+
+</details>
+
+---
+
+#### KTPScoreTracker
+
+**Repository:** [github.com/afraznein/KTPScoreTracker](https://github.com/afraznein/KTPScoreTracker) — **Version:** 1.1.1 — **License:** GPL v2
+
+Verbose capture scoring — emits real-time chat notifications for each capture (with all cappers and points) and writes HLStatsX-compatible log entries (`KTP_CP_CAPTURED`, `ktp_cap_score`, `ktp_cap_summary`). End-of-match summary is sorted by points and printed to chat. Hooks DODX's `controlpoints_init`, `dod_control_point_captured`, and `dod_score_event` forwards.
+
+<details>
+<summary><b>Output format & timelimit-capout recovery</b></summary>
+
+**During match:**
+```
+[KTP] Axis captured POINT_ANZIO_PLAZA: kroD- (+2), haha look at this. (+2), CHIRIMBOLOIDE (+2)
+```
+
+**Server log (HLStatsX-friendly):**
+```
+KTP_CP_CAPTURED (cp "3") (name "POINT_ANZIO_PLAZA") (new_owner "2") (old_owner "1") (matchid "1772072225-ATL5")
+"kroD-<17><STEAM_0:1:443810><Axis>" triggered "ktp_cap_score" (cp "3") (cpname "POINT_ANZIO_PLAZA") (points "2") (matchid "1772072225-ATL5")
+"kroD-<17><STEAM_0:1:443810><Axis>" triggered "ktp_cap_summary" (captures "5") (cappoints "12") (matchid "1772072225-ATL5")
+```
+
+**Timelimit capout recovery (v1.1.0, 2026-04-01):** when a team captures all control points in the same engine frame that timelimit fires, the game DLL drops the capout bonus. KTPScoreTracker hooks the `Final Scores` log event (intermission marker), reads `CP_owner` for all CPs via DODX, and if a single team owns all of them awards `mp_clan_scoring_bonus_allies`/`axis` via `dodx_set_team_score` + `dodx_broadcast_team_score`. Players are notified.
+
+Match boundaries are taken from KTPMatchHandler's `ktp_match_start` / `ktp_match_end` forwards.
 
 </details>
 
