@@ -7,9 +7,11 @@
 | Metric | Value |
 |--------|-------|
 | **Project Duration** | October 2025 - Present |
-| **Total Repositories** | 17 |
-| **Estimated Development Hours** | 1210-1520 |
-| **Last Updated** | 2026-03-29 (content; April 14 → present is documented in `discord-embeds/CHANGES_SUMMARY_2026-05-01.md` and recent CHANGELOG files pending a backfill pass) |
+| **Total Repositories** | 20 |
+| **Estimated Development Hours** | 1430-1800 |
+| **Last Updated** | 2026-04-25 |
+
+**Doc convention going forward:** Major releases (architectural changes, root-causes, incident responses) get full prose. Minor/patch releases get one-line entries in component-version tables. Reduces maintenance burden vs. backfilling per-version detail that's already in repo CHANGELOG files.
 
 ---
 
@@ -22,6 +24,7 @@
 - [January 2026](#january-2026---stability--polish) - Stability & Polish
 - [February 2026](#february-2026---bare-metal--performance) - Bare Metal & Performance
 - [March 2026](#march-2026---jit--code-review) - JIT & Code Review
+- [April 2026](#april-2026---engine-threading-jit-activation-stack-expansion) - Engine Threading, JIT, Stack Expansion
 
 ---
 
@@ -35,7 +38,8 @@
 | January 2026 | 120-150 | Stability, polish, explicit OT, admin tools |
 | February 2026 | 240-320 | Bare metal migration, performance optimization, lag investigation, CPU isolation, bug audit, 2 new server deployments |
 | March 2026 | 220-280 | JIT re-enablement, 3-round KTPAMXX code review (60+ fixes), fleet-wide plugin audit, match system performance, score persistence fix, engine profiler optimization |
-| **Total** | **1210-1520** | |
+| April 2026 | 220-280 | Engine threading (917-920), full-stack optimization pass, JIT activation, KTPAntiCheat launch, KTPAdminBot launch, KTPProfileAggregator launch, fleet outage recovery, AntiCheat integration phases 1-5 + 8.x, ktp_version_reporter rollout across all 9 plugins |
+| **Total** | **1430-1800** | |
 
 ### Repository Breakdown
 
@@ -43,7 +47,9 @@
 |----------|-------|----------|
 | Core Engine (C++) | 4 | KTPReHLDS, KTPAMXX, KTPReAPI, KTPAmxxCurl |
 | Game Plugins (Pawn) | 9 | KTPMatchHandler, KTPCvarChecker, KTPFileChecker, KTPAdminAudit, KTPHLTVRecorder, KTPPracticeMode, KTPGrenadeLoadout, KTPGrenadeDamage, KTPScoreTracker |
-| Backend Services | 3 | Discord Relay, KTPFileDistributor, KTPHLStatsX |
+| Anti-Cheat (C# .NET / Avalonia + ASP.NET Core API) | 1 | KTPAntiCheat (added April 2026) |
+| Discord Admin Bot (Python / discord.py) | 1 | KTPAdminBot (added April 2026) |
+| Backend Services | 4 | Discord Relay, KTPFileDistributor, KTPHLStatsX, KTPProfileAggregator (added April 2026) |
 | Discord Bots | 2 | KTPScoreBot-ScoreParser, KTPScoreBot-WeeklyMatches |
 
 ---
@@ -603,6 +609,14 @@ Systematic correctness review and performance optimization across all KTP plugin
 
 ---
 
+---
+
+## April 2026 - Engine Threading, JIT Activation, Stack Expansion
+
+**Focus: Engine threading (917-920), JIT re-enablement, three new stack components (KTPAntiCheat / KTPAdminBot / KTPProfileAggregator), AntiCheat integration phases 1-5 + 8.x, ktp_version_reporter shared include rolled out across all 9 KTP plugins.**
+
+The month started with the Apr 14 full-stack optimization pass (work for which was largely completed in March's continuous code-review effort) and ended with the JIT A/B verdict on Apr 25 confirming the fleet-wide debug-flag strip's predicted ATL:27016 σ normalization. Three previously-undocumented components shipped publicly this month — see component-overview sections below the chronological entries.
+
 ### Apr 3-5: KTPMatchHandler v0.10.111, KTPPracticeMode v1.4.0, KTPAMXX v2.7.5-2.7.6
 
 | Version | Key Changes |
@@ -658,6 +672,255 @@ Discord slot reuse race condition (compare authid not slot ID). Log message buff
 
 Average frame time: **0.012ms** (12 microseconds). Server FPS: 980+. Steam: 0.000ms. 2 spikes in 5.5 hours (kernel scheduling). Interframe jitter: avg 1.007ms, peak 1.134ms. **98.8% of each frame is idle.**
 
+### Apr 17: KTP-ReHLDS v3.22.0.917 — Spike-Frame Phys Sub-Phase Instrumentation
+
+A 158ms physics-phase spike on ATL2 during a 3-cap of Town Square exceeded what `[KTP_SPIKE]` could break down — the periodic `phys_detail` log was sampled on its own interval, stale by spike time. v917 adds a new `[KTP_SPIKE_PHYS]` alert that fires *on the spike frame* with per-frame sub-phase times: `startframe` (`pfnStartFrame()` work — game-DLL entity spawns, score cascade), `entloop` (per-entity physics iteration), and `paused_startframe`/`paused_hud` (pause-path sub-phases). Next >50ms phys spike points directly at the fix location (game DLL vs engine vs pause state). Fleet promotion on Apr 21 — see infrastructure entry below for the side story.
+
+### Apr 18-19: KTPMatchHandler v0.10.113
+
+Match-start `.ready`/`.rdy`/`.confirm` opcode spikes of 140-162ms were traced to synchronous `exec_map_config()` + `mp_clan_restartround 1` + `server_exec()` firing inside the chat-command handler's return path. v0.10.113 deferred these to a +0.05s task (`task_apply_match_config_and_start`) — config/restart work runs on its own frame instead of blocking the player's packet dispatch. Worst case (NY1 15:10, NY1 16:23) collapsed to single-digit ms. **Caveat: the defer only covers `will_start=1` match-start path; mid-count `will_start=0` `.rdy` spikes persisted, prompting the 0.10.114 probe a week later.**
+
+### Apr 20: KTPPracticeMode v1.4.1
+
+Diagnostic `log_amx` instrumentation in `dod_grenade_explosion` and `cmd_grenade` capturing entry state (`id / wpnid / practice-mode-flag / connected / alive`) and refill returns (`dodx_give_grenade()`, `dodx_set_grenade_ammo()`, `dodx_send_ammox()`, computed `ammoSlot`). Targets the 2026-04-17 ATL2 grenade auto-refill regression whose cause is still unknown. Low log volume (only fires during active practice mode), kept permanent for any future practice-mode diagnostic. Awaiting next organic reproduction.
+
+### Apr 18-21: Fleet Configuration & `.new`-swap Implementation
+
+| Change | Detail |
+|---|---|
+| **`sv_allow_dlfile "0"` fleet-wide** | Eliminates 2+-second server-wide stall when clients fall through FastDL to engine-fragment download. ReHLDS's reject-before-file-read short-circuit was already coded; just unreachable at default `1`. Applied to `dodserver.cfg` on all 25 instances. |
+| **`ktp-scheduled-restart.sh` `.new`-swap finally implemented** | Documented in CLAUDE.md / MEMORY.md since February but **never actually shipped** — both deployed script + `.example` template had no `.new`/`swap`/`mv` handling. Discovered when the 917 engine `.new` files staged 2026-04-20 did not activate at the 03:00 ET 2026-04-21 auto-restart despite a clean restart run. Fix landed `e0d571c` (Apr 21 17:00 ET) — actual swap block between stop and start phases, covering `serverfiles/*.new`, `addons/ktpamx/dlls/*.new`, `addons/ktpamx/modules/*.new`. Verified Atlanta first, then rolled to Dallas/Denver/NY/Chicago sequentially. |
+| **917 fleet promotion (Apr 21-22)** | All 24 active instances confirmed on 917 post-rollout (Chicago 27019 remains intentionally `.ktp-disabled`). |
+
+### Apr 22: HPAK Crash Day (KTPAMXX v2.7.12 + KTP-ReHLDS v3.22.0.918) — Major Incident
+
+Starting ~15:40 ET, a fleet-wide segfault pattern emerged that consumed most of the day to root-cause and fix. In parallel, the engine threading work filed as a 917 follow-up shipped as 918.
+
+**Symptom:** 15 segfaults across the fleet over two days (ATL ×4 on Apr 21 evening, DEN ×1 on Apr 19, **NY ×10 on Apr 22**). Pattern: `Segmentation fault (core dumped)` correlated with heavy player traffic. Bug only triggers on populated servers — NY took the hit because NY was the active-play host. Multiple instances crashed in minutes-wide clusters, not random.
+
+**Pre-condition: enabling core dumps fleet-wide.** Apport had been intercepting cores via its pipe handler (`kernel.core_pattern = |/usr/share/apport/apport ...`) and silently dropping them. Set `kernel.core_pattern = /tmp/core.%e.%p.%t` runtime + persistent `/etc/sysctl.d/99-ktp-coredump.conf` on all 5 hosts (Denver was already correct; ATL/DAL/NY/CHI had apport drift). RLIMIT_CORE was already unlimited via systemd. **First useful core dumps captured within hours of enablement** — led directly to the 2.7.12 root-cause diagnosis.
+
+**Diagnosis path:** First three crashes caught (ATL 27017 @ 20:06, ATL 27015 @ 20:11, ATL 27019 @ 20:13), 240-280 MB cores. `gdb` resolved through `CSPForward::execute` at `KTPAMXX/amxmodx/CForward.cpp:305`. Main thread inside libc's SSE-accelerated `strlen()` (`movdqu (%edi), %xmm1`) on bogus pointer `0x3f145406` — classic use-after-free.
+
+**Root cause:** `CForward::execute()` and `CSPForward::execute()` had a defensive check that rejected `NULL` and pointers `< 0x1000` before calling `strlen()` on `FP_STRING` / `FP_STRINGEX` parameters. Caught NULL/zero-page derefs, but not high-value integers reinterpret-cast as pointers. A scheduled AMX task fired after its backing memory was freed — the cell value stored in task params became an arbitrary integer like `0x3f145406`, passed the `< 0x1000` check, pointed to an unmapped page, and libc's `strlen` SSE loop SEGV'd on the first 16-byte load.
+
+**Fix (KTPAMXX 2.7.12):** New helper `amxx_is_string_ptr_readable()` combines old NULL/low-page check with `mincore()` syscall to verify the containing page is mapped. Applied to all four vulnerable sites (2 read paths + 2 `FP_STRINGEX` writeback paths — the writeback paths were caught by the `ktp-code-review` agent during review; initial patch only covered reads). Built, staged, deployed fleet-wide in ~5 min via parallel SSH rollout. **0 crashes** in the following hour of heartbeat monitoring.
+
+**`sv_send_logos "0"` hotfix** (parallel theory before gdb landed on CForward): kept in place even after the AMXX fix as defensive hardening — HPAK code path still has a latent bug whose repro path we now have core-dump infrastructure for. The 2.7.12 fix proved the real crash was AMXX, but `sv_send_logos 0` stays cosmetic-only (players don't see each other's spray/logo decals; competitive play unaffected) until the HPAK path soaks clean post-920.
+
+**KTP-ReHLDS 3.22.0.918 — engine threading (canary on ATL 4+5):**
+
+| Change | Detail |
+|---|---|
+| **E1: Steam 5s-timer → background thread** (`sv_steam3.cpp`) | The 5s block calling `SetMaxPlayerCount`/`SetServerName`/`BUpdateUserData` etc. inline on the game frame was the residual `steam=3-6ms` spike source post-913 (~26% of fleet `[KTP_SPIKE]` volume). Now: main thread snapshots state (~20µs), atomic flag flips, existing Steam background thread picks up within its 50ms cycle and publishes off-main. Critical `ktp-code-review` catch: must use `steam->BUpdateUserData()` directly — the `REHLDS_FIXES` helper routes through `m_Steam_GSBUpdateUserData` hookchain that plugin handlers (KTP-ReAPI → AMXX) use main-thread-only state in. |
+| **E2: Con_DebugLog persistent fd** (`sys_dll.cpp`) | Stock opened/wrote/closed `qconsole.log` per log line (3 syscalls per line). Under `-condebug` + `mp_logecho=1` (default for HLStatsX tailing), hundreds of `open`/`close` per second. Now caches `FILE*`, flushes after each write to preserve tail-reader semantics. Incidentally fixes a latent Windows crash from missing `_open` return check. |
+| **ProcessConsoleInput rate-limit** (`sys_ded.cpp`) | Stock called `ProcessConsoleInput` every iteration (→ `kbhit()` → `select()` syscall per iter). Under never-sleep pingboost (100k+ iter/sec), that syscall alone was **57% of CPU in kernel mode**. Rate-limited to 50ms (20 polls/sec) via `CLOCK_MONOTONIC`. Post-fix CPU split on never-sleep mode went from 43% usr / 57% sys → 99.67% usr / 0.33% sys — **172× syscall reduction**. Admin console latency unchanged in practice; pingboost 2-3 unaffected (already slept between iterations). |
+| **Host_FilterTime 1ns tolerance** (`host.cpp`) | Check is now `(1.0/fps) - 1e-9 > realtime - oldrealtime` instead of bare `1.0/fps > ...`. IEEE 754 double comparison on the boundary was non-deterministic, rejecting ~2% of frames and capping FPS at ~979 in abs-time sleep experiments. 1ns tolerance beats the boundary while staying 1000× smaller than the double-precision ulp at 0.001. |
+| **New `-pingboost 4` (never-sleep mode)** | Opt-in cmdline. `Sys_Sleep` is a no-op, main loop spins, `Host_FilterTime` rate-gates frame execution. Reaches true ~999 fps at `sys_ticrate 1000` (vs the ~977 structural ceiling of `-pingboost 2`) at the cost of **100% CPU per instance**. Existing `-pingboost 2` stays fleet default (977 fps at ~1-3% CPU is the better trade for most deployments). |
+| **Abs-time `Sleep_BusyWait` (dropped)** | Full day of iteration on a hybrid mode targeting the 1000Hz grid precisely (sleep most of ms, busy-wait last ~200µs). Three attempts topped out at ~979 fps due to a kernel HZ-tick edge case in `nanosleep` causing occasional multi-millisecond overshoots. Dropped from the release. |
+
+918 staged fleet-wide as `.new`; 23 instances pending 03:00 ET auto-swap. ATL 27018 + ATL 27019 activated immediately with `-pingboost 4` set in their dodserverN.cfg overrides — observable 100% CPU per instance confirmed.
+
+### Apr 22: Fleet Kernel Upgrade — 6.8.0-100/101-lowlatency → 6.8.0-110-lowlatency
+
+All 5 game hosts rebooted onto 6.8.0-110-lowlatency (skipped -106/-107). Each host carried 56-69 pending package upgrades; `apt-get upgrade` applied all of them before the reboot. Post-reboot state preserved correctly: CPU governor `performance`, isolation cmdline (isolcpus / nohz_full / rcu_nocbs / max_cstate=0 / mitigations=off), `ktp-chrt.timer` reapplied SCHED_FIFO 50 within 5 min, all sysctls held, all rc.local tuning held.
+
+**Operational quirks surfaced:** Chicago VPS took ~30 minutes to return (vs ~60s baremetals — root cause not confirmable without Akamai console access; eventually came back cleanly). Port 27015 monitoring-lock missing after reboot — `dodserver monitor` treats it as "intentionally stopped" because the lockfile isn't recreated through any non-START/RESTART path. Workaround: manual `./dodserver start` on 27015 after each reboot. Atlanta `6.14.11-psycachy` test kernel purged (was sitting at top of GRUB submenu by version sort; explicit `grub-set-default "1>2"` used during reboot to force -110-lowlatency entry).
+
+### Apr 23: KTP-ReHLDS v3.22.0.919-920, KTPAMXX v2.7.13, KTPMatchHandler v0.10.114, JIT Activation
+
+Single bundled release for the 03:00 ET 2026-04-24 auto-swap.
+
+**KTP-ReHLDS 3.22.0.919 (frame-efficiency + Linux NET_ThreadMain + Stage C experimental):**
+- Hoisted `host_limitlocal.value` + `sv_failuretime.value` out of `SV_SendClientMessages` per-client loop (cvars only change via console, never mid-frame). ~120ns/frame eliminated.
+- Replaced 4 sub-function reads of `ktp_profile_frame.value` with the `g_ktp_profiling_enabled` global already written once per frame in `SV_Frame_Internal`.
+- Replaced 4 `Cvar_VariableString("hostname")` hash-table lookups with direct `host_name.string`.
+- HPAK `FS_Read(NULL)` defensive fix (`hashpak.cpp`) — dormant SEGV-on-OOM site. Trivial one-line `break` in alloc-failure branch.
+- Linux `NET_ThreadMain` port (`net_ws.cpp`) — ports the Windows `-netthread` receive-pre-queue thread to Linux. Off by default; mutually exclusive with `-pingboost 3`. Not flipped on for any fleet instance yet — profiler hasn't shown read-phase burst-traffic spikes that would motivate enabling it.
+- **Stage C main-loop frame-boundary rewrite (experimental, opt-in `-absgrid`):** `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)` against a 1ms grid. Goal: ~999 fps at baseline CPU. Result on ATL 27019 canary: **643 fps / 1.53ms interframe / recurring 5ms peaks** at 2.8% CPU — kernel waking the SCHED_FIFO thread at ~500µs avg latency from hrtimer-fire even on isolcpus + nohz_full + max_cstate=0. Idle-CPU exit latency appears to be the floor. Gated behind `-absgrid` so plain `-pingboost 2` keeps the proven `Sleep_Select` path; research code retained for future kernel experiments.
+- **Canary topology:** ATL 27018 → reverted to fleet-default `-pingboost 2`. ATL 27019 → `-absgrid` research slot. NY 27019 → new perpetual `-pingboost 4` canary (never-sleep, 999 fps @ 100% CPU).
+
+**KTP-ReHLDS 3.22.0.920 (HPAK defensive hardening):** 3 SEGV-on-OOM sites in HPAK customization-download path, all guarded under `REHLDS_FIXES`:
+- `Mem_ZeroMalloc` NULL-safety (`mem.cpp`) — universal fix benefiting every caller across the engine
+- `HPAK_GetDataPointer` directory alloc NULL guard (`hashpak.cpp:104-117`)
+- `HPAK_ResourceForHash` directory alloc NULL guard (`hashpak.cpp:666-677`)
+
+5 more `Mem_Malloc + Q_memset` patterns in less-hot upload/admin paths held for follow-up release (now landed as 921 — see below).
+
+**KTPAMXX 2.7.13 — DODX forwards-stall fix (Jimmy's PR #4):** @JimmyLockhart65616 filed a clean diagnosis: every DODX-forward-based event (kill, damage, prone_change, player_spawn, player_team_change, flag_captured, player_score) had been going silent within hours of restart on all three matchday hosts (DEN5, ATL1, NY1). Root cause: two chained bugs in `modules/dod/dodx/moduleconfig.cpp`:
+- **Bug #1** — `DODX_OnSV_ActivateServer:1160` used `!FNullEnt(pWorld)`. `FNullEnt(edict 0)` returns TRUE because edict 0 IS the world entity. Same issue 2.7.5 fixed in `DODX_SetupExtensionHooks` but missed here. Every map change's `g_pFirstEdict` init was silently skipped.
+- **Bug #2** — `DODX_OnPlayerPreThink:947-948` had no recovery. 2.7.4 replaced the `ENTINDEX()`-based fallback with a hard `return`. Once per-map init failed for any reason, forwards stayed silent until plugin re-attach.
+
+Live `restart` on ATL1 confirmed attach-time fallback was what propped the stack. **Side-effect:** HLStatsX rankings and match records from 2026-04-05 (when 2.7.5 introduced the incomplete FNullEnt fix) through 2026-04-24 activation are incomplete. Events were never logged in the first place — no DB fix-up planned. Operator awareness item.
+
+**KTPMatchHandler 0.10.114 — cmd_ready 5-helper profiling probe:** Fleet telemetry since 2026-04-17 showed recurring ~163ms `cmd_ready` spikes on the `will_start=0` mid-count `.rdy` path (6 events on NY2/NY3 clustered at 163ms ± 0.5ms). 0.10.113's defer only covered `will_start=1`. Source audit ruled out Discord; tight clustering smelled like a deterministic blocking call. Split `cmd_ready` into 5 public helpers (`_cmd_ready_prechecks`, `_cmd_ready_identity`, `_cmd_ready_track_captain`, `_cmd_ready_update_roster`, `_cmd_ready_broadcast`) so AMXX's function-level profiler names the culprit stage on the next spike. **Important caveat:** AMXX's per-function profiler is gated on the `debug` flag — which got stripped fleet-wide tonight. The probe's per-helper warnings won't fire post-JIT-restart unless `debug` is selectively re-added.
+
+**Fleet-wide JIT activation (`debug` flag stripped):** Discovered from `modules.cpp:191-256` that **`debug` on a plugin in plugins.ini explicitly clears `AMX_FLAG_JITC`**. Every KTP plugin had `debug` set — ~9 plugins × 25 instances = 225 instances of interpreted Pawn execution on hot paths since extension mode was enabled. Python+SFTP regex transform stripped `debug` from every KTP plugin line in `plugins.ini` across all 25 instances, preserving `KTPHudObserver.amxx debug` on the three instances running cadaver's canary plugin (ATL:27015, DEN:27019, NY:27015). Backups saved as `plugins.ini.debugflag-bak-20260423` on each instance. Activates at 3 AM ET 2026-04-24 (KTPAMXX re-reads `plugins.ini` on server start).
+
+**Pre-JIT FPS baseline captured:** 127,543 `[KTP_PROFILE]` fps samples → `KTPInfrastructure/monitoring/fps_baselines/fleet_fps_2026-04-23_pre-jit.json` for tomorrow's A/B comparison. Fleet p50=978.2, σ=13.65. Per-host σ tightest → widest: Dallas 7.96, Denver 8.89, NY 10.31, Chicago 15.09 (VPS floor), Atlanta 17.44 (inflated by ATL:27016 at σ=30.74 min=842 — flagged anomaly).
+
+**`ktp-scheduled-restart.sh` — `-monitoring.lock` belt-and-suspenders fix:** Long-tracked TODO. After full OS reboot, port 27015 needed manual `./dodserver start` because LinuxGSM's monitor cron treated it as "intentionally stopped" when the lockfile was absent. Root-caused: `command_stop.sh:402` deletes the lockfile when `firstcommandname == "STOP"`; `command_start.sh:170` creates it only when `firstcommandname == "START" | "RESTART"`. Any out-of-flow start path leaves the lockfile absent. **Originally presented as 27015-specific but is port-agnostic** — found DAL:27015 in the broken state mid-investigation. Patched all 5 hosts: after each successful start, create `$SERVER_EXEC-monitoring.lock` with `date +%s` if missing. Idempotent.
+
+### Apr 23 (later): Held-on-main engine releases (not fleet-deployed)
+
+Two cleanup releases landed on `main` but were deliberately held out of the 24h bundle. Both committed; bundle into a future fleet release once 920 has soaked clean.
+
+| Version | Detail |
+|---|---|
+| **3.22.0.921** | 5 additional `Mem_Malloc + Q_memset` SEGV-on-OOM sites in `hashpak.cpp` (less-hot upload/admin paths) hardened the same way as 920. Committed as `8f616a6`. |
+| **3.22.0.922** | Two zero-risk `SV_Physics` entity-loop micro-hoists: `gGlobalVariables.force_retouch` cached as `const bool` before the loop; `g_psvs.maxclients` cached as `const int`. ~5-15ns/entity/frame, ~0.4-1.2µs/frame at peak. Free cleanup matching the existing 916/919 hoist patterns. Committed as `2c9f26c`. |
+
+### Apr 24 03:00 ET — FLEET-WIDE OUTAGE from `.new`-swap losing `+x` bit
+
+**Total outage window: 5h45m.** 03:00-08:48 ET — fleet down. Matchday hours unaffected (overnight low-traffic), but any player attempting to connect saw all 24 active KTP instances offline.
+
+**Root cause:** `ktp-scheduled-restart.sh`'s `.new`-swap loop did `mv -f "$new_file" "$target"`. SFTP uploads with default umask produce mode `644` (no execute bit). When `mv -f` moves a 644 file on top of a 755 target, Linux preserves the source's permissions — post-swap target is 644. `hlds_linux` and `engine_i486.so` silently lost `+x`. `./dodserver start` runs `./hlds_linux` under `tmux`; with no `+x`, exec fails with `Permission denied`, tmux exits immediately, LinuxGSM reports the opaque `Unable to start NOT SET` error.
+
+The bug was **latent in the swap script from 2026-04-21** (commit `e0d571c`). Three weeks of testing wouldn't have caught it because the failure required SFTP-uploaded files (umask 022) AND the auto-swap path running. First "cold boot" of both conditions was this morning.
+
+**Detection was the second failure.** Monitor cron produced ~30,000 "FAIL to start" log lines over 5h45m — none surfaced as alerts because Netdata / Discord plumbing was only wired to server-crash signatures, not to LinuxGSM start-failure signatures. A "servers running count != expected" heartbeat would have caught this within minutes.
+
+**Fix:** Permanent `chmod +x "$target"` after every successful swap in `ktp-scheduled-restart.sh`. Idempotent. Deployed in-place on all 5 hosts ~09:00. Backup saved as `.chmod-patch-bak-20260424`. Canonical source committed as `14e7612`.
+
+**Recovery confirmed:**
+- All 24 active instances running
+- CPU pinning correct (applied by `ktp-chrt.timer`'s 5-min reconciliation)
+- All binaries showing SCHED_FIFO priority 50
+- Startup logs show `KTPMatchHandler version=0.10.114` (probe deployed)
+- Plugins loading cleanly with **no `[performance issue]` warnings** — confirming JIT activation worked (Debugger hook absent = JIT active)
+- Engine banner shows `Version: 3.22.0.917-dev+m` due to pre-existing `appversion.h` auto-version drift (git commit count ≠ CHANGELOG version) — binary is 920, cosmetic mismatch only
+
+### Apr 24: KTP-ReHLDS v3.22.0.923 — HLTV `spawn` opcode alert suppression (held on main)
+
+With fleet back up, revisited the long-standing HLTV `spawn` opcode overhead TODO. Telemetry: HLTV SPAWN n=7591 p50=4.818ms, real-client SPAWN n=522 p50=1.812ms — ~2.6× asymmetry, fully localized to `WriteSpawn`'s `gamedll` phase (HLTV p50=3.197ms vs real p50=0.062ms — ~50× asymmetry). Real clients hit a short-circuit inside `dod_i386.so`'s `WriteSpawn` callback while HLTV takes the iterate-all-entities slow path. Game-DLL cost, not KTP-controllable; HLTV legitimately needs all-entity state for demo recording.
+
+Suppress the `[KTP_OPCODE]` alert at the threshold check when `cl->proxy != 0` AND command starts with `"spawn "`. Preserves real-client alerts; kills the noise floor (historically ~85% of all `KTP_OPCODE` alert volume was HLTV spawn). Fine-grained `[KTP_SPAWN]` / `[KTP_WRITESPAWN]` phase profiling continues for both. Committed `a2fc6ce`.
+
+### Apr 24: Fleet Health Heartbeat Alerter (response to outage)
+
+Direct response to the 5h45m undetected outage. `ktp-fleet-health.sh` runs as 1-minute cron on each of the 5 hosts. Checks `pgrep -c hlds_linux` against expected count (5 baremetals, 4 Chicago via per-host `~/.ktp-fleet-health/config.sh` override). Single Discord alert on state transitions — one 🚨 red DEGRADED post when count drops below expected for 3 consecutive minutes (debounce), one ✅ green RECOVERED post when it returns. Silent otherwise.
+
+**Design choices:**
+- Posts direct to test webhook channel, not via Cloud Run relay — one fewer dependency in the alert path. If the relay goes down (the scenario we care about most), alerts still fire.
+- State in `~/.ktp-fleet-health/state` (per-host). Hysteresis: outages produce exactly one DOWN + one UP alert.
+- `set -euo pipefail` + graceful curl-failure handling — alerter can't take down a host even if Discord is unreachable.
+
+Verified end-to-end. Committed `535f005`. **Would have caught today's outage within ~3 min, vs the 5h45m actual window.**
+
+### Apr 24-25: KTPAntiCheat Integration — Phases 1-5 shipped
+
+Full plan + per-phase contracts live in the private KTPAntiCheat repo. Eight phases scoped 2026-04-24, of which phases 1-5 + 8.x shipped within ~36 hours.
+
+Touchpoints visible in this repo's history:
+- **KTPMatchHandler 0.10.115** ships the game-server-side integration handshake — match-start and match-end announcement to the AC backend, idempotent on re-fire, gated on `<configsdir>/ac.ini` so the integration is a silent no-op when absent. Internals of what AC does with those signals stay in the private repo.
+- **Discord Relay 1.0.1** gained `allowed_mentions` passthrough to support the verdict-embed flow.
+
+Subsequent rollout phases (HWID enforce-flip, `.ready` enforcement) are time- and adoption-gated; the gating logic and thresholds live in the private repo.
+
+### Apr 25: KTPAdminBot Phase 8 — `/ops` Cog
+
+The Discord admin bot's `/ops` command surface (fleet-ops tooling) shipped over five sub-phases on the same day. Implementation lives in the private KTPAdminBot repo.
+
+The one piece visible in this repo's history: a **new metrics aggregator daemon** (KTPProfileAggregator, also private) that paramiko-tails 25 game-server logs every 5 min, parses `[KTP_PROFILE]` and `[KTP_SPIKE_*]` lines, and persists to a new `ktp_telemetry_metrics` + `ktp_telemetry_watermarks` MySQL schema. First cycle clocked at ~4.1s, 24/24 servers ingested cleanly. Distinct from the existing `ktp-server-monitor.py` cron — that polls RCON `stats`; the aggregator handles engine-emitted profiler data.
+
+### Apr 25: JIT Activation A/B Verdict
+
+Post-JIT FPS snapshot pulled after a full matchday of stable post-restart operation. Snapshots at `KTPInfrastructure/monitoring/fps_baselines/fleet_fps_2026-04-23_pre-jit.json` (n=127,543) and `fleet_fps_2026-04-25_post-jit.json` (n=138,069). Pull/diff scripts persisted at `pull_fleet_fps.py` + `diff_fleet_fps.py`.
+
+**Headline results:**
+- **ATL:27016 normalization confirmed** — σ 30.70 → **6.90** (4× tighter), min 842.0 → 904.7. The pre-JIT anomaly WAS interpreted Pawn tail latency. Explicit test target.
+- **Per-instance σ compression on 22 of 24 instances** (-0.4 to -2.0 typical). Per-host σ down on Dallas, Denver, Chicago.
+- **Fleet p50 unchanged** (978.2 → 978.3) — JIT didn't move the median. Median fps was already at the structural Sleep+work cap, not Pawn execution cost.
+- **Tail bias improved:** % in NFO window 998-1002 went from 3.17% → 4.34% (+37% relative).
+- **cmd_ready 163ms spike rate dropped to zero** in same-day grep (~20h of current logs). Pre-JIT averaged ~1.5 events/day on NY2/NY3.
+
+Two outliers explained as non-JIT events: NY:27015 mostly down (n=861 vs 5561 expected), ATL:27019 had a localized live-match event in hours 18-19 EDT.
+
+**Custom-kernel research does NOT de-escalate** per the runbook gate (post-JIT p50 ≥ 990 / σ ≤ 8 not met). Kernel TODO stays at Medium priority — proceed to Experiment A (preempt=full on ATL baremetal canary) when a maintenance window opens.
+
+### Apr 25: KTPInfrastructure PRs #3, #4, #5 — All Merged
+
+Three PRs from @JimmyLockhart65616 landed Saturday evening:
+
+- **#4** (`0ba7a77`) — `lint-configs` Makefile target rejects builds when `debug` is present in `config/online/plugins.ini`. Future-proofs JIT activation against regressions on plugins.ini edits.
+- **#5** (`5598657`) — `make build-data` target wraps the HUD Observer compose build with `DOD_HUD_PATH` validation + optional `NO_CACHE=1`.
+- **#3** (`7a758b3`) — local-prod parity: plugin/module load order matches Denver 5/ATL1:27015/NY1:27015, runtime base 22.04→24.04 (matches fleet glibc 2.39), stock-plugin compile pipeline, Makefile QoL. Required Makefile rebase against current main after #4 + #5 landed (single conflict on local-development `.PHONY` line; combined `build-data` + `refresh`/`refresh-local` cleanly).
+
+### Apr 25: KTPAdminBot 0.8.0/0.8.1 — Multi-Guild Routing
+
+Single Discord application token now serves multiple guilds with per-guild command-set filtering. Primary guild: full `/ac` + `/ops`; secondary guild: `/ops` only. Discord allows the same bot user across multiple guilds simultaneously — one process / one gateway / one token.
+
+`Config.guild_id` / `admin_role_id` scalars replaced by `tuple[GuildConfig, ...]`. Helpers `role_for_guild(gid)` / `mode_for_guild(gid)` / `primary_guild`. `bot.py setup_hook` iterates guilds, uses `tree.copy_global_to(guild)` + (for ops-only guilds) `tree.remove_command("ac", guild=...)` before per-guild `tree.sync()`. Internal verdict-embed HTTP listener starts only when a full-mode guild is configured. `interaction_check` in cogs routes role lookup through `cfg.role_for_guild(interaction.guild_id)`. Legacy `GUILD_ID` / `ADMIN_ROLE_ID` accepted as back-compat aliases.
+
+0.8.1 fixed a dataclass field-ordering crash from `default_factory=tuple` on a non-defaulted-fields-after dataclass. Deployed to a second guild (579024206931689482) for league-side fleet ops without exposing AC admin tooling.
+
+### Apr 25: KTPAntiCheat README Rewrite
+
+README was last meaningfully updated for v0.3.1 — since then 8 integration phases shipped (Gaps 1-4, Phases 5/8.2/8.3/8.4) all in the API (now 0.3.10) and KTPAdminBot. README still told admins to curl 4 endpoints and didn't mention the bot. Net change: +135 / -33. Committed `a0e135e`.
+- Version banner separates Server API (0.3.10) from Desktop client (0.3.1)
+- New "Admin architecture" section with auth-boundaries diagram
+- New "KTPAdminBot — recommended interface" section with full `/ac` + `/ops` command table
+- New sections for Discord verdict alerts, HWID ban workflow, session review workflow, match-ID linkage
+- "Direct API access (scripting)" preserves curl examples as fallback path
+
+### Apr 25: ktp_version_reporter Shared Include + 9-Plugin Onboarding
+
+First concrete deliverable for the test infrastructure plan + Tier 2 prerequisite (per-plugin live-version reporter that integration tests can assert against).
+
+**`KTPAMXX/plugins/include/ktp_version_reporter.inc`** (391e5389): provides `KTP_RegisterVersion(name, version)` for plugins to call from `plugin_init()`. The first-loaded plugin registers the `amx_ktp_versions` rcon command (ADMIN_RCON); subsequent plugins append their info to a shared localinfo registry. When invoked, prints fixed-width table: name | version | git SHA | build time (UTC). Build-time SHA + UTC timestamp injected via temp `build_info.inc` written by each plugin's compile.sh from `git rev-parse --short HEAD` + `date -u`. Include uses `#tryinclude` with "unknown" fallback for off-toolchain compiles.
+
+**Onboarding side-effect: discovered + fixed compile.sh `cp -r` nesting bug.** `cp -r src dst` semantics — when `dst` already exists, source contents get copied INTO it as `dst/src/...`. First-run worked; re-runs accumulated `/tmp/ktpbuild/include/include/...` layers. Pre-existing files survived from the first-ever run; new shared includes added later landed at the nested path and were invisible to amxxpc. Fixed via `rm -rf "$TEMP_BUILD"` before `mkdir`. Affected scripts: 4 patched (3 already had `rm -rf`, 2 used `mktemp -d` so unaffected).
+
+**Adopters:** all 9 plugins onboarded in one evening. Three plugins also had non-standard version constants standardized to `PLUGIN_NAME` / `PLUGIN_VERSION` / `PLUGIN_AUTHOR` for fleet-wide convention consistency.
+
+| Plugin | Old version | New version | Constants standardized |
+|---|---|---|---|
+| KTPMatchHandler | 0.10.115 | **0.10.116** | (already standard) |
+| KTPHLTVRecorder | 1.5.6 | **1.5.7** | (already standard) |
+| KTPCvarChecker | 7.22 | **7.23** | `gs_PLUGIN`/`gs_VERSION`/`gs_AUTHOR` → `PLUGIN_NAME`/`PLUGIN_VERSION`/`PLUGIN_AUTHOR` |
+| KTPFileChecker | 2.6 | **2.7** | `gs_PLUGIN`/`gs_VERSION`/`gs_AUTHOR` → `PLUGIN_NAME`/`PLUGIN_VERSION`/`PLUGIN_AUTHOR` |
+| KTPAdminAudit | 2.7.12 | **2.7.13** | `PLUGIN`/`VERSION`/`AUTHOR` → `PLUGIN_NAME`/`PLUGIN_VERSION`/`PLUGIN_AUTHOR` |
+| KTPGrenadeDamage | 1.0.4 | **1.0.5** | (already standard) |
+| KTPGrenadeLoadout | 1.0.7 | **1.0.8** | (already standard) |
+| KTPPracticeMode | 1.4.1 | **1.4.2** | (already standard) |
+| KTPScoreTracker | 1.1.0 | **1.1.1** | (already standard) |
+
+All 9 .amxx files compile clean and are locally staged. Production deploy held to **Monday 2026-04-27** (post-playoffs) per "no fleet changes during matchday" discipline.
+
+### Apr 25: Operational Infrastructure
+
+| Item | Detail |
+|---|---|
+| **Fleet Drift Audit** | Weekly cron on data server (`/etc/cron.d/ktp-fleet-audit`, Mon 05:00 ET) SSH-fans-out `fleet-drift-snapshot.sh` to all 5 game hosts and compares against declarative expected-state files in `KTPInfrastructure/provision/`. Five categories: sysctl, binary md5, GRUB cmdline, systemd timers, rc.local. Per-host `sample_port` field lets the audit sidestep canary-occupied ports. Discord alerts state-diff based (transitions only). SSH auth migrated to dedicated ed25519 key — shared `dodserver:ktp` password is out of audit config entirely. |
+| **Data-Server Health Check** | Hourly cron (`/etc/cron.d/ktp-data-server-health`) checks `mysql`, `nginx`, `hlstatsx`, `hltv-api`, `ktp-ac-api`, `ktp-file-distributor`, `hltv-restart.timer`, plus HLTV instance count (expected 24). State transitions only. |
+| **HLTV Demo Retention** | `/usr/local/bin/ktp-demo-retention.sh`. Tiered: `ktp/` + `draft/` 180 days, `12man/` + `scrim/` 90 days. Daily delete cron 04:30 ET; weekly preview alert Sunday 09:00 ET listing upcoming deletions to both KTP + 1.3 Discord channels. |
+| **KTPAMXX CI Replaced** | Master CI had been red since 2026-04-16 — `support/checkout-deps.sh` cloned stock `alliedmodders/hlsdk` but `meta_api.cpp` references `pfnClientCvarChanged` which exists only in `afraznein/KTPHLSDK` fork. Replaced with KTP-native workflow on `ubuntu-22.04` (glibc 2.35 floor for backward-compat), single-compiler `gcc-9-multilib`, explicit KTPHLSDK + metamod-hl1 + ambuild checkouts. Windows MSVC dropped (no Windows build); clang-11 dropped (incompatible with `-m32 -flto` on 22.04). |
+| **cadaver collaborator access** | New `cadaver:hud` account with NOPASSWD sudo provisioned across all 6 KTP hosts. Enables external collaborator deploys of `KTPHudObserver.amxx` companion plugin. |
+
+### Apr 25: Investigations Closed
+
+**Denver microcode — not actionable.** Denver's ~1.5× steam-phase spike magnitude vs Atlanta was hypothesized to stem from stale CPU microcode (`0x21` Denver vs `0x28` Atlanta). Tested 2026-04-22 by full reboot after confirming `intel-microcode` was already at latest Ubuntu version: microcode remained `0x21`. Ubuntu's package does not contain a newer blob for Intel Xeon E3-1240v2 (Ivy Bridge). Hardware-generation-inherent (Ivy Bridge vs Haswell), not fixable via standard channels.
+
+**`ktp-scheduled-restart.sh` race condition — fixed.** First-instance (`27015`) startup was racing its own STOP phase's async tmux kill-session teardown with the subsequent START, producing "NOT SET is already running" aborts. Polling loop after `./dodserver stop` waits for both `hlds_linux` processes and all `dodserver` tmux sessions to terminate (max 30s) before firing the next `start`. Also consolidated: Chicago's previously-custom restart script (port 27019 exclusion) replaced by the generic one + per-instance `.ktp-disabled` marker mechanism.
+
+---
+
+## New Components — April 2026
+
+Three new repositories joined the stack this month. **All three are private repos** — what follows is a high-level acknowledgement; design and implementation specifics live in their respective in-repo documentation.
+
+### KTPAntiCheat
+
+League anti-cheat for competitive Day of Defeat. **100% VAC-safe**, runs as a desktop client on Windows + macOS (Avalonia UI) with a server-side ASP.NET Core API on the data server. The API exposes integration endpoints used by KTPMatchHandler (match announce/end, session upload metadata) and admin endpoints used by KTPAdminBot. Methodology and detection mechanisms live in the private KTPAntiCheat repo.
+
+### KTPAdminBot
+
+Discord admin/ops bot. Python / discord.py 2.x. Runs on the data server as a systemd service. Surfaces `/ac` (anti-cheat admin) and `/ops` (fleet operations) slash-command groups, gated on a configurable admin role. Multi-guild routing (0.8.0+) lets one bot user serve multiple guilds with per-guild command-set filtering. Implementation specifics are in the private KTPAdminBot repo.
+
+### KTPProfileAggregator
+
+Metrics aggregator daemon on the data server that paramiko-tails fleet console logs every 5 min, parses engine-emitted profiler data, and persists to MySQL for downstream querying. Implementation lives in its private repo. Distinct from the existing `ktp-server-monitor.py` cron (which polls RCON `stats` per minute) — different data source, different cadence.
+
 ---
 
 ## Related Documentation
@@ -670,4 +933,4 @@ Average frame time: **0.012ms** (12 microseconds). Server FPS: 980+. Steam: 0.00
 
 ---
 
-*Last updated: 2026-04-14*
+*Last updated: 2026-04-25*
