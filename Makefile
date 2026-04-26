@@ -245,7 +245,7 @@ configure-names-dallas:
 # Local Development Targets
 # ============================================
 
-.PHONY: local-build local-up local-up-full local-down local-logs local-clean
+.PHONY: local-build build-data local-up local-up-full local-down local-logs local-clean
 
 LOCAL_COMPOSE := docker compose -f docker-compose.local.yml
 
@@ -278,6 +278,19 @@ local-up:
 	@echo ""
 	@echo "Drop .amxx files in local/plugins/ and restart to load custom plugins."
 	@echo "For the full stack (game servers + HUD Observer data service): make local-up-full"
+
+# Build the data server image (HUD Observer backend + frontend) only — no start.
+# Requires the sibling DoD-hud-observer repo; set DOD_HUD_PATH if it's not at
+# ../DoD-hud-observer. Force a clean rebuild with `make build-data NO_CACHE=1`.
+build-data:
+	@if [ ! -d "$${DOD_HUD_PATH:-../DoD-hud-observer}" ]; then \
+		echo "ERROR: DoD-hud-observer not found at $${DOD_HUD_PATH:-../DoD-hud-observer}"; \
+		echo "Clone it as a sibling directory or set DOD_HUD_PATH to point at it."; \
+		exit 1; \
+	fi
+	VERSION=$(VERSION) $(LOCAL_COMPOSE) --profile full build $(if $(NO_CACHE),--no-cache) data
+	@echo ""
+	@echo "Image built: ktp-dataserver:$(VERSION)"
 
 # Start local game server(s) + data service (HUD Observer backend, HLTV proxies,
 # MySQL, HLStatsX stub). Requires the sibling DoD-hud-observer repo — set
@@ -380,6 +393,7 @@ help:
 	@echo ""
 	@echo "Local development:"
 	@echo "  make local-build     - Build runtime game server image"
+	@echo "  make build-data      - Build HUD Observer data image only (NO_CACHE=1 to force clean)"
 	@echo "  make local-up        - Start local game server(s) (game only)"
 	@echo "  make local-up-full   - Start game servers + HUD Observer data service (needs sibling repo)"
 	@echo "  make local-down      - Stop local stack"
