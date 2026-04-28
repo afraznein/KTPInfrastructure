@@ -1,6 +1,6 @@
 # KTP Test Infrastructure Plan
 
-**Status:** Planning scoped 2026-04-24. **Tier 3 Project 1 partially shipped 2026-04-25** as a side effect of KTPAdminBot Phase 8.2 work (see "Already shipped" section below). **Tier 1 Session 1 — shared smoke harness — shipped 2026-04-26** (see Tier 1 section). Tier 2 not started. Three planning questions resolved at bottom.
+**Status:** Planning scoped 2026-04-24. **Tier 1 fully live 2026-04-28** — all 9 KTP plugin/module callers auto-trigger smoke on push, ~3-5 min runs via GHCR fast path. **Tier 3 Project 1 partially shipped 2026-04-25** via KTPAdminBot Phase 8.2 work. Tier 2 not started — now unblocked since T1 is live and the `amx_ktp_versions` rcon prerequisite shipped. Open T1 leaf: KTPAntiCheat xUnit scaffolding.
 **Scope:** Three-tier test infrastructure across the KTP stack — build-time smoke tests, pre-deploy integration tests, and continuous production baseline monitoring.
 
 ## Already shipped (overlaps with this plan)
@@ -301,11 +301,11 @@ Tier 2 last because it depends on Tier 1 build reliability + version diagnostic,
 
 | Tier | LoC planned | Hours planned | Shipped | Hours remaining |
 |---|---|---|---|---|
-| Tier 1 | ~1,500 | ~40 | shared harness (~600 LoC + 24 tests, ~6h) Session 1 2026-04-26 | ~34 |
+| Tier 1 | ~1,500 | ~40 | full harness + 9 callers + GHCR fast path + config-parse + preflight + bring-up debug (~26h) — fully live 2026-04-28 | ~14 (KTPAntiCheat xUnit only) |
 | Tier 2 | ~3,500 | ~120 | — | ~120 |
 | Tier 3 | ~2,000 | ~60 | aggregator (~800 LoC, ~20h) via AdminBot 8.2 | ~40 |
 | Cross-cutting | ~300 | ~20 | — | ~20 |
-| **Total** | **~7,300** | **~240** | **~26** | **~214** |
+| **Total** | **~7,300** | **~240** | **~46** | **~194** |
 
 ~5.5 weeks focused solo, ~9-11 calendar weeks part-time alongside regular plugin development.
 
