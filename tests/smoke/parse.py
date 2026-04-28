@@ -36,7 +36,12 @@ class ModuleRow:
 
     @property
     def is_running(self) -> bool:
-        return self.status.lower() == "running"
+        # AMXX reports `running` for JIT-compiled plugins and `debug` for
+        # plugins loaded with the `debug` flag (interpreted VM, no JIT).
+        # Both mean "loaded and active" — the assertion's intent is
+        # "did the plugin load successfully?", not "is it JIT-compiled?".
+        # Failure states are `bad load`, `error`, `paused`, `stopped`.
+        return self.status.lower() in ("running", "debug")
 
 
 @dataclass(frozen=True)
@@ -52,7 +57,12 @@ class PluginRow:
 
     @property
     def is_running(self) -> bool:
-        return self.status.lower() == "running"
+        # AMXX reports `running` for JIT-compiled plugins and `debug` for
+        # plugins loaded with the `debug` flag (interpreted VM, no JIT).
+        # Both mean "loaded and active" — the assertion's intent is
+        # "did the plugin load successfully?", not "is it JIT-compiled?".
+        # Failure states are `bad load`, `error`, `paused`, `stopped`.
+        return self.status.lower() in ("running", "debug")
 
 
 def _row_index(line: str) -> int | None:
