@@ -82,7 +82,8 @@ on:
       caller_repo_path:
         description: >-
           Path under workspace where the caller's repo should be checked out
-          (e.g. `KTPAmxxCurl`). Defaults to ${{ github.event.repository.name }}.
+          (e.g. `KTPAmxxCurl`). Defaults to the github.event.repository.name
+          context value when left empty.
         required: false
         type: string
         default: ''
