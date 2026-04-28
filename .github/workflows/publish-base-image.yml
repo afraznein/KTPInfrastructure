@@ -54,7 +54,7 @@ jobs:
       - name: Checkout KTPReHLDS
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPReHLDS
+          repository: ${{ github.repository_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 
@@ -68,21 +68,21 @@ jobs:
       - name: Checkout KTPReAPI
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPReAPI
+          repository: ${{ github.repository_owner }}/KTP-ReAPI
           path: KTPReAPI
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 
       - name: Checkout KTPhlsdk
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPhlsdk
+          repository: ${{ github.repository_owner }}/KTPHLSDK
           path: KTPhlsdk
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 
       - name: Checkout KTPAmxxCurl
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPAmxxCurl
+          repository: ${{ github.repository_owner }}/KTPAMXXCurl
           path: KTPAmxxCurl
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 

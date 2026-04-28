@@ -143,7 +143,7 @@ jobs:
         if: ${{ inputs.use_base_image && inputs.under_test_kind == 'cpp_module' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPhlsdk
+          repository: ${{ github.repository_owner }}/KTPHLSDK
           path: KTPhlsdk
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -154,7 +154,7 @@ jobs:
         if: ${{ !inputs.use_base_image }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPReHLDS
+          repository: ${{ github.repository_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -170,7 +170,7 @@ jobs:
         if: ${{ !inputs.use_base_image }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPReAPI
+          repository: ${{ github.repository_owner }}/KTP-ReAPI
           path: KTPReAPI
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -178,7 +178,7 @@ jobs:
         if: ${{ !inputs.use_base_image && inputs.under_test_kind != 'cpp_module' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPhlsdk
+          repository: ${{ github.repository_owner }}/KTPHLSDK
           path: KTPhlsdk
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -186,7 +186,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPAmxxCurl' }}
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/KTPAmxxCurl
+          repository: ${{ github.repository_owner }}/KTPAMXXCurl
           path: KTPAmxxCurl
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
