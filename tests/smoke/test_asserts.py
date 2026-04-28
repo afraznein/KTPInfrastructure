@@ -81,6 +81,23 @@ class AssertNoFailedTests(unittest.TestCase):
         assert_no_failed_modules(h)
         assert_no_failed_plugins(h)
 
+    def test_debug_status_treated_as_running(self):
+        """Plugins loaded with the `debug` flag in plugins.ini show status=
+        debug instead of running (interpreted VM, no JIT). They're still
+        loaded and active — should not fail the assertion."""
+        debug_output = "\n".join([
+            "Currently loaded plugins:",
+            "       id  name                 version    author           url                            file        status",
+            _plugin_row(1, 1, "Admin Base", "1.10.0", "AMXX Dev Team", "https://amxmodx.org/", "admin.amxx", "running"),
+            _plugin_row(2, 2, "KTP Match Handler", "0.10.116", "Nein_", "https://ktp.gg/", "KTPMatchHandler.amxx", "debug"),
+            _plugin_row(3, 3, "KTP HLTV Recorder", "1.5.7", "Nein_", "https://ktp.gg/", "KTPHLTVRecorder.amxx", "debug"),
+            "3 plugins, 3 running",
+        ])
+        h = StubHandle({"amx plugins": debug_output})
+        assert_no_failed_plugins(h)
+        # Truncation-aware match still works for debug-status plugins.
+        assert_plugins_running(h, ["KTPMatchHandler.amxx"])
+
     def test_failure_in_plugin_is_named(self):
         h = StubHandle({"amx modules": MODULES_OUTPUT, "amx plugins": PLUGINS_WITH_FAILURE})
         with self.assertRaises(AssertionError) as ctx:
