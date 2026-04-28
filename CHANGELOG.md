@@ -2,6 +2,29 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.2] - 2026-04-28
+
+### `scripts/hltv-api.py` v2.1 → v2.2
+
+#### Added
+- **`GET /hltv/<port>/state`** endpoint — returns HLTV recording state by parsing the last 5 minutes of `journalctl -u hltv@<port>` and walking newest-first. Recognizes four HLTV journal events: `Start recording to X.dem.` / `Already recording to X.dem.` / `Completed demo X.dem.` / `Recording to X.dem, Length N sec.`. `process_running` derives from `systemctl is-active`. Auth via existing `X-Auth-Key` header.
+- **Response shape:** `{"recording": bool, "basename": str|null, "process_running": bool, "last_event": {"type": str, "age_sec": int}|null, "already_recording_warning": bool}`. The `already_recording_warning` flag is the bleed signal — true when HLTV's most recent journal event was the explicit "Already recording" line that indicates a silently-rejected record command.
+
+#### Why
+KTPHLTVRecorder 1.6.0 polls `/state` before issuing `record` to avoid the record-while-recording bleed (HLTV silently kept the original basename across match boundaries). Fleet-wide audit 2026-04-28 found 60 misfiled match keys / 350 files / 59 missing-h1 cases caused by this. Plugin-side fix lives in `KTPHLTVRecorder.sma`; this is the API half.
+
+#### Changed
+- Refactored `do_POST` / `do_GET` dispatch — pulled common path-parse + auth-check into helpers (`_parse_path`, `_check_auth`). Same external behavior; new `/state` slots in cleanly.
+- Module-level helper `_parse_state(port)` — testable independently of the HTTP server. Tolerant of `journalctl` timeouts (returns safe "process up but state unknown" rather than blocking the client).
+
+#### Compatibility
+Purely additive. POST `/command` and `/restart` endpoints unchanged. Existing 1.5.x KTPHLTVRecorder plugins continue to work unmodified — they just don't poll the new endpoint. Older plugins receive HTTP 400 if they accidentally hit `/state`.
+
+#### Backup
+`/home/hltvserver/hltv-api.py.bak-20260428T124827` on the data server preserves the v2.1 binary for one-command rollback.
+
+---
+
 ## [1.5.1] - 2026-04-12
 
 ### Updated

@@ -2,7 +2,7 @@
 """
 KTP HLTV Command API
 Receives HTTP requests and writes commands to HLTV FIFO pipes.
-Also supports restarting individual HLTV instances.
+Also supports restarting individual HLTV instances and querying recording state.
 
 Location: /home/hltvserver/hltv-api.py (on data server)
 Service: /etc/systemd/system/hltv-api.service
@@ -10,15 +10,23 @@ Service: /etc/systemd/system/hltv-api.service
 Endpoints:
   POST /hltv/<port>/command  - Send command to HLTV via FIFO pipe
   POST /hltv/<port>/restart  - Restart specific HLTV instance
+  GET  /hltv/<port>/state    - Recording state from journalctl (v2.2)
   GET  /health               - Health check
 
+v2.2 - 2026-04-28: Added /state endpoint for plugin polling. Fixes record-while-
+                   recording bleed where HLTV silently ignored mid-recording
+                   `record <new>` commands and kept original basename across
+                   match/half boundaries.
 v2.0 - 2026-01-18: Added ThreadingHTTPServer and timeouts to prevent hangs
 """
 
 import os
+import re
 import json
+import time
 import subprocess
 import socket
+from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 
@@ -27,22 +35,152 @@ AUTH_KEY = "KTPVPS2026"
 PIPE_DIR = "/home/hltvserver/cmdpipes"
 VALID_PORTS = range(27020, 27045)
 
-# Timeout for FIFO writes (seconds)
 PIPE_WRITE_TIMEOUT = 5
+
+# /state journal scan window. 5 min covers the periodic "Length N sec." progress
+# lines (which fire every ~60s while recording) so we always have a fresh signal.
+STATE_JOURNAL_WINDOW = "5 minutes ago"
+STATE_JOURNALCTL_TIMEOUT = 4
+
+# Regexes against the message portion (after "hltv-wrapper.sh[PID]: ") of each
+# journal line. Order matters during the newest-first walk in _parse_state().
+_RE_START_RECORDING = re.compile(r"Start recording to (?P<basename>.+?)\.dem\.")
+_RE_ALREADY_RECORDING = re.compile(r"Already recording to (?P<basename>.+?)\.dem\.")
+_RE_COMPLETED_DEMO = re.compile(r"Completed demo (?P<basename>.+?)\.dem\.")
+_RE_RECORDING_LENGTH = re.compile(r"Recording to (?P<basename>.+?)\.dem, Length")
+
+# `journalctl --output=short-iso` emits "2026-04-28T12:42:02-04:00 host unit[pid]: msg"
+# Note: Python 3.7+ strptime accepts both -0400 and -04:00 for %z.
+_RE_JOURNAL_LINE = re.compile(
+    r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:?\d{2})\s+\S+\s+\S+:\s+(?P<msg>.*)$"
+)
 
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in separate threads to prevent blocking"""
-    daemon_threads = True  # Threads die when main thread exits
+    daemon_threads = True
 
     def server_bind(self):
-        """Set socket options before binding"""
         self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         super().server_bind()
 
 
+def _parse_iso(ts):
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S%z")
+
+
+def _service_active(port):
+    """Returns True if hltv@<port>.service is currently active."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", f"hltv@{port}.service"],
+            capture_output=True, text=True, timeout=3,
+        )
+        return result.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def _parse_state(port):
+    """Parse last 5 minutes of journalctl for hltv@<port> and return state dict.
+
+    Returns:
+        {
+          "recording": bool,
+          "basename": str|null,        # demo basename without .dem suffix
+          "process_running": bool,
+          "last_event": {"type": str, "age_sec": int}|null,
+          "already_recording_warning": bool,  # true if last event was "Already recording"
+        }
+    """
+    process_running = _service_active(port)
+
+    if not process_running:
+        return {
+            "recording": False,
+            "basename": None,
+            "process_running": False,
+            "last_event": None,
+            "already_recording_warning": False,
+        }
+
+    try:
+        result = subprocess.run(
+            [
+                "journalctl",
+                "-u", f"hltv@{port}.service",
+                "--since", STATE_JOURNAL_WINDOW,
+                "--no-pager",
+                "-q",
+                "--output=short-iso",
+            ],
+            capture_output=True, text=True, timeout=STATE_JOURNALCTL_TIMEOUT,
+        )
+        lines = result.stdout.splitlines()
+    except subprocess.TimeoutExpired:
+        # Don't pretend we know — return safe "unknown but process is up" state.
+        # Plugin treats this as idle (best-effort) so it doesn't infinite-poll.
+        return {
+            "recording": False,
+            "basename": None,
+            "process_running": True,
+            "last_event": None,
+            "already_recording_warning": False,
+            "error": "journalctl timeout",
+        }
+    except Exception as e:
+        return {
+            "recording": False,
+            "basename": None,
+            "process_running": True,
+            "last_event": None,
+            "already_recording_warning": False,
+            "error": str(e),
+        }
+
+    # Walk newest-first; first matching event wins.
+    now = datetime.now(timezone.utc)
+    for raw in reversed(lines):
+        m = _RE_JOURNAL_LINE.match(raw)
+        if not m:
+            continue
+        msg = m.group("msg")
+        ts = m.group("ts")
+
+        for kind, regex in (
+            ("already_recording", _RE_ALREADY_RECORDING),
+            ("start_recording", _RE_START_RECORDING),
+            ("completed_demo", _RE_COMPLETED_DEMO),
+            ("recording_length", _RE_RECORDING_LENGTH),
+        ):
+            mm = regex.search(msg)
+            if not mm:
+                continue
+            try:
+                age_sec = int((now - _parse_iso(ts)).total_seconds())
+            except Exception:
+                age_sec = -1
+            basename = mm.groupdict().get("basename")
+            recording = kind != "completed_demo"
+            return {
+                "recording": recording,
+                "basename": basename if recording else None,
+                "process_running": True,
+                "last_event": {"type": kind, "age_sec": age_sec},
+                "already_recording_warning": kind == "already_recording",
+            }
+
+    # No relevant events in the window — process is up but idle.
+    return {
+        "recording": False,
+        "basename": None,
+        "process_running": True,
+        "last_event": None,
+        "already_recording_warning": False,
+    }
+
+
 class HLTVHandler(BaseHTTPRequestHandler):
-    # Timeout for reading request (seconds)
     timeout = 10
 
     def log_message(self, format, *args):
@@ -55,34 +193,37 @@ class HLTVHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(data).encode())
         except (BrokenPipeError, ConnectionResetError):
-            # Client disconnected, ignore
             pass
 
-    def do_POST(self):
-        # Auth check
+    def _check_auth(self):
         auth = self.headers.get("X-Auth-Key", "")
         if auth != AUTH_KEY:
             self.send_json(401, {"error": "Unauthorized"})
-            return
+            return False
+        return True
 
-        # Parse path: /hltv/<port>/<action>
+    def _parse_path(self):
+        """Returns (port, action) or (None, None) if path was rejected."""
         parts = self.path.strip("/").split("/")
         if len(parts) != 3 or parts[0] != "hltv":
-            self.send_json(400, {"error": "Invalid path. Use /hltv/<port>/command or /hltv/<port>/restart"})
-            return
-
+            self.send_json(400, {"error": "Invalid path"})
+            return None, None
         try:
             port = int(parts[1])
         except ValueError:
             self.send_json(400, {"error": "Invalid port number"})
-            return
-
+            return None, None
         if port not in VALID_PORTS:
-            self.send_json(400, {"error": f"Port must be 27020-27044"})
+            self.send_json(400, {"error": "Port must be 27020-27044"})
+            return None, None
+        return port, parts[2]
+
+    def do_POST(self):
+        if not self._check_auth():
             return
-
-        action = parts[2]
-
+        port, action = self._parse_path()
+        if port is None:
+            return
         if action == "command":
             self.handle_command(port)
         elif action == "restart":
@@ -90,9 +231,23 @@ class HLTVHandler(BaseHTTPRequestHandler):
         else:
             self.send_json(400, {"error": f"Unknown action: {action}"})
 
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_json(200, {"status": "ok"})
+            return
+        # Auth required for /state
+        if not self._check_auth():
+            return
+        port, action = self._parse_path()
+        if port is None:
+            return
+        if action == "state":
+            self.handle_state(port)
+        else:
+            self.send_json(400, {"error": f"Unknown GET action: {action}"})
+
     def handle_command(self, port):
         """Send command to HLTV via FIFO pipe"""
-        # Read command from body
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
             self.send_json(400, {"error": "No command provided"})
@@ -109,21 +264,17 @@ class HLTVHandler(BaseHTTPRequestHandler):
             self.send_json(400, {"error": "Empty command"})
             return
 
-        # Write to FIFO with timeout
         pipe_path = f"{PIPE_DIR}/hltv-{port}.pipe"
         if not os.path.exists(pipe_path):
             self.send_json(500, {"error": f"Pipe not found: {pipe_path}"})
             return
 
         try:
-            # Open FIFO in non-blocking mode with timeout
-            # Use os.open to get file descriptor with O_NONBLOCK
             fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
             try:
                 os.write(fd, (command + "\n").encode())
             finally:
                 os.close(fd)
-
             self.send_json(200, {"success": True, "port": port, "command": command})
             print(f"[HLTV-API] Sent to {port}: {command}")
         except BlockingIOError:
@@ -141,26 +292,22 @@ class HLTVHandler(BaseHTTPRequestHandler):
         try:
             result = subprocess.run(
                 ["systemctl", "restart", service_name],
-                capture_output=True,
-                text=True,
-                timeout=30
+                capture_output=True, text=True, timeout=30,
             )
-
             if result.returncode == 0:
                 self.send_json(200, {
                     "success": True,
                     "port": port,
-                    "message": f"HLTV {port} restarted successfully"
+                    "message": f"HLTV {port} restarted successfully",
                 })
                 print(f"[HLTV-API] Restarted {service_name} successfully")
             else:
                 self.send_json(500, {
                     "success": False,
                     "port": port,
-                    "error": result.stderr.strip() or "Unknown error"
+                    "error": result.stderr.strip() or "Unknown error",
                 })
                 print(f"[HLTV-API] Failed to restart {service_name}: {result.stderr}")
-
         except subprocess.TimeoutExpired:
             self.send_json(500, {"error": "Restart timed out"})
             print(f"[HLTV-API] Restart of {service_name} timed out")
@@ -168,18 +315,18 @@ class HLTVHandler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": str(e)})
             print(f"[HLTV-API] Error restarting {service_name}: {e}")
 
-    def do_GET(self):
-        if self.path == "/health":
-            self.send_json(200, {"status": "ok"})
-        else:
-            self.send_json(404, {"error": "Not found"})
+    def handle_state(self, port):
+        """Return current recording state from journalctl scan."""
+        state = _parse_state(port)
+        self.send_json(200, state)
 
 
 if __name__ == "__main__":
-    print(f"[HLTV-API] Starting on port {API_PORT} (threaded)")
+    print(f"[HLTV-API] Starting on port {API_PORT} (threaded, v2.2)")
     print(f"[HLTV-API] Endpoints:")
     print(f"[HLTV-API]   POST /hltv/<port>/command - Send command to HLTV")
     print(f"[HLTV-API]   POST /hltv/<port>/restart - Restart HLTV instance")
-    print(f"[HLTV-API]   GET  /health - Health check")
+    print(f"[HLTV-API]   GET  /hltv/<port>/state   - Recording state")
+    print(f"[HLTV-API]   GET  /health              - Health check")
     server = ThreadingHTTPServer(("0.0.0.0", API_PORT), HLTVHandler)
     server.serve_forever()
