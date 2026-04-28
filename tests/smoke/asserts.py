@@ -25,14 +25,14 @@ def assert_modules_loaded(
     *,
     require_running: bool = True,
 ) -> list[ModuleRow]:
-    """Assert every name in `expected` appears in `amxx modules` output.
+    """Assert every name in `expected` appears in `amx modules` output.
 
     Names are matched after normalisation, so `amxxcurl`, `amxxcurl_ktp`, and
     `amxxcurl_ktp_i386.so` all match the same row.
 
     Returns the parsed rows on success.
     """
-    output = handle.rcon("amxx modules")
+    output = handle.rcon("amx modules")
     rows = parse_modules(output)
     by_key = {normalise_module_name(r.name): r for r in rows}
 
@@ -64,11 +64,11 @@ def assert_plugins_running(
     handle: ServerHandle,
     expected: list[str],
 ) -> list[PluginRow]:
-    """Assert every name in `expected` appears in `amxx plugins` output with
+    """Assert every name in `expected` appears in `amx plugins` output with
     status=running. Matching is truncation-aware — AMXX prints the .amxx
     filename truncated to 11 chars, so we match expected vs actual on a
     leading-prefix basis."""
-    output = handle.rcon("amxx plugins")
+    output = handle.rcon("amx plugins")
     rows = parse_plugins(output)
 
     missing: list[str] = []
@@ -103,7 +103,7 @@ def assert_plugins_running(
 
 def assert_no_failed_modules(handle: ServerHandle) -> list[ModuleRow]:
     """Catch the 04-14 KTPAmxxCurl class: a module silently fails to load."""
-    output = handle.rcon("amxx modules")
+    output = handle.rcon("amx modules")
     rows = parse_modules(output)
     failed = [r for r in rows if r.status.lower() not in ("running", "loaded")]
     if failed:
@@ -114,7 +114,7 @@ def assert_no_failed_modules(handle: ServerHandle) -> list[ModuleRow]:
 
 def assert_no_failed_plugins(handle: ServerHandle) -> list[PluginRow]:
     """Catch silent plugin load failures."""
-    output = handle.rcon("amxx plugins")
+    output = handle.rcon("amx plugins")
     rows = parse_plugins(output)
     failed = [r for r in rows if not r.is_running]
     if failed:

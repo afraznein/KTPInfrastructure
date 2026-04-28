@@ -3,7 +3,7 @@
 NOT a real test. Exists to validate that the harness can:
   1. Boot hlds_linux from the local KTP DoD Server tree (via WSL on Windows)
   2. Reach rcon
-  3. Successfully assert against `amxx modules` and `amxx plugins` output
+  3. Successfully assert against `amx modules` and `amx plugins` output
 
 Once Tier 1 ships properly, replace this file with the real per-project
 pytest suites it informs.

@@ -1,4 +1,4 @@
-"""Parsers for `amxx modules` and `amxx plugins` rcon output.
+"""Parsers for `amx modules` and `amx plugins` rcon output.
 
 Format strings taken verbatim from KTPAMXX `amxmodx/srvcmd.cpp`:
 
@@ -62,7 +62,7 @@ def _row_index(line: str) -> int | None:
 
 
 def parse_modules(output: str) -> list[ModuleRow]:
-    """Parse `amxx modules` output.
+    """Parse `amx modules` output.
 
     Format:  ` [%2d] %-23.22s %-11.10s %-20.19s %-11.10s`
     Layout:  '<sp>[NN] NAME(23) VER(11) AUTHOR(20) STATUS(11)'
@@ -101,7 +101,7 @@ def parse_modules(output: str) -> list[ModuleRow]:
 
 
 def parse_plugins(output: str) -> list[PluginRow]:
-    """Parse `amxx plugins` output.
+    """Parse `amx plugins` output.
 
     Format: ` [%3d] %-3i %-23.22s %-11.10s %-17.16s %-32.31s %-12.11s %-9.8s`
 

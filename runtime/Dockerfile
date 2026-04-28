@@ -77,6 +77,12 @@ COPY artifacts/${VERSION}/engine/ /opt/hlds/
 COPY artifacts/${VERSION}/ktpamx/dlls/ /opt/hlds/dod/addons/ktpamx/dlls/
 COPY artifacts/${VERSION}/ktpamx/modules/ /opt/hlds/dod/addons/ktpamx/modules/
 
+# Data files: gamedata/ for DODX's g_pGameRules lookup (else scoreboard
+# score natives disabled); lang/ for FCOS_LANG dictionary strings (else
+# boot spams "Failed to open dictionary file" warnings); GeoLite2-Country.mmdb
+# for the geoip module. All shipped from the AMXX build artifacts.
+COPY artifacts/${VERSION}/ktpamx/data/ /opt/hlds/dod/addons/ktpamx/data/
+
 # KTP application plugins
 COPY artifacts/${VERSION}/plugins/ /opt/hlds/dod/addons/ktpamx/plugins/
 

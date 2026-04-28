@@ -409,7 +409,7 @@ jobs:
 
       # KTPAMXX defers plugin_init until AFTER precache phase finishes (the
       # boot log line is "Loaded N plugin(s) during precache (plugin_init
-      # deferred)"). rcon answers ~1s after container start, but `amxx plugins`
+      # deferred)"). rcon answers ~1s after container start, but `amx plugins`
       # returns empty until plugin_init completes — usually 5-15s after rcon.
       # Poll until at least one plugin row is visible.
       - name: Wait for plugins to finish initializing
@@ -417,7 +417,7 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 60); do
-            out=$(python -m tests.smoke.cli rcon "amxx plugins" --port 27016 --rcon-password "$RCON_PASSWORD" 2>/dev/null || true)
+            out=$(python -m tests.smoke.cli rcon "amx plugins" --port 27016 --rcon-password "$RCON_PASSWORD" 2>/dev/null || true)
             # Parse format: ` [  N] name ...` — count rows that match.
             rows=$(echo "$out" | grep -cE '^\s*\[\s*[0-9]+\]' || true)
             if [ "$rows" -gt 0 ]; then
@@ -427,7 +427,7 @@ jobs:
             sleep 1
           done
           echo "::error::plugin_init did not complete within 60s after rcon-ready"
-          echo "--- last amxx plugins output ---"
+          echo "--- last amx plugins output ---"
           echo "$out"
           exit 1
 
@@ -455,8 +455,8 @@ jobs:
         working-directory: KTPInfrastructure
         continue-on-error: true
         run: |
-          python -m tests.smoke.cli rcon "amxx modules" --port 27016 --rcon-password "$RCON_PASSWORD" || true
-          python -m tests.smoke.cli rcon "amxx plugins" --port 27016 --rcon-password "$RCON_PASSWORD" || true
+          python -m tests.smoke.cli rcon "amx modules" --port 27016 --rcon-password "$RCON_PASSWORD" || true
+          python -m tests.smoke.cli rcon "amx plugins" --port 27016 --rcon-password "$RCON_PASSWORD" || true
 
       - name: Tear down
         if: always()

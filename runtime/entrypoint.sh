@@ -22,11 +22,17 @@ KTPAMX_DIR=$DOD_DIR/addons/ktpamx
 # This lets docker-compose mount a config profile (lan/, local/, online/)
 # and have it applied at startup without baking configs into the image.
 if [ -d /config ]; then
-    for f in modules.ini plugins.ini discord.ini hltv_recorder.ini; do
-        if [ -f "/config/$f" ]; then
-            cp "/config/$f" "$KTPAMX_DIR/configs/$f"
-            echo "[entrypoint] Installed config: $f"
-        fi
+    # Install all .ini config files from /config into the KTPAMXX configs
+    # directory. Includes the standard ones (modules.ini, plugins.ini,
+    # discord.ini, hltv_recorder.ini) plus any plugin-specific configs
+    # (ktp.ini, ktp_maps.ini, ktp_file.ini, grenade_loadout.ini, ac.ini)
+    # that exist alongside. The glob is intentional — individual plugins
+    # ship their own configs and we don't want to enumerate them here.
+    for f in /config/*.ini; do
+        [ -f "$f" ] || continue
+        bn="$(basename "$f")"
+        cp "$f" "$KTPAMX_DIR/configs/$bn"
+        echo "[entrypoint] Installed config: $bn"
     done
 
     if [ -f /config/dodserver.cfg ]; then

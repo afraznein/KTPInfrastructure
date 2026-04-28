@@ -8,7 +8,7 @@ Wire format (verified against KTPReHLDS rehlds/engine/sv_main.cpp):
   Rcon response       server -> client   \xff\xff\xff\xffl<output>\0\0
 
 Multi-packet responses: server sends one A2A_PRINT packet per redirect flush;
-large outputs (e.g. `amxx plugins`) span multiple packets. The client drains
+large outputs (e.g. `amx plugins`) span multiple packets. The client drains
 until a short inactivity gap, then concatenates.
 
 Stdlib only. Designed to run anywhere Python runs — WSL, hosted Linux runners,

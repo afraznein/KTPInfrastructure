@@ -31,7 +31,7 @@ tests/smoke/
 ├── server_handle.py       ServerHandle dataclass + wait_ready
 ├── boot.py                docker compose driver (sibling of boot_subprocess)
 ├── boot_subprocess.py     direct hlds_linux subprocess driver (CI / WSL)
-├── parse.py               fixed-column parser for `amxx modules` / `amxx plugins`
+├── parse.py               fixed-column parser for `amx modules` / `amx plugins`
 ├── asserts.py             high-level assertion helpers
 ├── cli.py                 command-line entrypoint
 ├── fixtures/
@@ -95,7 +95,7 @@ engine's filesystem layer rejects the directory entries and core-dumps on
 
 ## Truncation gotcha
 
-KTPAMXX prints `amxx plugins` with `%-12.11s` for the file column — only the
+KTPAMXX prints `amx plugins` with `%-12.11s` for the file column — only the
 first 11 chars survive. `KTPMatchHandler.amxx` shows up as `KTPMatchHan`.
 The parser preserves the truncated output as-is; `assert_plugins_running`
 matches expected names against parsed names with an 8-char prefix floor so
@@ -203,7 +203,7 @@ When the workflow fails:
 1. **`Container logs on failure` step** dumps the last 400 lines of
    `ktp-game-1` stdout. Look here first — most failures are visible
    immediately (`bad load: <module>`, missing file, segfault).
-2. **`Live amxx state on failure` step** runs `amxx modules` + `amxx plugins`
+2. **`Live amxx state on failure` step** runs `amx modules` + `amx plugins`
    via rcon and prints them. Useful for "server booted but X didn't load."
 3. **`make build` failure** is usually a missing sibling repo (look for
    "no such file or directory" in the docker context) or a real compile
@@ -251,10 +251,10 @@ For a C++ module repo (KTPAmxxCurl shape), the inputs differ:
 ```
 
 Naming hints:
-- `assert_module` matches against `amxx modules` output. Use the short
+- `assert_module` matches against `amx modules` output. Use the short
   display name (e.g. `amxxcurl`, `reapi`, `dodx`); the parser normalises
   away `_ktp_i386.so` suffixes.
-- `assert_plugin` matches against `amxx plugins` output. Truncation-aware
+- `assert_plugin` matches against `amx plugins` output. Truncation-aware
   matcher means `KTPMatchHandler` matches the truncated `KTPMatchHan` that
   AMXX's `%-12.11s` format string produces.
 

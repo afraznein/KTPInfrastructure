@@ -39,12 +39,12 @@ class StubHandle:
 
 class AssertModulesLoadedTests(unittest.TestCase):
     def test_all_present_passes(self):
-        handle = StubHandle({"amxx modules": MODULES_OUTPUT})
+        handle = StubHandle({"amx modules": MODULES_OUTPUT})
         rows = assert_modules_loaded(handle, ["amxxcurl_ktp_i386.so", "reapi_ktp", "dodx"])
         self.assertEqual(len(rows), 8)
 
     def test_missing_module_fails_with_name(self):
-        handle = StubHandle({"amxx modules": MODULES_OUTPUT})
+        handle = StubHandle({"amx modules": MODULES_OUTPUT})
         with self.assertRaises(AssertionError) as ctx:
             assert_modules_loaded(handle, ["amxxcurl", "reapi", "doesnotexist"])
         self.assertIn("doesnotexist", str(ctx.exception))
@@ -54,7 +54,7 @@ class AssertPluginsRunningTests(unittest.TestCase):
     def test_full_filenames_match_truncated_output(self):
         # The whole-point test: caller passes the .amxx filename, AMXX returns
         # it truncated, harness still finds it.
-        handle = StubHandle({"amxx plugins": PLUGINS_OUTPUT})
+        handle = StubHandle({"amx plugins": PLUGINS_OUTPUT})
         rows = assert_plugins_running(
             handle,
             ["KTPMatchHandler.amxx", "KTPHLTVRecorder.amxx", "admin.amxx"],
@@ -62,12 +62,12 @@ class AssertPluginsRunningTests(unittest.TestCase):
         self.assertEqual(len(rows), 5)
 
     def test_display_name_also_works(self):
-        handle = StubHandle({"amxx plugins": PLUGINS_OUTPUT})
+        handle = StubHandle({"amx plugins": PLUGINS_OUTPUT})
         rows = assert_plugins_running(handle, ["KTP Match Handler"])
         self.assertEqual(len(rows), 5)
 
     def test_bad_load_detected(self):
-        handle = StubHandle({"amxx plugins": PLUGINS_WITH_FAILURE})
+        handle = StubHandle({"amx plugins": PLUGINS_WITH_FAILURE})
         with self.assertRaises(AssertionError) as ctx:
             assert_plugins_running(handle, ["KTPMatchHandler.amxx"])
         msg = str(ctx.exception)
@@ -77,12 +77,12 @@ class AssertPluginsRunningTests(unittest.TestCase):
 
 class AssertNoFailedTests(unittest.TestCase):
     def test_clean_output_passes(self):
-        h = StubHandle({"amxx modules": MODULES_OUTPUT, "amxx plugins": PLUGINS_OUTPUT})
+        h = StubHandle({"amx modules": MODULES_OUTPUT, "amx plugins": PLUGINS_OUTPUT})
         assert_no_failed_modules(h)
         assert_no_failed_plugins(h)
 
     def test_failure_in_plugin_is_named(self):
-        h = StubHandle({"amxx modules": MODULES_OUTPUT, "amxx plugins": PLUGINS_WITH_FAILURE})
+        h = StubHandle({"amx modules": MODULES_OUTPUT, "amx plugins": PLUGINS_WITH_FAILURE})
         with self.assertRaises(AssertionError) as ctx:
             assert_no_failed_plugins(h)
         self.assertIn("KTPMatchHan", str(ctx.exception))
@@ -98,7 +98,7 @@ class AssertNoFailedTests(unittest.TestCase):
             _module_row(3, "reapi", "5.29.0", "KTP Team", "running"),
             "3 modules, 2 correct",
         ])
-        h = StubHandle({"amxx modules": broken})
+        h = StubHandle({"amx modules": broken})
         with self.assertRaises(AssertionError) as ctx:
             assert_no_failed_modules(h)
         self.assertIn("amxxcurl", str(ctx.exception))

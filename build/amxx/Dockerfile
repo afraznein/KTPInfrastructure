@@ -42,7 +42,7 @@ RUN . /opt/ambuild-venv/bin/activate && \
     python3 $(which ambuild)
 
 # Create output directory with artifacts
-RUN mkdir -p /output/ktpamx/dlls /output/ktpamx/modules /output/ktpamx/scripting/include && \
+RUN mkdir -p /output/ktpamx/dlls /output/ktpamx/modules /output/ktpamx/scripting/include /output/ktpamx/data && \
     # Main binary (required)
     cp obj-linux/packages/base/addons/ktpamx/dlls/ktpamx_i386.so /output/ktpamx/dlls/ && \
     # DODX module (required for KTP)
@@ -56,9 +56,15 @@ RUN mkdir -p /output/ktpamx/dlls /output/ktpamx/modules /output/ktpamx/scripting
     cp obj-linux/packages/base/addons/ktpamx/scripting/amxxpc32.so /output/ktpamx/scripting/ && \
     # Include files
     cp -r plugins/include/* /output/ktpamx/scripting/include/ && \
+    # Data files: gamedata/, lang/, GeoLite2 — DODX needs gamedata for
+    # g_pGameRules lookup (else scoreboard score natives are disabled);
+    # AMXX core needs lang/ for FCOS_LANG_* string lookups. Without these,
+    # boot logs spam "Failed to open dictionary file" warnings. Production
+    # gets these via the standard install; the docker build was missing them.
+    cp -r obj-linux/packages/base/addons/ktpamx/data/* /output/ktpamx/data/ 2>/dev/null || true && \
     # Set permissions
     chmod +x /output/ktpamx/dlls/* /output/ktpamx/modules/* /output/ktpamx/scripting/amxxpc && \
     # List what was built
-    echo "Built artifacts:" && ls -la /output/ktpamx/dlls/ /output/ktpamx/modules/
+    echo "Built artifacts:" && ls -la /output/ktpamx/dlls/ /output/ktpamx/modules/ /output/ktpamx/data/
 
 CMD ["ls", "-laR", "/output/ktpamx/"]
