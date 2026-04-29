@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import COMPLETE_PROFILES, CONFIG_ROOT
+from .conftest import COMPLETE_PROFILES, resolve_config
 from .parsers import parse_kv_file
 
 REQUIRED_KEYS = {"hltv_api_url", "hltv_api_key", "hltv_port"}
@@ -21,7 +21,7 @@ HLTV_PORT_MAX = 27044
 
 @pytest.fixture(params=COMPLETE_PROFILES)
 def hltv_ini(request) -> Path:
-    return CONFIG_ROOT / request.param / "hltv_recorder.ini"
+    return resolve_config(request.param, "hltv_recorder.ini")
 
 
 def test_hltv_ini_parses(hltv_ini):
@@ -48,7 +48,7 @@ def test_hltv_port_is_valid_int(hltv_ini):
 def test_online_hltv_port_in_known_range():
     """Online profile must use a port in the production HLTV range so the
     recorder hits the correct paired HLTV proxy on the data server."""
-    cfg = parse_kv_file(CONFIG_ROOT / "online" / "hltv_recorder.ini")
+    cfg = parse_kv_file(resolve_config("online", "hltv_recorder.ini"))
     port = int(cfg["hltv_port"])
     assert HLTV_PORT_MIN <= port <= HLTV_PORT_MAX, (
         f"online/hltv_recorder.ini: hltv_port {port} outside production "

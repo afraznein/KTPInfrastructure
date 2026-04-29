@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import COMPLETE_PROFILES, CONFIG_ROOT
+from .conftest import COMPLETE_PROFILES, resolve_config
 from .parsers import parse_kv_file
 
 # Required keys per the entrypoint + KTPMatchHandler / KTPAdminAudit
@@ -24,7 +24,7 @@ REQUIRED_KEYS = {
 
 @pytest.fixture(params=COMPLETE_PROFILES)
 def discord_ini(request) -> Path:
-    return CONFIG_ROOT / request.param / "discord.ini"
+    return resolve_config(request.param, "discord.ini")
 
 
 def test_discord_ini_parses(discord_ini):
