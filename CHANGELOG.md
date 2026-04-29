@@ -2,6 +2,33 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.3] - 2026-04-29
+
+### `scripts/ktp-scheduled-restart.sh` — plugins glob added
+
+#### Fixed
+- **Swap loop now covers `~/dod-*/serverfiles/dod/addons/ktpamx/plugins/*.new`**, in addition to the previously covered engine binaries, KTPAMXX dll, and modules. Without this, every `.amxx.new` plugin deployed to staging was invisible to the swap loop — the script would log `"No .new files pending — nothing to swap"` and servers would come back up running the old plugin versions despite a clean restart run.
+
+#### Why
+On 2026-04-29 03:00 ET, eight plugin updates were silently no-op'd by the swap loop (KTPHLTVRecorder 1.6.0, KTPMatchHandler 0.10.119, KTPCvarChecker 7.25, KTPFileChecker, KTPAdminAudit, KTPGrenadeDamage, KTPGrenadeLoadout, KTPPracticeMode, KTPScoreTracker). Discovered ~6 hours later via the post-activation monitoring routine, which file-size-checked HLTVRecorder against the v1.6.0 expected size (~19565 bytes) and saw the live `.amxx` was still pre-fix size (13771 bytes).
+
+The swap loop iterates an explicit glob list, not a recursive glob — `bash`'s `*.new` doesn't recurse into subdirectories, and the `[ -f "$new_file" ] || continue` early-exit makes new-file-type drift silent. Documentation comments in the script and CLAUDE.md both listed the same three covered paths the script actually iterated, so grepping either for "is plugins covered?" didn't surface the gap. Independent verification requires observed runtime behavior (file size, version banner, `amx_ktp_versions` rcon), not text-grep against `*.md` and `*.sh`.
+
+#### Changed
+- Comment block (lines ~226-229 in `scripts/ktp-scheduled-restart.sh`, ~183-186 in `.example`) updated to enumerate all four covered paths.
+- Glob array (line ~237 in `scripts/ktp-scheduled-restart.sh`, ~194 in `.example`) gained the `plugins/*.new` entry.
+
+#### Compatibility
+Idempotent — existing deploys without plugins/*.new files behave identically. Deploys that do stage plugin .new files now work as documented. The chmod +x applied post-mv to swapped files is a no-op on .amxx (which doesn't need executable bit) but harmless.
+
+#### Recovery action
+On 2026-04-29 ~14:00 ET, the eight staged plugins were activated fleet-wide via per-instance manual `mv` + LinuxGSM rolling restart (24 active instances, ~192 plugin swaps total). CHI:27019 (intentionally disabled per 2026-04-17 trial) still has all 8 `.new` files staged; the patched script will swap them correctly if/when that instance is re-enabled.
+
+#### Backups
+- All 5 game hosts retain pre-patch script as `~/ktp-scheduled-restart.sh.bak-20260429T140234Z-plugins-glob-fix`.
+
+---
+
 ## [1.5.2] - 2026-04-28
 
 ### `scripts/hltv-api.py` v2.1 → v2.2

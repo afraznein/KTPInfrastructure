@@ -224,9 +224,10 @@ log "All servers stopped"
 # while hlds_linux runs, so overwriting mid-run crashes the process).
 #
 # Covered locations (match what the deploy pipelines emit):
-#   ~/dod-*/serverfiles/*.new                         # engine_i486.so, hlds_linux, libsteam_api.so
-#   ~/dod-*/serverfiles/dod/addons/ktpamx/dlls/*.new  # ktpamx_i386.so
+#   ~/dod-*/serverfiles/*.new                            # engine_i486.so, hlds_linux, libsteam_api.so
+#   ~/dod-*/serverfiles/dod/addons/ktpamx/dlls/*.new     # ktpamx_i386.so
 #   ~/dod-*/serverfiles/dod/addons/ktpamx/modules/*.new  # dodx, reapi, amxxcurl
+#   ~/dod-*/serverfiles/dod/addons/ktpamx/plugins/*.new  # *.amxx (KTPMatchHandler, KTPHLTVRecorder, etc)
 log "Checking for staged .new files..."
 SWAP_COUNT=0
 SWAP_FAILED=0
@@ -234,7 +235,8 @@ for port in "${PORTS[@]}"; do
     BASE=~/dod-$port/serverfiles
     for new_file in "$BASE"/*.new \
                     "$BASE"/dod/addons/ktpamx/dlls/*.new \
-                    "$BASE"/dod/addons/ktpamx/modules/*.new; do
+                    "$BASE"/dod/addons/ktpamx/modules/*.new \
+                    "$BASE"/dod/addons/ktpamx/plugins/*.new; do
         [ -f "$new_file" ] || continue
         target="${new_file%.new}"
         if mv -f "$new_file" "$target"; then
