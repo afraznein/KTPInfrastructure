@@ -16,6 +16,23 @@ CONFIG_ROOT = INFRA_ROOT / "config"
 COMPLETE_PROFILES = ("local", "online")
 
 
+def resolve_config(profile: str, filename: str) -> Path:
+    """Return the path to read for a (profile, filename) pair.
+
+    The online profile's secret-bearing files (discord.ini, hltv_recorder.ini,
+    dodserver.cfg) are gitignored — only the .example templates are checked
+    in. In CI / fresh checkouts, fall back to the .example sibling so the
+    schema is still validated against what the repo actually ships.
+    """
+    real = CONFIG_ROOT / profile / filename
+    if real.exists():
+        return real
+    example = real.with_name(f"{filename}.example")
+    if example.exists():
+        return example
+    return real  # let the test surface the missing-file error
+
+
 @pytest.fixture(scope="session")
 def config_root() -> Path:
     return CONFIG_ROOT
