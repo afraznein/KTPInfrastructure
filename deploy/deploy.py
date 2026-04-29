@@ -631,8 +631,32 @@ Examples:
         "--artifacts-dir",
         help="Override artifacts directory",
     )
+    parser.add_argument(
+        "--force-deploy",
+        action="store_true",
+        help="Skip the CI-greenness pre-flight check. Use sparingly — only when CI "
+        "is broken for unrelated reasons. The bypass is logged to stderr.",
+    )
 
     args = parser.parse_args()
+
+    # Pre-flight: assert CI on HEAD is green before deploying. Skipped on
+    # --dry-run since a dry-run doesn't actually push artifacts. Bypass with
+    # --force-deploy when CI is red for unrelated reasons. See
+    # docs/CI_SETUP.md section 5 for the canonical pattern + escape hatch.
+    if not args.dry_run:
+        sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+        from preflight import assert_ci_passing, PreflightError  # noqa: E402
+
+        try:
+            assert_ci_passing(
+                repo_root=str(Path(__file__).parent.parent),
+                force=args.force_deploy,
+            )
+        except PreflightError as e:
+            print(f"REFUSING TO DEPLOY: {e}", file=sys.stderr)
+            print("Use --force-deploy to bypass.", file=sys.stderr)
+            sys.exit(1)
 
     # Determine artifacts directory
     if args.artifacts_dir:

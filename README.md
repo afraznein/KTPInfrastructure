@@ -1,6 +1,6 @@
 # KTP Infrastructure
 
-**Version 1.5.5** - Server infrastructure, deployment automation, and operational documentation for KTP Day of Defeat competitive servers.
+**Version 1.5.6** - Server infrastructure, deployment automation, and operational documentation for KTP Day of Defeat competitive servers.
 
 ---
 

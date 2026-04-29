@@ -2,6 +2,35 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.6] - 2026-04-29
+
+### Deploy preflight integration
+
+#### Added — `deploy/deploy.py` now requires CI green for HEAD before deploying
+The canonical Python deploy entry point (used by `make deploy`, `make deploy-atlanta`, `make deploy-plugins`, etc.) now fires `scripts/preflight.py::assert_ci_passing` before doing any work. Catches the regression class where someone compiles + deploys without realizing their last commit broke smoke or config-tests.
+
+##### Changed
+- `deploy/deploy.py` — Added a new `--force-deploy` flag and a pre-flight block that imports `preflight` from `../scripts/`, calls `assert_ci_passing(repo_root=KTPInfrastructure root, force=args.force_deploy)`, and exits with `REFUSING TO DEPLOY: <reason>` on failure. Skipped on `--dry-run` (no point gating a dry-run).
+
+##### Behavior
+- Normal path: deploy aborts if HEAD has no workflow runs, has any in-progress run, or has any non-success conclusion. Push your commit and wait for CI; or use `--force-deploy` to bypass.
+- `--dry-run`: pre-flight skipped, deploy proceeds in dry-run mode regardless of CI state.
+- `--force-deploy`: pre-flight runs but logs a warning instead of failing. Same convention as branch-protection bypass — sparingly, and document why.
+
+##### Why now
+TODO entry "Tier 1 housekeeping (c) — Deploy-script preflight integration" had been deferred since 2026-04-29. The pre-flight library + CLI shipped 2026-04-27 but no deploy script called it yet. Now the highest-traffic deploy entry point does.
+
+##### Compatibility
+Purely additive. Existing invocations work the same. The `--force-deploy` flag is opt-in. No env vars required beyond what `gh` CLI already needs (the dev machine should already have `gh auth login`'d).
+
+##### Scope note
+This integration covers the tracked Python deploy entry point (`deploy/deploy.py`). The dev-local gitignored deploy scripts in plugin repos (e.g., `KTPAmxxCurl/scripts/deploy_curl.py`) are not touched here — those vary per developer and per session and should adopt the pattern individually when next modified. See `docs/CI_SETUP.md` section 5 for the canonical library + shell integration patterns.
+
+##### Related
+- Branch protection per-repo (the other half of the TODO entry) remains pending. Operator UI / `gh api` work — per `docs/CI_SETUP.md` section 3 — held for a focused review pass to avoid getting status check names wrong (a wrong required check blocks all PRs on that repo).
+
+---
+
 ## [1.5.5] - 2026-04-29
 
 ### Build system — drop external `metamod-am` checkout
