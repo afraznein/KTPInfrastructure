@@ -27,3 +27,23 @@ frontend:
 
 auth:
   steam_api_key: ""
+
+# HUD-to-HLTV broadcast sync. Local dev mirrors production layout: HLTV
+# proxies run inside the data container on 127.0.0.1:27020/27021 with
+# `delay 60` (matches production). Game servers report hostnames
+# "KTP Local Dev #1" / "#2" (set via SERVER_HOSTNAME env in
+# docker-compose.local.yml).
+hltv_sync:
+  enabled: true
+  heartbeat_seconds: 30
+  fallback_delay_seconds: 60
+  rcon_timeout_ms: 5000
+  servers:
+    "KTP Local Dev #1":
+      hltv_addr: 127.0.0.1
+      hltv_port: 27020
+      rcon_password: localdev-rcon
+    "KTP Local Dev #2":
+      hltv_addr: 127.0.0.1
+      hltv_port: 27021
+      rcon_password: localdev-rcon

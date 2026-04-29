@@ -110,9 +110,14 @@ services:
     volumes:
       # Backend config (auth key, ports, storage)
       - ./config/local/config.yaml:/app/config.yaml:ro
-      # HLTV proxy configs (connect to game servers by service name)
-      - ./test-env/data/hltv-1.cfg:/opt/hltv/instance-1/hltv.cfg:ro
-      - ./test-env/data/hltv-2.cfg:/opt/hltv/instance-2/hltv.cfg:ro
+      # HLTV proxy configs — staged at /host-cfgs and copied into the instance
+      # dirs by start.sh. Mounting them directly at /opt/hltv/instance-N/hltv.cfg
+      # breaks the 32-bit HLTV binary's stat() on Docker Desktop / WSL2 because
+      # the bind-mount synthesizes 64-bit inodes that overflow stat32 (EOVERFLOW),
+      # the cfg silently falls back to default port 27020, and both instances
+      # race for the same port.
+      - ./test-env/data/hltv-1.cfg:/host-cfgs/hltv-1.cfg:ro
+      - ./test-env/data/hltv-2.cfg:/host-cfgs/hltv-2.cfg:ro
       # HLTV demo recordings (persist across restarts)
       - ./test-env/data/demos:/opt/hltv/demos
       # MySQL data (persist across restarts)
