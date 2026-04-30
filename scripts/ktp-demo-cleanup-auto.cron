@@ -1,0 +1,8 @@
+# KTP HLTV root-level auto-* demo cleanup
+# See /usr/local/bin/ktp-demo-cleanup-auto.sh
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+# Daily at 04:45 ET (after organize 04:00 and retention 04:30)
+45 4 * * *   root  /usr/local/bin/ktp-demo-cleanup-auto.sh >> /var/log/ktp-demo-cleanup-auto.log 2>&1

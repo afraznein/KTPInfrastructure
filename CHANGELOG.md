@@ -2,6 +2,38 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.8] - 2026-04-29
+
+### `scripts/hltv-demo-renamer` — match-window-driven demo renamer (Phase 1c of HLTV F+A architecture)
+
+New systemd service on the data server that watches each game host's amxx log for `[KTP HLTV] MATCH_WINDOW_OPEN` / `MATCH_WINDOW_CLOSE` lines emitted by KTPHLTVRecorder v1.7.0+, and renames `auto_<friendly>-<TS>-<map>.dem` files to the canonical format the existing 4 AM `ktp-organize-hltv-demos.sh` recognizes.
+
+#### Added
+- `scripts/hltv-demo-renamer.py` — Python service, ~450 LOC. Paramiko-tails logs every 30s; in-memory state of open match windows keyed by `(hltv_port, match_id, half)` with persistent JSON checkpoint at `/var/lib/hltv-demo-renamer/state.json`. h1's effective close is auto-derived from h2's open event (KTPMatchHandler only emits `MATCH_WINDOW_CLOSE` once per whole match at MATCH_END).
+- `scripts/hltv-demo-renamer.service` — systemd unit (Type=simple, root, Restart=on-failure, StartLimitBurst=5).
+- `scripts/ktp-demo-cleanup-auto.sh` — Phase 1d sibling cleanup: sweeps unmatched root-level `auto*-*.dem` >7 days. Required because `ktp-demo-retention.sh` only operates on `demos/{ktp,draft,12man,scrim}/` subfolders — its blind spot is exactly where unmatched auto-* files land.
+- `scripts/ktp-demo-cleanup-auto.cron` — daily at 04:45 ET (sequenced after organize 04:00, retention 04:30).
+- `scripts/install-hltv-demo-renamer.sh` — single-shot installer: copies binaries, installs systemd unit + cron, ensures python3-paramiko, reloads systemd.
+- `scripts/README-hltv-demo-renamer.md` — operations runbook (pipeline diagram, friendly-alias table, dry-run / state-reset / failure-mode docs).
+
+#### Verified design
+- Output format (`<matchtype>_<match_id>-<UPPER_FRIENDLY>(_h1|_h2)?-<hltv_ts>-<map>.dem`) matches the existing organizer's regex; verified via Python AST replay of the bash regex on real production filenames.
+- HLTV's auto-rotation suffix behavior (`-<YYMMDDHHMM>-<map>` appended to whatever basename is configured) confirmed against current production v1.6.0 amxx log evidence — no canary needed before rollout.
+- Unit + ingest tests pass: friendly mapping (5 region bases), MATCH_WINDOW parse, auto-* regex, target-name builder including multi-segment `_part2`, h1→h2 auto-close-prior-half logic.
+
+#### Activation
+Idle until KTPHLTVRecorder v1.7.0 is fleet-wide AND HLTV cfgs include `record auto_<friendly>` (Phase 1a). Service can be enabled before those land — it simply has no events to process.
+
+#### Pipeline order (cron + service)
+```
+hltv-demo-renamer.service       continuous     auto-*.dem -> canonical
+ktp-organize-hltv-demos.sh      04:00 ET       canonical -> demos/<F>/<T>/
+ktp-demo-retention.sh delete    04:30 ET       per-tier age sweep (subfolders only)
+ktp-demo-cleanup-auto.sh        04:45 ET       root-level auto-*.dem >7d sweep
+```
+
+---
+
 ## [1.5.7] - 2026-04-29
 
 ### `scripts/hltv-restart-all.sh` — fix syntax error that broke nightly HLTV restarts since 2026-04-10

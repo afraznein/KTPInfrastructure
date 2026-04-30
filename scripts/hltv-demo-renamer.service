@@ -1,0 +1,26 @@
+[Unit]
+Description=KTP HLTV Demo Renamer — match-window-driven rename of auto-* demos
+Documentation=https://github.com/afraznein/KTPInfrastructure/blob/main/scripts/README-hltv-demo-renamer.md
+After=network-online.target hltv-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/bin/hltv-demo-renamer.py
+Restart=on-failure
+RestartSec=15
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# State + log directories
+StateDirectory=hltv-demo-renamer
+RuntimeDirectory=hltv-demo-renamer
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hltv-demo-renamer
+
+[Install]
+WantedBy=multi-user.target
