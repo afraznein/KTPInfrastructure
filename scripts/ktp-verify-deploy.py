@@ -69,6 +69,17 @@ SCOPE_GLOBS = {
 }
 ENGINE_GLOBS = ["../engine_i486.so", "../hlds_linux", "../libsteam_api.so"]
 
+# Paths intentionally NOT deployed to the full fleet. Missing-on-target for
+# these is reported as INFO (informational, not drift). Maintain explicitly
+# here — if you want a plugin to be considered "must-be-everywhere," remove
+# it from this set.
+KNOWN_PARTIAL_DEPLOYS: set[str] = {
+    # Jimmy's external-contributor plugin. Released at his pace, deployed
+    # only to a subset of instances (currently ATL1, DAL1, DEN5 per
+    # 2026-05-02 verify-deploy first run). Not a deploy gap.
+    "addons/ktpamx/plugins/KTPHudObserver.amxx",
+}
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -199,9 +210,10 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
             inst_data = {
                 "status": "green",
                 "files_count": len(manifest),
-                "missing": [],     # in ref, not in target (RED)
-                "drift": [],       # in both, hash differs (RED)
-                "extra": [],       # in target, not in ref (YELLOW)
+                "missing": [],         # in ref, not in target (RED)
+                "missing_partial": [], # in ref, not in target, but on KNOWN_PARTIAL_DEPLOYS allowlist (INFO)
+                "drift": [],           # in both, hash differs (RED)
+                "extra": [],           # in target, not in ref (YELLOW)
                 "new_files": new_files,
             }
 
@@ -209,7 +221,10 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
             tgt_paths = set(manifest.keys())
 
             for p in sorted(ref_paths - tgt_paths):
-                inst_data["missing"].append(p)
+                if p in KNOWN_PARTIAL_DEPLOYS:
+                    inst_data["missing_partial"].append(p)
+                else:
+                    inst_data["missing"].append(p)
             for p in sorted(tgt_paths - ref_paths):
                 inst_data["extra"].append(p)
             for p in sorted(ref_paths & tgt_paths):
@@ -220,7 +235,8 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
                         "actual_sha": manifest[p][:16],
                     })
 
-            # Status classification
+            # Status classification — KNOWN_PARTIAL_DEPLOYS missing doesn't
+            # count toward drift severity (it's expected partial coverage).
             if new_files or inst_data["missing"] or inst_data["drift"]:
                 inst_data["status"] = "red"
             elif inst_data["extra"]:

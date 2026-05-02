@@ -1,0 +1,27 @@
+# KTP scheduled verification — post-fleet-restart deploy verification (Tier 2)
+#
+# Triggers ktp-soak-verify --suite post-restart at 03:30 ET nightly (after
+# the 03:00 ET fleet restart + .new swap completes). Posts a red Discord
+# embed to #ktp-updates ONLY on RED (hash drift, missing-on-target, or
+# lingering .new files). Silent on GREEN/YELLOW per --quiet-yellow.
+#
+# Why --quiet-yellow:
+#   - KTPHudObserver.amxx is intentional partial-deploy (Jimmy's plugin,
+#     released at his pace). Now in ktp-verify-deploy's KNOWN_PARTIAL_DEPLOYS
+#     allowlist, so it doesn't trigger RED.
+#   - CHI + NYC each have 10 stock KTPAMXX modules on disk (dodfun, engine,
+#     fun, geoip, hamsandwich, etc.) that ATL/DAL/DEN don't have. Modules
+#     on disk ≠ loaded modules; not operationally harmful. Treated as
+#     known operator drift; YELLOW won't post.
+#
+# What WILL trigger a post:
+#   - Any new RED: hash drift between hosts, missing-not-on-allowlist,
+#     or .new files lingering (the 2026-04-21 swap-script regression class).
+#
+# Companion to /etc/cron.d/ktp-soak-verify-post-matchday (Mon 10:00 ET).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+30 3 * * *   root  /usr/local/bin/ktp-soak-verify --suite post-restart --quiet-yellow >> /var/log/ktp-soak-verify-post-restart.log 2>&1
