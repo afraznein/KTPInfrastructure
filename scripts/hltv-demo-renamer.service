@@ -3,6 +3,13 @@ Description=KTP HLTV Demo Renamer — match-window-driven rename of auto-* demos
 Documentation=https://github.com/afraznein/KTPInfrastructure/blob/main/scripts/README-hltv-demo-renamer.md
 After=network-online.target hltv-api.service
 Wants=network-online.target
+# StartLimitIntervalSec + StartLimitBurst belong in [Unit] per systemd.unit(5),
+# NOT [Service]. The latter placement triggers
+#   "Unknown key name 'StartLimitIntervalSec' in section 'Service', ignoring"
+# at unit-load time, which silently disables the restart rate-limiting.
+# Fixed 2026-05-02.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,8 +18,6 @@ Group=root
 ExecStart=/usr/bin/python3 /usr/local/bin/hltv-demo-renamer.py
 Restart=on-failure
 RestartSec=15
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # State + log directories
 StateDirectory=hltv-demo-renamer
