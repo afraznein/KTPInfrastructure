@@ -98,7 +98,10 @@ COLORS = {
 
 
 def load_relay_conf(path: str = "/etc/ktp/discord-relay.conf") -> dict[str, str]:
-    """Parse the simple KEY=VALUE lines used by existing KTP scripts."""
+    """Parse bash-sourceable KEY=VALUE conf. Strips surrounding shell quotes
+    on values — `RELAY_URL="https://..."` and `RELAY_URL='https://...'` both
+    yield `https://...`. Without this, urllib treats `"https` as a literal
+    URL scheme and fails with `unknown url type`."""
     conf: dict[str, str] = {}
     if not os.path.exists(path):
         return conf
@@ -109,7 +112,11 @@ def load_relay_conf(path: str = "/etc/ktp/discord-relay.conf") -> dict[str, str]
                 continue
             if "=" in line:
                 k, v = line.split("=", 1)
-                conf[k.strip()] = v.strip()
+                v = v.strip()
+                # Strip matching surrounding quotes (single or double).
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in ('"', "'"):
+                    v = v[1:-1]
+                conf[k.strip()] = v
     return conf
 
 

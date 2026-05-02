@@ -1,0 +1,15 @@
+[Unit]
+Description=KTP systemd unit-failure alert (POSTs Discord embed for %i)
+Documentation=https://github.com/afraznein/KTPInfrastructure/blob/main/scripts/ktp-systemd-alert.py
+
+[Service]
+Type=oneshot
+# %i = the failed unit name (passed via OnFailure=ktp-systemd-alert@%n.service
+# in the watched unit's [Unit] block — systemd substitutes %n with the failing
+# unit's full name and %i in this template receives that as the instance arg).
+ExecStart=/usr/local/bin/ktp-systemd-alert %i
+
+# Don't cascade alerts on alert-script failure — that would create a loop if
+# the relay is unreachable. Failures are best-effort; ktp-data-server-health
+# is the periodic safety net.
+SuccessExitStatus=0 3
