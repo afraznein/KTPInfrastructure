@@ -151,9 +151,14 @@ def build_embed(suite: SuiteResult) -> dict:
 
 
 def post_to_discord(embed: dict, channel_id: str, relay_url: str, auth_secret: str) -> tuple[bool, str]:
-    """POST a Discord embed via the KTP relay. Returns (success, response_text)."""
+    """POST a Discord embed via the KTP relay. Returns (success, response_text).
+
+    Relay expects camelCase `channelId` field, NOT snake_case. Source-of-truth
+    is /usr/local/bin/ktp-report-core's `post_to_discord` on game hosts. See
+    memory `scheduled_report_channel.md` for the canonical POST shape.
+    """
     payload = json.dumps({
-        "channel_id": channel_id,
+        "channelId": channel_id,
         "embeds": [embed],
     }).encode("utf-8")
     req = urllib.request.Request(
