@@ -4,5 +4,7 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MAILTO=''
 
-# Daily at 04:45 ET (after organize 04:00 and retention 04:30)
-45 4 * * *   root  /usr/local/bin/ktp-demo-cleanup-auto.sh >> /var/log/ktp-demo-cleanup-auto.log 2>&1
+# Every 30 min — F+A always-on HLTV recording produces ~75 GB/day of dead
+# demos across the 24-instance fleet; 30-min cadence keeps disk pressure
+# bounded to ~1.5 GB max accumulation between sweeps.
+*/30 * * * *   root  /usr/local/bin/ktp-demo-cleanup-auto.sh >> /var/log/ktp-demo-cleanup-auto.log 2>&1

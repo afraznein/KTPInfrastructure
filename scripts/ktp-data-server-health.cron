@@ -1,0 +1,8 @@
+# KTP Data Server Health — hourly check
+# Critical-enough that a 10-minute window felt like overkill; most issues
+# here are background services whose failures aren't player-visible.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+0 * * * *     root  /usr/local/bin/ktp-data-server-health.sh >> /var/log/ktp-data-server-health.log 2>&1
