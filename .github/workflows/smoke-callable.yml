@@ -87,6 +87,18 @@ on:
         required: false
         type: string
         default: ''
+      ktp_owner:
+        description: >-
+          GitHub owner that publishes the KTP infrastructure (KTPInfrastructure
+          repo, sibling KTP plugin repos, and the GHCR base image). Defaults to
+          `afraznein` — the canonical KTP owner. External callers under a
+          different owner (e.g. JimmyLockhart65616/DoD-hud-observer) inherit the
+          correct default and don't need to override. Forks under a non-KTP
+          owner can override only if they actually publish their own image and
+          repo set, which is uncommon.
+        required: false
+        type: string
+        default: 'afraznein'
     secrets:
       ktp_checkout_token:
         description: PAT for cross-repo checkout (required for private KTP repos)
@@ -104,7 +116,7 @@ jobs:
     env:
       VERSION: ci
       RCON_PASSWORD: changeme
-      BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
+      BASE_IMAGE: ghcr.io/${{ inputs.ktp_owner }}/ktp-runtime-test-base:latest
       CALLER_REPO_DIR: ${{ inputs.caller_repo_path != '' && inputs.caller_repo_path || github.event.repository.name }}
 
     steps:
@@ -119,7 +131,7 @@ jobs:
       - name: Checkout KTPInfrastructure
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPInfrastructure
+          repository: ${{ inputs.ktp_owner }}/KTPInfrastructure
           path: KTPInfrastructure
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -136,7 +148,7 @@ jobs:
         if: ${{ inputs.use_base_image && inputs.under_test_kind == 'cpp_module' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPAMXX
+          repository: ${{ inputs.ktp_owner }}/KTPAMXX
           path: KTPAMXX
           submodules: recursive
           token: ${{ secrets.ktp_checkout_token || github.token }}
@@ -145,7 +157,7 @@ jobs:
         if: ${{ inputs.use_base_image && inputs.under_test_kind == 'cpp_module' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPHLSDK
+          repository: ${{ inputs.ktp_owner }}/KTPHLSDK
           path: KTPhlsdk
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -156,7 +168,7 @@ jobs:
         if: ${{ !inputs.use_base_image }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTP-ReHLDS
+          repository: ${{ inputs.ktp_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -164,7 +176,7 @@ jobs:
         if: ${{ !inputs.use_base_image && inputs.under_test_kind != 'cpp_module' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPAMXX
+          repository: ${{ inputs.ktp_owner }}/KTPAMXX
           path: KTPAMXX
           submodules: recursive
           token: ${{ secrets.ktp_checkout_token || github.token }}
@@ -176,7 +188,7 @@ jobs:
         if: ${{ !inputs.use_base_image }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTP-ReAPI
+          repository: ${{ inputs.ktp_owner }}/KTP-ReAPI
           path: KTPReAPI
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -184,7 +196,7 @@ jobs:
         if: ${{ !inputs.use_base_image && inputs.under_test_kind != 'cpp_module' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPHLSDK
+          repository: ${{ inputs.ktp_owner }}/KTPHLSDK
           path: KTPhlsdk
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -192,7 +204,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPAmxxCurl' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPAMXXCurl
+          repository: ${{ inputs.ktp_owner }}/KTPAMXXCurl
           path: KTPAmxxCurl
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -200,7 +212,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPMatchHandler' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPMatchHandler
+          repository: ${{ inputs.ktp_owner }}/KTPMatchHandler
           path: KTPMatchHandler
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -208,7 +220,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPHLTVRecorder' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPHLTVRecorder
+          repository: ${{ inputs.ktp_owner }}/KTPHLTVRecorder
           path: KTPHLTVRecorder
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -216,7 +228,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPCvarChecker' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPCvarChecker
+          repository: ${{ inputs.ktp_owner }}/KTPCvarChecker
           path: KTPCvarChecker
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -224,7 +236,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPFileChecker' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPFileChecker
+          repository: ${{ inputs.ktp_owner }}/KTPFileChecker
           path: KTPFileChecker
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -232,7 +244,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPAdminAudit' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPAdminAudit
+          repository: ${{ inputs.ktp_owner }}/KTPAdminAudit
           path: KTPAdminAudit
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -240,7 +252,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPGrenades' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPGrenades
+          repository: ${{ inputs.ktp_owner }}/KTPGrenades
           path: KTPGrenades
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -248,7 +260,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPPracticeMode' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPPracticeMode
+          repository: ${{ inputs.ktp_owner }}/KTPPracticeMode
           path: KTPPracticeMode
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
@@ -256,7 +268,7 @@ jobs:
         if: ${{ !inputs.use_base_image && env.CALLER_REPO_DIR != 'KTPScoreTracker' }}
         uses: actions/checkout@v6
         with:
-          repository: ${{ github.repository_owner }}/KTPScoreTracker
+          repository: ${{ inputs.ktp_owner }}/KTPScoreTracker
           path: KTPScoreTracker
           token: ${{ secrets.ktp_checkout_token || github.token }}
 
