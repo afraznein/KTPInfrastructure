@@ -107,8 +107,17 @@ services:
       context: ${DOD_HUD_PATH:-../DoD-hud-observer}
       dockerfile: data-server/Dockerfile
     image: ktp-dataserver:${VERSION:-latest}
+    environment:
+      # Tell the backend to read the bind-mounted config below instead of the
+      # one COPY'd into the image at build time. Mirrors how production sets
+      # HUD_CONFIG_PATH on the systemd unit. Without this override the backend
+      # resolves config relative to its own __dirname and reads
+      # /app/config/local/config.yaml (the image-baked default), so the bind
+      # mount would be a no-op.
+      HUD_CONFIG_PATH: /app/config.yaml
     volumes:
-      # Backend config (auth key, ports, storage)
+      # Backend config (auth key, ports, storage, hltv_sync). Source of truth
+      # for the local docker stack — edit this file, restart the data container.
       - ./config/local/config.yaml:/app/config.yaml:ro
       # HLTV proxy configs — staged at /host-cfgs and copied into the instance
       # dirs by start.sh. Mounting them directly at /opt/hltv/instance-N/hltv.cfg
