@@ -550,11 +550,19 @@ def main():
                 presence[label] = {p: None for p in paths}
         ssh.close()
 
-    # FastDL
-    print(f"[audit] FastDL via root@{FASTDL_HOST}...", file=sys.stderr)
-    fastdl_ssh = ssh_connect(FASTDL_HOST, FASTDL_USER)
-    presence["FastDL"] = batch_check_existence(fastdl_ssh, FASTDL_DIR, paths)
-    fastdl_ssh.close()
+    # FastDL — run locally when the script is on the FastDL host (cron path),
+    # SSH otherwise (workstation runs). Self-SSH `root@host` from the same
+    # host requires root's pubkey in its own authorized_keys, which isn't a
+    # standard config; checking for the dir locally is more robust.
+    import os as _os
+    if _os.path.isdir(FASTDL_DIR):
+        print(f"[audit] FastDL via local fs ({FASTDL_DIR})...", file=sys.stderr)
+        presence["FastDL"] = {p: _os.path.isfile(_os.path.join(FASTDL_DIR, p)) for p in paths}
+    else:
+        print(f"[audit] FastDL via root@{FASTDL_HOST}...", file=sys.stderr)
+        fastdl_ssh = ssh_connect(FASTDL_HOST, FASTDL_USER)
+        presence["FastDL"] = batch_check_existence(fastdl_ssh, FASTDL_DIR, paths)
+        fastdl_ssh.close()
     fastdl_missing = sum(1 for v in presence["FastDL"].values() if not v)
     print(f"[audit] FastDL  scanned {len(presence['FastDL'])} paths · {fastdl_missing} missing",
           file=sys.stderr)
