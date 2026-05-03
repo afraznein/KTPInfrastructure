@@ -2,6 +2,43 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.12] - 2026-05-03
+
+### `fix`: ktp-demo-cleanup-auto retune for F+A always-on-recording rate
+
+`ktp-demo-cleanup-auto.sh` deployed 2026-04-29 22:43 with a 7-day age threshold and daily 04:45 ET cron. KTPHLTVRecorder 1.7.0 F+A activation flipped HLTV recording from match-windowed to always-on the same day, raising root-level `auto_*.dem` accumulation from a few GB/week (matches only) to ~75 GB/day (24-instance fleet × continuous recording during dead time + map rotations on empty servers). The 7-day threshold meant the script logged `nothing past 7d at root` four nights running while the disk drowned. Discovered 2026-05-03 12:00 ET when `/dev/xvda2` hit 100% used (468G/493G); root partition wedged.
+
+#### Retune
+- `AGE_DAYS=7` → `AGE_MINUTES=360` (6 hours). 6h covers a full DoD match plus renamer-recovery grace; renamer normally renames within seconds of `MATCH_WINDOW_CLOSE`, and renamer outages page via the `OnFailure=` alert framework well before this window elapses. `find -mtime` → `find -mmin`.
+- Cron daily 04:45 ET → `*/30 * * * *` (every 30 min). Bounds max disk pressure between sweeps to ~1.5 GB.
+- No logic changes — same dry-run mode, same per-file logging, same human-bytes formatter, same `-maxdepth 1` to keep `demos/<friendly>/<matchtype>/*.dem` untouchable.
+
+#### Operational steps applied 2026-05-03
+- Manual triage cleanup ahead of script retune: 6,035 root-level `auto_*.dem` files / 305.32 GB deleted via `find -maxdepth 1 -mmin +120 -delete`. Manifest at `/var/log/ktp-cleanup/auto-dem-purge-20260503-121032.txt`. Disk: 100% → 35% used (305 GB freed).
+- Sanity assertions: `demos/` subtree (137 GB sorted demos) untouched; renamer service still `active`; all 24 HLTV instances still running.
+- Script + cron deployed via SFTP, dry-run validated, real cron picks up new schedule on next refresh.
+- 12:30 ET first scheduled fire under new schedule logged `auto-cleanup: nothing past 360m at root` — expected (manual triage already covered the >120m set). First real sweep arrives ~18:30 ET when the post-triage in-flight backlog crosses the 6h threshold.
+
+#### Why this slipped 2026-04-29
+Pure timing miss. The cleanup script was sized for the pre-F+A world (matches only) and the F+A activation landed the same day. Pre-F+A, dead-time recording produced ~zero GB; post-F+A, it's the dominant volume source. The script's premise ("anything past 7d is forgotten by the renamer") was correct; the ASSUMPTION ("disk has weeks of headroom") wasn't audited against the F+A change.
+
+### `fix`: ktp-data-server-health alerts move to #ktp-updates
+
+`ktp-data-server-health.sh` was posting state-transition alerts to channel `1081255192529477744` (legacy "drift audit" channel) while every other operational alert framework on the data server (`ktp-soak-verify`, `ktp-systemd-alert`, `ktp-precache-audit`, RemoteTrigger / canary / cron embeds) posts to `#ktp-updates` (`1498813261263405097`). The split-channel state meant operators had to watch two channels for an essentially identical class of signal. Surfaced 2026-05-03 03:00 ET when a hltv@27027=deactivating alert landed in the wrong place.
+
+#### Change
+- `ALERT_CHANNEL` default `1081255192529477744` → `1498813261263405097` (memory `scheduled_report_channel.md`).
+- Script header comment updated: stale `Schedule: every 10 minutes` corrected to match the actual cron (`hourly`); the 10-min comment was a leftover from an earlier draft of the cron file's own justification block.
+- Imported as canonical source into `KTPInfrastructure/scripts/ktp-data-server-health.sh` + `.cron` — the script was previously only deployed, not in the repo. No `.example` template required (no inline secrets — `RELAY_URL` + `AUTH_SECRET` source from `/etc/ktp/discord-relay.conf` at runtime).
+
+#### Operational steps applied 2026-05-03
+- Backup: `/root/cron-backups/ktp-data-server-health.sh.bak-20260503-122500`.
+- Deploy: SFTP'd to `/usr/local/bin/ktp-data-server-health.sh`, line endings normalized, `chmod 755`, `chown root:root`. md5 changed from `99ec3855…` to `747574a9…`.
+- Verification: manual run `[2026-05-03 12:39:10] no transitions (currently down: 0)` — script reads new channel value, won't post anything until next real transition. Next real transition lands in `#ktp-updates` as proof.
+
+#### Housekeeping
+- Moved my own `.bak-*` backup files out of `/etc/cron.d/` (defensive — cron's run-parts naming rule ignores filenames containing dots, so they weren't firing, but they shouldn't sit in `/etc/cron.d/` regardless). Backups now live in `/root/cron-backups/`.
+
 ## [1.5.11] - 2026-05-01
 
 ### `fix`: hltv-demo-renamer no longer double-appends friendly hostname into canonical filename
