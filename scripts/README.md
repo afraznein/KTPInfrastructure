@@ -186,6 +186,47 @@ Creates a tarball of base DoD game files for deployment to new servers.
 ./package-dod-base.sh [source_path] [output_path]
 ```
 
+### precache_audit.py
+Fleet-wide precache-gap audit. Cross-references map-declared asset references against the actual on-disk state of every game-server instance + FastDL. Surfaces files that are referenced (and could be precached on map load) but missing on one or more hosts → crash candidates when those hosts rotate to the relevant map.
+
+**Reference sources:**
+- **`.res` files** (Phase 1, 2026-05-02). Custom maps' explicit asset manifests. Caught the 2026-05-01 `xrain2.spr` crash on `dod_thunder`.
+- **BSP `entdata` lump** (Phase 2, 2026-05-02). Stock DoD maps don't have `.res` files but DO embed precache references in entity definitions (`env_sprite "model"`, `ambient_generic "message"`, `worldspawn "wad"`). Generalizes the bug class to stock maps.
+
+**Severity model:**
+| Severity | Trigger | Discord post |
+|---|---|---|
+| `CRITICAL` | Missing on 5+ game-server instances | yes |
+| `HIGH`     | Missing on 1-4 game-server instances | yes |
+| `MEDIUM`   | Present on every game host, missing on FastDL | yes |
+| `LOW`      | Other drift | yes |
+| `INFO`     | Reference host AND ≥80% of fleet missing — stale entdata, engine-tolerated | no (silent in cron mode; listed in saved report.md) |
+
+**Usage:**
+```bash
+# Manual run, full report to stdout
+python3 precache_audit.py
+
+# Save report to a file (markdown)
+python3 precache_audit.py --output /tmp/audit.md
+
+# BSP-only or .res-only
+python3 precache_audit.py --scope bsp
+python3 precache_audit.py --scope res
+
+# Pull references from a different reference host
+python3 precache_audit.py --ref-host dal --ref-port 27015
+
+# Cron mode — post Discord embed only on actionable severity, silent otherwise
+python3 precache_audit.py --scope all --cron-mode --output /var/log/ktp-precache-audit-$(date +%Y%m%d).md
+```
+
+**Cron:** `/etc/cron.d/ktp-precache-audit-weekly` runs Sun 06:00 ET → posts to `#ktp-updates` (channel id `1498813261263405097`) only on actionable severity (silent on green/INFO-only).
+
+**Deployed to:** `/usr/local/bin/ktp-precache-audit` (data server symlink to the script).
+
+**Phase 3 deferred** — SHA256 drift detection (presence-only today). Add only if a real drift incident shows up; deploys are pretty atomic via FTP fan-out.
+
 ## Deployment Locations
 
 | Script | Server | Path |

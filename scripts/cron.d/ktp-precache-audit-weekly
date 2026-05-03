@@ -1,0 +1,40 @@
+# KTP weekly precache-gap audit — fleet-wide drift detection.
+#
+# Runs precache_audit.py with --scope all (.res + BSP entdata) on Sunday
+# 06:00 ET (after the 03:00 ET fleet restart + .new swap, before Sunday
+# matchplay starts ~12:00 ET). Posts a Discord embed to #ktp-updates ONLY
+# on actionable severity (CRITICAL/HIGH/MEDIUM/LOW); silent on GREEN or
+# INFO-only weeks.
+#
+# What this catches that ktp-soak-verify doesn't:
+#   - ktp-soak-verify checks deployed binaries (md5 drift across .so/.amxx)
+#   - This audit checks deployed ASSETS (.spr/.mdl/.wav/.wad/.tga/.bmp)
+#     referenced by maps. Different surface, different bug class.
+#
+# What CAN trigger a post:
+#   - CRITICAL: asset referenced by a map missing on 5+ game-server
+#     instances (the xrain2.spr 2026-05-01 class — fleet-wide deploy gap)
+#   - HIGH:     missing on 1-4 instances (partial-deploy class)
+#   - MEDIUM:   present on every game host but missing on FastDL (slow
+#     client downloads, no crashes)
+#   - LOW:      other drift
+#
+# What does NOT trigger a post:
+#   - INFO: reference host AND ≥80% of fleet missing — stale entdata
+#     reference the engine tolerates. Map has shipped this way forever;
+#     not a fleet-drift signal. Listed in the saved report.md for
+#     operator visibility but not embedded in the Discord post.
+#
+# Companion to:
+#   - /etc/cron.d/ktp-soak-verify-post-restart  (nightly binary drift)
+#   - /etc/cron.d/ktp-soak-verify-post-matchday (Mon HLTV F+A health)
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+# Sun 06:00 ET = 10:00 UTC during EDT, 11:00 UTC during EST.
+# Server's TZ=America/New_York handles the conversion; cron evaluates the
+# minute/hour fields against local time. Confirm with `timedatectl` on the
+# data server (should report America/New_York).
+0 6 * * 0   root  /usr/local/bin/ktp-precache-audit --scope all --cron-mode --output /var/log/ktp-precache-audit-$(date +\%Y\%m\%d).md >> /var/log/ktp-precache-audit-cron.log 2>&1
