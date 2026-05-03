@@ -86,7 +86,11 @@ def scan_pid_port_table() -> dict[int, int]:
         cmdline_path = proc_dir / "cmdline"
         try:
             data = cmdline_path.read_bytes()
-        except (PermissionError, FileNotFoundError):
+        except (PermissionError, FileNotFoundError, ProcessLookupError):
+            # ProcessLookupError: PID died between glob() yielding it and
+            # read_bytes() opening /proc/<pid>/cmdline — Linux reaps the
+            # /proc entry asynchronously, so we can race it. Same fall-
+            # through as FileNotFoundError: skip this PID and continue.
             continue
         if b"hlds_linux" not in data:
             continue

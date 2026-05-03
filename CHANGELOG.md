@@ -2,6 +2,31 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.13] - 2026-05-03
+
+### `fix`: ktp-report-core ProcessLookupError race in scan_pid_port_table
+
+The crashreporter's PID-port table scanner walks `/proc/[0-9]*` and reads each `/proc/<pid>/cmdline` to map live `hlds_linux` PIDs to their game ports. The existing exception handler at `report_core.py:89` caught `PermissionError` + `FileNotFoundError`, but not `ProcessLookupError` — Linux raises the latter (not the former) when `/proc/<pid>/` exists but the task struct behind it has been reaped between `Path.glob()` yielding the PID and `read_bytes()` opening the cmdline file. The /proc reaper is asynchronous, so the directory entry can survive the task struct briefly.
+
+ATL crashreporter hit this race once on 2026-05-01 04:52:01 EDT and crashed; systemd auto-restarted 11s later. No core-event was lost in the gap (no cores landed in `/tmp` during the window), but a longer-running race could have masked a real game-server crash. Discovered 2026-05-03 while reviewing Tier 3 Project 2 status.
+
+#### Change
+- `scan_pid_port_table()` exception tuple `(PermissionError, FileNotFoundError)` → `(PermissionError, FileNotFoundError, ProcessLookupError)`. Same continue-and-skip-this-PID semantics for all three.
+- Added 4-line comment explaining the race so future readers don't strip `ProcessLookupError` thinking it's redundant with `FileNotFoundError`.
+
+#### Operational steps applied 2026-05-03
+- Deployed in parallel to all 5 game hosts (ATL/DAL/DEN/NY/CHI). md5 `8a2d50a4...` → `d76f010d...`. `systemctl restart ktp-crashreporter` per host; all 5 came back `active` at the same instant 13:16:21 EDT, all logged the canonical `crashreporter started · region=<X>` line.
+- Backups: `/root/cron-backups/ktp-report-core.bak-20260503-130000` per host.
+- `python3 -c "import py_compile; py_compile.compile(...)"` syntax check passed pre-restart on each host.
+- Service consumed memory peak 17-19M per host pre-restart (38-150s CPU lifetime), no leak signals.
+
+#### Why this slipped 2026-04-26
+`ProcessLookupError` vs `FileNotFoundError` vs `PermissionError` looks like a distinction without a difference at first glance — they're all "this PID went away or isn't readable." Original handler caught the two more obvious ones. `ProcessLookupError` fires specifically when the kernel still has the `/proc` directory entry but the task struct has been reaped — rare on idle systems, more frequent on busy ones with high process churn. Defensive fix.
+
+### `chore`: Tier 3 Project 2 (Core-dump auto-reporter) — TODO checkbox flipped post-hoc
+
+Project shipped 2026-04-26 per memory `crashreporter_fleet_2026-04-26.md`; TODO checkbox in `TODO.md` was never flipped. Updated to `[x]` with a resolved-line pointing at the memory + the race-condition fix above. Scope totals math refreshed: Tier 3 remaining ~25h (rollup + spike categorizer) instead of ~40h. ~168h total Tier-2/3 remaining instead of ~180h.
+
 ## [1.5.12] - 2026-05-03
 
 ### `fix`: ktp-demo-cleanup-auto retune for F+A always-on-recording rate
