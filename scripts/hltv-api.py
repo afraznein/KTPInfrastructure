@@ -37,10 +37,22 @@ VALID_PORTS = range(27020, 27045)
 
 PIPE_WRITE_TIMEOUT = 5
 
-# /state journal scan window. 5 min covers the periodic "Length N sec." progress
-# lines (which fire every ~60s while recording) so we always have a fresh signal.
+# /state journal scan window. The 2026-05-04 forensics on ATL1 disproved the
+# original assumption that HLTV emits "Length N sec." progress lines every
+# ~60s on its own — those lines only appear in response to external rcon
+# `status` calls. So `_parse_state()` now writes `status\n` to the cmdpipe
+# itself before scanning the journal (see `_trigger_status_rcon` below), and
+# this 5-min window only needs to be wide enough to absorb journalctl write
+# latency + our trigger sleep. Conservative for safety.
 STATE_JOURNAL_WINDOW = "5 minutes ago"
 STATE_JOURNALCTL_TIMEOUT = 4
+
+# How long to wait between writing `status\n` to the cmdpipe and reading the
+# journal back. HLTV processes one stdin line per tick (~10ms), the kernel
+# flushes journald within ~50ms, but allow generous slack on a busy data
+# server. Cost: this much added latency per /state call (which fires once
+# per match start, per host — ~10x/day fleet-wide; not a hot path).
+STATE_TRIGGER_SLEEP_SEC = 0.25
 
 # Regexes against the message portion (after "hltv-wrapper.sh[PID]: ") of each
 # journal line. Order matters during the newest-first walk in _parse_state().
@@ -81,6 +93,37 @@ def _service_active(port):
         return False
 
 
+def _trigger_status_rcon(port):
+    """Write `status\\n` to HLTV's cmdpipe to trigger a fresh `Recording to ...
+    Length N sec.` line in the journal.
+
+    The HLTV `status` rcon prints recording state as a side effect; in v1.7.0
+    F+A architecture (HLTV-cfg-driven `record auto_<friendly>`), the journal
+    has no other periodic source for this signal — so without this trigger,
+    the journal scan in _parse_state() returns recording=False whenever the
+    last 5 minutes had no rcon-status traffic, producing false-positive
+    "HLTV up but not recording" alerts at every match start (Bug 2, observed
+    on ATL1 four times on 2026-05-03).
+
+    Pipe write is non-blocking; failures are silent (caller falls back to
+    journal-only scan, which is the prior buggy behavior). Pipe is a kernel
+    FIFO — concurrent writes serialize at line granularity, so concurrent
+    /state calls don't garble each other's `status` lines.
+    """
+    pipe_path = f"{PIPE_DIR}/hltv-{port}.pipe"
+    if not os.path.exists(pipe_path):
+        return False
+    try:
+        fd = os.open(pipe_path, os.O_WRONLY | os.O_NONBLOCK)
+        try:
+            os.write(fd, b"status\n")
+        finally:
+            os.close(fd)
+        return True
+    except (BlockingIOError, OSError):
+        return False
+
+
 def _parse_state(port):
     """Parse last 5 minutes of journalctl for hltv@<port> and return state dict.
 
@@ -103,6 +146,11 @@ def _parse_state(port):
             "last_event": None,
             "already_recording_warning": False,
         }
+
+    # Bug 2 fix (2026-05-04): trigger a fresh `status` rcon before scanning
+    # the journal. See _trigger_status_rcon() docstring for rationale.
+    _trigger_status_rcon(port)
+    time.sleep(STATE_TRIGGER_SLEEP_SEC)
 
     try:
         result = subprocess.run(

@@ -2,6 +2,62 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.14] - 2026-05-04
+
+### `fix`: HLTV recording-pipeline 3-bug bundle (post-matchday YELLOW root-cause)
+
+Three correlated bugs surfaced by the 2026-05-04 post-matchday soak-verify YELLOW: 10 "no matching auto-*" warnings from `hltv-demo-renamer` plus 4 ATL1 in-game "HLTV up but not recording" alerts from `KTPHLTVRecorder`. Forensics on ATL1 + HLTV 27020 confirmed **no actual data loss** — every demo file was preserved on disk; all three bugs were observability or labeling. Root cause for each follows; ktp-code-review approved diffs after one round of corrections (case-mismatch in `_sibling_demo_extends_into` glob + State.load forward-compat field-filter).
+
+#### Bug 1 — `hltv-demo-renamer.py` mislabels h2 demos when HLTV does not rotate at half boundary
+
+The renamer's contract with KTPHLTVRecorder v1.7.0 (`MATCH_WINDOW_OPEN` per half + `MATCH_WINDOW_CLOSE` once at MATCH_END) presumes HLTV rotates `auto_*.dem` files at half boundaries. HLTV's actual rotation is on its own internal cadence (~22-30 min, time-based), unrelated to plugin events. When rotation does not align with the h1→h2 boundary, the renamer's auto-close logic claimed the still-being-written file at the moment it received OPEN h2 — and `rename(2)` preserves the open FD, so HLTV continued writing h2 data into the file already labeled `_h1-...partN`. The h2 close then found nothing to claim and emitted "no matching auto-*". Net: data preserved, label wrong.
+
+##### Change
+- `OpenWindow` dataclass gains `deferred: bool` + `deferred_candidates: List[str]` fields, persisted to `state.json` via existing `asdict`/`from-dict` round-trip.
+- `Renamer.rename_for_window(window, *, force=False)` rewritten: when the candidate set's max mtime is at-or-newer than every other auto-* file for the same friendly (i.e., HLTV may still be writing to a candidate), defer the rename. Stash candidate basenames on `OpenWindow.deferred_candidates`. Subsequent poll cycles retry — on rotation (a newer auto-* appears) flush normally as `_h1`/`_h2`; at the 4h `WINDOW_ABANDON_AGE_SEC` timeout, force-flush as combined-name with `omit_half=True` (no half marker — the file is a single-recording whole-match; organizer regex `(_h[12])?` accepts the marker-less form).
+- New helpers: `_all_auto_for_friendly`, `_has_successor_auto`, `_sibling_demo_extends_into` — the last differentiates the no-data-loss case (HLTV did not rotate; data is in the prior-half file) from a true recording loss and emits a different INFO log line. The new line is INTENTIONALLY EXCLUDED from `ktp-soak-verify`'s YELLOW grep (see Bug 1 soak-verify change below).
+- `_build_target_name` gains keyword-only `omit_half: bool = False` for the combined-name flush path.
+- `_process_closed_windows` updated to keep deferred windows in state across poll cycles, force-flush at abandon, and drop normally on successful rename.
+- `State.load` now filters JSON keys to known dataclass fields, defending against forward-compat schema drift in either direction.
+
+#### Bug 2 — `hltv-api.py` `/state` returns false-positive `recording: false`
+
+`_parse_state()` scanned the last 5 minutes of `journalctl -u hltv@<port>.service` for `Recording to X.dem, Length N sec.` lines, on the assumption that HLTV emits them periodically. The 2026-05-04 forensics on the ATL1 HLTV journal disproved this: those lines only appear in response to external rcon `status` calls, paired 1:1 with `Executing rcon "status" from 127.0.0.1:<ephemeral>` log lines. Nothing periodic emits them. So whenever the last 5 minutes had no rcon-status traffic (the steady state for any match running >5 min with no monitor traffic), `/state` returned `recording: false`, and the plugin's `hltv_health_check_callback` logged the in-game WARNING "HLTV up but not recording — match may be missing" at every match start. ATL1 fired this 4 times on 2026-05-03 — all false positives; HLTV was actively recording the whole time.
+
+##### Change
+- New `_trigger_status_rcon(port)` helper: writes `status\n` to the cmdpipe (`/home/hltvserver/cmdpipes/hltv-<port>.pipe`) non-blocking via `O_WRONLY | O_NONBLOCK`, swallows `BlockingIOError` and `OSError` (graceful degrade to pre-fix journal-only scan if the pipe is unreachable).
+- `_parse_state()` now calls `_trigger_status_rcon(port)` before the journalctl scan, then sleeps `STATE_TRIGGER_SLEEP_SEC` (default 0.25s) so HLTV's status response has time to flush to the journal. 250ms is a 2.5x safety margin over the typical ~10ms HLTV stdin tick + ~100ms journald flush; under peak matchday journal pressure if telemetry shows false-idle returns, bumping this to 0.5 is a one-line followup.
+- Outdated comment block at lines 40-43 corrected (the prior comment claimed periodic emission).
+
+Failure mode under journal pressure: `/state` reverts to pre-fix behavior (false-idle) for that one call. Identical to current buggy state, no regression. KTPHLTVRecorder's caller would see false idle and fall through; the alert is harmless beyond noise.
+
+#### Bug 3 — `hltv-demo-renamer.py` emits misleading "Auto-closing prior half: h1" on duplicate OPEN
+
+KTPHLTVRecorder's `ktp_match_start` forward fires twice for h1 in some scenarios, confirmed via wall_time diffs in the 2026-05-03 logs (same-second duplicates with identical `wall_time=1777856520`, AND 2-min-apart duplicates with different `wall_time=1777783177` vs `1777783316`). The renamer's auto-close loop in `_ingest_lines` did not check `w.half`, so a duplicate same-half OPEN auto-closed the prior h1 entry and emitted "Auto-closing prior half: port=27020 match=<id> half=h1" every time. The downstream replace-on-same-key dedup at the OPEN-append step prevented actual state corruption (the auto-closed entry was deleted before `_process_closed_windows` could process it), but the log noise polluted operator inspection and inflated the perceived event rate.
+
+##### Change
+- `_ingest_lines` open branch: explicit `dup` check at the top — `any(w.key() == (port, match_id, half) and w.close_unix is None for w in open_windows)`. On dup, log "Duplicate OPEN ignored (idempotent)" and `continue` before reaching the auto-close loop.
+- Auto-close loop additionally requires `w.half != half` as defense-in-depth.
+- Original closed-same-key replace block preserved (handles the rare "stale closed-pending-rename entry" case).
+
+Plugin-side root cause for the duplicate forward fire is unconfirmed and **not addressed** in this commit — the renamer dedup is sufficient to silence the operator-visible symptom, but the underlying double-fire likely also produces duplicate Discord embeds + duplicate HLStatsX events. Filed as a low-priority followup in TODO.md (suspect: `restore_match_context_from_localinfo` replaying state in `plugin_cfg` on map load, or a non-deferred match-start path bypassing the documented `task_deferred_discord_fwd` defer pattern).
+
+#### Bug 1 soak-verify wording correction
+
+`ktp-soak-verify.py` check 4 grep pattern updated to `no matching auto-\* files in mtime|Deferred-rename abandon`, intentionally excluding the renamer's new "HLTV did not rotate at half boundary; data is in the prior-half file" INFO line — those are zero-data-loss cases and were the bulk of pre-fix YELLOW noise. Check renamed to "Recording-loss / abandon warnings" so the message matches the actual semantics.
+
+#### Verification
+- `python3 -m py_compile` on all three edited scripts: clean.
+- ktp-code-review agent reviewed both diagnosis (pre-code) and code diffs (post-code); approved after one round of corrections.
+- Forensic data covers all 10 reported events from 2026-05-03 — every demo file present on disk, no actual data loss in any case.
+- Deployment: not yet deployed to data server. Local commit only; deploy planned for next maintenance window.
+
+#### Cross-references
+- Plugin source: `KTPHLTVRecorder/KTPHLTVRecorder.sma` v1.7.0 (no changes, contract preserved).
+- Plugin chat-side alert: `hltv_health_check_callback` lines 285-380 (no changes; will stop firing falsely once Bug 2 fix deploys).
+- Memory updates: indexed in MEMORY.md (none added — investigations resolved in-session, fix lives in this CHANGELOG).
+- Soak-verify cron: `cron.d/ktp-soak-verify-post-matchday` (Mon 10:00 ET); next firing on 2026-05-11 will validate the fix end-to-end.
+
 ## [1.5.13] - 2026-05-03
 
 ### `fix`: ktp-report-core ProcessLookupError race in scan_pid_port_table

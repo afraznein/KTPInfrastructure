@@ -285,25 +285,38 @@ def suite_post_matchday() -> SuiteResult:
                 summary=f"⚠ {n_auto} auto-*.dem produced but 0 renamed — renamer not seeing match windows",
             ))
 
-    # ── 4. "no matching auto-*" warnings since Sunday ──
+    # ── 4. Renamer warnings since Sunday ──
+    # Two distinct signals from the renamer (post-Bug 1 fix 2026-05-04):
+    #   (a) "Deferred-rename abandon" — WARNING-level: window was deferred for
+    #       >4h waiting on HLTV rotation that never came. Force-flushed as a
+    #       combined name (no half marker). Rare; long-running session no rotate.
+    #   (b) "no matching auto-* files" — INFO-level but worth flagging: window
+    #       had no candidate file AND no sibling demo extending into the window.
+    #       Closest signal to a real recording loss the renamer can produce.
+    # The "HLTV did not rotate at half boundary; data is in the prior-half file"
+    # log line is INTENTIONALLY EXCLUDED here — that's a single-file-match case
+    # with data preserved, no operator action needed (was the bulk of the prior
+    # YELLOW noise pre-fix).
     rc, out, _ = sh(
-        f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 | grep "no matching auto-\\*" | wc -l'
+        f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 '
+        f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon" | wc -l'
     )
-    no_match_count = int(out) if out.isdigit() else 0
-    if no_match_count == 0:
+    loss_count = int(out) if out.isdigit() else 0
+    if loss_count == 0:
         result.checks.append(CheckResult(
-            name="Recording-loss warnings",
+            name="Recording-loss / abandon warnings",
             status=Status.GREEN,
-            summary=f"0 'no matching auto-*' warnings since {since_label}",
+            summary=f"0 recording-loss / deferred-rename-abandon warnings since {since_label}",
         ))
     else:
         _, detail, _ = sh(
-            f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 | grep "no matching auto-\\*" | head -10'
+            f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 '
+            f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon" | head -10'
         )
         result.checks.append(CheckResult(
-            name="Recording-loss warnings",
+            name="Recording-loss / abandon warnings",
             status=Status.YELLOW,
-            summary=f"⚠ {no_match_count} 'no matching auto-*' warnings — possible h2 recording loss; investigate per match_id+port",
+            summary=f"⚠ {loss_count} recording-loss-shaped warnings — investigate per match_id+port",
             detail=detail[:1500] if detail else None,
         ))
 

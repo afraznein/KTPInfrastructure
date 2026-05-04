@@ -155,6 +155,15 @@ class OpenWindow:
     map: str
     open_unix: int
     close_unix: Optional[int] = None  # set on CLOSE event
+    # Bug 1 fix: if HLTV is still writing to the candidate auto-*.dem at the
+    # moment we'd rename, we defer the rename until either (a) a newer auto-*
+    # appears for this friendly (HLTV rotated → safe to rename), or (b) the
+    # window is abandoned (4h timeout → flush as combined / unlabeled).
+    # `deferred_candidates` stashes the BASENAMES we identified at defer time,
+    # since by the time HLTV rotates the candidate's mtime has crawled past
+    # our original window and a fresh mtime-based scan would miss them.
+    deferred: bool = False
+    deferred_candidates: List[str] = field(default_factory=list)
 
     def key(self) -> Tuple[int, str, str]:
         return (self.hltv_port, self.match_id, self.half)
@@ -173,9 +182,17 @@ class State:
             return cls()
         try:
             data = json.loads(STATE_FILE.read_text())
+            # Filter to known dataclass fields. Defends against schema drift
+            # in either direction: a state.json from a future build with extra
+            # keys won't TypeError on `OpenWindow(**w)`; a state.json from a
+            # past build missing new fields uses dataclass defaults.
+            known = {f.name for f in OpenWindow.__dataclass_fields__.values()}
             return cls(
                 log_offsets=data.get("log_offsets", {}),
-                open_windows=[OpenWindow(**w) for w in data.get("open_windows", [])],
+                open_windows=[
+                    OpenWindow(**{k: v for k, v in w.items() if k in known})
+                    for w in data.get("open_windows", [])
+                ],
             )
         except Exception as e:
             logging.error("State load failed (%s) — starting clean", e)
@@ -310,8 +327,20 @@ class Renamer:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
 
-    def rename_for_window(self, window: OpenWindow) -> List[Tuple[Path, Path]]:
-        """Returns list of (original, renamed) paths actually renamed."""
+    def rename_for_window(self, window: OpenWindow, *, force: bool = False) -> List[Tuple[Path, Path]]:
+        """Returns list of (original, renamed) paths actually renamed.
+
+        Bug 1 deferred-rename: if all candidate files are the latest auto-*
+        for this friendly (i.e., HLTV may still be writing to one of them),
+        defer the rename. Stashes basenames on `window.deferred_candidates`
+        and sets `window.deferred=True`. Caller leaves the window in state;
+        subsequent calls retry. When HLTV eventually rotates, a newer auto-*
+        appears and the deferred candidates can be safely renamed.
+
+        `force=True` flushes a deferred window unconditionally (used at
+        abandon-time), naming with no half marker (combined / single-file
+        match) since we know HLTV never rotated.
+        """
         if window.close_unix is None:
             return []
 
@@ -320,42 +349,84 @@ class Renamer:
             logging.error("Unknown hltv_port %d — cannot derive friendly", window.hltv_port)
             return []
 
-        mtime_lo = window.open_unix - MTIME_WINDOW_PAD_BEFORE_SEC
-        mtime_hi = window.close_unix + MTIME_WINDOW_PAD_AFTER_SEC
+        all_friendly_auto = self._all_auto_for_friendly(friendly)
 
-        candidates: List[Path] = []
-        for path in DEMOS_DIR.glob("auto_*-*.dem"):
-            m = _RE_AUTO_DEMO.match(path.name)
-            if not m:
-                continue
-            # Source friendly in basename must match (case-insensitive against
-            # configured `record auto_<friendly>` in HLTV cfg, which uses
-            # lowercase by convention).
-            if m.group("friendly").upper() != friendly.upper():
-                continue
-            try:
-                mtime = path.stat().st_mtime
-            except FileNotFoundError:
-                continue
-            if not (mtime_lo <= mtime <= mtime_hi):
-                continue
-            candidates.append(path)
+        # Two paths into this method:
+        # (1) First-time rename — scan DEMOS_DIR by mtime against the window's
+        #     [open-90s, close+60s] range to pick candidates.
+        # (2) Retry of a previously-deferred window — use the stashed basenames
+        #     since their mtimes have crawled past the original window while
+        #     HLTV continued writing.
+        flush_combined = False
+        if window.deferred and window.deferred_candidates:
+            candidates = [DEMOS_DIR / b for b in window.deferred_candidates
+                          if (DEMOS_DIR / b).exists()]
+            if not candidates:
+                # Files vanished (manual cleanup, prior rename) — un-defer + drop.
+                logging.warning("Deferred candidates gone: %s/%s/%s — dropping window",
+                                friendly, window.match_id, window.half)
+                window.deferred = False
+                return []
+            has_successor = self._has_successor_auto(window, all_friendly_auto)
+            if not has_successor and not force:
+                # Still no rotation evidence; keep waiting.
+                return []
+            # On force without successor → flush as combined-name (no half marker).
+            flush_combined = force and not has_successor
+        else:
+            mtime_lo = window.open_unix - MTIME_WINDOW_PAD_BEFORE_SEC
+            mtime_hi = window.close_unix + MTIME_WINDOW_PAD_AFTER_SEC
+            candidates = [p for p, mt in all_friendly_auto if mtime_lo <= mt <= mtime_hi]
 
-        if not candidates:
-            logging.info("Window %s/%s/%s closed but no matching auto-* files in mtime [%s, %s]",
-                         friendly, window.match_id, window.half,
-                         _fmt_ts(mtime_lo), _fmt_ts(mtime_hi))
-            return []
+            if not candidates:
+                # No auto-* in our mtime range. Either genuine recording loss OR
+                # HLTV-did-not-rotate-at-half-boundary case (data is in the
+                # prior-half file, no separate file for us). Distinguish so the
+                # log line is accurate — soak-verify can then differentiate
+                # "demo missing" from "single-file match, data preserved".
+                if self._sibling_demo_extends_into(window, friendly):
+                    logging.info(
+                        "Window %s/%s/%s: no separate auto-* file (HLTV did not rotate at half boundary; "
+                        "demo data is included in the prior-half file — single-file match, no data loss)",
+                        friendly, window.match_id, window.half,
+                    )
+                else:
+                    logging.info(
+                        "Window %s/%s/%s closed but no matching auto-* files in mtime [%s, %s]",
+                        friendly, window.match_id, window.half,
+                        _fmt_ts(mtime_lo), _fmt_ts(mtime_hi),
+                    )
+                return []
+
+            # Defer if all candidates are at-or-newer than every other auto-*
+            # for this friendly — i.e., HLTV may still be writing to one of
+            # them. The renamer would otherwise rename a file whose FD HLTV
+            # holds open, and subsequent writes (from later halves) would land
+            # under the renamed path, mislabeling later-half data as h1.
+            if not force:
+                latest_friendly_mtime = max(mt for _, mt in all_friendly_auto)
+                candidate_max_mtime = max(c.stat().st_mtime for c in candidates)
+                if candidate_max_mtime >= latest_friendly_mtime:
+                    window.deferred = True
+                    window.deferred_candidates = [c.name for c in candidates]
+                    logging.info(
+                        "Deferring rename: %s/%s/%s — candidate(s) are still the latest auto-* for %s "
+                        "(HLTV may still be writing). Will retry on rotation or after %ds abandon timeout.",
+                        friendly, window.match_id, window.half, friendly, WINDOW_ABANDON_AGE_SEC,
+                    )
+                    return []
 
         candidates.sort(key=lambda p: p.stat().st_mtime)
 
         renamed: List[Tuple[Path, Path]] = []
         for idx, src in enumerate(candidates):
             m = _RE_AUTO_DEMO.match(src.name)
-            assert m is not None  # filtered above
+            if m is None:
+                continue
             hltv_ts = m.group("hltv_ts")
             map_name = m.group("map")
-            target_name = self._build_target_name(window, friendly, hltv_ts, map_name, segment=idx)
+            target_name = self._build_target_name(window, friendly, hltv_ts, map_name,
+                                                  segment=idx, omit_half=flush_combined)
             dst = DEMOS_DIR / target_name
 
             if dst.exists():
@@ -374,11 +445,70 @@ class Renamer:
             except OSError as e:
                 logging.error("Rename failed: %s -> %s: %s", src.name, dst.name, e)
 
+        # Successful processing — un-defer so caller drops the window.
+        window.deferred = False
+        window.deferred_candidates = []
         return renamed
+
+    def _all_auto_for_friendly(self, friendly: str) -> List[Tuple[Path, float]]:
+        """All current auto-*.dem files for `friendly` with their mtimes."""
+        out: List[Tuple[Path, float]] = []
+        for path in DEMOS_DIR.glob("auto_*-*.dem"):
+            m = _RE_AUTO_DEMO.match(path.name)
+            if not m or m.group("friendly").upper() != friendly.upper():
+                continue
+            try:
+                out.append((path, path.stat().st_mtime))
+            except FileNotFoundError:
+                continue
+        return out
+
+    def _has_successor_auto(self, window: OpenWindow,
+                            all_friendly_auto: List[Tuple[Path, float]]) -> bool:
+        """True iff some auto-* file (other than our deferred candidates) has
+        mtime newer than any deferred candidate — i.e., HLTV has rotated."""
+        if not window.deferred_candidates:
+            return False
+        candidate_basenames = set(window.deferred_candidates)
+        deferred_mtimes: List[float] = []
+        for b in window.deferred_candidates:
+            p = DEMOS_DIR / b
+            try:
+                deferred_mtimes.append(p.stat().st_mtime)
+            except FileNotFoundError:
+                continue
+        if not deferred_mtimes:
+            return True  # all candidates gone — treat as rotated (caller un-defers + drops)
+        deferred_max = max(deferred_mtimes)
+        return any(mt > deferred_max for path, mt in all_friendly_auto
+                   if path.name not in candidate_basenames)
+
+    def _sibling_demo_extends_into(self, window: OpenWindow, friendly: str) -> bool:
+        """True iff a renamed sibling demo from this match (e.g. _h1-) exists
+        with mtime falling inside our window's [open-pad, close+pad] range —
+        indicates HLTV did not rotate at the half boundary and the data
+        crossed into us via the still-open FD on the prior file.
+
+        `match_type.lower()` mirrors `_build_target_name`'s defensive
+        normalization. Without it, a stale or future plugin emitting mixed-case
+        match_type (e.g., `KTP`) would skip detection because the rename writes
+        lowercase but this glob would search uppercase.
+        """
+        pattern = f"{window.match_type.lower()}_{window.match_id}-{friendly.upper()}_*.dem"
+        mtime_lo = window.open_unix - MTIME_WINDOW_PAD_BEFORE_SEC
+        mtime_hi = window.close_unix + MTIME_WINDOW_PAD_AFTER_SEC
+        for path in DEMOS_DIR.glob(pattern):
+            try:
+                mtime = path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if mtime_lo <= mtime <= mtime_hi:
+                return True
+        return False
 
     @staticmethod
     def _build_target_name(window: OpenWindow, friendly: str, hltv_ts: str,
-                           map_name: str, segment: int) -> str:
+                           map_name: str, segment: int, *, omit_half: bool = False) -> str:
         """Produce: <matchtype>_<match_id>(_h<n>)?-<hltv_ts>-<map>.dem
         with optional _partN suffix on additional segments (segment > 0).
 
@@ -392,6 +522,12 @@ class Renamer:
         if match_id already ends in `-<friendly>` — earlier renamer versions
         produced names like `scrim_1777594479-ATL4-ATL4_h1-...` which the
         organizer's regex (single-host) refused to recognize.
+
+        `omit_half=True` produces the half-less form, used when force-flushing
+        a deferred window at abandon time (HLTV never rotated; the file is a
+        single-file whole-match recording, so labeling it `_h1` or `_h2` would
+        be misleading). The organizer's `(_h[12])?` regex makes this optional
+        marker — files without it still get organized.
 
         Defensive lowercase on match_type: the existing organizer's regex is
         `[a-z0-9]+` and rejects mixed-case (e.g., `ktpOT`). Plugin v1.7.0 emits
@@ -412,7 +548,7 @@ class Renamer:
         # would never auto-organize. Strip non-h1/h2 halves; OT rounds remain
         # distinguishable by the hltv_ts segment (each OT source-rotate gets
         # a fresh timestamp).
-        if window.half in ("h1", "h2"):
+        if not omit_half and window.half in ("h1", "h2"):
             parts.extend(["_", window.half])
         parts.extend(["-", hltv_ts, "-", map_name])
         if segment > 0:
@@ -464,25 +600,51 @@ class Service:
                 continue
 
             if kind == "open":
+                # Bug 3 idempotency: if a window with the EXACT same key
+                # (port + match_id + half) is already open, this is a duplicate
+                # OPEN — most often KTPMatchHandler's `ktp_match_start` forward
+                # firing twice (genuine double-fire confirmed via wall_time
+                # diffs in the 2026-05-03 logs). Suppress auto-close + replace
+                # silently. Without this, the auto-close loop below would emit
+                # a misleading "Auto-closing prior half: h1" line every time.
+                dup = any(
+                    w.key() == (hltv_port, match_id, half)
+                    and w.close_unix is None
+                    for w in self.state.open_windows
+                )
+                if dup:
+                    logging.info("Duplicate OPEN ignored (idempotent): port=%d match=%s half=%s",
+                                 hltv_port, match_id, half)
+                    continue
+
                 # KTPMatchHandler fires ktp_match_start once per half (h1, h2,
                 # ot1...). MATCH_WINDOW_CLOSE only fires once per whole match
                 # at MATCH_END. So when h2 OPEN arrives, h1's window is still
                 # open — close it now using THIS event's wall_time, so h1's
                 # mtime-bound doesn't bleed into h2's demo files.
+                #
+                # Bug 3 fix: only auto-close DIFFERENT halves. Without the
+                # `w.half != half` guard, a duplicate-half OPEN (caught above
+                # but kept here as defense in depth) would auto-close the
+                # prior entry and emit a misleading log line.
                 for w in self.state.open_windows:
                     if (w.hltv_port == hltv_port
                             and w.match_id == match_id
+                            and w.half != half
                             and w.close_unix is None):
                         w.close_unix = wall_time
                         logging.info("Auto-closing prior half: port=%d match=%s half=%s",
                                      w.hltv_port, w.match_id, w.half)
 
-                # Replace any existing window with EXACT same key (plugin
-                # restart mid-match, log re-replay, etc.) — last write wins.
+                # Drop any pre-existing CLOSED window with the exact same key
+                # (rare: plugin restart with re-emitted OPEN, or a stale
+                # closed-pending-rename entry from a prior bug). Open same-key
+                # entries already short-circuit via the duplicate guard above.
                 self.state.open_windows = [
                     w for w in self.state.open_windows
                     if w.key() != (hltv_port, match_id, half)
                 ]
+
                 self.state.open_windows.append(OpenWindow(
                     hltv_port=hltv_port, match_id=match_id, half=half,
                     match_type=match_type, map=map_name, open_unix=wall_time,
@@ -504,19 +666,40 @@ class Service:
                              "" if closed_count == 1 else "s")
 
     def _process_closed_windows(self) -> None:
-        """Run the renamer for any closed windows; remove successful renames from state."""
+        """Run the renamer for any closed windows; remove successful renames from state.
+
+        Deferred windows (Bug 1 fix): kept in state across poll cycles until
+        either HLTV rotates (rename_for_window flushes them) or the abandon
+        timeout expires, at which point we force-flush as a combined-name
+        single-file recording.
+        """
         still_open: List[OpenWindow] = []
         now = int(time.time())
         for w in self.state.open_windows:
-            if w.close_unix is not None:
-                self.renamer.rename_for_window(w)
-                # Drop closed windows regardless of rename outcome — log
-                # captures missing/orphan cases for operator inspection.
-            elif now - w.open_unix > WINDOW_ABANDON_AGE_SEC:
-                logging.warning("Abandoning stale window: port=%d match=%s half=%s age=%ds",
-                                w.hltv_port, w.match_id, w.half, now - w.open_unix)
-            else:
+            if w.close_unix is None:
+                if now - w.open_unix > WINDOW_ABANDON_AGE_SEC:
+                    logging.warning("Abandoning stale window: port=%d match=%s half=%s age=%ds",
+                                    w.hltv_port, w.match_id, w.half, now - w.open_unix)
+                else:
+                    still_open.append(w)
+                continue
+
+            close_age = now - w.close_unix
+            if w.deferred and close_age > WINDOW_ABANDON_AGE_SEC:
+                # Deferred too long — HLTV never rotated. Flush as combined-name.
+                logging.warning(
+                    "Deferred-rename abandon: port=%d match=%s half=%s close_age=%ds — forcing combined flush",
+                    w.hltv_port, w.match_id, w.half, close_age,
+                )
+                self.renamer.rename_for_window(w, force=True)
+                # Drop after force-flush regardless of outcome.
+                continue
+
+            self.renamer.rename_for_window(w)
+            if w.deferred:
+                # Still waiting on HLTV rotation — keep in state for next poll.
                 still_open.append(w)
+            # Otherwise rename succeeded (or no-op) — drop from state.
         self.state.open_windows = still_open
 
     def run(self) -> None:
