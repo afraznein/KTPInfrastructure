@@ -2,6 +2,50 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.15] - 2026-05-04
+
+### `feat`: ktp-verify-deploy — `--check-runtime` flag (Tier 2 prereq for runtime version assertion)
+
+Closes the Tier 2 sub-item filed as "`amx_ktp_versions` rcon assertion — extends ktp-verify-deploy with a runtime 'is this what's loaded?' check (vs. just 'is this what's on disk?')". The rcon command itself shipped 2026-05-01 in KTPAMXX 2.7.15 (`ktp_version_reporter.inc` v2 multi-forward redesign); the asserter side was the missing piece.
+
+#### What it catches
+
+The disk-side check answers "are the right `.amxx` and `.so` files on disk?" — but a plugin's bytecode is loaded once at server start and held in KTPAMXX's memory for process lifetime. So a host can have the correct `.amxx` on disk (passes existing checks) while still RUNNING the prior version's bytecode because the instance hasn't restarted since deploy. This drift is invisible to the disk-side path.
+
+`--check-runtime` runs `amx_ktp_versions` rcon on each instance, parses the loaded-plugin table, and diffs against the reference's loaded set. Catches:
+
+- `runtime_drift`: plugin loaded with different `version` or build `sha` than reference (RED)
+- `runtime_missing`: plugin loaded on reference, not loaded on target (RED — plugin failed to load there)
+- `runtime_missing_partial`: above, but allowlisted via new `KNOWN_PARTIAL_RUNTIME` set (currently `{"KTP HUD Observer"}` — Jimmy's external-contributor plugin, deployed only to a subset of instances per `KNOWN_PARTIAL_DEPLOYS`) — INFO only
+- `runtime_extra`: plugin loaded on target, not on reference (YELLOW)
+- `runtime_error`: rcon failure on target (YELLOW; doesn't block GREEN-on-other-instances)
+
+#### Implementation
+
+- Added an inlined minimal GoldSrc UDP rcon client (`_RconClient` dataclass + `RconError`) at module scope. ~80 LoC. Mirrors the wire format in `tests/smoke/rcon.py` (canonical reference) but omits the smoke-only `wait_until_responsive` boot polling. Inlined rather than imported to keep `ktp-verify-deploy` single-file deployable to `/usr/local/bin` without a `sys.path` detour. Two-place sync required if the wire format changes; current format has been stable since the smoke harness shipped 2026-04-26.
+- `collect_runtime_versions(host, port, password=RCON_PASS)` — runs `amx_ktp_versions` rcon, returns `{display_name: {version, sha, build_time}}`. Parses the fixed-column `%-32s %-14s %-10s %s` output (per `ktp_version_reporter.inc:111-117`) via `str.rsplit(maxsplit=3)` — the last 3 tokens are space-free (version, sha, build_time) and everything before is the multi-word display name. Robust against `-dirty` SHAs that overflow the 10-char column (`%-Ns` minimum-pads, doesn't truncate).
+- `verify_fleet(...)` gained a `check_runtime: bool = False` parameter. When set, fetches the reference's runtime versions first; if that fails, sets `ref_runtime_error` and skips per-instance checks (avoids cascading false RED across the fleet from one transient ref-rcon timeout). Reference instance reuses its own `ref_runtime` for the self-comparison rather than issuing a duplicate rcon round-trip.
+- New `--check-runtime` CLI flag (default off). Per-instance rcon adds ~1-9s wall time per host; full fleet sweep with `--check-runtime` ran ~3 min vs ~30s baseline.
+- Constants: `RCON_PASS = "REDACTED_RCON"` (mirrors existing `GAME_PASS = "REDACTED"` pattern; uniform fleet-wide per `dodserver.cfg`).
+- Status integration: `runtime_drift` or non-allowlisted `runtime_missing` → RED; `runtime_extra` or `runtime_error` → YELLOW; otherwise GREEN unchanged.
+- JSON report schema additions are additive: `check_runtime: bool` at top level, `reference.runtime_plugins` (sorted name list) and `reference.runtime_error`, per-instance `runtime_drift` / `runtime_missing` / `runtime_missing_partial` / `runtime_extra` / `runtime_count` / `runtime_error`. No breaking change for existing report consumers.
+
+#### Verification
+
+- `python3 -m py_compile` clean.
+- Live test against 24-instance production fleet: **24/24 GREEN**. ATL1 (reference) reports 9 plugins; the other 23 instances report 8 with `runtime_missing_partial: ["KTP HUD Observer"]` correctly classified as INFO. Zero `runtime_drift`, zero `runtime_error`, zero `runtime_extra`. Default path (no `--check-runtime`) regression-tested: identical JSON output to pre-change.
+- ktp-code-review agent reviewed; approved with two warnings — both addressed in the commit:
+  - **Warning 1:** `timeout` parameter in `collect_runtime_versions` only covers the response-receive phase (challenge has its own `connect_timeout=5.0`, drain has `drain_timeout=0.4`). Worst-case per-instance wall is ~9.4s, not 4.0s. Fix: docstring clause clarifying the bound, with the cumulative formula spelled out.
+  - **Warning 2:** redundant column-header keyword guard in `_parse_amx_ktp_versions` could silently drop a future plugin whose display name happens to contain "Name", "Version", and "SHA" all at once. Fix: removed the keyword check (the separator-line state machine already skips the header correctly).
+  - **Suggestion (also fixed):** when reference instance re-enters the per-instance loop, it was issuing a duplicate `amx_ktp_versions` rcon to itself. Fix: `is_ref` short-circuit reuses the already-fetched `ref_runtime`.
+
+#### Cross-references
+
+- `KTPAMXX/plugins/include/ktp_version_reporter.inc` (rcon source side; v2 multi-forward design from 2026-04-30)
+- `tests/smoke/rcon.py` (canonical wire-format reference; suggested follow-up: add a "KEEP IN SYNC WITH scripts/ktp-verify-deploy.py" marker in its module docstring for symmetric discoverability)
+- TODO.md sub-bullet "`amx_ktp_versions` rcon assertion" — closed by this commit
+- TEST_INFRASTRUCTURE_PLAN.md Tier 2 — incremental progress
+
 ## [1.5.14] - 2026-05-04
 
 ### `fix`: HLTV recording-pipeline 3-bug bundle (post-matchday YELLOW root-cause)

@@ -27,19 +27,25 @@ Usage:
   ktp-verify-deploy [--reference <host>:<port>] [--out report.json]
                     [--scope plugins|dlls|modules|all]
                     [--include-engine]   (also check serverfiles/*.so engine + steam_api)
+                    [--check-runtime]    (also rcon `amx_ktp_versions` on each instance —
+                                          catches "right .amxx on disk, prior version
+                                          still loaded because instance hasn't restarted")
 
 Defaults:
-  --reference  74.91.121.9:27015 (ATL1)
-  --out        -                  (stdout)
-  --scope      all
+  --reference     74.91.121.9:27015 (ATL1)
+  --out           -                 (stdout)
+  --scope         all
+  --check-runtime off (extra UDP rcon traffic per instance)
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -59,6 +65,7 @@ GAME_HOSTS = [
 ]
 GAME_USER = "dodserver"
 GAME_PASS = "REDACTED"
+RCON_PASS = "REDACTED_RCON"  # game-server rcon password — uniform fleet-wide per dodserver.cfg
 
 # What to walk under each instance's addons/ktpamx/. Glob patterns relative
 # to the dod/ root. Engine check (serverfiles/*.so) is opt-in via --include-engine.
@@ -78,6 +85,15 @@ KNOWN_PARTIAL_DEPLOYS: set[str] = {
     # only to a subset of instances (currently ATL1, DAL1, DEN5 per
     # 2026-05-02 verify-deploy first run). Not a deploy gap.
     "addons/ktpamx/plugins/KTPHudObserver.amxx",
+}
+
+# Same allowlist for runtime version checks — but keyed on PLUGIN_NAME (the
+# string the plugin passes to KTP_RegisterVersion), not the .amxx filename.
+# `KTP_RegisterVersion` emits the display name from the plugin's
+# `PLUGIN_NAME` macro, which by convention has spaces (e.g. "KTP HUD Observer"
+# vs file `KTPHudObserver.amxx`). Maintain in sync with KNOWN_PARTIAL_DEPLOYS.
+KNOWN_PARTIAL_RUNTIME: set[str] = {
+    "KTP HUD Observer",
 }
 
 
@@ -148,6 +164,150 @@ def collect_artifacts(ssh: paramiko.SSHClient, port: int, scope: str,
     return results
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Minimal GoldSrc UDP rcon client (inlined from tests/smoke/rcon.py).
+#
+# Why inlined: ktp-verify-deploy is a single-file script deployed to
+# /usr/local/bin on the data server. The smoke harness's rcon.py is in a
+# pytest-discovered test directory not packaged for runtime use. Inlining
+# the ~80 LoC we need (challenge → rcon-quoted-pw → A2A_PRINT drain) lets
+# this script stay one-file-deployable without a sys.path detour or a
+# parallel /usr/local/lib/ktp/ install. If the wire format changes, both
+# places need updating — the canonical reference + protocol notes live in
+# tests/smoke/rcon.py.
+#
+# Wire format (verified against KTPReHLDS rehlds/engine/sv_main.cpp):
+#   Challenge request   client -> server   \xff\xff\xff\xffchallenge rcon\n\0
+#   Challenge response  server -> client   \xff\xff\xff\xffchallenge rcon <num>\n\0
+#   Rcon request        client -> server   \xff\xff\xff\xffrcon <num> "<pass>" <cmd>\n\0
+#   Rcon response       server -> client   \xff\xff\xff\xffl<output>\0\0
+# ──────────────────────────────────────────────────────────────────────────
+
+_RCON_PREFIX = b"\xff\xff\xff\xff"
+_RCON_A2A_PRINT = ord("l")
+
+
+class RconError(Exception):
+    pass
+
+
+@dataclass
+class _RconClient:
+    host: str
+    port: int
+    password: str
+    timeout: float = 2.0
+    connect_timeout: float = 5.0
+    drain_timeout: float = 0.4
+
+    def execute(self, command: str) -> str:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.settimeout(self.connect_timeout)
+            challenge = self._challenge(sock)
+            sock.settimeout(self.timeout)
+            quoted_pw = '"' + self.password.replace('"', '') + '"'
+            line = f"rcon {challenge} {quoted_pw} {command}\n"
+            sock.sendto(_RCON_PREFIX + line.encode("utf-8") + b"\x00", (self.host, self.port))
+            return self._drain(sock)
+        finally:
+            sock.close()
+
+    def _challenge(self, sock: socket.socket) -> str:
+        sock.sendto(_RCON_PREFIX + b"challenge rcon\n\0", (self.host, self.port))
+        data, _ = sock.recvfrom(4096)
+        if not data.startswith(_RCON_PREFIX):
+            raise RconError(f"challenge response missing prefix: {data!r}")
+        body = data[len(_RCON_PREFIX):].rstrip(b"\x00\n").decode("utf-8", errors="replace")
+        parts = body.split()
+        if len(parts) < 3 or parts[0] != "challenge" or parts[1] != "rcon":
+            raise RconError(f"unexpected challenge response: {body!r}")
+        return parts[2]
+
+    def _drain(self, sock: socket.socket) -> str:
+        chunks: list[str] = []
+        try:
+            data, _ = sock.recvfrom(4096)
+        except socket.timeout as exc:
+            raise RconError("no rcon response within timeout") from exc
+        chunks.append(self._unwrap(data))
+        sock.settimeout(self.drain_timeout)
+        while True:
+            try:
+                data, _ = sock.recvfrom(4096)
+            except socket.timeout:
+                break
+            chunks.append(self._unwrap(data))
+        return "".join(chunks)
+
+    @staticmethod
+    def _unwrap(packet: bytes) -> str:
+        if not packet.startswith(_RCON_PREFIX):
+            raise RconError(f"response missing prefix: {packet!r}")
+        body = packet[len(_RCON_PREFIX):]
+        if not body or body[0] != _RCON_A2A_PRINT:
+            raise RconError(f"response missing A2A_PRINT 'l' byte: {packet!r}")
+        return body[1:].rstrip(b"\x00").decode("utf-8", errors="replace")
+
+
+def collect_runtime_versions(host: str, port: int, password: str = RCON_PASS,
+                             timeout: float = 4.0) -> dict[str, dict[str, str]]:
+    """Run `amx_ktp_versions` rcon, return {plugin_display_name: {version, sha, build_time}}.
+
+    Output format from `ktp_version_reporter.inc:110-128` is fixed-column
+    (`%-32s %-14s %-10s %s`) — but `%-Ns` minimum-pads not truncates, so the
+    SHA column overflows when builds are `-dirty`. Plugin names contain spaces
+    ("KTP Match Handler", "KTP HUD Observer"), so split-by-whitespace from
+    the right works cleanest: the last 3 tokens are space-free (version, sha,
+    build_time), everything before is the name.
+
+    `timeout` bounds the RESPONSE-packet receive phase only (passed through
+    to `_RconClient.timeout`). The challenge phase has its own internal
+    `connect_timeout` (5.0s default in `_RconClient`) and the post-response
+    drain has `drain_timeout` (0.4s default). Worst-case per-instance wall
+    time is therefore `connect_timeout + timeout + drain_timeout` ≈ 9.4s
+    when defaults are used and the host stalls. For 24 sequential instances
+    this caps the run at ~3.75 minutes.
+
+    Raises RconError on connectivity / protocol failure.
+    """
+    client = _RconClient(host=host, port=port, password=password, timeout=timeout)
+    output = client.execute("amx_ktp_versions")
+    return _parse_amx_ktp_versions(output)
+
+
+def _parse_amx_ktp_versions(output: str) -> dict[str, dict[str, str]]:
+    plugins: dict[str, dict[str, str]] = {}
+    in_table = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Separator line: `--------------------------------  ...` flips us
+        # into in_table=True. Column-header line ("Name  Version  SHA  …")
+        # appears BEFORE the separator, so the `if not in_table` guard below
+        # already skips it — no explicit header-keyword check needed.
+        # (Earlier draft had a header-keyword check; removed because a
+        # future plugin display name happening to contain "Name", "Version",
+        # AND "SHA" would have been silently dropped.)
+        if stripped.startswith("---"):
+            in_table = True
+            continue
+        # Footer: `Total: N KTP plugin(s) loaded`
+        if stripped.startswith("Total:"):
+            in_table = False
+            continue
+        if not in_table:
+            continue
+        # Plugin row — last 3 tokens are version, sha, build_time; rest is name.
+        parts = stripped.rsplit(maxsplit=3)
+        if len(parts) != 4:
+            continue
+        name, version, sha, build_time = parts
+        plugins[name] = {"version": version, "sha": sha, "build_time": build_time}
+    return plugins
+
+
 def list_new_files(ssh: paramiko.SSHClient, port: int) -> list[str]:
     """List any *.new files lingering — these indicate a swap-script gap."""
     base = f"/home/dodserver/dod-{port}/serverfiles"
@@ -165,9 +325,17 @@ def list_new_files(ssh: paramiko.SSHClient, port: int) -> list[str]:
 # Verification
 # ──────────────────────────────────────────────────────────────────────────
 
-def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
+def verify_fleet(reference: str, scope: str, include_engine: bool,
+                 check_runtime: bool = False) -> dict:
     """Build reference manifest from <ref_host>:<ref_port>, diff every other
-    instance against it, return aggregated report."""
+    instance against it, return aggregated report.
+
+    `check_runtime=True` adds a per-instance `amx_ktp_versions` rcon query
+    + drift check against the reference instance. This catches the failure
+    mode where disk has the right .amxx but the running KTPAMXX has the
+    PRIOR build still loaded (e.g., plugin .new staged but instance hasn't
+    restarted since — disk-side check passes, runtime-side fails).
+    """
     ref_host, ref_port = reference.split(":")
     ref_port = int(ref_port)
 
@@ -183,6 +351,20 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
           file=sys.stderr)
     if not ref_manifest:
         return {"error": f"reference {reference} returned empty manifest"}
+
+    # Reference runtime versions — only fetched if --check-runtime. The rcon
+    # query is independent of SSH, so we hit the reference's UDP port directly.
+    ref_runtime: dict[str, dict[str, str]] = {}
+    ref_runtime_error: Optional[str] = None
+    if check_runtime:
+        try:
+            ref_runtime = collect_runtime_versions(ref_host, ref_port)
+            print(f"[verify-deploy] reference runtime: {len(ref_runtime)} plugins via amx_ktp_versions",
+                  file=sys.stderr)
+        except Exception as e:
+            ref_runtime_error = f"{type(e).__name__}: {e}"
+            print(f"[verify-deploy] reference runtime FAILED: {ref_runtime_error}",
+                  file=sys.stderr)
 
     # Iterate every host × port (except the reference).
     instances: dict[str, dict] = {}
@@ -235,11 +417,70 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
                         "actual_sha": manifest[p][:16],
                     })
 
+            # Per-instance runtime version check (opt-in via --check-runtime).
+            # Only useful if reference's own runtime query succeeded.
+            if check_runtime and ref_runtime:
+                inst_data["runtime_drift"] = []          # version mismatch (RED)
+                inst_data["runtime_missing"] = []        # in ref, not in target (RED — plugin failed to load)
+                inst_data["runtime_missing_partial"] = []# in ref, not in target, allowlisted (INFO)
+                inst_data["runtime_extra"] = []          # in target, not in ref (YELLOW)
+                inst_data["runtime_count"] = 0
+                inst_data["runtime_error"] = None
+
+                # Reference compares against itself trivially (always empty
+                # diffs). Reuse `ref_runtime` instead of issuing a duplicate
+                # rcon query against the same host:port.
+                tgt_runtime: Optional[dict[str, dict[str, str]]] = None
+                if is_ref:
+                    tgt_runtime = ref_runtime
+                    inst_data["runtime_count"] = len(ref_runtime)
+                else:
+                    try:
+                        tgt_runtime = collect_runtime_versions(h["host"], port)
+                        inst_data["runtime_count"] = len(tgt_runtime)
+                    except Exception as e:
+                        inst_data["runtime_error"] = f"{type(e).__name__}: {e}"
+
+                if tgt_runtime is not None:
+                    ref_names = set(ref_runtime.keys())
+                    tgt_names = set(tgt_runtime.keys())
+                    for name in sorted(ref_names - tgt_names):
+                        if name in KNOWN_PARTIAL_RUNTIME:
+                            inst_data["runtime_missing_partial"].append(name)
+                        else:
+                            inst_data["runtime_missing"].append(name)
+                    for name in sorted(tgt_names - ref_names):
+                        inst_data["runtime_extra"].append(name)
+                    for name in sorted(ref_names & tgt_names):
+                        rv = ref_runtime[name]
+                        tv = tgt_runtime[name]
+                        if rv["version"] != tv["version"] or rv["sha"] != tv["sha"]:
+                            inst_data["runtime_drift"].append({
+                                "plugin": name,
+                                "expected_version": rv["version"],
+                                "actual_version": tv["version"],
+                                "expected_sha": rv["sha"],
+                                "actual_sha": tv["sha"],
+                            })
+
             # Status classification — KNOWN_PARTIAL_DEPLOYS missing doesn't
             # count toward drift severity (it's expected partial coverage).
-            if new_files or inst_data["missing"] or inst_data["drift"]:
+            # Runtime drift (version mismatch on a loaded plugin) is RED;
+            # runtime_error is YELLOW (rcon may be transiently flaky).
+            runtime_red = (
+                check_runtime and ref_runtime and (
+                    inst_data.get("runtime_drift") or inst_data.get("runtime_missing")
+                )
+            )
+            runtime_yellow = (
+                check_runtime and ref_runtime and (
+                    inst_data.get("runtime_extra") or inst_data.get("runtime_error")
+                )
+            )
+
+            if new_files or inst_data["missing"] or inst_data["drift"] or runtime_red:
                 inst_data["status"] = "red"
-            elif inst_data["extra"]:
+            elif inst_data["extra"] or runtime_yellow:
                 inst_data["status"] = "yellow"
             else:
                 inst_data["status"] = "green"
@@ -268,7 +509,7 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
         elif s in ("unreachable", "error") and overall == "green":
             overall = "yellow"
 
-    return {
+    report = {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "reference": {
             "host": ref_host, "port": ref_port, "label": ref_label,
@@ -277,10 +518,15 @@ def verify_fleet(reference: str, scope: str, include_engine: bool) -> dict:
         },
         "scope": scope,
         "include_engine": include_engine,
+        "check_runtime": check_runtime,
         "overall": overall,
         "counts": dict(counts),
         "instances": instances,
     }
+    if check_runtime:
+        report["reference"]["runtime_plugins"] = sorted(ref_runtime.keys())
+        report["reference"]["runtime_error"] = ref_runtime_error
+    return report
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -294,11 +540,16 @@ def main() -> int:
     ap.add_argument("--scope", choices=["plugins", "dlls", "modules", "all"], default="all")
     ap.add_argument("--include-engine", action="store_true",
                     help="Also verify engine_i486.so + hlds_linux + libsteam_api.so")
+    ap.add_argument("--check-runtime", action="store_true",
+                    help="Also query `amx_ktp_versions` rcon on each instance and "
+                         "diff loaded plugin versions against the reference. "
+                         "Catches the disk-OK-but-not-yet-restarted-since-deploy gap.")
     ap.add_argument("--out", default="-",
                     help="Output JSON path (default: - = stdout)")
     args = ap.parse_args()
 
-    report = verify_fleet(args.reference, args.scope, args.include_engine)
+    report = verify_fleet(args.reference, args.scope, args.include_engine,
+                          check_runtime=args.check_runtime)
 
     out_text = json.dumps(report, indent=2)
     if args.out == "-":
