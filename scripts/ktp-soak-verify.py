@@ -418,8 +418,15 @@ def suite_post_matchday() -> SuiteResult:
         f'journalctl -u hltv-restart --since "{since_iso_local}" --no-pager 2>/dev/null '
         '| grep -iE "scheduled restart complete|restart complete" | tail -1'
     )
+    # Exclude the script's success summary line ("N succeeded, 0 failed") from
+    # the error grep — without this filter, the literal string `failed` in the
+    # success-context match triggers a false-positive YELLOW. Caught 2026-05-04
+    # post-matchday: the restart logged `[03:00:01 EST] 24 succeeded, 0 failed`
+    # and check 9 flagged that one line as an error. A real partial failure
+    # would say `23 succeeded, 1 failed` — also matched, also (correctly) flagged.
     rc, errors, _ = sh(
         f'journalctl -u hltv-restart --since "{since_iso_local}" --no-pager 2>/dev/null '
+        r'| grep -vE "succeeded, 0 failed$" '
         '| grep -iE "error|failed|fatal" | wc -l'
     )
     err_count_restart = int(errors) if errors.isdigit() else 0

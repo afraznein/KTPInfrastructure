@@ -46,6 +46,13 @@ Plugin-side root cause for the duplicate forward fire is unconfirmed and **not a
 
 `ktp-soak-verify.py` check 4 grep pattern updated to `no matching auto-\* files in mtime|Deferred-rename abandon`, intentionally excluding the renamer's new "HLTV did not rotate at half boundary; data is in the prior-half file" INFO line — those are zero-data-loss cases and were the bulk of pre-fix YELLOW noise. Check renamed to "Recording-loss / abandon warnings" so the message matches the actual semantics.
 
+#### Bug 4 — `ktp-soak-verify.py` check 9 false-positive on HLTV restart success summary
+
+The same 2026-05-04 post-matchday YELLOW also flagged "HLTV restart timer ⚠ completion seen but 1 error/fail line(s) in journal". Investigation showed the `1` was the script's own success summary line `[2026-05-04 03:00:01 EST] 24 succeeded, 0 failed` — `grep -iE "error|failed|fatal"` matched the literal string `failed` in the success-context. Same class of bug as Bug 1's overly broad grep.
+
+##### Change
+- `ktp-soak-verify.py` check 9 error-grep gains a pre-filter: `grep -vE "succeeded, 0 failed$"` excludes the success-summary trailer. A real partial failure (e.g., `23 succeeded, 1 failed`) still passes the filter and triggers YELLOW correctly. Comment block at line 421-426 documents the trigger + non-trigger semantics so a future reader doesn't strip the filter as redundant.
+
 #### Verification
 - `python3 -m py_compile` on all three edited scripts: clean.
 - ktp-code-review agent reviewed both diagnosis (pre-code) and code diffs (post-code); approved after one round of corrections.
