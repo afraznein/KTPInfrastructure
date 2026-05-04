@@ -2,6 +2,104 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.16] - 2026-05-04
+
+### `feat`: ktp-perf-rollup daily threshold-alert script (Tier 3 Project 1 follow-up)
+
+Implements the spec'd Tier 3 Project 1 follow-up: `[KTP_PROFILE]` rollup daemon already populates `hlstatsx.ktp_telemetry_metrics` every 5 min (Phase 8.2 from 2026-04-25), but no automated alerting on regressions. This is the alert layer.
+
+Three-tier severity model per `TODO.md` Tier 3 Project 1 spec:
+
+- **WARN** — yellow embed, no role-ping. Per-host `fps_p50` < (mean − 2σ) OR per-host daily `spike_total` > (mean + 2σ).
+- **CRITICAL (partial fleet)** — red embed, no role-ping. ≥3 hosts in WARN on the same day. Catches partial-fleet regressions like one region's kernel update batch.
+- **CRITICAL (fleet)** — red embed, ping `@KTP Admin`. Fleet daily median `fps_p50` < `FLEET_CRITICAL_FPS` (default 963 = 976.5 − 2 × 6.83 per fleet baseline measured 2026-05-03). Catches fleet-wide regressions like a kernel-experiment fallout or bad plugin deploy.
+
+Daily aggregates, NOT per-window — per-window 2σ would fire on every 03:00 ET nightly restart artifact (server-fresh warm-up jitter). Daily smoothing absorbs 1-2 anomalous 5-min windows in 288/day. Trailing 7-day window per host as baseline; ≥4 baseline data points required for σ to stabilize (with only 2 points `statistics.stdev` returns `abs(a-b)` which gives random thresholds during fresh-deploy warmup).
+
+NY:27019 excluded from WARN evaluation and from fleet-median computation (perpetual pingboost-4 canary, σ=0.12; would fire on any drop below ~999.7 fps; not a player-serving instance). Configurable via `PERF_EXCLUDED_HOSTS` in `/etc/ktp/discord-relay.conf`.
+
+#### Files
+
+- `scripts/ktp-perf-rollup.py` — ~570 LoC including docstring. Reads `ktp_telemetry_metrics`, computes per-host trailing-7-day baselines, persists forensic cache rows to new `ktp_telemetry_baselines` table, builds + posts embed via existing relay.
+- `scripts/cron.d/ktp-perf-rollup-daily` — cron entry, 04:30 ET daily (after 03:00 fleet restart + 04:00 demo organizer + 04:15 demo retention sweeps complete).
+
+#### Schema
+
+New `hlstatsx.ktp_telemetry_baselines` table — forensic cache, ~50 KB/year:
+
+```
+server_endpoint VARCHAR(48) PK1
+day             DATE PK2
+fps_p50_today / fps_p50_mean / fps_p50_stddev / fps_p50_baseline (= mean − 2σ)
+spike_total_today / spike_total_mean / spike_total_stddev / spike_total_baseline (= mean + 2σ)
+warn_fps / warn_spikes / posted_to_discord (TINYINT bools)
+computed_at  TIMESTAMP
+KEY idx_day (day)
+```
+
+DDL is inline in the script as `DDL_BASELINES`. `ensure_baseline_schema()` probes via `SHOW TABLES LIKE` first and only runs `CREATE TABLE` if absent — `CREATE TABLE IF NOT EXISTS` itself requires CREATE privilege to evaluate (MySQL behavior), so the steady-state path stays SELECT-only on `information_schema` (which the scoped user has by default). First-ever run requires the operator to pre-create the table as root, then ktp_telemetry takes over.
+
+#### Operator setup (one-time)
+
+```sql
+-- as MySQL root
+CREATE TABLE hlstatsx.ktp_telemetry_baselines ( ... );  -- DDL above, or run script once as root
+GRANT SELECT ON hlstatsx.ktp_telemetry_metrics TO 'ktp_telemetry'@'localhost';
+GRANT SELECT, INSERT, UPDATE, DELETE ON hlstatsx.ktp_telemetry_baselines TO 'ktp_telemetry'@'localhost';
+FLUSH PRIVILEGES;
+```
+
+DELETE pre-authorizes future replay scenarios (script is idempotent on `ON DUPLICATE KEY UPDATE`, but DELETE lets an operator wipe a bad day for a clean rerun if needed).
+
+Also add to `/etc/ktp/discord-relay.conf`:
+```
+PERF_ALERT_CHANNEL="<channel_id>"
+PERF_EXCLUDED_HOSTS="74.91.123.64:27019"
+# Optional:
+# FLEET_CRITICAL_FPS=963
+# KTP_ADMIN_ROLE_ID=1002394466700767332
+```
+
+Deploy artifact: `/usr/local/bin/ktp-perf-rollup` (symlink or copy of script). Cron file install: `/etc/cron.d/ktp-perf-rollup-daily`.
+
+#### 48-hour suppression on first deploy
+
+Cron entry ships with `--dry-run` flag. Daemon computes alerts and writes to `ktp_telemetry_baselines` but does NOT POST to Discord. Operator eyeballs `/var/log/ktp-perf-rollup.log` + the table for 2 days, then removes `--dry-run` from `/etc/cron.d/ktp-perf-rollup-daily` to enable posting.
+
+#### Live test results (data server, dry-run)
+
+- **Target 2026-05-03 (matchday):** 24 hosts, 7 in WARN, fleet median fps 975.3 → embed severity **CRITICAL (partial fleet)**. WARN cases: ATL1 (951 fps vs 968 baseline; spikes 539 vs 457 — both fps + spikes WARN), ATL4 (966 vs 974), CHI3/CHI4/ATL5/DAL2/DAL4 (tight-σ hosts on small drops). Embed JSON renders cleanly within Discord field-value caps.
+- **Target 2026-05-04 (today, off-season Mon):** 24 hosts, 0 WARN, fleet median 979.1 → all-clear, no embed.
+
+Output JSON snippet:
+```json
+{"title": "KTP perf rollup — CRITICAL (partial fleet) — 2026-05-03",
+ "color": 15548997,
+ "fields": [{"name": "Hosts in WARN (7)", "value": "**ATL1** ... fps 951.0 < 968.3 ...", "inline": false}, ...]}
+```
+
+#### ktp-code-review pass
+
+Approved with 2 actionable warnings — both addressed before commit:
+
+- **Warning 1 (truncation):** `[:1020]` cap was a silent mid-line cut on bad-fleet days (15+ WARN hosts overflow the 1024 field-value limit). Replaced with line-aware truncation + `…(truncated)` sentinel so operators see the cut.
+- **Warning 2 (baseline floor):** `>= 2` baseline-data-points floor was too low; `statistics.stdev` with 2 points = `abs(a-b)` which gives random thresholds during fresh-deploy warmup. Bumped to `>= 4` (4 silent days of warmup, then reliable σ).
+- Plus 2 doc clarifications (DELETE grant in cron-file operator note; MYSQL_USER/HOST/DB in script docstring).
+
+#### Cross-references
+
+- `TODO.md` Tier 3 Project 1 follow-up — closed by this commit
+- `/opt/ktp-profile-aggregator/aggregator.py` — upstream collector (Phase 8.2 of KTPAdminBot, 2026-04-25)
+- Memory `KTP off-season operational tempo` — 48h suppression aligns with off-season's lower production-change risk
+- Spec at `TODO.md` lines 566-578 (or wherever it sits post-this-commit's TODO update)
+
+#### Open follow-ups (post-deploy, not blocking)
+
+- After 48h, operator removes `--dry-run` from cron.
+- After ~1 week of live posting, tune `SIGMA_THRESHOLD` based on observed false-positive rate per spec (>5 WARNs/day fleet-wide → 2.5σ; <1/day → 1.5σ).
+- Tier 3 Project 3 (`[KTP_SPIKE]` categorizer) is the remaining open Tier 3 work; this commit doesn't address it.
+- Tier 1 smoke for output format — additive, can ship as a follow-up if helpful.
+
 ## [1.5.15] - 2026-05-04
 
 ### `feat`: ktp-verify-deploy — `--check-runtime` flag (Tier 2 prereq for runtime version assertion)

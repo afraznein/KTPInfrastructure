@@ -1,0 +1,51 @@
+# KTP daily performance rollup — Tier 3 Project 1 follow-up
+#
+# Fires daily at 04:30 ET (after the 03:00 fleet restart + 04:00 demo
+# organizer + 04:15 demo retention sweeps complete). Computes per-host
+# trailing-7-day baselines from hlstatsx.ktp_telemetry_metrics and posts
+# Discord alerts on hosts deviating ≥2σ from baseline.
+#
+# Three-tier severity (per TODO.md Tier 3 Project 1 follow-up spec):
+#
+#   WARN     yellow embed, no role-ping
+#              per-host fps_p50 < (mean − 2σ)
+#              OR per-host daily spike_total > (mean + 2σ)
+#
+#   CRITICAL red embed, no role-ping
+#              ≥3 hosts WARN on the same day
+#
+#   CRITICAL red embed, ping @KTP Admin
+#              fleet daily median fps_p50 < FLEET_CRITICAL_FPS (default 963)
+#
+# Excluded from WARN: NY:27019 (perpetual pingboost-4 canary, σ=0.12;
+# would fire on any drop below ~999.7 fps; not a player-serving instance).
+# See PERF_EXCLUDED_HOSTS in /etc/ktp/discord-relay.conf.
+#
+# 48-hour suppression on first deploy: launch with `--dry-run` for the
+# first 2 daily fires (runs the rollup, writes to ktp_telemetry_baselines
+# table, but does NOT POST to Discord). Operator eyeballs the output via
+# the log + the table, then removes --dry-run from this cron once happy.
+#
+# Implementation:
+#   /usr/local/bin/ktp-perf-rollup       — Python script (this repo: scripts/ktp-perf-rollup.py)
+#   hlstatsx.ktp_telemetry_baselines     — forensic cache, schema in DDL inside script
+#   PERF_ALERT_CHANNEL in /etc/ktp/discord-relay.conf — embed delivery channel
+#
+# Operator note: the underlying ktp_telemetry MySQL user needs:
+#   GRANT SELECT ON hlstatsx.ktp_telemetry_metrics TO 'ktp_telemetry'@'localhost';
+#   GRANT SELECT, INSERT, UPDATE, DELETE ON hlstatsx.ktp_telemetry_baselines TO 'ktp_telemetry'@'localhost';
+# The DELETE grant pre-authorizes future replay scenarios (e.g. backfilling
+# a day's row after a config-correction rerun); not used by the steady-state
+# script. The baselines table itself must be pre-created as root (script's
+# CREATE IF NOT EXISTS is idempotent but requires CREATE privilege which
+# the scoped user lacks; `ensure_baseline_schema` probes via SHOW TABLES
+# first to skip the DDL on the steady-state path).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+# 04:30 ET daily. Wraps the venv'd python — pymysql lives in the
+# ktp-profile-aggregator venv (we share it rather than maintaining two).
+# --dry-run for the first 48h post-deploy; remove after operator eyeball.
+30 4 * * *   root  set -a; source /opt/ktp-profile-aggregator/.env; set +a; /opt/ktp-profile-aggregator/venv/bin/python /usr/local/bin/ktp-perf-rollup --dry-run --config /etc/ktp/discord-relay.conf >> /var/log/ktp-perf-rollup.log 2>&1
