@@ -23,7 +23,9 @@ tests/integration/
 ├── conftest.py              # session-scoped hlds fixture + autouse reset
 ├── match_flow.py            # MatchDriver class wrapping amx_ktp_test_* rcons
 ├── log_tail.py              # log_ktp + witness.jsonl polling helpers
+├── fake_relay.py            # stdlib HTTP mock of the Discord relay (Session 3 prep)
 ├── test_match_flow_spine.py # tests 1 / 3 / 4 / 6 (Session 2 — the spine)
+├── test_fake_relay.py       # mock-side smoke of fake_relay (Session 3 prep)
 ├── witness/                 # KTPWitness.amxx source + compile.sh
 └── README.md
 ```
@@ -134,8 +136,12 @@ runs on a dev box without the hlds environment.
 ## Future sessions
 
 - **Session 3 (~8h)** — Phase B/C/D fill-out: DODX context propagation,
-  HLStatsX `KTP_MATCH_START` log line, Discord embed POST attempted (needs
-  `fake_relay.py` aiohttp mock), tech pause / resume, half/match-end.
+  HLStatsX `KTP_MATCH_START` log line, Discord embed POST verification
+  (the `fake_relay.py` mock + 11 mock-side smoke tests landed 2026-05-04
+  as Session 3 prep), tech pause / resume, half/match-end. Remaining
+  Session 3 work is wiring KTPMatchHandler at the mock URL via fixture-
+  injected discord.ini override + writing the actual end-to-end Discord
+  POST tests — the mock contract is now stable + reusable.
 - **Session 4 (~8h)** — Phase E/F: alt match types (.scrim / .draft /
   .12man) + admin recovery (`ktp_forcereset`, `ktp_restarthalf`).
 - **Session 5 (~6h)** — Phase G/H + flake hardening + CI wiring (self-

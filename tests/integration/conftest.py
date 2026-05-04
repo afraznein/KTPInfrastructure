@@ -118,15 +118,25 @@ def hlds(request):
 
 
 @pytest.fixture(autouse=True)
-def _reset_match_state(hlds):
+def _reset_match_state(request):
     """Auto-fired before every test: clear match-flow state machine via
     `amx_ktp_test_reset` so each test starts from idle. Cheaper than a full
     server reboot per test, and the test-mode reset is comprehensive enough
     to act as a clean slate for the spine tests (Sessions 3-5 may need
-    finer cleanup if they touch localinfo or other persistent state)."""
+    finer cleanup if they touch localinfo or other persistent state).
+
+    LAZY on `hlds`: only resolves the hlds fixture for tests that already
+    declared a dependency on it. Pure mock-side tests (e.g. test_fake_relay)
+    that don't touch hlds skip the reset entirely — without this guard the
+    autouse fixture would force-skip every integration test in env-less mode.
+    """
+    if "hlds" not in request.fixturenames:
+        yield
+        return
     # Pre-test reset — handle the case where a prior test left the state
     # machine partway through.
     try:
+        hlds = request.getfixturevalue("hlds")
         hlds.rcon("amx_ktp_test_reset")
     except Exception:
         # Best-effort: if rcon is briefly unresponsive, the test itself
