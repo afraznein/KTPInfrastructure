@@ -60,11 +60,24 @@ from .fake_relay import FakeRelay
 from .match_flow import MatchDriver, MatchType
 
 
-SKIP_REASON = (
-    "Session 3 fill-out: KTPMatchHandler's Discord-emission surface still "
-    "being audited — see file docstring + DODX_FORWARD_FIRING_DESIGN.md "
-    "siblings for the pattern. Remove this skip when the emission path "
-    "for the asserted event is confirmed."
+SKIP_REASON_9B = (
+    "Session 3 Phase 2a: SESSION_3_DISCORD_EMISSION_AUDIT.md confirms the "
+    "match-end emission path (KTPMatchHandler.sma:776), but it goes through "
+    "send_match_embed_update() — an EDIT of the persistent embed via "
+    "g_discordMatchMsgId, not a fresh POST. Need to verify whether the "
+    "production relay's /reply route returns a deterministic message ID "
+    "the plugin captures, and whether subsequent edits round-trip through "
+    "the FakeRelay's /reply handler (or use a different verb/path). Unskip "
+    "after one successful test_9 run against real hlds confirms the "
+    "create+update wire format."
+)
+
+SKIP_REASON_9C = (
+    "Session 3 Phase 2a: needs `amx_ktp_test_reload_discord_config` rcon "
+    "added to KTPMatchHandler test-mode build OR rely on the changelevel-"
+    "induced plugin_init re-fire path (slower, ~15s, but works without "
+    "plugin changes). Per SESSION_3_DISCORD_EMISSION_AUDIT.md unskip "
+    "priority order, this is the LAST of the 9-series tests to enable."
 )
 
 # How long to poll for relay POSTs after a state-machine transition.
@@ -92,7 +105,6 @@ def _wait_for_post_count(relay: FakeRelay, expected_min: int,
 # Test 9 — Discord embed POSTs during ktp_match_start
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason=SKIP_REASON)
 def test_9_discord_embed_posts_on_match_start(hlds, discord_relay):
     """KTPMatchHandler should POST a Discord embed when the match goes
     LIVE (ktp_match_start fires). Asserts:
@@ -105,6 +117,18 @@ def test_9_discord_embed_posts_on_match_start(hlds, discord_relay):
       - The embed has *some* identifying content (title or description
         non-empty) — exact text format is operator-tunable so we don't
         pin specific words
+
+    Path confirmed by SESSION_3_DISCORD_EMISSION_AUDIT.md:
+    `task_deferred_discord_fwd()` at `KTPMatchHandler.sma:7395-7419` fires
+    ~200ms after match-live for COMPETITIVE/KTP_OT, calls
+    `send_match_embed_create()` (line 7414) which POSTs the initial
+    persistent match embed. Fixture writes `discord_channel_id` (base
+    key, used by COMPETITIVE per `get_discord_channel_id()` switch);
+    auth_secret matches `discord_relay.expected_secret`.
+
+    Test still skips cleanly when no env vars are set (fixture chain
+    `hlds → _discord_ini_setup → _serverfiles_path()` returns None and
+    hlds skips).
     """
     discord_relay.reset()  # clear any pre-test posts
 
@@ -140,7 +164,7 @@ def test_9_discord_embed_posts_on_match_start(hlds, discord_relay):
 # Test 9b — Discord embed POSTs on match end (paired-event sanity)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason=SKIP_REASON)
+@pytest.mark.skip(reason=SKIP_REASON_9B)
 def test_9b_discord_embed_posts_on_match_end(hlds, discord_relay):
     """Match-end is a known Discord-emission point (per memory + the
     KTPMatchHandler match-end-digest BackgroundService work in
@@ -178,7 +202,7 @@ def test_9b_discord_embed_posts_on_match_end(hlds, discord_relay):
 # Test 9c — Auth mismatch should land in auth_failures, not received
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason=SKIP_REASON + " (negative-path test; deferred until 9 + 9b green)")
+@pytest.mark.skip(reason=SKIP_REASON_9C)
 def test_9c_bad_auth_routes_to_auth_failures(hlds, discord_relay):
     """Negative-path sanity: if KTPMatchHandler somehow reads the WRONG
     secret (e.g., production secret while pointed at test relay), every
