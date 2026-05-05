@@ -87,6 +87,49 @@ For the data server (real Linux ext4): the existing `/home/dodserver/dod-27015/s
 works directly. Or stage a separate copy under `/tmp/integration-test/`
 to avoid touching production trees.
 
+### Steam runtime requirement (verified 2026-05-04 attempt)
+
+**hlds_linux refuses to boot without a working Steam authentication
+runtime**, even with `+sv_lan 1` (the boot-subprocess driver passes
+this; doesn't help). The engine logs:
+
+```
+[S_API FAIL] SteamAPI_Init() failed; SteamAPI_IsSteamRunning() failed.
+dlopen failed trying to load: steamclient.so
+[S_API FAIL] SteamAPI_Init() failed; unable to locate a running instance
+of Steam, or a local steamclient.dll.
+FATAL ERROR (shutting down): Unable to initialize Steam.
+```
+
+What's needed:
+1. **`steamclient.so` reachable** — engine looks at `~/.steam/sdk32/steamclient.so`
+   AND in the serverfiles cwd as bare `steamclient.so`. Both must resolve.
+   On production game servers this is set up by `steamcmd` install.
+2. **A live Steam authentication context** — even the dlopen-success path
+   gates on `SteamAPI_IsSteamRunning()`, which checks for an actual
+   running steam daemon / shared-mem segment.
+
+A 2026-05-04 attempt confirmed the rest of the test path works:
+- `KTPMatchHandler.amxx` (test-mode) loaded cleanly
+- `KTPWitness.amxx` loaded cleanly
+- KTPAMXX extension mode initialized; ReAPI / DODX / amxxcurl modules
+  attached
+- Plugins.ini surgery worked
+- 3 plugins precached, plugin_init deferred to server-activate
+
+… but Steam init blocks final boot. Workaround paths:
+
+- **Install `steamcmd` in WSL** (~100MB; needs network access; one-time
+  setup): `sudo apt install steamcmd` then run `steamcmd +login anonymous +quit`
+  to populate `~/.steam/sdk32/steamclient.so` symlinks correctly.
+- **Run on the data server** (`/tmp/integration-test/` tree per above)
+  where steamcmd is already installed.
+- **External-server mode** (`KTP_HLDS_HOST` set) against an instance
+  with test-mode plugins staged. Caution: don't confound an instance
+  that's currently part of a canary experiment (e.g., ATL:27019 is
+  perpetually in something).
+- **Session 5's CI-runner registration** — long-term resolution.
+
 ## Running
 
 Three modes (priority order — first one configured wins):
