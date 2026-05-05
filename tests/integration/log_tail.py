@@ -96,6 +96,45 @@ def current_log_size(serverfiles: Path) -> int:
     return log.stat().st_size if log is not None else 0
 
 
+def wait_for_log_substring(
+    serverfiles: Path,
+    substring: str,
+    *,
+    timeout: float = 5.0,
+    poll_interval: float = 0.1,
+    after_offset: int = 0,
+) -> str:
+    """Like `wait_for_log_event` but greps by literal substring instead of
+    `event=NAME`. Use for HLStatsX-shape lines (`log_message` output) or
+    other formats that don't follow the `[KTP] event=...` AMXX log_ktp
+    convention.
+
+    Example:
+        line = wait_for_log_substring(sf, 'KTP_MATCH_START')
+        # Matches `L MM/DD/YYYY - HH:MM:SS: KTP_MATCH_START (matchid "...") ...`
+
+    Returns the matching line. Raises TimeoutError on timeout.
+    """
+    serverfiles = Path(serverfiles).resolve()
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        log = _latest_log_file(serverfiles)
+        if log is not None and log.stat().st_size > after_offset:
+            with log.open("rb") as f:
+                f.seek(after_offset)
+                tail = f.read().decode("utf-8", errors="replace")
+            for line in tail.splitlines():
+                if substring in line:
+                    return line
+        time.sleep(poll_interval)
+
+    raise TimeoutError(
+        f"substring {substring!r} not found in {_logs_dir(serverfiles)}/L*.log "
+        f"within {timeout:.1f}s (after_offset={after_offset})"
+    )
+
+
 def read_witness_jsonl(serverfiles: Path) -> list[dict]:
     """Return all rows from `addons/ktpamx/logs/witness.jsonl` as parsed
     dicts. Empty list if the file doesn't exist (witness has never fired).

@@ -1,0 +1,130 @@
+# KTP Tier 2 — Integration tests against a real hlds_linux subprocess.
+#
+# Runs the pytest suite at tests/integration/ on a self-hosted runner that
+# has a writable test serverfiles tree on ext4 (WSL DrvFs is incompatible
+# with hlds_linux per memory `wsl_drvfs_hlds_incompatibility.md`). The
+# runner pre-stages compiled test-mode artifacts:
+#
+#   - KTPMatchHandler.amxx (test-mode build, compiled/test/)
+#   - KTPWitness.amxx (1.x.0+, witness/compiled/)
+#   - dodx_ktp_i386.so (with test-only natives, KTPAMXX build output)
+#
+# The workflow assumes these are present at $KTP_HLDS_SERVERFILES.
+# `tests/integration/CI_RUNNER_SETUP.md` documents the registration +
+# staging procedure.
+#
+# Why self-hosted vs GitHub-hosted runners:
+#   - hlds_linux is a 32-bit binary that needs ~50MB of game assets +
+#     libsteam_api.so + KTPAMXX core. Bundling all that into a GH-hosted
+#     runner image would inflate the image to >2GB; bake time per CI run
+#     would be >5min just to set up. A self-hosted runner with the tree
+#     pre-staged drops to <30s setup.
+#   - Tier 2 needs a stable test environment with deterministic IO timing.
+#     GH-hosted runners share infra; their performance varies enough to
+#     introduce flakes in our 5s polling timeouts.
+#
+# Trigger model:
+#   - Manually via workflow_dispatch (operator-driven for now)
+#   - On PR to main (warn-only initially per the test-infra plan; flip to
+#     blocking after 2 weeks green-on-main per design decision 2026-04-24)
+
+name: Tier 2 Integration
+
+on:
+  workflow_dispatch:
+    inputs:
+      timeout_multiplier:
+        description: 'Scale all test timeouts (1.0 = default, 2.0 = slow CI)'
+        required: false
+        type: string
+        default: '1.0'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/integration/**'
+      - 'tests/smoke/boot_subprocess.py'
+      # Trigger when KTPMatchHandler test-mode rcons or DODX test natives
+      # change — these are the production-path surfaces Tier 2 covers
+      - '.github/workflows/tier2-integration.yml'
+
+# Concurrency: only one Tier 2 run at a time per PR. Self-hosted runner
+# can't safely run two suites in parallel against the same hlds_linux
+# subprocess port.
+concurrency:
+  group: tier2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: [self-hosted, ktp-tier2]
+    timeout-minutes: 30
+
+    env:
+      # Self-hosted runner stages the test serverfiles tree at this path.
+      # See tests/integration/CI_RUNNER_SETUP.md § "Stage test serverfiles".
+      KTP_HLDS_SERVERFILES: ${{ vars.KTP_HLDS_SERVERFILES || '/home/runner/ktphlds-test/serverfiles' }}
+      # Timeout multiplier — manual runs can dial this up if the runner is
+      # busy. Default 1.0 = same as local dev.
+      KTP_TEST_TIMEOUT_MULTIPLIER: ${{ inputs.timeout_multiplier || '1.0' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test deps
+        run: |
+          python -m pip install --upgrade pip
+          # Pinned to the same versions used in dev. pytest-rerunfailures
+          # mitigates transient flakes (e.g., a 200ms curl round-trip
+          # racing a 100ms poll on a busy runner). 2 reruns max.
+          pip install pytest==9.0.3 pytest-rerunfailures==15.0
+
+      - name: Verify test artifacts present in serverfiles
+        run: |
+          set -e
+          SF="$KTP_HLDS_SERVERFILES"
+          echo "Checking $SF for required test artifacts..."
+          test -f "$SF/hlds_linux"               || { echo "MISSING: hlds_linux"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/dlls/ktpamx_i386.so" || { echo "MISSING: ktpamx_i386.so"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/modules/dodx_ktp_i386.so" || { echo "MISSING: dodx_ktp_i386.so"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx" || { echo "MISSING: KTPMatchHandler.amxx (must be test-mode build)"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx" || { echo "MISSING: KTPWitness.amxx"; exit 1; }
+          echo "All required artifacts present."
+
+      - name: Run Tier 2 integration suite
+        run: |
+          # --reruns 2: retry transient failures up to 2 times before
+          #   marking a test as failed. Catches I/O race flakes without
+          #   masking real regressions (a true bug fails all 3 attempts).
+          # --reruns-delay 1: 1s sleep between reruns to let any pending
+          #   async work drain.
+          # -v: verbose output for CI logs
+          # -ra: short-test-summary for skipped + failed (visible in PR check)
+          pytest tests/integration/ \
+            --reruns 2 --reruns-delay 1 \
+            -v -ra \
+            --tb=short
+
+      - name: Collect crash artifacts on failure
+        if: failure()
+        run: |
+          # If hlds_linux crashed during the run, /tmp will have a core
+          # file. Capture it for forensic analysis.
+          mkdir -p ci-artifacts
+          cp /tmp/core.hlds_linux.* ci-artifacts/ 2>/dev/null || true
+          cp "$KTP_HLDS_SERVERFILES"/dod/addons/ktpamx/logs/L*.log ci-artifacts/ 2>/dev/null || true
+          cp "$KTP_HLDS_SERVERFILES"/dod/addons/ktpamx/logs/witness.jsonl ci-artifacts/ 2>/dev/null || true
+          ls -la ci-artifacts/
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tier2-failure-artifacts-${{ github.run_id }}
+          path: ci-artifacts/
+          retention-days: 14

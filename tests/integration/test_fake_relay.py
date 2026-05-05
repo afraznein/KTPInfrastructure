@@ -220,3 +220,64 @@ def test_assert_post_count_raises_with_helpful_message(relay: FakeRelay):
     _post(relay.reply_url, {"channelId": "channel-b"})
     with pytest.raises(AssertionError, match="expected 5 POSTs.*got 2.*channel-a.*channel-b"):
         relay.assert_post_count(5)
+
+
+# ---------------------------------------------------------------------------
+# AC route — POST /api/match/end with X-Server-Secret auth
+# ---------------------------------------------------------------------------
+
+def _post_ac(url: str, body: dict, secret: str | None = "test-ac-secret",
+             timeout: float = 2.0) -> tuple[int, dict]:
+    """Helper for the AC route — uses X-Server-Secret header instead of
+    X-Relay-Auth."""
+    headers = {"Content-Type": "application/json"}
+    if secret is not None:
+        headers["X-Server-Secret"] = secret
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode("utf-8"),
+        method="POST", headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode("utf-8") or "{}")
+
+
+def test_ac_match_end_post_captured_with_correct_secret(relay: FakeRelay):
+    """Happy path for the AC route: POST /api/match/end with the right
+    X-Server-Secret lands in `received_ac_match_end` with match_id +
+    server_endpoint parsed."""
+    status, body = _post_ac(
+        relay.url + "/api/match/end",
+        {"matchId": "1777999999-TESTHOST", "serverEndpoint": "TESTHOST:27015"},
+    )
+    assert status == 200
+    assert body == {"ok": True}
+
+    assert len(relay.received_ac_match_end) == 1
+    ac_post = relay.received_ac_match_end[0]
+    assert ac_post.auth_ok is True
+    assert ac_post.match_id == "1777999999-TESTHOST"
+    assert ac_post.server_endpoint == "TESTHOST:27015"
+    # AC posts must NOT pollute Discord-side captured-lists
+    assert len(relay.received) == 0
+    assert len(relay.received_edits) == 0
+
+
+def test_ac_match_end_bad_secret_routes_to_ac_auth_failures(relay: FakeRelay):
+    """Wrong X-Server-Secret on the AC route → 401, does NOT land in
+    `received_ac_match_end`, DOES land in `ac_auth_failures` (separate
+    bucket from Discord auth_failures)."""
+    status, body = _post_ac(
+        relay.url + "/api/match/end",
+        {"matchId": "1777999999-TESTHOST", "serverEndpoint": "TESTHOST:27015"},
+        secret="wrong-ac-secret",
+    )
+    assert status == 401
+    assert body == {"error": "Unauthorized (AC)"}
+    assert len(relay.received_ac_match_end) == 0
+    assert len(relay.ac_auth_failures) == 1
+    # Discord auth_failures bucket stays empty — AC-route 401s don't
+    # cross-pollute the Discord assertion surface
+    assert len(relay.auth_failures) == 0
