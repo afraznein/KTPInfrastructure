@@ -35,10 +35,11 @@ from .log_tail import (
 from .match_flow import MatchDriver, MatchType
 
 
-# Pinned version: KTPMatchHandler 0.10.122 added the test-mode build flag.
-# When that bumps, both the source PLUGIN_VERSION + this test pin update
-# in lockstep (memory `feedback_commit_hygiene.md`).
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.122"
+# Pinned version: KTPMatchHandler 0.10.122 added the test-mode build flag;
+# 0.10.123 routed test rcons through the production deferred-fwd path. When
+# the source PLUGIN_VERSION bumps, this test pin updates in lockstep
+# (memory `feedback_commit_hygiene.md`).
+EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.123"
 
 
 def _serverfiles() -> Path | None:
@@ -61,10 +62,14 @@ def test_1_plugin_load_and_version_pin(hlds):
     test-mode build never ran, so the deployed binary is stale.
     """
     output = hlds.rcon("amx_ktp_versions")
-    # Output shape (per memory `amxx_rcon_output_format.md`):
-    #   `KTPMatchHandler         0.10.122    Nein_      <sha>     <build_time>`
-    # Use a permissive regex — column widths can shift by a char or two.
-    m = re.search(r"KTPMatchHandler\s+(\S+)", output)
+    # Output shape (per memory `amxx_rcon_output_format.md` + verified against
+    # KTPAMXX 2.7.13 against KTPMatchHandler 0.10.123):
+    #   `KTP Match Handler                0.10.123       9f573af-dirty  2026-05-05T05:43Z`
+    # The plugin registers via `register_plugin("KTP Match Handler", ...)` and
+    # `KTP_RegisterVersion(PLUGIN_NAME, ...)` — both use the human-readable name
+    # with spaces. Older versions of this regex looked for `KTPMatchHandler`
+    # (no spaces) and silently miss-matched.
+    m = re.search(r"KTP Match Handler\s+(\S+)", output)
     assert m, (
         f"KTPMatchHandler not in `amx_ktp_versions` output. Either the plugin "
         f"didn't load or it doesn't register via ktp_version_reporter.inc:\n{output}"

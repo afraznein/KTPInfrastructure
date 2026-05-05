@@ -60,25 +60,17 @@ from .fake_relay import FakeRelay
 from .match_flow import MatchDriver, MatchType
 
 
-SKIP_REASON_9B = (
-    "Session 3 Phase 2a: SESSION_3_DISCORD_EMISSION_AUDIT.md confirms the "
-    "match-end emission path (KTPMatchHandler.sma:776), but it goes through "
-    "send_match_embed_update() — an EDIT of the persistent embed via "
-    "g_discordMatchMsgId, not a fresh POST. Need to verify whether the "
-    "production relay's /reply route returns a deterministic message ID "
-    "the plugin captures, and whether subsequent edits round-trip through "
-    "the FakeRelay's /reply handler (or use a different verb/path). Unskip "
-    "after one successful test_9 run against real hlds confirms the "
-    "create+update wire format."
-)
-
-SKIP_REASON_9C = (
-    "Session 3 Phase 2a: needs `amx_ktp_test_reload_discord_config` rcon "
-    "added to KTPMatchHandler test-mode build OR rely on the changelevel-"
-    "induced plugin_init re-fire path (slower, ~15s, but works without "
-    "plugin changes). Per SESSION_3_DISCORD_EMISSION_AUDIT.md unskip "
-    "priority order, this is the LAST of the 9-series tests to enable."
-)
+# Wire format reference (KTPMatchHandler 0.10.123 + FakeRelay 2026-05-05):
+#
+# CREATE: send_match_embed_create() → POST {relay}/reply with `channelId` +
+#   `embeds`. FakeRelay returns `{"id":"fake-relay-msg-N","ok":true,...}` and
+#   KTPMatchHandler captures the `id` into `g_discordMatchMsgId` via
+#   `discord_embed_callback` (ktp_matchhandler_discord.inc:625-655).
+#
+# UPDATE: send_match_embed_update() → POST {relay-with-/reply-replaced-by-
+#   /edit} with `channelId` + `messageId` + `embeds`. URL surgery happens
+#   in ktp_matchhandler_discord.inc:781-784. Lands in FakeRelay's
+#   `received_edits` list, not `received`.
 
 # How long to poll for relay POSTs after a state-machine transition.
 # KTPMatchHandler uses task_deferred_discord_fwd for some posts (fires
@@ -164,12 +156,18 @@ def test_9_discord_embed_posts_on_match_start(hlds, discord_relay):
 # Test 9b — Discord embed POSTs on match end (paired-event sanity)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason=SKIP_REASON_9B)
 def test_9b_discord_embed_posts_on_match_end(hlds, discord_relay):
-    """Match-end is a known Discord-emission point (per memory + the
-    KTPMatchHandler match-end-digest BackgroundService work in
-    KTPAntiCheat 0.4.3). Drives setup → live → end via test-mode rcons,
-    polls the relay for the close-paired POST.
+    """Match-end fires a Discord embed UPDATE (POST /edit) referencing the
+    final score. Production path: `KTPMatchHandler.sma:776` →
+    `send_match_embed_update("MATCH COMPLETE - Final: %d-%d - %s")`. The
+    test-mode `cmd_test_end_match` mirrors that emission since 0.10.123.
+
+    Wire-shape:
+      - advance_live → POST /reply (CREATE) → received[0]
+      - end_match    → POST /edit  (UPDATE) → received_edits[0]
+
+    Asserts both halves of the create+update pair, plus that the update
+    references the score the test passed in.
     """
     discord_relay.reset()
 
@@ -177,24 +175,74 @@ def test_9b_discord_embed_posts_on_match_end(hlds, discord_relay):
     driver.setup_match(MatchType.COMPETITIVE)
     driver.advance_pending()
     driver.advance_live(half=1)
-    # Fake a 100-50 score; plugin's match-end embed should reference it
-    driver.end_match(score_team1=100, score_team2=50)
 
-    # Plugin posts both match-start AND match-end embeds in this flow,
-    # so we expect ≥2 (start + end). Relaxed lower bound.
-    actual = _wait_for_post_count(discord_relay, expected_min=2)
-    assert actual >= 2, (
-        f"expected ≥2 Discord POSTs (start + end) within "
-        f"{DISCORD_POST_TIMEOUT}s, got {actual}"
+    # Wait for CREATE POST + the async msg-ID capture round-trip:
+    #   1. Plugin POSTs /reply (curl async)
+    #   2. FakeRelay records into received[] + responds with `{"id":"..."}`
+    #   3. Curl response callback `discord_embed_callback` runs on next frame
+    #      → parses id, sets `g_discordMatchMsgId`, mirrors to localinfo
+    #      `_ktp_dmsg`. Until step 3 completes, send_match_embed_update
+    #      no-ops with `event=DISCORD_EDIT_SKIP reason=no_msg_id`.
+    actual_creates = _wait_for_post_count(discord_relay, expected_min=1)
+    assert actual_creates >= 1, (
+        f"CREATE POST never arrived; got {actual_creates}. Auth_failures="
+        f"{len(discord_relay.auth_failures)}"
     )
 
-    end_posts = [p for p in discord_relay.received
-                 if any("100" in str(e) or "50" in str(e)
-                        for e in p.embeds)]
-    assert end_posts, (
-        f"none of {actual} POSTs referenced the match-end score 100-50 — "
-        f"either match-end doesn't post a Discord embed, or it doesn't "
-        f"include the score, or the score format differs from raw integer."
+    # Poll for the localinfo mirror — guarantees the plugin's globals are
+    # populated before we trigger the edit. 2s is generous for a loopback
+    # curl round-trip.
+    deadline = time.monotonic() + 2.0
+    captured_id = ""
+    while time.monotonic() < deadline:
+        captured_id = driver.get_localinfo("_ktp_dmsg")
+        if captured_id:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+    assert captured_id, (
+        "Plugin never captured a Discord message ID from the /reply "
+        "response within 2s — discord_embed_callback may not be firing, "
+        "or the response body shape changed and the parser at "
+        "ktp_matchhandler_discord.inc:625-655 no longer matches."
+    )
+
+    driver.end_match(score_team1=100, score_team2=50)
+
+    # Poll for the /edit POST. Reuse _wait_for_post_count semantics on the
+    # edits list — same shape, different attribute.
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if discord_relay.received_edits:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+
+    assert len(discord_relay.received_edits) >= 1, (
+        f"expected ≥1 /edit POST after end_match; got "
+        f"{len(discord_relay.received_edits)}. /reply count="
+        f"{len(discord_relay.received)}, auth_failures="
+        f"{len(discord_relay.auth_failures)}"
+    )
+
+    edit = discord_relay.received_edits[0]
+    assert edit.auth_ok is True, "/edit POST had bad X-Relay-Auth"
+    assert edit.message_id, (
+        "/edit POST had no messageId field — fixture or plugin sent the "
+        "wrong shape, or msg ID capture from /reply response failed"
+    )
+    assert edit.message_id == "fake-relay-msg-1", (
+        f"/edit POST messageId mismatch: expected fake-relay-msg-1 (the "
+        f"FakeRelay's id for the first /reply post), got {edit.message_id!r}"
+    )
+    # Score must surface in the embed. Production format:
+    # "MATCH COMPLETE - Final: 100-50 - Team1 wins!"
+    embed = edit.embeds[0] if edit.embeds else {}
+    embed_text = (
+        str(embed.get("title", "")) + " "
+        + str(embed.get("description", "")) + " "
+        + " ".join(str(f.get("value", "")) for f in embed.get("fields", []))
+    )
+    assert "100" in embed_text and "50" in embed_text, (
+        f"/edit embed didn't reference final score 100-50: text={embed_text!r}"
     )
 
 
@@ -202,17 +250,27 @@ def test_9b_discord_embed_posts_on_match_end(hlds, discord_relay):
 # Test 9c — Auth mismatch should land in auth_failures, not received
 # ---------------------------------------------------------------------------
 
+SKIP_REASON_9C = (
+    "Discovered 2026-05-05: rotating the auth secret at runtime is blocked "
+    "by KTPMatchHandler's persistent g_curlHeaders slist (KTPMatchHandler.sma:"
+    "3728-3730 — built once at plugin_init, never freed for UAF safety per "
+    "memory `amxxcurl_shutdown_race_2026-05-04` + `KTPAmxxCurl Async Gotcha`). "
+    "load_discord_config() updates g_discordAuthSecret but the slist holding "
+    "the X-Relay-Auth header is frozen, so all subsequent curl POSTs send "
+    "the boot-time secret. This is intentional production design, not a "
+    "bug. Auth-rejection routing is covered by the 11 FakeRelay mock-side "
+    "smokes in tests/integration/test_fake_relay.py — that validates the "
+    "401-into-auth_failures path without requiring runtime secret rotation."
+)
+
+
 @pytest.mark.skip(reason=SKIP_REASON_9C)
 def test_9c_bad_auth_routes_to_auth_failures(hlds, discord_relay):
-    """Negative-path sanity: if KTPMatchHandler somehow reads the WRONG
-    secret (e.g., production secret while pointed at test relay), every
-    POST should land in `relay.auth_failures` not `relay.received`.
+    """Negative-path sanity: if KTPMatchHandler reads the WRONG secret,
+    every POST lands in `relay.auth_failures` not `relay.received`.
 
-    This test deliberately writes a temporary discord.ini with the wrong
-    secret + drives a match-start. Asserts `auth_failures` accumulates,
-    `received` stays empty. Ensures the test infrastructure correctly
-    distinguishes auth-rejected from happy-path posts.
-    """
+    Currently un-runnable end-to-end — see SKIP_REASON_9C. The mock-side
+    smokes in test_fake_relay.py cover this path structurally."""
     sf = os.environ.get("KTP_HLDS_SERVERFILES")
     if not sf:
         pytest.skip("test 9c needs writable serverfiles to swap discord.ini")
@@ -228,19 +286,21 @@ def test_9c_bad_auth_routes_to_auth_failures(hlds, discord_relay):
     discord_relay.reset()
     try:
         config_path.write_bytes(bad_config.encode("utf-8"))
-        # Force plugin_init re-fire to pick up the bad config —
-        # changelevel is the production-supported way; an
-        # `amx_ktp_test_reload_discord` rcon would be cleaner if we ever
-        # add it.
-        hlds.rcon("changelevel dod_anzio")
-        time.sleep(15.0)  # let map reload + plugin_init re-fire
+        hlds.rcon("amx_ktp_test_reload_discord_config")
+        # The reload is synchronous in plugin land but the rcon round-trip
+        # plus the test_advance_live deferred-fwd timing means we still
+        # need to drive a match and let the deferred POST drain.
 
         driver = MatchDriver(hlds)
+        driver.reset()  # clears g_discordMatchMsgId — important: a stale ID
+                        # from a prior test would route the next POST as
+                        # an /edit (auth still wrong, still routes to
+                        # auth_failures, but cleaner to start clean)
         driver.setup_match(MatchType.COMPETITIVE)
         driver.advance_pending()
         driver.advance_live(half=1)
 
-        time.sleep(DISCORD_POST_TIMEOUT)  # let any deferred POST drain
+        time.sleep(DISCORD_POST_TIMEOUT)  # let the deferred POST drain
 
         assert len(discord_relay.received) == 0, (
             "wrong-secret POSTs landed in `received` — fixture is leaking "
@@ -249,7 +309,14 @@ def test_9c_bad_auth_routes_to_auth_failures(hlds, discord_relay):
         assert len(discord_relay.auth_failures) >= 1, (
             "wrong-secret POSTs vanished entirely — KTPMatchHandler may "
             "have refused to send (e.g., empty discord_channel_id), or "
-            "plugin_init didn't re-read the swapped config"
+            "the reload-config rcon didn't re-read the swapped file"
         )
     finally:
         config_path.write_bytes(original)
+        # Restore the plugin's view too, so subsequent tests see the
+        # correct config without a fixture-level reset.
+        try:
+            hlds.rcon("amx_ktp_test_reload_discord_config")
+            hlds.rcon("amx_ktp_test_reset")
+        except Exception:
+            pass  # Best-effort restore

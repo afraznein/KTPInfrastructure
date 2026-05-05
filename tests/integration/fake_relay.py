@@ -15,11 +15,27 @@ The production relay accepts:
               Content-Type: application/json
     Body:     {"channelId": "<id>", "embeds": [<embed>, ...],
                "allowed_mentions": {...}?,  ...}
-  Returns:    HTTP 200 with a Discord-message-shape echo (we return a minimal
-              {"id": "<fake-id>", "ok": true} — KTPMatchHandler doesn't
-              currently inspect the response body, only the HTTP status).
+  Returns:    HTTP 200 with `{"id": "<fake-id>", "ok": true, "channel_id": ...}`.
+              KTPMatchHandler parses the `id` field and stores it in
+              `g_discordMatchMsgId` (`ktp_matchhandler_discord.inc:625-655`)
+              so subsequent edits know which message to PATCH.
               HTTP 401 on auth mismatch.
               HTTP 400 on JSON parse failure.
+
+  POST /edit
+    Headers:  X-Relay-Auth: <secret>
+              Content-Type: application/json
+    Body:     {"channelId": "<id>", "messageId": "<id>",
+               "embeds": [<embed>, ...]}
+              KTPMatchHandler builds this URL by string-replacing `/reply`
+              with `/edit` in `g_discordRelayUrl`
+              (`ktp_matchhandler_discord.inc:781-784`); the test fixture's
+              `discord_relay.reply_url` ends in `/reply` so the swap works.
+  Returns:    HTTP 200 (plugin doesn't capture an ID from edit responses).
+              HTTP 401 / 400 same as /reply.
+
+`received_edits` is the captured-list for /edit; `received` stays /reply-only
+so create-vs-update test assertions don't have to filter by route.
 
 ## Why stdlib http.server + threading instead of aiohttp
 
@@ -72,16 +88,21 @@ class CapturedPost:
     rejected with 401 and recorded into FakeRelay.auth_failures separately
     so a test can verify auth-rejection behavior without polluting the
     happy-path list).
+
+    `message_id` is populated for /edit captures (the `messageId` field the
+    plugin sent); None for /reply captures.
     """
     channel_id: str | None
     embeds: list[dict[str, Any]] = field(default_factory=list)
     allowed_mentions: dict[str, Any] | None = None
     raw_body: dict[str, Any] = field(default_factory=dict)
     auth_ok: bool = True
+    message_id: str | None = None
 
 
 class _RelayHandler(BaseHTTPRequestHandler):
-    """Per-request handler. Routes POST /reply only; everything else 404.
+    """Per-request handler. Routes POST /reply (creates) and POST /edit
+    (in-place embed updates); everything else 404.
     Reaches into `self.server.relay` (set by FakeRelay.start) for state."""
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -93,7 +114,7 @@ class _RelayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         relay: FakeRelay = self.server.relay  # type: ignore[attr-defined]
 
-        if self.path != "/reply":
+        if self.path not in ("/reply", "/edit"):
             self._respond(404, {"error": f"unknown path: {self.path}"})
             return
 
@@ -132,16 +153,32 @@ class _RelayHandler(BaseHTTPRequestHandler):
             allowed_mentions=body.get("allowed_mentions"),
             raw_body=body,
             auth_ok=True,
+            message_id=body.get("messageId"),
         )
-        relay.received.append(post)
-        self._respond(200, {
-            "id": f"fake-relay-msg-{len(relay.received)}",
-            "ok": True,
-            "channel_id": post.channel_id,
-        })
+        if self.path == "/reply":
+            relay.received.append(post)
+            self._respond(200, {
+                "id": f"fake-relay-msg-{len(relay.received)}",
+                "ok": True,
+                "channel_id": post.channel_id,
+            })
+        else:  # /edit
+            relay.received_edits.append(post)
+            self._respond(200, {
+                "ok": True,
+                "channel_id": post.channel_id,
+                "id": post.message_id,
+            })
 
     def _respond(self, status: int, body: dict[str, Any]) -> None:
-        payload = json.dumps(body).encode("utf-8")
+        # Compact JSON (no whitespace between key/value) — KTPMatchHandler's
+        # response parser at `ktp_matchhandler_discord.inc:630` looks for the
+        # literal substring `"id":"<digits>"` to extract g_discordMatchMsgId.
+        # `json.dumps` defaults to `"id": "..."` (with the space after colon),
+        # which silently breaks msg-ID capture and the entire create→edit
+        # flow. The production Cloud Run relay returns compact JSON, so
+        # mirroring that here is correct.
+        payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
@@ -157,7 +194,8 @@ class FakeRelay:
     def __init__(self, expected_secret: str = "test-secret", verbose: bool = False) -> None:
         self.expected_secret = expected_secret
         self.verbose = verbose
-        self.received: list[CapturedPost] = []
+        self.received: list[CapturedPost] = []  # POST /reply (creates)
+        self.received_edits: list[CapturedPost] = []  # POST /edit (in-place updates)
         self.auth_failures: list[CapturedPost] = []
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -200,9 +238,10 @@ class FakeRelay:
         self._thread = None
 
     def reset(self) -> None:
-        """Clear captured posts + auth failures. Use between subtests when
-        a fixture is shared across multiple test functions."""
+        """Clear captured posts + edits + auth failures. Use between
+        subtests when a fixture is shared across multiple test functions."""
         self.received.clear()
+        self.received_edits.clear()
         self.auth_failures.clear()
 
     # Convenience assertions — keep tests one-line where possible.

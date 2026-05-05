@@ -225,7 +225,9 @@ def hlds(request, _discord_ini_setup):
     with booted_subprocess(
         serverfiles,
         map_name="dod_anzio",
-        rcon_password="integration",
+        # Must match the rcon_password set in test_server.cfg — the cfg
+        # executes after +rcon_password CLI processing and overrides it.
+        rcon_password="smoketest",
         server_cfg=smoke_cfg.name,
         boot_timeout=120.0,
     ) as handle:

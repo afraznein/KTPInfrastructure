@@ -87,6 +87,25 @@ def _build_hlds_argv(
     ]
 
 
+def _ld_library_path(serverfiles: Path, *, wsl_form: bool = False) -> str:
+    """Build LD_LIBRARY_PATH so hlds_linux's dlopen("steamclient.so") resolves.
+
+    The engine (after KTP-ReHLDS 3.22.x) calls dlopen with a bare name; the
+    dynamic linker won't search CWD, so without LD_LIBRARY_PATH it fails with
+    `cannot open shared object file: No such file or directory` even when a
+    copy exists in the serverfiles tree. ~/.steam/sdk32 is the production
+    fallback path (populated by steamcmd). serverfiles/ first matches the
+    same precedence the engine uses internally.
+    """
+    if wsl_form:
+        sf_dir = _wsl_path(serverfiles)
+        sdk32 = "$HOME/.steam/sdk32"
+    else:
+        sf_dir = str(serverfiles)
+        sdk32 = str(Path.home() / ".steam" / "sdk32")
+    return f"{sf_dir}:{sdk32}"
+
+
 def _spawn(
     serverfiles: Path,
     argv: list[str],
@@ -98,7 +117,11 @@ def _spawn(
     if platform.system() == "Windows":
         wsl_dir = _wsl_path(serverfiles)
         cmdline = " ".join(shlex.quote(a) for a in argv)
-        wsl_argv = ["wsl", "bash", "-c", f"cd {shlex.quote(wsl_dir)} && exec {cmdline}"]
+        ld_path = _ld_library_path(serverfiles, wsl_form=True)
+        wsl_argv = [
+            "wsl", "bash", "-c",
+            f"cd {shlex.quote(wsl_dir)} && export LD_LIBRARY_PATH={shlex.quote(ld_path)}:${{LD_LIBRARY_PATH:-}} && exec {cmdline}",
+        ]
         return subprocess.Popen(
             wsl_argv,
             stdout=log_handle,
@@ -106,12 +129,17 @@ def _spawn(
             stdin=subprocess.DEVNULL,
         )
     # Linux / macOS-WSL: exec directly from the serverfiles dir.
+    env = dict(os.environ)
+    ld_path = _ld_library_path(serverfiles, wsl_form=False)
+    existing = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = f"{ld_path}:{existing}" if existing else ld_path
     return subprocess.Popen(
         argv,
         cwd=str(serverfiles),
         stdout=log_handle,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
+        env=env,
         preexec_fn=os.setsid if hasattr(os, "setsid") else None,
     )
 
