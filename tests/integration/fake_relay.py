@@ -81,7 +81,8 @@ from typing import Any
 
 @dataclass
 class CapturedPost:
-    """One recorded POST. Tests assert against these.
+    """One recorded Discord-relay POST (POST /reply or POST /edit). Tests
+    assert against these.
 
     `auth_ok` is whether the X-Relay-Auth header matched the expected secret;
     auth-failed posts are NOT routed into FakeRelay.received (they're
@@ -100,6 +101,25 @@ class CapturedPost:
     message_id: str | None = None
 
 
+@dataclass
+class CapturedAcPost:
+    """One recorded KTPAntiCheat-API POST (POST /api/match/end and friends).
+
+    Distinct from `CapturedPost` because the AC API:
+      - Uses a different auth header (`X-Server-Secret` vs `X-Relay-Auth`)
+      - Has a different payload shape (`matchId`/`serverEndpoint`) — no
+        embeds, no channel_id
+
+    Match-end is the only AC endpoint test 17 covers; future Phase 2c
+    extensions can add `/api/match/announce` etc. by following the same
+    pattern (new captured-list, route the POST in _RelayHandler.do_POST).
+    """
+    match_id: str | None
+    server_endpoint: str | None
+    raw_body: dict[str, Any] = field(default_factory=dict)
+    auth_ok: bool = True
+
+
 class _RelayHandler(BaseHTTPRequestHandler):
     """Per-request handler. Routes POST /reply (creates) and POST /edit
     (in-place embed updates); everything else 404.
@@ -114,7 +134,11 @@ class _RelayHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         relay: FakeRelay = self.server.relay  # type: ignore[attr-defined]
 
-        if self.path not in ("/reply", "/edit"):
+        # Three known routes: Discord /reply, /edit, and AC /api/match/end.
+        # Anything else 404s.
+        is_ac_match_end = (self.path == "/api/match/end")
+        is_discord = self.path in ("/reply", "/edit")
+        if not (is_ac_match_end or is_discord):
             self._respond(404, {"error": f"unknown path: {self.path}"})
             return
 
@@ -128,15 +152,28 @@ class _RelayHandler(BaseHTTPRequestHandler):
             return
         raw = self.rfile.read(length)
 
-        # Auth check first — pre-parse, mirrors how the real relay short-circuits.
-        auth = self.headers.get("X-Relay-Auth", "")
-        if auth != relay.expected_secret:
-            relay.auth_failures.append(CapturedPost(
-                channel_id=None, raw_body={"_unparsed": raw.decode("utf-8", errors="replace")},
-                auth_ok=False,
-            ))
-            self._respond(401, {"error": "Unauthorized"})
-            return
+        # Auth check — different routes use different headers + secrets.
+        # Discord routes use X-Relay-Auth + relay.expected_secret;
+        # AC route uses X-Server-Secret + relay.expected_ac_secret.
+        if is_ac_match_end:
+            auth = self.headers.get("X-Server-Secret", "")
+            if auth != relay.expected_ac_secret:
+                relay.ac_auth_failures.append(CapturedAcPost(
+                    match_id=None, server_endpoint=None,
+                    raw_body={"_unparsed": raw.decode("utf-8", errors="replace")},
+                    auth_ok=False,
+                ))
+                self._respond(401, {"error": "Unauthorized (AC)"})
+                return
+        else:
+            auth = self.headers.get("X-Relay-Auth", "")
+            if auth != relay.expected_secret:
+                relay.auth_failures.append(CapturedPost(
+                    channel_id=None, raw_body={"_unparsed": raw.decode("utf-8", errors="replace")},
+                    auth_ok=False,
+                ))
+                self._respond(401, {"error": "Unauthorized"})
+                return
 
         try:
             body = json.loads(raw.decode("utf-8"))
@@ -145,6 +182,20 @@ class _RelayHandler(BaseHTTPRequestHandler):
             return
         if not isinstance(body, dict):
             self._respond(400, {"error": "body must be a JSON object"})
+            return
+
+        if is_ac_match_end:
+            ac_post = CapturedAcPost(
+                match_id=body.get("matchId"),
+                server_endpoint=body.get("serverEndpoint"),
+                raw_body=body,
+                auth_ok=True,
+            )
+            relay.received_ac_match_end.append(ac_post)
+            # Production API returns 200 with no body (or empty {}); we
+            # mirror that. The plugin's ac_callback only checks
+            # CURLINFO_RESPONSE_CODE 2xx, doesn't parse the body.
+            self._respond(200, {"ok": True})
             return
 
         post = CapturedPost(
@@ -191,12 +242,20 @@ class FakeRelay:
     `url` exposes the listening base URL. Start in a daemon thread so a
     crashing test doesn't leak the listener."""
 
-    def __init__(self, expected_secret: str = "test-secret", verbose: bool = False) -> None:
+    def __init__(
+        self,
+        expected_secret: str = "test-secret",
+        expected_ac_secret: str = "test-ac-secret",
+        verbose: bool = False,
+    ) -> None:
         self.expected_secret = expected_secret
+        self.expected_ac_secret = expected_ac_secret
         self.verbose = verbose
         self.received: list[CapturedPost] = []  # POST /reply (creates)
         self.received_edits: list[CapturedPost] = []  # POST /edit (in-place updates)
+        self.received_ac_match_end: list[CapturedAcPost] = []  # POST /api/match/end
         self.auth_failures: list[CapturedPost] = []
+        self.ac_auth_failures: list[CapturedAcPost] = []
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -210,6 +269,13 @@ class FakeRelay:
     @property
     def reply_url(self) -> str:
         return self.url + "/reply"
+
+    @property
+    def ac_api_base_url(self) -> str:
+        """Base URL for the AC API path. KTPMatchHandler appends
+        `/api/match/end` etc. to this; FakeRelay routes `/api/match/end`
+        into `received_ac_match_end`."""
+        return self.url
 
     def start(self) -> None:
         if self._server is not None:
@@ -238,11 +304,14 @@ class FakeRelay:
         self._thread = None
 
     def reset(self) -> None:
-        """Clear captured posts + edits + auth failures. Use between
+        """Clear all captured posts + auth failures across every route
+        (Discord /reply, Discord /edit, AC /api/match/end). Use between
         subtests when a fixture is shared across multiple test functions."""
         self.received.clear()
         self.received_edits.clear()
+        self.received_ac_match_end.clear()
         self.auth_failures.clear()
+        self.ac_auth_failures.clear()
 
     # Convenience assertions — keep tests one-line where possible.
 

@@ -1,8 +1,13 @@
 # DODX Forward-Firing Test — Design (Tier 2 wedge, 2026-05-04)
 
-**Status:** Design phase. One stub test landed alongside this doc
-(`test_dodx_forward_firing.py`); execution awaits witness extension +
-DODX-test-mode build flag work spec'd below.
+**Status (updated 2026-05-05):** **All phases (1, 2, 2b, 3, 3b, 4) shipped.**
+KTPWitness 1.6.0 + DODX module (4 new `dodx_test_dispatch_*` natives) +
+KTPMatchHandler 0.10.124 (test-mode `cmd_test_end_match` now calls
+`dodx_flush_all_stats()`) cover all 10 forward-firing tests end-to-end —
+all env-conditional, no decorator skips remaining. Production 3-module
+set (`amxxcurl + reapi + dodx`) unchanged — the test natives extend the
+existing DODX module rather than loading a new one (per operator policy
+2026-05-05).
 
 ## What this is
 
@@ -125,7 +130,11 @@ pattern Session 2 already established.
 
 ## Phased rollout
 
-### Phase 1: One forward, deterministic trigger
+### Phase 1: One forward, deterministic trigger ✅ SHIPPED 2026-05-05
+
+`controlpoints_init` is now hooked in KTPWitness 1.1.0 and
+`test_controlpoints_init_fires_on_map_load` is unblocked. Below describes
+the design as shipped; subsequent phases inherit the same pattern.
 
 Pick `controlpoints_init` as the first hook. Reasons:
 - Fires exactly once per map load — deterministic, no flake potential
@@ -160,35 +169,175 @@ Implementation work:
 3. Compile + stage to test serverfiles tree.
 4. Integration test as above.
 
-### Phase 2: Player-interaction forwards
+### Phase 2: Player-interaction forwards ✅ SHIPPED 2026-05-05 (partial)
 
-Hook `client_death`, `dod_client_spawn`, `dod_client_changeteam`,
-`dod_client_changeclass`. These need synthetic clients — BUT we cannot
-use fakemeta (`CreateFakeClient`) per memory `extension_mode_no_fakemeta.md`.
+Four handlers landed in KTPWitness 1.2.0:
 
-Options:
+- `dod_client_spawn(id)` — args `{id}`
+- `dod_client_changeteam(id, team, oldteam)` — args `{id, team, oldteam}`. Team values: 1=Allies, 2=Axis, 3=Spectators.
+- `dod_client_changeclass(id, class, oldclass)` — args `{id, class, oldclass}`. Class IDs 1-6 per side; oldclass=0 on initial pick.
+- `client_death(killer, victim, wpnindex, hitplace, TK)` — args `{killer, victim, wpnindex, hitplace, TK}`. Witness label: `dod_client_death` (forward name itself has no `dod_` prefix in dodx.inc; we add it for namespace clarity).
+
+Driver path chosen: **bot pseudo-client via `addbot` rcon**. A single
+`addbot` deterministically triggers a forward sequence — bot connects,
+auto-joins a team, picks a class, spawns. The first three forwards (team /
+class / spawn) all fire within ~10s of `addbot`. Tests assert occurrence +
+structural shape per the design contract ("forward fires ≥N times in T
+seconds with K bots").
+
+Three tests now unblocked (env-conditional, will run when
+`KTP_HLDS_SERVERFILES` is set):
+
+- `test_dod_client_spawn_fires_on_bot_join`
+- `test_dod_client_changeteam_fires_on_bot_join`
+- `test_dod_client_changeclass_fires_on_bot_join`
+
+**Phase 2b ✅ SHIPPED 2026-05-05** — kill-trigger rcon added directly to
+the witness plugin (KTPWitness 1.2.0 → 1.3.0). The new `amx_witness_kill
+<slot>` rcon validates the slot, calls `user_kill(slot, 0)`, and returns
+PLUGIN_HANDLED. user_kill dispatches the death event → DODX raises
+`client_death` → witness's existing 1.2.0 handler records the row.
+
+Test sequence for `test_client_death_fires_on_kill`:
+
+  1. `addbot` rcon → wait for `dod_client_spawn` row (proves bot is in-world).
+  2. Capture the bot's slot from the spawn row's `args.id`.
+  3. `amx_witness_kill <slot>` rcon → `user_kill` → `client_death` dispatch.
+  4. Wait for `dod_client_death` row, assert shape + `args.victim` matches
+     the killed bot slot.
+
+Choice rationale (kill primitive in witness vs separate plugin / amxx_admin):
+
+  - In-witness keeps the test surface in one source-controlled artifact —
+    no separate "test admin tools" plugin to maintain.
+  - `user_kill` is core AMXX (no new module load).
+  - `register_concmd` is the same registration pattern KTPMatchHandler uses
+    for its `-DKTP_TEST_MODE` rcons; proven extension-mode-safe.
+  - Witness plugin is already test-only with strong production-safety
+    docs; kill rcon inherits the same boundary.
+
+Live-client option (real DoD client in a docker container) was surveyed
+but rejected for Phase 2 — heavy infrastructure for a test surface where
+bots cover 3 of 4 forwards cleanly. Revisit if a future phase needs
+multiplayer interactions that bots can't drive.
+
+Options surveyed (kept for record):
 - **Live test client.** Spawn a real DoD client process inside a docker
   container, connect to the test hlds. Heavy but realistic. Aligns with
   Session 5's docker-compose plan.
 - **Bot pseudo-client.** DoD's built-in bots (`addbot`) have limited
-  AI but DO trigger spawn/death/team-change forwards. Probably the
-  cheapest path. Constraint: bot AI is unpredictable so test can't
-  assert exact counts; instead asserts "forward fires ≥N times in T
-  seconds with K bots".
+  AI but DO trigger spawn/team-change/class-change forwards. Cheapest
+  path; chosen above. Constraint: bot AI is unpredictable so tests
+  assert occurrence + shape, not exact values.
 
-### Phase 3: Hot-path forwards
+### Phase 3: Hot-path forwards ✅ HANDLERS SHIPPED 2026-05-05 (tests pending Phase 3b)
 
-`client_damage`, `dod_grenade_explosion`, `dod_score_event`. These fire
-at cadences where witness.jsonl will produce hundreds of lines per
-minute. Tests assert *occurrence + shape* not exact counts; rate-test
-the witness path itself for I/O regression.
+Four handlers landed in KTPWitness 1.4.0:
 
-### Phase 4: Match-flow-coupled forwards
+- `client_damage(attacker, victim, damage, wpnindex, hitplace, TA)` — args
+  `{attacker, victim, damage, wpnindex, hitplace, TA}` (6 ints). Witness
+  label `dod_client_damage`.
+- `dod_grenade_explosion(id, Float:pos[3], wpnid)` — args
+  `{id, pos: [x, y, z], wpnid}`. pos serialized with `%.2f` precision (DoD
+  map limits ±16384 per axis; %.2f precision sufficient for spatial assertions).
+- `client_score(id, score, total)` — args `{id, score, total}`. Witness
+  label `dod_client_score`. score is the delta; total is the post-change
+  running score.
+- `dod_score_event(id, score_delta, total_score, cp_index)` — args
+  `{id, score_delta, total_score, cp_index}`. cp_index is the CP that
+  triggered the score, or -1 if not CP-related.
 
-`dod_control_point_captured`, `dod_stats_flush`. These tie back to the
-match-flow state machine — trigger via `amx_ktp_test_*` rcons (already
-exposed for the spine tests) and assert both the state-machine
-transition AND the DODX forward dispatch land.
+All tests for Phase 3 forwards remain decorator-skipped because `addbot`
+alone doesn't reliably trigger any of them within test-suite timing:
+
+- `client_damage` — bot AI may or may not engage in combat within 60s
+- `dod_grenade_explosion` — DoD bots rarely throw grenades
+- `client_score` — fires on frag credit, requires combat
+- `dod_score_event` — same, plus requires CP capture for cp_index>=0
+
+These fire at cadences (hundreds of rows per minute on a populated
+production server) where occurrence + shape is the right contract per
+the design's "≥N times in T seconds" rule. Tests for these forwards will
+need either Phase 3b's deterministic dispatch primitive or a bot-stress
+harness with flake-tolerant assertions.
+
+#### Phase 3b ✅ SHIPPED 2026-05-05 — Deterministic dispatch via test-only DODX natives
+
+Three new natives added to `modules/dod/dodx/NBase.cpp` + declarations in
+`plugins/include/dodx.inc`:
+
+```
+dodx_test_dispatch_damage(attacker, victim, damage, wpnindex, hitplace, TA)
+dodx_test_dispatch_grenade_explosion(id, Float:pos[3], wpnid)
+dodx_test_dispatch_score(id, score_delta, total_score, cp_index)
+    -> fires BOTH client_score AND dod_score_event in tandem,
+       matching production dispatch pattern (moduleconfig.cpp:276-278).
+```
+
+Each native short-circuits if the relevant forward isn't registered
+(`iFDamage < 0`, etc.) and otherwise calls `MF_ExecuteForward(...)`
+directly — bypassing the engine usermsg chain but exercising the same
+forward-dispatch primitive DODX uses for real engine events. They are
+test-only by name + by intent; production plugins must not call them.
+
+Production safety analysis (in `NBase.cpp` § "KTP TEST-ONLY: Forward
+dispatch primitives") + safety rationale captured in `dodx.inc` doc
+comments. Net behavioral change for production: zero — the natives don't
+modify engine state and aren't called from any production plugin.
+
+Witness wraps each native in an rcon (KTPWitness 1.5.0+):
+- `amx_witness_dispatch_damage <attacker> <victim> <damage> <wpnindex> <hitplace> <TA>`
+- `amx_witness_dispatch_grenade <slot> <x> <y> <z> <wpnid>`
+- `amx_witness_dispatch_score <id> <score_delta> <total> <cp_index>`
+
+Tests assert exact value round-trip (deterministic dispatch means the
+witness records exactly the values the test passed in via rcon).
+
+Test coverage gain: 4 Phase 3 forwards now exercise the
+DODX-side `MF_ExecuteForward` chain end-to-end. The engine→DODX dispatch
+chain (engine usermsg/entity-event → DODX hook → `MF_ExecuteForward`) is
+still covered separately by Phase 1's `controlpoints_init` (engine-driven
+on map change) and Phase 4's `dod_stats_flush` (engine-driven via
+KTPMatchHandler's `dodx_flush_all_stats()`).
+
+Test environment requirements:
+1. Built `dodx_ktp_i386.so` (sha varies — current `790edc37...`)
+2. KTPWitness 1.5.0+ staged in test serverfiles plugins/
+
+Operator deployment note: production fleet redeploy of `dodx_ktp_i386.so`
+is **optional** — these natives don't run unless called, and no
+production plugin calls them. The test environment needs the new
+binary; production fleet can stay on the prior dodx until a separate
+redeploy event happens.
+
+### Phase 4: Match-flow-coupled forwards ✅ SHIPPED 2026-05-05
+
+`dod_stats_flush(id)` and `dod_control_point_captured(cp_index, new_owner,
+old_owner)` — both engine-driven in production:
+
+- `dod_stats_flush` fires when KTPMatchHandler calls
+  `dodx_flush_all_stats()` (CLAUDE.md "Match Flow" — at half/match end).
+  KTPMatchHandler 0.10.124 added the call to test-mode `cmd_test_end_match`,
+  so `test_dod_stats_flush_fires_on_match_end` drives the FULL match-flow
+  chain: addbot → setup_match → advance_pending → advance_live → end_match
+  → dodx_flush_all_stats → dod_stats_flush forward → witness row.
+
+- `dod_control_point_captured` fires from DoD's flag-cap usermsg path
+  (production: dispatched at `usermsg.cpp:643-644`). Engine timing for
+  flag-cap is non-deterministic for a test suite (bot AI capture timing
+  is highly variable), so Phase 4 uses the same Phase 3b dispatch
+  primitive pattern: `dodx_test_dispatch_cp_captured(cp_index, new_owner,
+  old_owner)` test-only native (added to NBase.cpp), wrapped by KTPWitness
+  1.6.0's `amx_witness_dispatch_cp_captured` rcon. Real engine flag-cap
+  coverage is provided by manual matchday testing.
+
+Tests added in Phase 4:
+- `test_dod_stats_flush_fires_on_match_end` — full match-flow drive
+- `test_dod_control_point_captured_via_dispatch` — Phase 4b primitive
+
+KTPWitness 1.6.0 adds `public dod_stats_flush` and `public
+dod_control_point_captured` handlers, plus the
+`amx_witness_dispatch_cp_captured` rcon.
 
 ## Open questions
 

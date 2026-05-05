@@ -85,7 +85,9 @@ class MatchState:
 
 
 _RCON_OK_PREFIXES = ("KTP_TEST_SETUP:", "KTP_TEST_PENDING:", "KTP_TEST_LIVE:",
-                     "KTP_TEST_END:", "KTP_TEST_RESET:")
+                     "KTP_TEST_END:", "KTP_TEST_END_HALF1:", "KTP_TEST_ABANDON:",
+                     "KTP_TEST_ROUNDLIVE_LOG:", "KTP_TEST_FORCERESET:",
+                     "KTP_TEST_RESTARTHALF:", "KTP_TEST_RESET:")
 _STATE_LINE_RE = re.compile(r"KTP_TEST_STATE:\s*(\{.*\})")
 _LOCALINFO_LINE_RE = re.compile(r"KTP_TEST_LOCALINFO:\s+key=(\S+)\s+value=(.*)")
 
@@ -133,12 +135,101 @@ class MatchDriver:
         out = self._handle.rcon(f"amx_ktp_test_end_match {int(score_team1)} {int(score_team2)}")
         self._raise_on_error(out, "KTP_TEST_END")
 
+    def fire_match_start_log(self) -> None:
+        """Emit the KTP_MATCH_START log_message + event=ROUNDLIVE_MATCH_START_LOG
+        log_ktp pair that production fires from `task_roundlive_match_context`
+        on engine round-live. The production task gates on the engine's
+        RoundState=1 event which doesn't fire in test environment without
+        a real round; this rcon lets tests drive the emission directly.
+
+        Use AFTER `advance_live(half=N)` so g_currentHalf and g_matchId
+        are populated.
+        """
+        out = self._handle.rcon("amx_ktp_test_fire_match_start_log")
+        self._raise_on_error(out, "KTP_TEST_ROUNDLIVE_LOG")
+
+    def abandon_match(self) -> None:
+        """Emit the production-shape 2nd-half-abandon Discord embed update
+        ("MATCH ENDED (2nd half) - 1st half: T1 X - Y T2") using the
+        currently-set team names + half-1 scores. Doesn't drive the full
+        localinfo-driven abandon-detection logic — only the embed-update
+        side-effect that test 16 asserts on. See KTPMatchHandler.sma's
+        cmd_test_abandon_match docstring for what's covered vs deferred.
+
+        Use AFTER `end_first_half(s1, s2)` so the half-1 scores are
+        populated; calling on a setup-only state would emit "0 - 0".
+        """
+        out = self._handle.rcon("amx_ktp_test_abandon_match")
+        self._raise_on_error(out, "KTP_TEST_ABANDON")
+
+    def end_first_half(self, score_team1: int, score_team2: int) -> None:
+        """Drive the production `handle_first_half_end()` path with the
+        supplied half-1 scores. Emits the "1st Half Complete - Score: X-Y"
+        Discord embed update + KTP_HALF_END HLStatsX log + dod_stats_flush
+        forward fires per connected client. Halftime watchdog is suppressed
+        in the test rcon so the test environment doesn't get a forced map
+        reload after 10s.
+
+        Use this BEFORE advance_live(half=2) to drive the full half-transition
+        sequence:
+            advance_live(half=1) -> end_first_half(s1, s2) -> advance_live(half=2)
+        """
+        out = self._handle.rcon(
+            f"amx_ktp_test_end_first_half {int(score_team1)} {int(score_team2)}"
+        )
+        self._raise_on_error(out, "KTP_TEST_END_HALF1")
+
     def reset(self) -> None:
         """Clear all match state to idle. Used by the conftest autouse
         fixture between tests; tests can call directly if they need to
         re-test setup-from-clean within a single test body."""
         out = self._handle.rcon("amx_ktp_test_reset")
         self._raise_on_error(out, "KTP_TEST_RESET")
+
+    def forcereset(self) -> None:
+        """Bypass the production `.forcereset` chat-confirmation flow and
+        call `execute_force_reset()` directly with synthetic admin metadata
+        ("test_admin", STEAM_0:0:99999999, 127.0.0.1).
+
+        Production-shape side effects (per `execute_force_reset` at
+        KTPMatchHandler.sma:6513-6703):
+          - Full state reset (g_matchLive, g_matchPending, etc. all cleared)
+          - Localinfo cleared (LOCALINFO_MATCH_ID, _MAP, _MODE, etc.)
+          - Discord embed posted via `send_discord_simple_embed("Server Force Reset",
+            ...)` — lands in `relay.received` (CREATE POST)
+          - log_ktp `event=FORCERESET_EXECUTED ...`
+          - Hostname reset, idle hint task restarted
+
+        Distinct from `reset()` which only clears test-mode state without
+        the production-shape Discord notification or full helper-chain
+        invocation.
+        """
+        out = self._handle.rcon("amx_ktp_test_forcereset")
+        self._raise_on_error(out, "KTP_TEST_FORCERESET")
+
+    def restarthalf(self) -> None:
+        """Bypass the production `.restarthalf` chat-confirmation flow and
+        call `execute_restart_half()` directly with synthetic admin metadata.
+
+        Preconditions (enforced by the test rcon, raises MatchDriverError
+        with KTP_TEST_RESTARTHALF: ERROR ... if not met):
+          - Match must be LIVE
+          - Current half must be 2
+          - Match must NOT be in overtime
+
+        Production-shape side effects (per `execute_restart_half` at
+        KTPMatchHandler.sma:6772-6834):
+          - Round restart via `mp_clan_restartround 1`
+          - Scoreboard reset to 1st-half scores (h2 back to 0-0)
+          - g_matchScore[1/2] re-synced to h1 values
+          - dodx_flush_all_stats + dodx_reset_all_stats deferred (Phase 1, 0.1s)
+          - Discord embed posted ("2nd Half Restarted", Phase 2, 0.2s)
+
+        Use AFTER `setup_match → advance_pending → advance_live(half=1) →
+        end_first_half → advance_live(half=2)` so g_currentHalf==2.
+        """
+        out = self._handle.rcon("amx_ktp_test_restarthalf")
+        self._raise_on_error(out, "KTP_TEST_RESTARTHALF")
 
     # -- State readback -------------------------------------------------
 

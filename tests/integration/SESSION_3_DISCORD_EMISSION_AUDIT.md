@@ -42,7 +42,7 @@ Categorized by match-flow event for direct mapping to test phases:
 | 1010 | `send_match_embed_update("1st Half Complete - Score: %d-%d")` | Half-end transition; fires when half-1 timer expires + scores save |
 | 7416 | `send_match_embed_update("2nd Half - Match Live")` | h2 advance_live as above |
 
-**Tests 13/14 unskip plan:** drive `setup_match → advance_pending → advance_live(half=1) → end_first_half → advance_live(half=2)`. Need a `amx_ktp_test_end_first_half` rcon (or equivalent) — Session 1 added 5 driver rcons (setup_match, advance_pending, advance_live, end_match, reset); end-first-half may need a 6th. Check `KTPMatchHandler.sma` test-mode block. Assert two embed-update events.
+**Tests 13/14 unskip plan ✅ SHIPPED 2026-05-05:** KTPMatchHandler 0.10.125 added `amx_ktp_test_end_first_half <s1> <s2>` (the 6th driver rcon). MatchDriver gained `end_first_half(s1, s2)` helper. Tests 13 + 14 are now env-conditional (run end-to-end when `KTP_HLDS_SERVERFILES` is set with KTPMatchHandler 0.10.125+ test-mode build staged). Test 13 asserts the half-1-end embed update has "1st Half Complete - Score: X-Y" with the supplied scores; test 14 chains end_first_half → advance_live(half=2) and asserts the second /edit has "2nd Half - Match Live".
 
 ### Tech pause / unpause (tests 10/11)
 
@@ -50,7 +50,7 @@ Categorized by match-flow event for direct mapping to test phases:
 |---|---|---|
 | 1302 | `send_match_embed_update("…- Match Live")` | Unpause-resume path: status string rebuilt from `g_currentHalf`/`g_inOvertime`. Fires when `.tech` resolves (timer expires or `.unpause` confirmed) |
 
-**Tests 10/11 unskip plan:** test 10 = pause-start emits embed update with "Paused" status; test 11 = unpause-resume re-emits "Match Live". Need to find pause-start emission site (not in the 5 sites I grepped — might be in a tech-pause-specific function I didn't search). Add `amx_ktp_test_tech_pause` + `amx_ktp_test_tech_resume` rcons if not present. **Audit gap: locate pause-start `send_match_embed_update` callsite.**
+**Tests 10/11 design-skipped 2026-05-05:** the "audit gap" was actually the feature not existing — `cmd_tech_pause` and the unpause path do NOT call `send_match_embed_update` or any other Discord-side primitive. Pause status is a HUD-only feature in production design (ReHLDS `RH_SV_UpdatePausedHUD` real-time HUD updates per CLAUDE.md § Pause System). Tests 10/11 as originally specified would assert on an embed update that never fires. They could be repurposed as negative-path tests ("pause does NOT produce a /edit POST") if a future regression added an unwanted Discord notification — but that's a different test contract. Skip-marked with `PAUSE_NO_DISCORD_REASON` in `tests/integration/test_match_flow_logs.py`; reopen if the operator decides to wire pause-state Discord notifications.
 
 ### Match end (tests 15/16)
 
@@ -62,7 +62,9 @@ Categorized by match-flow event for direct mapping to test phases:
 | 4327 | `send_match_embed_update(abandonedStatus)` | Similar abandon path |
 | 4444 | `send_match_embed_update(finalStatus)` | Final-status fallthrough |
 
-**Tests 15/16 unskip plan:** drive `setup → live → end_match(100, 50)`. Sleep ≥200ms. Assert at least one embed update referencing the score. The 5 distinct end-paths above are SAME helper, different status strings — easier to assert structurally ("any update with `MATCH COMPLETE` OR `MATCH ENDED` in status") than to pin a specific line.
+**Tests 15/16 unskip plan:**
+- **Test 15 ✅ SHIPPED 2026-05-05:** `test_15_tied_match_end_emits_tied_winner` drives `setup → live → end_match(42, 42)` and asserts the /edit embed has the "Match tied" winner phrasing (end_match's tied-score branch builds "Match tied!" winner string per cmd_test_end_match line 7817). Distinct from test 9b which uses 100-50 to validate the non-tied winner branch.
+- **Test 16 PENDING** — abandon-path coverage. The 5 abandon-path lines (4130, 4284, 4327, 4444, plus auto-DC 776) share a `send_match_embed_update` helper but with different status strings ("MATCH ENDED (2nd half)", abandonedStatus, finalStatus). Currently no test rcon drives the abandon code paths; would need either an `amx_ktp_test_abandon_match` rcon or extending `cmd_test_end_match` with an `abandon=1` flag to take one of those branches. Structural assertion ("any /edit with `MATCH ENDED` in status") would be straightforward once a trigger exists.
 
 ### Cancel / abort paths (NOT in spec'd test 7-17 set; document only)
 

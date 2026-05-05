@@ -56,6 +56,7 @@ from pathlib import Path
 
 import pytest
 
+from ._timing import DISCORD_POLL_INTERVAL, DISCORD_POST_TIMEOUT
 from .fake_relay import FakeRelay
 from .match_flow import MatchDriver, MatchType
 
@@ -72,11 +73,8 @@ from .match_flow import MatchDriver, MatchType
 #   in ktp_matchhandler_discord.inc:781-784. Lands in FakeRelay's
 #   `received_edits` list, not `received`.
 
-# How long to poll for relay POSTs after a state-machine transition.
-# KTPMatchHandler uses task_deferred_discord_fwd for some posts (fires
-# ~200ms post-trigger); 5s is generous for any single event's POST.
-DISCORD_POST_TIMEOUT = 5.0
-DISCORD_POLL_INTERVAL = 0.1
+# Timeout constants imported from `_timing` — scaled by
+# KTP_TEST_TIMEOUT_MULTIPLIER for slow CI runners.
 
 
 def _wait_for_post_count(relay: FakeRelay, expected_min: int,
@@ -320,3 +318,294 @@ def test_9c_bad_auth_routes_to_auth_failures(hlds, discord_relay):
             hlds.rcon("amx_ktp_test_reset")
         except Exception:
             pass  # Best-effort restore
+
+
+# ---------------------------------------------------------------------------
+# Helper for tests 13/14/15 — drive create+wait-for-msgID, return match_id
+# ---------------------------------------------------------------------------
+
+def _drive_to_live_with_msgid(driver: MatchDriver, relay) -> str:
+    """Setup a competitive match, drive to LIVE for half 1, and wait for
+    the msgID round-trip so subsequent /edit POSTs land cleanly. Returns
+    the match_id assigned by the rcon so tests can use it in assertions.
+
+    Why this is factored out: tests 13/14/15 all need the same setup
+    sequence (test 9b/9c-style). Inlining four times accumulates errors
+    in the timing logic; one helper captures the contract.
+    """
+    match_id = driver.setup_match(MatchType.COMPETITIVE)
+    driver.advance_pending()
+    driver.advance_live(half=1)
+
+    # Wait for the CREATE POST that fires from task_deferred_discord_fwd
+    # ~200ms after advance_live (KTPMatchHandler.sma:7414).
+    actual = _wait_for_post_count(relay, expected_min=1)
+    assert actual >= 1, (
+        f"setup: CREATE POST never arrived; got {actual}. Auth_failures="
+        f"{len(relay.auth_failures)}"
+    )
+
+    # Wait for the msgID capture round-trip (curl response → callback →
+    # localinfo mirror). Up to 2s for a loopback round-trip.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if driver.get_localinfo("_ktp_dmsg"):
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+    else:
+        raise AssertionError(
+            "setup: msgID round-trip never completed within 2s — subsequent "
+            "/edit POSTs would no-op with DISCORD_EDIT_SKIP reason=no_msg_id"
+        )
+    return match_id
+
+
+# ---------------------------------------------------------------------------
+# Test 13 — Half-1 end emits "1st Half Complete - Score: X-Y" embed update
+# ---------------------------------------------------------------------------
+
+def test_13_half1_end_emits_score_embed_update(hlds, discord_relay):
+    """`handle_first_half_end()` (KTPMatchHandler.sma:939-1023) emits a
+    Discord embed update with a status string formatted as "1st Half
+    Complete - Score: %d-%d" (line 1010). Test drives via the new
+    `amx_ktp_test_end_first_half` rcon (KTPMatchHandler 0.10.125+).
+
+    Wire-shape:
+      - advance_live(1)        → POST /reply (CREATE) → received[0]
+      - end_first_half(3, 1)   → POST /edit  (UPDATE) → received_edits[0]
+
+    Asserts the /edit POST has the literal "1st Half Complete" status and
+    the score round-trips. Independent of test 14 — half-1-end is a
+    discrete event that emits ONE embed update before any half-2 advance.
+    """
+    discord_relay.reset()
+    driver = MatchDriver(hlds)
+
+    _drive_to_live_with_msgid(driver, discord_relay)
+
+    edits_baseline = len(discord_relay.received_edits)
+    driver.end_first_half(score_team1=3, score_team2=1)
+
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) > edits_baseline:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+
+    assert len(discord_relay.received_edits) > edits_baseline, (
+        f"expected ≥1 /edit POST after end_first_half; got "
+        f"{len(discord_relay.received_edits)} (baseline={edits_baseline})"
+    )
+
+    edit = discord_relay.received_edits[edits_baseline]
+    assert edit.auth_ok is True, "/edit POST had bad X-Relay-Auth"
+    assert edit.message_id == "fake-relay-msg-1", (
+        f"/edit messageId should be the CREATE POST's id; got {edit.message_id!r}"
+    )
+    embed = edit.embeds[0] if edit.embeds else {}
+    embed_text = (
+        str(embed.get("title", "")) + " "
+        + str(embed.get("description", "")) + " "
+        + " ".join(str(f.get("value", "")) for f in embed.get("fields", []))
+    )
+    assert "1st Half Complete" in embed_text, (
+        f"/edit embed missing '1st Half Complete' status: text={embed_text!r}"
+    )
+    # Score round-trip — the production format is "Score: 3-1"
+    assert "3" in embed_text and "1" in embed_text, (
+        f"/edit embed didn't reference half-1 scores 3-1: text={embed_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 14 — Advance-live(half=2) emits "2nd Half - Match Live" embed update
+# ---------------------------------------------------------------------------
+
+def test_14_half2_advance_live_emits_match_live_embed_update(hlds, discord_relay):
+    """`task_deferred_discord_fwd()` (KTPMatchHandler.sma:7395-7419)
+    distinguishes h1 vs h2/OT: for h1 it fires `send_match_embed_create`
+    (the initial persistent embed POST), for h2 it fires
+    `send_match_embed_update("2nd Half - Match Live")` against the existing
+    msgID (line 7416).
+
+    Wire-shape after the full setup → live(1) → end_first_half(2-1) → live(2):
+      - received[0]        — CREATE from advance_live(half=1)
+      - received_edits[0]  — UPDATE from end_first_half ("1st Half Complete")
+      - received_edits[1]  — UPDATE from advance_live(half=2) ("2nd Half - Match Live")
+
+    Asserts the second /edit POST has the "2nd Half - Match Live" status.
+    """
+    discord_relay.reset()
+    driver = MatchDriver(hlds)
+
+    _drive_to_live_with_msgid(driver, discord_relay)
+    driver.end_first_half(score_team1=2, score_team2=1)
+
+    # Wait for the half-1-end embed update to land (test 13 covers it
+    # explicitly; here we just need it sequenced before the half-2 update)
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) >= 1:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+    h1_edit_count = len(discord_relay.received_edits)
+    assert h1_edit_count >= 1, "half-1-end edit didn't arrive — test 13 sequencing prereq"
+
+    # Trigger the h2 advance_live → expect another /edit POST shortly after
+    driver.advance_live(half=2)
+
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) > h1_edit_count:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+
+    assert len(discord_relay.received_edits) > h1_edit_count, (
+        f"expected ≥1 additional /edit POST after advance_live(half=2); "
+        f"got {len(discord_relay.received_edits)} (h1-edit count was {h1_edit_count})"
+    )
+
+    h2_edit = discord_relay.received_edits[h1_edit_count]
+    assert h2_edit.auth_ok is True
+    embed = h2_edit.embeds[0] if h2_edit.embeds else {}
+    embed_text = (
+        str(embed.get("title", "")) + " "
+        + str(embed.get("description", "")) + " "
+        + " ".join(str(f.get("value", "")) for f in embed.get("fields", []))
+    )
+    assert "2nd Half" in embed_text and "Match Live" in embed_text, (
+        f"h2 /edit embed missing '2nd Half - Match Live' status: text={embed_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 15 — Tied-result match-end emits "Match tied!" winner phrasing
+# ---------------------------------------------------------------------------
+
+def test_15_tied_match_end_emits_tied_winner(hlds, discord_relay):
+    """Match-end with equal scores produces the tied-result winner string.
+    `cmd_test_end_match` constructs the status as "MATCH COMPLETE - Final:
+    %d-%d - %s" where the winner string is "Match tied!" when s1 == s2
+    (KTPMatchHandler.sma:7817).
+
+    Distinct from test 9b (which uses 100-50, asserts a non-tied winner).
+    Asserts the literal "Match tied!" phrasing surfaces in the embed,
+    which catches a regression where the equality branch is taken but the
+    winner string is built wrong.
+    """
+    discord_relay.reset()
+    driver = MatchDriver(hlds)
+
+    _drive_to_live_with_msgid(driver, discord_relay)
+
+    # Equal scores → tied-result branch
+    edits_baseline = len(discord_relay.received_edits)
+    driver.end_match(score_team1=42, score_team2=42)
+
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) > edits_baseline:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+
+    assert len(discord_relay.received_edits) > edits_baseline, (
+        f"expected ≥1 /edit POST after end_match(42, 42); got "
+        f"{len(discord_relay.received_edits)} (baseline={edits_baseline})"
+    )
+
+    edit = discord_relay.received_edits[edits_baseline]
+    embed = edit.embeds[0] if edit.embeds else {}
+    embed_text = (
+        str(embed.get("title", "")) + " "
+        + str(embed.get("description", "")) + " "
+        + " ".join(str(f.get("value", "")) for f in embed.get("fields", []))
+    )
+    assert "Match tied" in embed_text, (
+        f"tied-result /edit embed missing 'Match tied' phrasing: "
+        f"text={embed_text!r}"
+    )
+    # Score round-trip
+    assert "42" in embed_text, (
+        f"tied-result /edit didn't reference tied score 42: text={embed_text!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 16 — 2nd-half-abandon emits "MATCH ENDED (2nd half)" embed update
+# ---------------------------------------------------------------------------
+
+def test_16_abandon_match_emits_match_ended_embed_update(hlds, discord_relay):
+    """The 2nd-half-abandon path emits a Discord embed update with
+    "MATCH ENDED (2nd half) - 1st half: %s %d - %d %s" status
+    (KTPMatchHandler.sma:4284-4288). KTPMatchHandler 0.10.126's
+    `amx_ktp_test_abandon_match` rcon emits this exact production-shape
+    string using the currently-set team names + half-1 scores.
+
+    Test sequence:
+      1. setup_match → advance_pending → advance_live(half=1) → wait msgID
+      2. end_first_half(7, 4) — populates `g_firstHalfScore[1/2]` so the
+         abandon embed has meaningful scores
+      3. abandon_match() — emits the MATCH ENDED embed update
+      4. Assert /edit POST has the abandon-shape status string + scores
+
+    What this test does NOT cover (deferred per Phase 2a notes):
+      - The localinfo-driven abandon-detection path itself (production
+        runs this from plugin_cfg on map load, not via rcon)
+      - HLStatsX KTP_MATCH_END "abandoned_2nd_half" log emission
+      - dodx_flush_all_stats() type=abandoned_2nd_half flushing
+
+    Those gaps are operator-checked manually during real matchday recovery
+    drills; the embed-update side-effect — which is the player-visible
+    Discord notification — is what this test pins.
+    """
+    discord_relay.reset()
+    driver = MatchDriver(hlds)
+
+    _drive_to_live_with_msgid(driver, discord_relay)
+
+    # Half-1-end populates g_firstHalfScore so the abandon embed has
+    # meaningful scores. Wait for its /edit POST to land before triggering
+    # the abandon (so the assertion can target the abandon edit cleanly).
+    driver.end_first_half(score_team1=7, score_team2=4)
+
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) >= 1:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+    half1_edit_count = len(discord_relay.received_edits)
+    assert half1_edit_count >= 1, "half-1-end edit prereq didn't land"
+
+    # Trigger the abandon-shape embed update
+    driver.abandon_match()
+
+    deadline = time.monotonic() + DISCORD_POST_TIMEOUT
+    while time.monotonic() < deadline:
+        if len(discord_relay.received_edits) > half1_edit_count:
+            break
+        time.sleep(DISCORD_POLL_INTERVAL)
+
+    assert len(discord_relay.received_edits) > half1_edit_count, (
+        f"expected ≥1 additional /edit POST after abandon_match; got "
+        f"{len(discord_relay.received_edits)} (half1-edit count was {half1_edit_count})"
+    )
+
+    abandon_edit = discord_relay.received_edits[half1_edit_count]
+    assert abandon_edit.auth_ok is True
+    embed = abandon_edit.embeds[0] if abandon_edit.embeds else {}
+    embed_text = (
+        str(embed.get("title", "")) + " "
+        + str(embed.get("description", "")) + " "
+        + " ".join(str(f.get("value", "")) for f in embed.get("fields", []))
+    )
+    # Production format: "MATCH ENDED (2nd half) - 1st half: <team1> 7 - 4 <team2>"
+    assert "MATCH ENDED" in embed_text, (
+        f"abandon /edit missing 'MATCH ENDED' phrasing: text={embed_text!r}"
+    )
+    assert "2nd half" in embed_text, (
+        f"abandon /edit missing '2nd half' qualifier: text={embed_text!r}"
+    )
+    # Half-1 scores round-trip
+    assert "7" in embed_text and "4" in embed_text, (
+        f"abandon /edit didn't reference half-1 scores 7-4: text={embed_text!r}"
+    )
