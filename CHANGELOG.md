@@ -2,6 +2,46 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.17] - 2026-05-05
+
+### `tune`: ktp-perf-rollup spike threshold 2σ → 2.5σ (Poisson-tail tolerance)
+
+First dry-run fire (2026-05-05 04:30:01 ET) flagged **3 hosts in WARN**, triggering "CRITICAL (partial fleet)" embed (suppressed by `--dry-run` per the 48h soak protocol). Two of the three were boundary false-positives:
+
+- **DAL3** spikes 333 vs threshold 332 (μ=200 σ=66 → 2σ=132 → threshold μ+2σ=332). 1 spike over threshold = textbook Poisson-tail false-positive.
+- **DEN1** fps 973.4 vs threshold 973.6 (μ=977.2 σ=1.8 → 2σ=3.6). 0.2 fps below threshold = boundary false-positive on Gaussian-ish data, less concerning since fps distribution is closer to normal.
+
+Only **DAL5** (spikes 378 vs 321 threshold; 57 over) was a real-anomaly signal worth surfacing.
+
+Per the original design doc note: "distribution is heavily Poisson (avg 0.47 spikes/window, max 26, steam=send=0 since 2026-04-22 threading fix), so per-window 2σ is meaningless. Daily total per host vs trailing-7-day baseline is the right granularity. Once Project 3 categorizer ships, swap to 'new signature appeared OR count > 2σ AND signature severity ≥ 2'." — Project 3 categorizer is deferred to a separate phase; in the interim, widening spike threshold to 2.5σ suppresses the worst Poisson-tail false-positives without losing the real anomalies.
+
+Same DAL3 example with 2.5σ: μ + 2.5σ = 200 + 165 = 365. DAL3's 333 sits comfortably below — would not flag. DAL5: μ + 2.5σ = 233 + 110 = 343. DAL5's 378 still 35 over — still flags.
+
+#### Changes
+
+- `scripts/ktp-perf-rollup.py`:
+  - `SIGMA_THRESHOLD = 2.0` split into `FPS_SIGMA_THRESHOLD = 2.0` (unchanged) and `SPIKE_SIGMA_THRESHOLD = 2.5` (widened). fps stays at 2σ — Gaussian-ish distribution, 2σ catches real regressions cleanly.
+  - Updated docstring + dataclass field comment + embed `Source` text to reflect the dual thresholds.
+
+#### Operator deploy step
+
+Stage updated `scripts/ktp-perf-rollup.py` to `/usr/local/bin/ktp-perf-rollup` on data server (74.91.112.242) before tomorrow's 04:30 ET cron fire. The cron itself is unchanged.
+
+```bash
+scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
+ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+```
+
+After the 2nd dry-run fire (tomorrow 04:30 ET), re-eyeball the table + log to confirm the threshold widening eliminates the false-positives. If clean, lift `--dry-run` from `/etc/cron.d/ktp-perf-rollup-daily` per the original 48h-suppression protocol.
+
+#### Cross-references
+
+- TODO.md § "Tier 3 Project 1 follow-up" — original spec
+- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "Perf-rollup dry-run review" — first-fire data + decision rationale
+- 1.5.16 (entry below) — initial deploy
+
+---
+
 ## [1.5.16] - 2026-05-04
 
 ### `feat`: ktp-perf-rollup daily threshold-alert script (Tier 3 Project 1 follow-up)

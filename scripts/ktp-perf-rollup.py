@@ -10,7 +10,10 @@ Three-tier severity model per `TODO.md` Tier 3 Project 1 follow-up spec:
 
   WARN      yellow embed, no role-ping
               per-host fps_p50 < (host_baseline_mean - 2σ)
-              OR per-host daily spike_total > (host_baseline_mean + 2σ)
+              OR per-host daily spike_total > (host_baseline_mean + 2.5σ)
+              (spike threshold widened from 2σ to 2.5σ on 2026-05-05 to
+              suppress Poisson-tail false-positives observed on first
+              dry-run fire; see CHANGELOG 1.5.17)
 
   CRITICAL  red embed, no role-ping
               ≥3 hosts WARN on the same day
@@ -82,7 +85,15 @@ from pymysql.cursors import DictCursor
 # ──────────────────────────────────────────────────────────────────────────
 
 DEFAULT_CONFIG = Path("/etc/ktp/discord-relay.conf")
-SIGMA_THRESHOLD = 2.0
+# σ thresholds split per metric. fps stays at 2σ — Gaussian-ish distribution,
+# 2σ catches real regressions cleanly. Spike count is heavily Poisson on the
+# tail (per the design doc and the 2026-05-05 first-fire data: DAL3 spikes
+# 333 vs threshold 332, just 1 over — textbook 2σ-on-Poisson false-positive)
+# so spikes use 2.5σ to widen the band by ~25%. Same DAL3 example with 2.5σ
+# would give threshold 365 — DAL3's 333 sits comfortably below, while real
+# anomalies like DAL5 (378 vs 343 threshold at 2.5σ) still flag.
+FPS_SIGMA_THRESHOLD = 2.0
+SPIKE_SIGMA_THRESHOLD = 2.5
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
 DEFAULT_FLEET_CRITICAL_FPS = 963.0  # = 976.5 - 2*6.83 per fleet baseline 2026-05-03
@@ -258,7 +269,7 @@ class HostFinding:
     spike_total_today: int
     spike_total_mean: Optional[float]
     spike_total_stddev: Optional[float]
-    spike_total_baseline: Optional[float]  # mean + 2σ
+    spike_total_baseline: Optional[float]  # mean + 2.5σ (Poisson-tail tolerance)
     warn_fps: bool = False
     warn_spikes: bool = False
 
@@ -316,14 +327,14 @@ def compute_findings(
         if len(baseline_fps) >= 4:
             f.fps_p50_mean = statistics.mean(baseline_fps)
             f.fps_p50_stddev = statistics.stdev(baseline_fps)
-            f.fps_p50_baseline = f.fps_p50_mean - SIGMA_THRESHOLD * f.fps_p50_stddev
+            f.fps_p50_baseline = f.fps_p50_mean - FPS_SIGMA_THRESHOLD * f.fps_p50_stddev
             if endpoint not in excluded and f.fps_p50_today < f.fps_p50_baseline:
                 f.warn_fps = True
         if len(baseline_spikes) >= 4:
             f.spike_total_mean = statistics.mean(baseline_spikes)
             f.spike_total_stddev = statistics.stdev(baseline_spikes)
             f.spike_total_baseline = (
-                f.spike_total_mean + SIGMA_THRESHOLD * f.spike_total_stddev
+                f.spike_total_mean + SPIKE_SIGMA_THRESHOLD * f.spike_total_stddev
             )
             if endpoint not in excluded and f.spike_total_today > f.spike_total_baseline:
                 f.warn_spikes = True
@@ -430,8 +441,8 @@ def build_embed(
     fields.append({
         "name": "Source",
         "value": ("`ktp_telemetry_metrics` daily aggregates · trailing-7-day baseline · "
-                  "2σ thresholds. NY5 (74.91.123.64:27019) excluded from WARN — "
-                  "perpetual pingboost-4 canary."),
+                  "fps 2σ / spike 2.5σ thresholds. NY5 (74.91.123.64:27019) excluded from "
+                  "WARN — perpetual pingboost-4 canary."),
         "inline": False,
     })
 
