@@ -1,0 +1,30 @@
+# KTP daily spike-digest — Tier 3 Project 3 phase 3
+#
+# Fires daily at 05:00 ET (after the 04:30 ET ktp-perf-rollup, so today's
+# digest reads yesterday's complete fleet data — both rollups operate on
+# the same trailing-day window). Reads hlstatsx.ktp_spike_signatures and
+# posts a Discord embed summarizing:
+#
+#   - Top fingerprints by all-time count, last_seen yesterday
+#   - New fingerprints first_seen yesterday (cross-checks the alert hook)
+#   - Daily phase distribution (READ/PHYS/STEAM/SEND/POST/MISC1)
+#
+# Default channel: 1497957091107668070 (#ktp-crashes — same as
+# PERF_ALERT_CHANNEL + SPIKE_ALERT_CHANNEL). Override via
+# SPIKE_DIGEST_CHANNEL in /etc/ktp/discord-relay.conf.
+#
+# Implementation:
+#   /usr/local/bin/ktp-spike-digest    — Python script (this repo: scripts/ktp-spike-digest.py)
+#   hlstatsx.ktp_spike_signatures      — populated by KTPProfileAggregator daemon
+#
+# Operator note: the underlying ktp_telemetry MySQL user already has
+# SELECT on ktp_spike_signatures (granted in 1.5.20 — see
+# README.md § "Required MySQL grants"). No new grants needed.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+# 05:00 ET daily. Reuses the ktp-profile-aggregator venv (pymysql lives
+# there; sharing avoids maintaining a second venv just for this script).
+0 5 * * *   root  set -a; source /opt/ktp-profile-aggregator/.env; set +a; /opt/ktp-profile-aggregator/venv/bin/python /usr/local/bin/ktp-spike-digest --config /etc/ktp/discord-relay.conf >> /var/log/ktp-spike-digest.log 2>&1

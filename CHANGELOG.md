@@ -2,6 +2,85 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.23] - 2026-05-06
+
+### `feat`: Tier 3 Project 3 — daily digest cron + per-fingerprint alert hook
+
+Closes the next-phase items filed in 1.5.20: aggregator-side immediate-alert on never-before-seen fingerprints + a separate daily-digest cron that rolls up the full day's signature activity. Project 3 is now operationally complete (modulo the AdminBot `/ops spikes-by-fingerprint` command, which is its own task).
+
+#### Schema migration (live on data server)
+
+Added `posted_alert TINYINT(1) NOT NULL DEFAULT 0 AFTER sample_line` + `KEY idx_posted_alert (posted_alert)` to `ktp_spike_signatures`. Backfill suppression: one-shot `UPDATE ktp_spike_signatures SET posted_alert=1 WHERE posted_alert=0` ran post-ALTER (2 rows updated — the existing READ:0-5ms + STEAM:0-5ms from the first post-deploy cycle). New rows from this point forward default to `posted_alert=0` and trigger an alert on next aggregator cycle.
+
+Canonical DDL in `scripts/spike_signatures.py:DDL_SIGNATURES` updated to include the new column + index — fresh installs apply the right schema via `CREATE TABLE IF NOT EXISTS`. Vendored copy in KTPProfileAggregator updated to match (sync md5 d73ec76a…).
+
+#### Aggregator alert hook (KTPProfileAggregator commit, separate)
+
+New cycle-level alert step in `aggregator.py`:
+- After all per-server `write_metrics_and_watermark` calls in a cycle, the union of fingerprints observed across all servers is collected
+- `find_unposted_fingerprints` SELECTs rows where `fingerprint IN (cycle's set) AND posted_alert=0`
+- Per row: `build_alert_embed` formats a yellow heads-up embed (title `🆕 New spike fingerprint: PHASE:BUCKET`, fields for phase + bucket + sample log line + count, footer "alert fires once per fingerprint")
+- `post_alert_embed` POSTs via the relay using same conventions as `ktp-perf-rollup` and `post-tier2-result` (`X-Relay-Auth` header, channel-id payload)
+- On 2xx response: `UPDATE ktp_spike_signatures SET posted_alert=1 WHERE fingerprint=%s` per row, so a relay failure mid-batch doesn't lose track
+
+Gated by `SPIKE_ALERTS_ENABLED` env var (default `0` — safety net so a misconfigured deploy doesn't flood `#ktp-crashes` with historical fingerprints). Relay creds via `RELAY_URL` + `AUTH_SECRET`. Channel default `1497957091107668070` (#ktp-crashes — same as `PERF_ALERT_CHANNEL`); override via `SPIKE_ALERT_CHANNEL`.
+
+Smoke-tested 4 short-circuit paths locally (disabled flag, missing creds, empty fingerprint set) + the embed-shape (sample line correctly truncated, all fields present).
+
+#### Daily digest cron (this repo)
+
+`scripts/ktp-spike-digest.py` (~250 LOC) reads `ktp_spike_signatures` for a target day window and posts a Discord embed summarizing:
+- **Top fingerprints** (top 5 by all-time count, `last_seen` in target day) — what's chronically active
+- **New fingerprints** (first 10 with `first_seen` in target day) — never-before-seen patterns; cross-checks the alert hook (any "alert NOT posted" sentinel here means the alert was suppressed somehow)
+- **Daily totals by phase** — sum of `count` per phase across all fingerprints active in the day, in canonical order (READ/PHYS/STEAM/SEND/POST/MISC1)
+
+Color ladder: green (steady-state only), yellow (any new fingerprints — heads-up), red (any single fingerprint count >1000 in one day — fleet anomaly).
+
+CLI mirrors `ktp-perf-rollup`: `--day YYYY-MM-DD` (default = yesterday server-local), `--dry-run`, `--config`. Reads relay creds + channel from `/etc/ktp/discord-relay.conf` (new optional key `SPIKE_DIGEST_CHANNEL`, defaults to `#ktp-crashes`).
+
+Cron: `scripts/cron.d/ktp-spike-digest-daily` fires at 05:00 ET daily — after the 04:30 ET ktp-perf-rollup so today's digest reads yesterday's complete fleet data. Reuses the `ktp-profile-aggregator` venv (pymysql lives there; sharing avoids maintaining a second venv).
+
+#### Verification
+
+Aggregator restarted on data server 2026-05-06 11:59:14 EDT (PID 838865 → 839407). First post-restart cycle clean: `cycle complete in 3.7s: 24/24 servers reported, 0 silent, 0 alerts` (correct — alerts disabled by default).
+
+Digest dry-run for today (with 13 spike occurrences captured by aggregator across the day so far):
+- 5 top fingerprints + 5 new fingerprints surfaced
+- Phase distribution: READ 8 / PHYS 2 / STEAM 2 / SEND 1
+- **Notable**: `PHYS:100-250ms` from DAL5 — a real meaningful regression event (single occurrence today, but the magnitude bucket 100-250ms is significant). Would have triggered an alert if the hook were enabled.
+
+#### Operator deploy steps
+
+Schema migration: ✅ already executed.
+Aggregator restart: ✅ already executed (still with `SPIKE_ALERTS_ENABLED=0`).
+Digest script + cron: ✅ deployed live (md5 `a538f185…`); first auto-fire 2026-05-07 05:00 ET.
+
+**To enable per-fingerprint alerts** (operator-driven, deferred-by-default):
+1. Add `SPIKE_ALERTS_ENABLED=1` to `/opt/ktp-profile-aggregator/.env` (or to `/etc/ktp/discord-relay.conf` if RELAY_URL+AUTH_SECRET aren't already set per-aggregator).
+2. `systemctl restart ktp-profile-aggregator`
+3. Watch `journalctl -u ktp-profile-aggregator -f` for "spike alert posted: …" lines.
+4. If a flood appears (shouldn't happen — historical backfill was suppressed), `systemctl stop ktp-profile-aggregator` + `UPDATE ktp_spike_signatures SET posted_alert=1 WHERE posted_alert=0` + restart.
+
+#### Files changed (this repo)
+
+- `scripts/spike_signatures.py` — DDL_SIGNATURES updated with `posted_alert` column + index
+- `scripts/ktp-spike-digest.py` — new file (~250 LOC)
+- `scripts/cron.d/ktp-spike-digest-daily` — new file (cron entry)
+- `CHANGELOG.md` — § 1.5.23
+
+KTPProfileAggregator (separate commit):
+- `aggregator.py` — alert hook (~120 LOC: 4 new helper functions + cycle-loop integration)
+- `spike_signatures.py` — vendor re-sync to match canonical DDL update
+- `.env.example` — new `SPIKE_ALERTS_ENABLED` / `SPIKE_ALERT_CHANNEL` / `RELAY_URL` / `AUTH_SECRET` keys
+
+#### Cross-references
+
+- 1.5.20 — Project 3 aggregator wiring (parser + DDL + UPSERT — what this builds on)
+- 1.5.22 — Tier 2 reporting embed (parallel reporting pattern using same relay)
+- KTPProfileAggregator commit (separate repo) — the alert-hook code itself
+
+---
+
 ## [1.5.22] - 2026-05-06
 
 ### `feat`: Tier 2 post-run Discord reporting embed (Session 5 sub-followup closed)

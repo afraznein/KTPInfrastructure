@@ -101,9 +101,11 @@ CREATE TABLE IF NOT EXISTS ktp_spike_signatures (
     count            INT         NOT NULL DEFAULT 0,
     sample_endpoint  VARCHAR(48) NOT NULL,
     sample_line      TEXT        NOT NULL,
+    posted_alert     TINYINT(1)  NOT NULL DEFAULT 0,
     PRIMARY KEY (fingerprint),
     KEY idx_last_seen (last_seen),
-    KEY idx_phase_bucket (phase, magnitude_bucket)
+    KEY idx_phase_bucket (phase, magnitude_bucket),
+    KEY idx_posted_alert (posted_alert)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 """.strip()
 
