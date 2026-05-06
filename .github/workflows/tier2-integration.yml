@@ -66,6 +66,12 @@ jobs:
       # Timeout multiplier — manual runs can dial this up if the runner is
       # busy. Default 1.0 = same as local dev.
       KTP_TEST_TIMEOUT_MULTIPLIER: ${{ inputs.timeout_multiplier || '1.0' }}
+      # Tier 2 post-run reporting (1.5.22) — pytest_sessionfinish hook in
+      # tests/integration/conftest.py writes a session-summary JSON here
+      # IFF this env var is set; the post-pytest step reads it and POSTs
+      # a Discord embed via the relay. Unset in dev to preserve the
+      # "no extra files written" loop.
+      KTP_TIER2_REPORT_PATH: tier2-report.json
 
     steps:
       - name: Checkout
@@ -129,6 +135,43 @@ jobs:
           path: allure-results/
           retention-days: 14
           if-no-files-found: warn
+
+      - name: Post Tier 2 result embed to Discord
+        if: always()
+        # Self-hosted runner is on the data server, so /etc/ktp/discord-relay.conf
+        # is readable directly — no GH-Actions secrets needed for the relay
+        # creds. Helper script reads RELAY_URL + AUTH_SECRET + TIER2_REPORT_CHANNEL
+        # (default 1498813261263405097, the scheduled-report channel where
+        # perf-rollup + canary embeds also flow). Override via the conf file
+        # if you want a dedicated channel for Tier 2 results.
+        #
+        # Failure here does NOT mask a real test failure — the embed step
+        # logs and exits 0 so the workflow's overall result reflects pytest's
+        # exit code, not a transient relay issue.
+        run: |
+          if [ ! -f tier2-report.json ]; then
+            echo "tier2-report.json not produced (pytest may have crashed before sessionfinish hook); skip embed"
+            exit 0
+          fi
+          # `|| true` — see comment above. A relay/embed failure is a
+          # noise issue, not a test failure.
+          python3 scripts/post-tier2-result.py \
+            --report tier2-report.json \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --branch "${{ github.ref }}" \
+            --commit-sha "${{ github.sha }}" \
+            || echo "WARNING: post-tier2-result.py exited non-zero; embed not posted (test result unaffected)"
+
+      - name: Upload Tier 2 report JSON (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Useful for post-mortem analysis even after the embed has been
+          # archived in Discord. Same JSON the embed was built from.
+          name: tier2-report-${{ github.run_id }}
+          path: tier2-report.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Collect crash artifacts on failure
         if: failure()
