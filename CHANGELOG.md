@@ -2,6 +2,88 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.20] - 2026-05-06
+
+### `feat`: Tier 3 Project 3 — spike-categorizer aggregator wiring
+
+Closes the open "Aggregator wiring (~3-4h, NEXT)" item from the Project 3 spec. The canonical parser + DDL shipped 2026-05-04 (commit `abe75e8`, version 1.5.13/14 era — `scripts/spike_signatures.py` + 34 unit tests at `tests/unit/test_spike_signatures.py`); this commit wires it into the production daemon.
+
+#### What landed
+
+**Schema deploy** (data server, idempotent — `CREATE TABLE IF NOT EXISTS`):
+
+```
+ktp_spike_signatures (
+  fingerprint      VARCHAR(64) NOT NULL PRIMARY KEY,
+  phase            VARCHAR(16) NOT NULL,
+  magnitude_bucket VARCHAR(16) NOT NULL,
+  first_seen       TIMESTAMP   NOT NULL,
+  last_seen        TIMESTAMP   NOT NULL,
+  count            INT         NOT NULL DEFAULT 0,
+  sample_endpoint  VARCHAR(48) NOT NULL,
+  sample_line      TEXT        NOT NULL,
+  KEY idx_last_seen (last_seen),
+  KEY idx_phase_bucket (phase, magnitude_bucket)
+)
+```
+
+Applied as MySQL root on the data server. `ktp_telemetry@localhost` granted `SELECT, INSERT, UPDATE` on the new table; FLUSH PRIVILEGES applied. Verified post-deploy via `SHOW CREATE TABLE` + `SHOW GRANTS`.
+
+**KTPProfileAggregator wiring** (companion repo — separate commit there):
+
+- Vendored `spike_signatures.py` from `KTPInfrastructure/scripts/` to `KTPProfileAggregator/` as a sibling of `aggregator.py`. Header comment documents the canonical home + sync md5 (`4b96d608c2139f0323fbfde913008fdb` as of vendor date 2026-05-06).
+- Added `RE_SPIKE_UMBRELLA` regex to match `[KTP_SPIKE]` umbrella lines (timestamp prefix only — full structural parse still goes through `parse_spike_line`).
+- New `SignatureOccurrence` dataclass aggregates first/last/count/sample-line per fingerprint within a single server's cycle.
+- `CycleResult` extended with `signatures: dict[str, SignatureOccurrence]` field.
+- `aggregate_lines()` extended with a third match arm for umbrella lines, populating signatures dict.
+- New `write_signatures()` function does an `INSERT ... ON DUPLICATE KEY UPDATE` for each fingerprint, incrementing count + advancing last_seen on collision while preserving first_seen + sample.
+- `write_metrics_and_watermark()` calls `write_signatures()` after the metrics insert (separate transaction-scope so a malformed signature row doesn't roll back metrics).
+- Per-cycle debug log line extended with `signatures=N` count.
+- README updated: new vendor file in `Files` table, new GRANT in `Required MySQL grants`, new schema-deploy snippet in `Schema` section.
+
+**Smoke test** (no SSH, no real DB): exercised `aggregate_lines()` against 5 sample log lines covering FPS / per-phase spike / 2× same-fingerprint umbrella / 1× distinct-fingerprint umbrella. Confirmed:
+
+- FPS samples + per-phase spike counts unchanged from pre-wiring (`spikes={'PHYS': 0, 'READ': 1, 'STEAM': 0, 'SEND': 0}`)
+- Two unique fingerprints captured: `READ:0-5ms` (count=2, first/last spanning the two same-fingerprint lines) + `STEAM:5-10ms` (count=1)
+- Window aggregation expanded to include umbrella-line timestamps
+- The STEAM-dominated umbrella line had no companion `[KTP_SPIKE_STEAM]` per-phase line — exactly the gotcha called out in the spike_signatures docstring; categorizer caught it.
+
+#### Service restart held
+
+Aggregator daemon on data server is still running 1.5.x without the umbrella handling. Restart pending operator decision — service is `ktp-profile-aggregator.service`, restart cost is ~30s of one-cycle gap.
+
+```bash
+# When ready (operator):
+scp aggregator.py spike_signatures.py root@74.91.112.242:/opt/ktp-profile-aggregator/
+ssh root@74.91.112.242 systemctl restart ktp-profile-aggregator
+journalctl -u ktp-profile-aggregator -f --since "1 minute ago"
+# Verify first-cycle output: "wrote <endpoint>: ... signatures=N" in debug logs
+# Verify rows: SELECT * FROM ktp_spike_signatures ORDER BY first_seen DESC LIMIT 10
+```
+
+#### Next-phase TODOs
+
+- **Daily digest cron + alert hook** (~6-8h, separate followup) — script similar to `ktp-perf-rollup` reads `ktp_spike_signatures`, posts daily summary to `#ktp-crashes`. Immediate-alert hook fires inline when an INSERT (vs UPDATE) occurs — never-before-seen fingerprint is the high-signal event.
+- **AdminBot `/ops spikes-by-fingerprint`** (~2-3h) — replace existing raw-line-fetch with structured fingerprint lookup. Existing `/ops spikes` stays as the count-based view.
+
+#### Files changed
+
+This repo:
+- `CHANGELOG.md` — § 1.5.20
+
+KTPProfileAggregator (separate repo):
+- `aggregator.py` — wiring (RE_SPIKE_UMBRELLA, SignatureOccurrence, signatures dict, write_signatures, integration with write_metrics_and_watermark)
+- `spike_signatures.py` — vendored copy with header comment
+- `README.md` — vendor file + new GRANT + schema deploy snippet
+
+#### Cross-references
+
+- 2026-05-04 § "spike_signatures wedge" — original parser + DDL + 34 unit tests
+- TODO.md § "KTP test infrastructure" — Tier 3 Project 3 aggregator wiring resolved
+- KTPProfileAggregator commit (separate repo)
+
+---
+
 ## [1.5.19] - 2026-05-06
 
 ### `tests`: Tier 2 finishing — `_timing` migration + Allure publish
