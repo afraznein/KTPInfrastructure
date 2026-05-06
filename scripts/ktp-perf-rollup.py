@@ -94,6 +94,22 @@ DEFAULT_CONFIG = Path("/etc/ktp/discord-relay.conf")
 # anomalies like DAL5 (378 vs 343 threshold at 2.5σ) still flag.
 FPS_SIGMA_THRESHOLD = 2.0
 SPIKE_SIGMA_THRESHOLD = 2.5
+
+# FPS-side absolute-drop floor (filed 2026-05-06, shipped 1.5.21).
+# 2σ alone fires for any drop ≥ 2σ regardless of magnitude — on tight-σ hosts
+# (DAL1 σ=0.3 fps, DAL4 σ=0.2 fps in the 2026-05-06 second-fire data) that
+# meant sub-1-fps drops triggered WARN even though the actual delta is
+# player-imperceptible (<0.05% throughput). Adding an absolute-drop floor
+# gates the 2σ trigger to drops of meaningful magnitude only — either
+# ≥1 fps absolute OR ≥0.1% relative, whichever is more lenient (lenient
+# floor preserves sensitivity on lower-fps hosts where 1 fps is still 0.1%+).
+#
+# Validation against 2026-05-06 fire data:
+#   NY3 drop = 979.5 - 973.2 = 6.3 fps (0.64%)  → BOTH conditions pass → fire
+#   DAL1 drop = 980.7 - 980.2 = 0.5 fps (0.05%) → BOTH fail → suppressed
+#   DAL4 drop = 979.1 - 978.7 = 0.4 fps (0.04%) → BOTH fail → suppressed
+FPS_MIN_DROP_FPS = 1.0
+FPS_MIN_DROP_PCT = 0.001  # 0.1%
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
 DEFAULT_FLEET_CRITICAL_FPS = 963.0  # = 976.5 - 2*6.83 per fleet baseline 2026-05-03
@@ -328,7 +344,18 @@ def compute_findings(
             f.fps_p50_mean = statistics.mean(baseline_fps)
             f.fps_p50_stddev = statistics.stdev(baseline_fps)
             f.fps_p50_baseline = f.fps_p50_mean - FPS_SIGMA_THRESHOLD * f.fps_p50_stddev
-            if endpoint not in excluded and f.fps_p50_today < f.fps_p50_baseline:
+            # Two-condition gate (1.5.21): 2σ test must pass AND drop must be
+            # meaningfully large (≥1 fps absolute OR ≥0.1% relative). Either
+            # magnitude condition satisfies the floor — lenient OR keeps low-
+            # fps hosts (Chicago at 967 fps) responsive while suppressing
+            # tight-σ noise on near-1000-fps hosts (DAL1/DAL4 sub-1-fps drift).
+            sigma_breach = f.fps_p50_today < f.fps_p50_baseline
+            drop_fps = f.fps_p50_mean - f.fps_p50_today
+            drop_pct = drop_fps / f.fps_p50_mean if f.fps_p50_mean > 0 else 0.0
+            magnitude_meaningful = (
+                drop_fps >= FPS_MIN_DROP_FPS or drop_pct >= FPS_MIN_DROP_PCT
+            )
+            if endpoint not in excluded and sigma_breach and magnitude_meaningful:
                 f.warn_fps = True
         if len(baseline_spikes) >= 4:
             f.spike_total_mean = statistics.mean(baseline_spikes)
@@ -441,8 +468,8 @@ def build_embed(
     fields.append({
         "name": "Source",
         "value": ("`ktp_telemetry_metrics` daily aggregates · trailing-7-day baseline · "
-                  "fps 2σ / spike 2.5σ thresholds. NY5 (74.91.123.64:27019) excluded from "
-                  "WARN — perpetual pingboost-4 canary."),
+                  "fps 2σ + ≥1 fps floor / spike 2.5σ thresholds. NY5 (74.91.123.64:27019) "
+                  "excluded from WARN — perpetual pingboost-4 canary."),
         "inline": False,
     })
 

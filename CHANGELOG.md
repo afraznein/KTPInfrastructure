@@ -2,6 +2,69 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.21] - 2026-05-06
+
+### `tune`: ktp-perf-rollup FPS-side absolute-drop floor (suppress sub-1-fps boundary alerts)
+
+The 2026-05-06 second-fire data showed the same Gaussian-vs-tight-σ false-positive pattern that bit DAL3 on the spike side, but on the FPS side this time. Two hosts (DAL1 σ=0.3 fps, DAL4 σ=0.2 fps) had per-host σ tight enough that a sub-1-fps drop technically passed 2σ even though the actual delta was player-imperceptible (~0.05% throughput).
+
+Original 2σ-only rule on 2026-05-05 data:
+- NY3 fps 973.2 < 978.7 (μ 979.5 σ 0.4) → drop = 6.3 fps (0.64%) → real signal ✓
+- DAL1 fps 980.2 < 980.2 (μ 980.7 σ 0.3) → drop = 0.5 fps (0.05%) → boundary noise ✗
+- DAL4 fps 978.7 < 978.8 (μ 979.1 σ 0.2) → drop = 0.4 fps (0.04%) → boundary noise ✗
+
+Filed in 1.5.18's CHANGELOG as a "low-priority follow-up" — the alerts were dismissable, just noisy. Filed as a TODO immediately after.
+
+#### Fix shipped (1.5.21)
+
+Added an absolute-drop floor that gates the 2σ trigger:
+
+```python
+sigma_breach = fps_today < (mean - FPS_SIGMA_THRESHOLD * stddev)
+drop_fps = mean - fps_today
+drop_pct = drop_fps / mean
+magnitude_meaningful = drop_fps >= FPS_MIN_DROP_FPS or drop_pct >= FPS_MIN_DROP_PCT
+warn_fps = sigma_breach and magnitude_meaningful
+```
+
+Defaults: `FPS_MIN_DROP_FPS = 1.0`, `FPS_MIN_DROP_PCT = 0.001` (0.1%). Lenient OR keeps the floor sensitive on lower-fps hosts (Chicago at 967 fps where 1 fps is already 0.1%) without producing tight-σ noise on near-1000-fps baremetals.
+
+Validation: re-replayed `--day 2026-05-05 --dry-run` against deployed 1.5.21:
+
+```
+findings: 24 hosts; warn=1; fleet_median_fps=978.6
+title: WARN — 2026-05-05
+hosts in WARN (1): NY3 (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4)
+```
+
+Down from 3 WARN (NY3 + DAL1 + DAL4 → "CRITICAL (partial fleet)" tier) to 1 WARN (NY3 → standard WARN tier). DAL1 + DAL4 boundary alerts suppressed as intended. NY3's real signal preserved. Embed Source-field text updated to `fps 2σ + ≥1 fps floor / spike 2.5σ thresholds` so operators see the gating logic in the alert itself.
+
+#### Files changed
+
+- `scripts/ktp-perf-rollup.py`:
+  - Added `FPS_MIN_DROP_FPS` + `FPS_MIN_DROP_PCT` constants with the validation table inline as a docstring (NY3/DAL1/DAL4 row-by-row).
+  - Replaced the simple `if today < baseline` WARN test with the two-condition gate.
+  - Updated embed Source field text to include the floor in the threshold description.
+- `CHANGELOG.md` — § 1.5.21
+
+#### Operator deploy step (executed 2026-05-06 10:39 ET)
+
+```bash
+# Already done — recorded for repeatability:
+scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
+ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+```
+
+Live at md5 `14914a8b…` on data server. Backup of pre-fix script at `/usr/local/bin/ktp-perf-rollup.bak-20260506-103910`. Cron unchanged — picks up the new script at next 04:30 ET fire.
+
+#### Cross-references
+
+- 1.5.20 — Tier 3 Project 3 spike-categorizer (separate concurrent change in same session)
+- 1.5.18 — `--dry-run` lift + filing of this follow-up
+- 1.5.17 — initial spike-side 2σ → 2.5σ tune (same false-positive class, different metric)
+
+---
+
 ## [1.5.20] - 2026-05-06
 
 ### `feat`: Tier 3 Project 3 — spike-categorizer aggregator wiring
