@@ -2,6 +2,59 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.25] - 2026-05-06
+
+### `tests`: Tier 2 first-fire follow-ups — bot-AI test skips + version-pin sync
+
+First end-to-end Tier 2 run on the newly-registered self-hosted runner produced 29 PASS / 10 FAIL / 3 SKIP (47 collected). Of the 10 failures, 9 traced to two distinct root causes both fixed in this commit + companion KTPMatchHandler 0.10.131. The 10th was a stale version pin in test_match_flow_spine.py (also fixed below).
+
+#### Changes
+
+**1. Bot-AI-dependent tests skip-marked (5 tests, Class A).**
+
+`tests/integration/test_dodx_forward_firing.py:test_dod_client_spawn / changeteam / changeclass / client_death / dod_stats_flush_fires_on_match_end` all rely on `addbot` rcon producing a connected player that picks a team and spawns. Reality: DoD itself ships **no bot AI**, and production game servers don't run bots. `addbot` creates a fake-client slot but the client never spawns into a team without an external bot DLL. Without that, the witness events never fire and the tests timeout at 10s.
+
+Skip-marked with a clear `BOT_AI_REQUIRED_REASON` constant explaining the gap and how to re-enable (install a DoD bot AI mod into the test serverfiles tree). Deterministic-dispatch test natives (Phase 3+) still cover the dispatch primitive without requiring a real player chain — the 6 non-bot tests in this file (`controlpoints_init`, `client_damage`, `grenade_explosion`, `client_score_event`, `dod_score_event`, `control_point_captured`) all PASSED in the first run.
+
+**2. Version pin synced to 0.10.131 (Class C, trivial).**
+
+`tests/integration/test_match_flow_spine.py:42`: `EXPECTED_KTPMATCHHANDLER_VERSION` bumped 0.10.130 → 0.10.131 to match the new test-mode binary that includes the score-propagation + log_message-mirror fixes (see KTPMatchHandler 0.10.131 CHANGELOG).
+
+#### Companion fixes outside this repo
+
+Classes B (score propagation, 3 tests) and D (log_message dir mismatch, 1 test) live in KTPMatchHandler test-mode rcons — fixed in KTPMatchHandler 0.10.131 commit. Production binary unaffected.
+
+#### Verification
+
+- `pytest --collect-only`: 47 tests, 0 errors (regression-clean post-skip-marks)
+- AST parse: clean
+- Test-mode binary recompiled (md5 `f1b21414…`); restaged to `/opt/ktp-tier2-runner/serverfiles/...`
+
+#### Expected post-fix Tier 2 run
+
+| Outcome | Pre-fix | Expected post-fix |
+|---|---|---|
+| PASSED | 29 | 33 (29 + 3 score tests + 1 log_message + 1 version pin = 34, but bots stay skipped so net +5) |
+| FAILED | 10 | 0 (5 bot tests now skip; 4 + 1 fixed) |
+| SKIPPED (intentional) | 3 | 8 (3 prior + 5 bot-AI) |
+| Total | 47 | 47 (all 47 either pass or have documented-skip reason) |
+
+Estimate: 33 PASSED / 0 FAILED / 8 SKIPPED + ≤2 reruns on flaky timing — **green Tier 2** depending on environmental noise.
+
+#### Files changed
+
+- `tests/integration/test_dodx_forward_firing.py` — 5 `@pytest.mark.skip` decorators + `BOT_AI_REQUIRED_REASON` constant + 14-line explanatory comment block
+- `tests/integration/test_match_flow_spine.py` — `EXPECTED_KTPMATCHHANDLER_VERSION` 0.10.130 → 0.10.131
+- `CHANGELOG.md` — § 1.5.25
+
+#### Cross-references
+
+- KTPMatchHandler 0.10.131 (companion commit; Class B + Class D fixes)
+- 1.5.24 — review-fix follow-ups from the original stack review (now stale on the bot-AI assumption)
+- Tier 2 first-fire run 25454115479 (the failing baseline these fixes correct)
+
+---
+
 ## [1.5.24] - 2026-05-06
 
 ### `tune`: Tier 2 / spike-digest deferred refinements (4 of 6 from review)

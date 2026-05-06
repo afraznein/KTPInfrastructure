@@ -105,8 +105,32 @@ def test_controlpoints_init_fires_on_map_load(hlds):
 # `client_death` is excluded from the addbot path (needs an attacker source),
 # and stays scaffold-skipped pending a deterministic kill driver (rcon-based
 # admin slay or bot-vs-bot combat).
+#
+# DoD bot-AI dependency (surfaced 2026-05-06 Tier 2 first-fire):
+#
+# `addbot` is a stock HLDS console command that creates a fake-client slot
+# but does NOT drive AI — the client never picks a team or spawns. DoD
+# itself ships no bot AI; production game servers also don't run bots.
+# Without an external bot DLL (HPB_Bot, RCBot, etc.) installed in the test
+# serverfiles tree, all 4 addbot-driven tests + the stats-flush test (which
+# transitively requires a connected player) timeout with `dod_client_spawn`
+# never observed in witness.jsonl.
+#
+# The five tests below skip-mark with this reason. To re-enable: install
+# a DoD bot AI mod into the test serverfiles tree, document the addition in
+# CI_RUNNER_SETUP.md, and remove the skip markers. Until then, the deter-
+# ministic-dispatch test natives (Phase 3+) cover the dispatch primitive
+# without requiring a real player chain.
+BOT_AI_REQUIRED_REASON = (
+    "DoD ships no bot AI; production fleet doesn't run bots; test serverfiles "
+    "tree doesn't include a bot DLL. `addbot` rcon creates a fake client that "
+    "never spawns into a team, so dod_client_spawn / changeteam / changeclass "
+    "/ death witness events never fire. To re-enable, install a DoD bot AI mod "
+    "(HPB_Bot, RCBot, etc.) and remove this marker."
+)
 
 
+@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
 def test_dod_client_spawn_fires_on_bot_join(hlds):
     """`dod_client_spawn(id)` fires when a bot spawns into the round.
     `addbot` rcon -> wait for witness row.
@@ -132,6 +156,7 @@ def test_dod_client_spawn_fires_on_bot_join(hlds):
     assert row["args"]["id"] >= 1, f"args.id must be a positive client slot: {row['args']['id']}"
 
 
+@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
 def test_dod_client_changeteam_fires_on_bot_join(hlds):
     """`dod_client_changeteam(id, team, oldteam)` fires when a bot is
     auto-assigned a team. `addbot` -> bot starts in Spectators (team 3) ->
@@ -160,6 +185,7 @@ def test_dod_client_changeteam_fires_on_bot_join(hlds):
     assert args.get("oldteam") in (0, 1, 2, 3), f"args.oldteam must be 0..3: {args!r}"
 
 
+@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
 def test_dod_client_changeclass_fires_on_bot_join(hlds):
     """`dod_client_changeclass(id, class, oldclass)` fires when a bot
     picks a class (just after spawn per dodx.inc). `addbot` -> bot picks
@@ -188,6 +214,7 @@ def test_dod_client_changeclass_fires_on_bot_join(hlds):
     assert isinstance(args.get("oldclass"), int) and args["oldclass"] >= 0, f"args.oldclass invalid: {args!r}"
 
 
+@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
 def test_client_death_fires_on_kill(hlds):
     """`client_death(killer, victim, wpnindex, hitplace, TK)` fires on
     any player death. Witness label: `dod_client_death`. Args shape:
@@ -426,6 +453,7 @@ def test_dispatch_score_fires_both_client_score_and_dod_score_event(hlds):
 # (CP capture timing is non-deterministic enough for test-suite use).
 
 
+@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
 def test_dod_stats_flush_fires_on_match_end(hlds):
     """`dod_stats_flush(id)` fires for each connected player at match
     end. KTPMatchHandler 0.10.124+ test-mode `cmd_test_end_match` calls
