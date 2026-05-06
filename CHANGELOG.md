@@ -2,6 +2,47 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.18] - 2026-05-06
+
+### `ops`: ktp-perf-rollup `--dry-run` lifted (Discord posts now live)
+
+Second dry-run fire (2026-05-06 04:30:01 ET, target_day=2026-05-05) ran clean of spike-side false-positives — confirming the 1.5.17 spike threshold widening (2σ → 2.5σ) eliminated the DAL3-class boundary triggers from the first fire. Lifted `--dry-run` flag from `/etc/cron.d/ktp-perf-rollup-daily` per the original 48h-suppression protocol.
+
+#### Verification fire findings
+
+3 hosts WARN today, all FPS-side:
+
+- **NY3** (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4). **Real ~6 fps regression.** Drilled down: localized to a single 21:15-22:00 EDT window where NY3-only dropped to 818-890 fps for 9 consecutive 5-min samples while NY1/NY2/NY4 held 974-985 normal. Spike total 84 vs 12-18 on siblings (7× baseline). Pattern is transient gameplay load (12man/scrim on NY3 specifically), not a systemic regression — recovered fully by next sample, 2026-05-06 NY3 back to 979.7 fps avg post-nightly-restart. The alert correctly surfaced a real per-instance anomaly worth a brief investigation.
+- **DAL1** (74.91.126.55:27015) — fps 980.2 < 980.2 (μ 980.7 σ 0.3). Sub-1-fps drop.
+- **DAL4** (74.91.126.55:27018) — fps 978.7 < 978.8 (μ 979.1 σ 0.2). Sub-1-fps drop.
+
+DAL1 + DAL4 are the same flavor as the earlier spike-side DAL3 false-positive: tight-σ hosts trigger 2σ technically while the actual fps drop is player-imperceptible (~0.05% throughput). Filed as a low-priority follow-up TODO ("FPS floor refinement") to add an absolute-drop minimum (e.g., `WARN only if fps drop ≥ 1.0 fps OR ≥ 0.1%` AND 2σ). Not blocking the lift — DAL1/DAL4-style alerts are estimated at ~1-2 false positives/week on tight-σ hosts, an acceptable noise floor in exchange for surfacing real signals like NY3.
+
+#### Changes
+
+- `scripts/cron.d/ktp-perf-rollup-daily`:
+  - Removed `--dry-run` from the cron command line.
+  - Replaced "48-hour suppression" comment block with soak-history note (recording the 1.5.17 spike-threshold tune + the 1.5.18 lift) so future operators can read the timeline.
+  - Updated the inline `# --dry-run for the first 48h post-deploy` comment above the cron line to "Live (post-soak) — Discord posts enabled."
+
+#### Operator deploy step (executed 2026-05-06 09:38 ET)
+
+```bash
+# (Already done — recorded for repeatability)
+scp scripts/cron.d/ktp-perf-rollup-daily root@74.91.112.242:/etc/cron.d/ktp-perf-rollup-daily
+```
+
+cron auto-reloads `/etc/cron.d/` on file change; no `systemctl reload` needed. Verified live execution line is `--dry-run`-free; cron service active. Backup of pre-lift cron at `/etc/cron.d/ktp-perf-rollup-daily.bak-20260506-093758`.
+
+#### Cross-references
+
+- 1.5.17 — spike threshold widening (2σ → 2.5σ) that this 1.5.18 lift validates
+- 1.5.16 — initial perf-rollup deploy
+- TODO.md "FPS floor refinement" — filed follow-up tracking the DAL1/DAL4 sub-1-fps boundary case
+- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "perf-rollup spike threshold tuned" — pre-lift decision rationale
+
+---
+
 ## [1.5.17] - 2026-05-05
 
 ### `tune`: ktp-perf-rollup spike threshold 2σ → 2.5σ (Poisson-tail tolerance)

@@ -21,10 +21,14 @@
 # would fire on any drop below ~999.7 fps; not a player-serving instance).
 # See PERF_EXCLUDED_HOSTS in /etc/ktp/discord-relay.conf.
 #
-# 48-hour suppression on first deploy: launch with `--dry-run` for the
-# first 2 daily fires (runs the rollup, writes to ktp_telemetry_baselines
-# table, but does NOT POST to Discord). Operator eyeballs the output via
-# the log + the table, then removes --dry-run from this cron once happy.
+# Soak history: launched with `--dry-run` 2026-05-04 for the 48h soak
+# protocol (runs rollup, writes baselines, suppresses Discord post).
+# First fire 2026-05-05 surfaced 1 Poisson-tail false-positive on the
+# spike side (DAL3 1-over-threshold) → spike threshold widened 2σ → 2.5σ
+# in 1.5.17. Second fire 2026-05-06 ran clean of spike-side false-positives;
+# `--dry-run` lifted in 1.5.18. FPS-side may show occasional sub-1-fps
+# borderline alerts on tight-σ hosts (DAL1/DAL4 pattern); floor refinement
+# tracked as a follow-up TODO.
 #
 # Implementation:
 #   /usr/local/bin/ktp-perf-rollup       — Python script (this repo: scripts/ktp-perf-rollup.py)
@@ -47,5 +51,5 @@ MAILTO=''
 
 # 04:30 ET daily. Wraps the venv'd python — pymysql lives in the
 # ktp-profile-aggregator venv (we share it rather than maintaining two).
-# --dry-run for the first 48h post-deploy; remove after operator eyeball.
-30 4 * * *   root  set -a; source /opt/ktp-profile-aggregator/.env; set +a; /opt/ktp-profile-aggregator/venv/bin/python /usr/local/bin/ktp-perf-rollup --dry-run --config /etc/ktp/discord-relay.conf >> /var/log/ktp-perf-rollup.log 2>&1
+# Live (post-soak) — Discord posts enabled.
+30 4 * * *   root  set -a; source /opt/ktp-profile-aggregator/.env; set +a; /opt/ktp-profile-aggregator/venv/bin/python /usr/local/bin/ktp-perf-rollup --config /etc/ktp/discord-relay.conf >> /var/log/ktp-perf-rollup.log 2>&1
