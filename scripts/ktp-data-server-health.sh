@@ -16,10 +16,13 @@
 set -euo pipefail
 
 STATE_FILE=/var/lib/ktp-data-server-health.json
-# #ktp-updates — same channel used by ktp-soak-verify, ktp-systemd-alert,
-# ktp-precache-audit, RemoteTrigger / canary cron embeds. See memory
-# `scheduled_report_channel.md` in the operator's memory store.
-ALERT_CHANNEL="${ALERT_CHANNEL:-1498813261263405097}"
+# #ktp-crashes — consolidated with perf-rollup (PERF_ALERT_CHANNEL in
+# /etc/ktp/discord-relay.conf, same channel) per operator decision
+# 2026-05-06. Health alerts are crash-class signals (services dying);
+# routing them alongside crashes keeps the operational signal in one
+# place. Reverses the May 3 "dedicated #ktp-data-server-health" split.
+# Override via ALERT_CHANNEL env var if a different routing is needed.
+ALERT_CHANNEL="${ALERT_CHANNEL:-1497957091107668070}"
 # HLTV port range mirrors game ports: 27020=ATL1, 27021=ATL2, ... 27044=CHI5
 HLTV_PORT_START=27020
 HLTV_PORT_END=27044

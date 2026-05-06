@@ -31,8 +31,10 @@ injects the test plugins automatically per-boot.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -349,3 +351,68 @@ def _reset_match_state(request):
     # Post-test reset is intentionally omitted — leaves state visible to
     # an operator inspecting a failed-test server. Pre-test reset on the
     # next test handles cleanup.
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Tier 2 post-run reporting (1.5.22 sub-followup of Session 5 finishing)
+# ──────────────────────────────────────────────────────────────────────────
+#
+# When KTP_TIER2_REPORT_PATH is set (CI workflow), pytest_sessionfinish
+# writes a session-summary JSON for the post-pytest workflow step to read
+# and POST as a Discord embed. The hook is a no-op when the env var is
+# unset — preserves the dev-loop's "no extra files written" behavior.
+#
+# Failure-list shape: each failed test contributes its node_id (e.g.,
+# "tests/integration/test_match_flow_spine.py::test_3_setup_match_enters_prestart")
+# to a list. The first 5 land in the embed body; longer lists get a
+# "…and N more" sentinel. Errors (collection failures, fixture errors)
+# land in a separate list — Discord shows them as a unified "Failed tests"
+# field but the JSON keeps them distinct so future enhancements can split.
+
+def pytest_sessionfinish(session, exitstatus):
+    """Emit tier2-report.json with pass/fail/skip/error counts + duration +
+    failed-test node IDs. Skipped if KTP_TIER2_REPORT_PATH is unset."""
+    out_path = os.environ.get("KTP_TIER2_REPORT_PATH")
+    if not out_path:
+        return
+
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is None:
+        # Defensive — terminalreporter is a built-in plugin and should always
+        # be loaded under normal pytest invocation. If it isn't (very minimal
+        # config), write a degraded report rather than crashing the session.
+        report = {
+            "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "rerun": 0,
+            "total": session.testscollected,
+            "duration_sec": 0.0,
+            "exitstatus": int(exitstatus),
+            "failures": [],
+            "error_tests": [],
+            "_note": "terminalreporter unavailable — counts degraded",
+        }
+    else:
+        stats = reporter.stats
+        failures = [r.nodeid for r in stats.get("failed", [])]
+        errors = [r.nodeid for r in stats.get("error", [])]
+        report = {
+            "passed": len(stats.get("passed", [])),
+            "failed": len(failures),
+            "skipped": len(stats.get("skipped", [])),
+            "errors": len(errors),
+            "rerun": len(stats.get("rerun", [])),
+            "total": session.testscollected,
+            "duration_sec": time.time() - getattr(reporter, "_sessionstarttime", time.time()),
+            "exitstatus": int(exitstatus),
+            "failures": failures,
+            "error_tests": errors,
+        }
+
+    try:
+        Path(out_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    except OSError as e:
+        # Don't fail the session on a report-write error — just log and move on.
+        # The pytest run's own pass/fail status is the load-bearing signal.
+        reporter and reporter.write_line(
+            f"WARNING: failed to write Tier 2 report to {out_path}: {e}",
+            yellow=True,
+        )

@@ -2,6 +2,80 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.22] - 2026-05-06
+
+### `feat`: Tier 2 post-run Discord reporting embed (Session 5 sub-followup closed)
+
+Closes the "post-run reporting Discord embed" piece deferred in 1.5.19's CHANGELOG. Pytest writes a session-summary JSON via a new `pytest_sessionfinish` conftest hook; CI workflow reads it after pytest and POSTs a Discord embed via the relay.
+
+#### What landed
+
+**Conftest hook** (`tests/integration/conftest.py:pytest_sessionfinish`):
+
+- Triggered iff `KTP_TIER2_REPORT_PATH` env var is set — preserves the dev-loop's "no extra files written" behavior. CI workflow sets it to `tier2-report.json` at job-env scope.
+- Pulls counts from pytest's `terminalreporter.stats`: `passed`, `failed`, `skipped`, `errors`, `rerun`, plus failed-test node IDs (full pytest IDs like `tests/integration/test_match_flow_spine.py::test_3_setup_match_enters_prestart`).
+- Writes JSON. Best-effort error handling — a write failure surfaces as a yellow warning line in pytest output but does NOT fail the session (the run's pass/fail status is the load-bearing signal).
+
+**Helper script** (`scripts/post-tier2-result.py`, ~250 LOC):
+
+- Reads the JSON, builds a Discord embed with green/red color ladder, formats a "Failed tests (N)" field with first 5 IDs + truncation sentinel for longer lists (Discord 1024-char field-value cap).
+- Title: `KTP Tier 2 Integration — GREEN/RED (Np / Mf / Ks)` plus `/ Eerr` if any errors.
+- Description includes total test count, runtime, branch + commit-short-SHA, and a clickable run-details link to GitHub Actions.
+- Footer: `tier2-integration · <exitstatus> exit · N rerun(s)`.
+- Reads relay creds from `/etc/ktp/discord-relay.conf` (same conf as `ktp-perf-rollup`). New optional key `TIER2_REPORT_CHANNEL` overrides the default channel; default is `1498813261263405097` (scheduled-report channel — same destination as perf-rollup + canary embeds + RemoteTrigger reports).
+- `--dry-run` flag prints embed JSON to stdout without POSTing — useful for local verification + CI step debugging without spamming Discord.
+- Same exit-code convention as `ktp-perf-rollup`: 0 success, 1 input invalid, 2 missing creds, 3 relay non-2xx.
+
+**Workflow integration** (`.github/workflows/tier2-integration.yml`):
+
+- Added `KTP_TIER2_REPORT_PATH: tier2-report.json` to job env.
+- New `Post Tier 2 result embed to Discord` step with `if: always()` runs after pytest. Wrapped in `|| true` semantically — a relay failure logs a warning but does NOT fail the workflow (a test regression is the load-bearing signal, not a transient relay hiccup).
+- New `Upload Tier 2 report JSON (always)` artifact step preserves the JSON for 14 days alongside the Allure bundle. Useful for post-mortem correlation even after the embed has scrolled out of Discord.
+- Self-hosted runner is on the data server so `/etc/ktp/discord-relay.conf` is readable directly — no GH Actions secrets needed for relay creds.
+
+#### Smoke-tested 3 report shapes locally
+
+All `--dry-run` invocations rendered correctly:
+
+| Shape | Title | Color | Failures field |
+|---|---|---|---|
+| GREEN (47p/0f/8s) | "GREEN (47p / 0f / 8s)" | green | (omitted) |
+| RED (42p/3f/8s/1err) | "RED (42p / 3f / 8s / 1err)" | red | 4 IDs listed |
+| MANY (12 fails) | "RED (30p / 12f / 5s)" | red | 5 IDs + "…and 7 more" sentinel |
+
+Truncation sentinels work; embed stays under Discord's 1024 field-value cap.
+
+### `ops`: ktp-data-server-health alerts re-routed to #ktp-crashes
+
+`scripts/ktp-data-server-health.sh:22` default channel changed from `1498813261263405097` (scheduled-report channel) to `1497957091107668070` (#ktp-crashes). Reverses the May 3 "dedicated #ktp-data-server-health channel" decision per operator preference 2026-05-06.
+
+Rationale: data-server-health alerts (services dying, HLTV instance count drop) are crash-class signals — they belong alongside crashreporter + perf-rollup alerts in `#ktp-crashes` rather than mixed with the broader scheduled-report stream. Mirrors the same consolidation perf-rollup did earlier (`PERF_ALERT_CHANNEL="1497957091107668070"` already in the conf file).
+
+`ALERT_CHANNEL` env-var override still works for runtime routing experiments. Backup of pre-change script at `/usr/local/bin/ktp-data-server-health.sh.bak-20260506-104907`. New live md5 `c7dfb1fb…`. Verified script runs cleanly post-deploy (no transitions to alert on at the moment).
+
+#### Files changed
+
+- `tests/integration/conftest.py` — added `pytest_sessionfinish` hook + 3 new imports (json, time, Path)
+- `scripts/post-tier2-result.py` — new file (~250 LOC), helper script + embed builder
+- `.github/workflows/tier2-integration.yml` — `KTP_TIER2_REPORT_PATH` env, post-pytest embed step, JSON upload step
+- `scripts/ktp-data-server-health.sh` — `ALERT_CHANNEL` default updated + comment refreshed
+- `CHANGELOG.md` — § 1.5.22
+
+#### Operator deploy step
+
+Tier 2 reporting: lands automatically on next workflow trigger (no separate deploy — the workflow YAML + helper script + conftest are all in-tree). Optional: add `TIER2_REPORT_CHANNEL=<id>` to `/etc/ktp/discord-relay.conf` if a dedicated `#ktp-tier2` channel is preferred over the default scheduled-report channel.
+
+Data-server-health: deployed to data server 2026-05-06 10:49 ET (verified via test invoke). Next hourly cron fire on a transition lands in #ktp-crashes.
+
+#### Cross-references
+
+- 1.5.19 — original Session 5 finishing (deferred this reporting embed as sub-followup)
+- 1.5.21 — perf-rollup FPS-floor refinement (concurrent change in same session)
+- TODO.md § Tier 2 — closes the "Tier 2 post-run Discord reporting embed" sub-followup line
+- Memory `scheduled_report_channel.md` — channel routing convention
+
+---
+
 ## [1.5.21] - 2026-05-06
 
 ### `tune`: ktp-perf-rollup FPS-side absolute-drop floor (suppress sub-1-fps boundary alerts)
