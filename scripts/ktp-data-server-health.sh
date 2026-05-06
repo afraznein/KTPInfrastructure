@@ -164,9 +164,14 @@ if [ ${#down[@]} -gt 0 ]; then
     fi
 fi
 
-# Red color on new-down, green if only recoveries
-color=65280
-[ ${#new_down[@]} -gt 0 ] && color=16711680
+# KTP canonical colors — match perf-rollup, crashreporter, soak-verify, etc.
+# Pre-1.5.24 used raw hex (65280 / 16711680) which rendered as pure green/red
+# instead of the KTP brand colors. Aligning now so the data-server-health
+# embeds visually match the rest of the alert flow.
+KTP_GREEN=5763719
+KTP_RED=15548997
+color=$KTP_GREEN
+[ ${#new_down[@]} -gt 0 ] && color=$KTP_RED
 
 payload=$(jq -n \
     --arg ch "$ALERT_CHANNEL" \

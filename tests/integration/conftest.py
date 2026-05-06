@@ -369,12 +369,28 @@ def _reset_match_state(request):
 # land in a separate list — Discord shows them as a unified "Failed tests"
 # field but the JSON keeps them distinct so future enhancements can split.
 
+def pytest_sessionstart(session):
+    """Record session start time on the session object — load-bearing for
+    `pytest_sessionfinish`'s duration calculation. Previously we read
+    `terminalreporter._sessionstarttime` (a private attribute), which would
+    silently fall back to `time.time()` (= zero duration) on a future pytest
+    bump if the attribute name changes. Recording on the public session
+    object is forward-compatible."""
+    session.config._ktp_session_start = time.time()
+
+
 def pytest_sessionfinish(session, exitstatus):
     """Emit tier2-report.json with pass/fail/skip/error counts + duration +
     failed-test node IDs. Skipped if KTP_TIER2_REPORT_PATH is unset."""
     out_path = os.environ.get("KTP_TIER2_REPORT_PATH")
     if not out_path:
         return
+
+    # Duration via our own session-start hook (forward-compat) with a
+    # defensive fallback for the case where pytest_sessionstart didn't
+    # run (e.g., conftest reload mid-session — exotic but cheap to guard).
+    started = getattr(session.config, "_ktp_session_start", None)
+    duration_sec = (time.time() - started) if started is not None else None
 
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
     if reporter is None:
@@ -384,7 +400,7 @@ def pytest_sessionfinish(session, exitstatus):
         report = {
             "passed": 0, "failed": 0, "skipped": 0, "errors": 0, "rerun": 0,
             "total": session.testscollected,
-            "duration_sec": 0.0,
+            "duration_sec": duration_sec if duration_sec is not None else 0.0,
             "exitstatus": int(exitstatus),
             "failures": [],
             "error_tests": [],
@@ -401,7 +417,7 @@ def pytest_sessionfinish(session, exitstatus):
             "errors": len(errors),
             "rerun": len(stats.get("rerun", [])),
             "total": session.testscollected,
-            "duration_sec": time.time() - getattr(reporter, "_sessionstarttime", time.time()),
+            "duration_sec": duration_sec if duration_sec is not None else 0.0,
             "exitstatus": int(exitstatus),
             "failures": failures,
             "error_tests": errors,

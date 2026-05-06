@@ -199,8 +199,22 @@ def build_embed(day: date, top: list[dict], new: list[dict],
     color = KTP_GREEN
     if new:
         color = KTP_YELLOW
-    if any(row["count"] > 1000 for row in top):
+    # Red threshold count > 1000 is provisional — set without production
+    # calibration during 1.5.23 deploy. Steady-state daily magnitudes only
+    # become observable after ~1-2 weeks of fleet data accumulates. Log a
+    # warning the first time it fires so the operator sees a calibration
+    # opportunity rather than a quiet alert. The choice between "tune
+    # threshold" vs "accept the alert" depends on whether the trigger
+    # fingerprint is a real regression vs steady-state noise floor.
+    high_count_rows = [row for row in top if row["count"] > 1000]
+    if high_count_rows:
         color = KTP_RED
+        logging.warning(
+            "RED-tier triggered by uncalibrated count>1000 threshold: %s. "
+            "Operator: review whether this is steady-state noise or a real "
+            "regression and tune the constant in build_embed if needed.",
+            [(r["fingerprint"], r["count"]) for r in high_count_rows],
+        )
 
     fields = []
 

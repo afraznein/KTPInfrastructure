@@ -145,7 +145,14 @@ def description_for(report: dict, run_url: Optional[str], branch: Optional[str],
 def failures_field(report: dict, max_lines: int = 5) -> Optional[dict]:
     """Build a Discord embed field listing the first N failed test IDs,
     or None if no failures. Truncates with a sentinel so operators see
-    the field was clipped vs a silent mid-line cut."""
+    the field was clipped vs a silent mid-line cut.
+
+    Truncation order: hard char-cap applied BEFORE the "…and N more"
+    sentinel is added. Earlier ordering (cap-then-add-sentinel) had a
+    theoretical hole where 5 long node IDs (>200 chars each, e.g. deeply
+    parameterized fixtures) could exceed the 1024 Discord field cap before
+    the cap check ran. New order: format the line block, char-cap that,
+    THEN append the count sentinel — which itself has a tiny budget."""
     failures = report.get("failures") or []
     errors = report.get("error_tests") or []
     items = list(failures) + list(errors)
@@ -153,10 +160,19 @@ def failures_field(report: dict, max_lines: int = 5) -> Optional[dict]:
         return None
     shown = items[:max_lines]
     extra = len(items) - len(shown)
+
+    # Format + cap the per-line body first. Reserve ~30 chars for the
+    # "…and N more" trailer (max realistic: "…and 9999 more" = 14 chars
+    # plus the leading "\n" = 15; reserving 30 leaves headroom).
+    BODY_BUDGET = 990
     body = "\n".join(f"• `{x}`" for x in shown)
+    if len(body) > BODY_BUDGET:
+        body = body[:BODY_BUDGET - 4] + "\n…"
+
     if extra > 0:
         body += f"\n…and {extra} more"
-    # Discord field value cap is 1024
+
+    # Belt-and-suspenders absolute cap (Discord field-value limit is 1024).
     if len(body) > 1020:
         body = body[:1016] + "\n…(truncated)"
     return {

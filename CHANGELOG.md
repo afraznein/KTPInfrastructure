@@ -2,6 +2,60 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.24] - 2026-05-06
+
+### `tune`: Tier 2 / spike-digest deferred refinements (4 of 6 from review)
+
+Closes 4 of the 6 deferred items filed as TODO #28 after the 1.5.18-1.5.23 ktp-code-review pass. Remaining 2 items (KTPAdminBot bucket Choice gate + 500ms-1s color severity) shipped in the companion KTPAdminBot 0.9.2 commit.
+
+#### Changes
+
+**1. `tests/integration/conftest.py` — pytest_sessionstart hook for forward-compatible duration calculation.**
+
+Previously `pytest_sessionfinish` read `terminalreporter._sessionstarttime` (a private attribute) with `getattr(reporter, "_sessionstarttime", time.time())`. The fallback silently returned `time.time()` (= zero duration in the embed) if the private attribute name ever changes in a future pytest release. Replaced with a `pytest_sessionstart` hook that records `time.time()` on `session.config._ktp_session_start`, which `pytest_sessionfinish` reads. Forward-compatible against pytest API drift; defensive `None`-fallback preserves the no-crash behavior if `pytest_sessionstart` somehow doesn't fire.
+
+**2. `scripts/post-tier2-result.py` — `failures_field` truncation order fix.**
+
+Earlier ordering applied the 1024-char cap AFTER appending the "…and N more" sentinel, leaving a theoretical hole if 5 long node IDs (>200 chars each, e.g. deeply parameterized fixtures) blew past the cap before the check ran. New order: format the line block, char-cap to 990 (reserving 30 chars for the sentinel + safety), THEN append "…and N more", THEN belt-and-suspenders absolute 1020-char cap. No production exposure on current test IDs (~85 chars each), but hardens against future parameterized test refactors.
+
+**3. `scripts/ktp-spike-digest.py` — logged warning on uncalibrated red threshold.**
+
+Red-tier color was triggered by `count > 1000` for any fingerprint, set without production calibration during 1.5.23 deploy. Threshold may be too tight (false-red on noisy steady state) or too loose (silent on real fleet event). Added `logging.warning` on first fire so the operator sees a calibration opportunity rather than a quiet alert. Threshold itself unchanged — adjusted by future commit after ~1-2 weeks of production data.
+
+**4. `scripts/ktp-data-server-health.sh` — KTP canonical colors.**
+
+Embed used raw hex `color=65280` (pure green) and `color=16711680` (pure red) instead of KTP brand colors. Other embeds (perf-rollup, crashreporter, soak-verify) all use `5763719` (KTP green) / `15548997` (KTP red). Aligning so data-server-health visually matches the rest of the alert flow in #ktp-crashes. Replaced raw hex with named bash variables (`KTP_GREEN` / `KTP_RED`) for the same reason.
+
+**Plus a companion review-fix amend on 1.5.23** (deployed in this session): added a clarifying comment in `ktp-spike-digest.py:open_mysql` explaining the MySQL session TZ inheritance from `SYSTEM` (= `America/New_York` via the data server's `TZ` env). Reviewer flagged a Critical TZ-mismatch concern that turned out to be incorrect — pymysql does NOT default to UTC session TZ; it inherits whatever the server has set (`SYSTEM` in this case). Verified live with dual queries confirming naive ET datetime params return identical 11-row count via mysql CLI and pymysql. Comment prevents future maintainers from worrying about the same false alarm.
+
+#### Verification
+
+- pytest --collect-only: 47 tests collect cleanly (regression-free)
+- AST parse all 4 modified files: clean
+- `ktp-data-server-health.sh` test invoke: "no transitions" — script runs clean post-color-change
+- `ktp-spike-digest --dry-run` for today: 5 top + 10 new fingerprints across 4 phases, color correctly yellow (no row exceeds the 1000 threshold; the new logged warning would have fired if any did)
+
+#### Operator deploy (executed 2026-05-06 14:07 ET)
+
+- `/usr/local/bin/ktp-spike-digest` — updated; cron picks up at next 05:00 ET fire
+- `/usr/local/bin/ktp-data-server-health.sh` — updated; hourly cron picks up next fire
+- Test invoke confirmed both run clean
+
+Backups at `<live-path>.bak-20260506-1407XX-deferred-fixes`.
+
+#### Two items NOT in this commit
+
+- KTPAdminBot bucket Choice gate (Suggestion #5 from review) — shipped as KTPAdminBot 0.9.2
+- KTPAdminBot 500ms-1s color severity bump (Warning #6) — shipped as KTPAdminBot 0.9.2
+
+#### Cross-references
+
+- 1.5.18-1.5.23 — the stack reviewed
+- TODO.md #28 — original deferred-refinements task (now resolved)
+- KTPAdminBot 0.9.2 (companion commit) — bucket Choice + severity bump
+
+---
+
 ## [1.5.23] - 2026-05-06
 
 ### `feat`: Tier 3 Project 3 — daily digest cron + per-fingerprint alert hook
