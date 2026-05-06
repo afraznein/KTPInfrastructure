@@ -82,7 +82,10 @@ jobs:
           # Pinned to the same versions used in dev. pytest-rerunfailures
           # mitigates transient flakes (e.g., a 200ms curl round-trip
           # racing a 100ms poll on a busy runner). 2 reruns max.
-          pip install pytest==9.0.3 pytest-rerunfailures==15.0
+          # allure-pytest emits per-test JSON into --alluredir for the
+          # post-run report; no Allure CLI install needed at this layer
+          # (operators run `allure serve <downloaded-results>` locally).
+          pip install pytest==9.0.3 pytest-rerunfailures==15.0 allure-pytest==2.13.5
 
       - name: Verify test artifacts present in serverfiles
         run: |
@@ -105,10 +108,27 @@ jobs:
           #   async work drain.
           # -v: verbose output for CI logs
           # -ra: short-test-summary for skipped + failed (visible in PR check)
+          # --alluredir: per-test JSON for the always-uploaded Allure
+          #   results bundle. Run `allure serve <download>` locally to
+          #   view the HTML report; no CLI install on the runner needed.
+          mkdir -p allure-results
           pytest tests/integration/ \
             --reruns 2 --reruns-delay 1 \
             -v -ra \
-            --tb=short
+            --tb=short \
+            --alluredir=./allure-results
+
+      - name: Upload Allure results (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Always uploaded so passing runs also have a report on hand
+          # — useful for trend analysis (run-time creep, flake rate).
+          # Operator: download + `allure serve <unzipped-dir>` for HTML.
+          name: tier2-allure-results-${{ github.run_id }}
+          path: allure-results/
+          retention-days: 14
+          if-no-files-found: warn
 
       - name: Collect crash artifacts on failure
         if: failure()

@@ -31,6 +31,7 @@ from pathlib import Path
 
 import pytest
 
+from ._timing import LOG_POLL_TIMEOUT
 from .log_tail import current_log_size, wait_for_log_event, wait_for_log_substring
 from .match_flow import MatchDriver, MatchType
 
@@ -73,7 +74,7 @@ def test_7_fwd_match_start_log_event_after_advance_live(hlds):
 
     line = wait_for_log_event(
         sf, "FWD_MATCH_START",
-        timeout=5.0,
+        timeout=LOG_POLL_TIMEOUT,
         after_offset=log_baseline,
     )
     # Sanity-check the line shape — should have the match_id + half=1
@@ -116,7 +117,7 @@ def test_8_ktp_match_start_log_message_line(hlds):
     # — they're plain HLStatsX format. Use the substring helper.
     line = wait_for_log_substring(
         sf, "KTP_MATCH_START",
-        timeout=5.0,
+        timeout=LOG_POLL_TIMEOUT,
         after_offset=log_baseline,
     )
     # Production format: KTP_MATCH_START (matchid "...") (map "...") (half "1st")
@@ -126,7 +127,7 @@ def test_8_ktp_match_start_log_message_line(hlds):
     # Also assert the companion log_ktp event line surfaces
     event_line = wait_for_log_event(
         sf, "ROUNDLIVE_MATCH_START_LOG",
-        timeout=2.0,
+        timeout=LOG_POLL_TIMEOUT,
         after_offset=log_baseline,
     )
     assert "matchid=" in event_line, (

@@ -2,6 +2,52 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.19] - 2026-05-06
+
+### `tests`: Tier 2 finishing — `_timing` migration + Allure publish
+
+Closes the open Session 5 finishing items from the Tier 2 test infrastructure plan. Two parallel changes:
+
+#### `_timing` constant migration (3 files, 20 inline floats → named constants)
+
+All remaining inline `timeout=X.0` floats in the Tier 2 suite migrated to the `_timing` module's named constants. Previously the matchhandler / discord / match-types / ac / admin-recovery test files were already on `_timing` (per 1.5.16's CI flake-hardening pass); the spine, logs, and dodx forward-firing files still had inline floats that wouldn't scale with `KTP_TEST_TIMEOUT_MULTIPLIER`. Migration:
+
+- `test_match_flow_spine.py` — added `LOG_POLL_TIMEOUT, WITNESS_TIMEOUT` import; 4 inline floats migrated (3× `2.0` log-event waits → `LOG_POLL_TIMEOUT`; 1× `3.0` witness wait → `WITNESS_TIMEOUT`).
+- `test_match_flow_logs.py` — added `LOG_POLL_TIMEOUT` import; 3 inline floats migrated (2× `5.0` log-event waits + 1× `2.0` companion-event wait → `LOG_POLL_TIMEOUT`).
+- `test_dodx_forward_firing.py` — added `WITNESS_TIMEOUT, scaled` import; 13 inline floats migrated (12× `5.0`/`10.0` witness-event waits → `WITNESS_TIMEOUT`; 1× `30.0` boot/mapload wait → `scaled(30.0)` to preserve the unusual longer-than-default deadline).
+
+Net effect: a CI runner with `KTP_TEST_TIMEOUT_MULTIPLIER=2.0` (set per workflow input or repo var) now scales every Tier 2 deadline uniformly, including these 20 sites that previously would have stayed locked at their inline values and false-failed under load. AST + `pytest --collect-only` verified all 47 tests still collect cleanly.
+
+The original 2.0/3.0 inline values in spine were deliberately tighter than the 5.0 default; the migration consolidates to `LOG_POLL_TIMEOUT` (5.0×_M). On passing tests no behavior change; on failing tests the diagnostic delay grows by 2-3s — acceptable trade for uniform scaling.
+
+#### Allure publish in `tier2-integration.yml`
+
+Added `allure-pytest==2.13.5` to the runner's pip install line, `--alluredir=./allure-results` to the pytest invocation, and a new `Upload Allure results (always)` step that uploads the per-test JSON bundle on every run (pass + fail, 14-day retention). Operators download the bundle + `allure serve <unzipped-dir>` locally for the HTML report — no Allure CLI install on the runner needed.
+
+The "post-run reporting Discord embed" piece of Session 5's spec is intentionally deferred — that needs a hook to extract pytest counts + format an embed via the relay, which is its own ~60-90 LOC deliverable. Filed as a sub-followup TODO.
+
+#### Files changed
+
+- `tests/integration/test_match_flow_spine.py` — import + 4 timeout sites
+- `tests/integration/test_match_flow_logs.py` — import + 3 timeout sites
+- `tests/integration/test_dodx_forward_firing.py` — import + 13 timeout sites
+- `.github/workflows/tier2-integration.yml` — `allure-pytest` install + `--alluredir` flag + always-upload step
+- `CHANGELOG.md` — § 1.5.19
+
+#### Verification
+
+- `pytest --collect-only` against the local checkout: **47 tests collected, 0 errors** (was already 47 pre-migration; collection contract preserved)
+- AST parse of all 4 modified files: clean
+- `_timing` reference count post-migration: 20 references across the 3 test files (was 0)
+
+#### Cross-references
+
+- 1.5.16 — initial Session 5 commit (workflow + `_timing` module + first wave of file migrations)
+- TODO.md § "KTP test infrastructure" — Tier 2 still-open list updated
+- Sub-followup: "Tier 2 Discord reporting embed" (filed in TODO.md)
+
+---
+
 ## [1.5.18] - 2026-05-06
 
 ### `ops`: ktp-perf-rollup `--dry-run` lifted (Discord posts now live)

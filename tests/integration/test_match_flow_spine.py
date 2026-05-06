@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from ._timing import LOG_POLL_TIMEOUT, WITNESS_TIMEOUT
 from .log_tail import (
     current_log_size,
     wait_for_log_event,
@@ -120,7 +121,7 @@ def test_3_setup_match_enters_prestart(hlds):
     # event is emitted by cmd_test_setup_match BEFORE returning, so it lands
     # before the rcon round-trip ends.
     if sf is not None:
-        line = wait_for_log_event(sf, "TEST_SETUP", timeout=2.0, after_offset=log_baseline)
+        line = wait_for_log_event(sf, "TEST_SETUP", timeout=LOG_POLL_TIMEOUT, after_offset=log_baseline)
         assert f"match_id={match_id}" in line, (
             f"TEST_SETUP log line should reference the same match_id {match_id!r}: {line!r}"
         )
@@ -157,7 +158,7 @@ def test_4_advance_pending_enters_pending(hlds):
         # itself, then PENDING_BEGIN from enter_pending_phase. Asserting on
         # PENDING_BEGIN — that's the production-shaped event downstream
         # plugins / log scrapers gate on.
-        wait_for_log_event(sf, "PENDING_BEGIN", timeout=2.0, after_offset=log_baseline)
+        wait_for_log_event(sf, "PENDING_BEGIN", timeout=LOG_POLL_TIMEOUT, after_offset=log_baseline)
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,7 @@ def test_6_advance_live_fires_match_start_forward(hlds):
     assert state.match_pending is False, "matchPending should clear when going LIVE"
 
     # Forward-fire assertion via witness JSONL
-    row = wait_for_witness_event(sf, "ktp_match_start", timeout=3.0, after_count=witness_baseline)
+    row = wait_for_witness_event(sf, "ktp_match_start", timeout=WITNESS_TIMEOUT, after_count=witness_baseline)
     assert row["matchId"] == match_id, (
         f"witness ktp_match_start matchId mismatch: state {match_id!r} vs witness {row.get('matchId')!r}"
     )
@@ -210,4 +211,4 @@ def test_6_advance_live_fires_match_start_forward(hlds):
     assert row["half"] == 1, f"witness half {row.get('half')!r} != 1"
 
     # Log-side double-check — TEST_ADVANCE_LIVE event from the test rcon.
-    wait_for_log_event(sf, "TEST_ADVANCE_LIVE", timeout=2.0, after_offset=log_baseline)
+    wait_for_log_event(sf, "TEST_ADVANCE_LIVE", timeout=LOG_POLL_TIMEOUT, after_offset=log_baseline)

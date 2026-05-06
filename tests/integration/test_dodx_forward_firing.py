@@ -24,6 +24,8 @@ from pathlib import Path
 
 import pytest
 
+from ._timing import WITNESS_TIMEOUT, scaled
+
 
 SKIP_REASON = (
     "DODX forward-firing tests are scaffolded but not yet executable. "
@@ -74,7 +76,7 @@ def test_controlpoints_init_fires_on_map_load(hlds):
     hlds.rcon("changelevel dod_anzio")
     row = wait_for_witness_event(
         sf, "dod_controlpoints_init",
-        timeout=30.0,
+        timeout=scaled(30.0),
         after_count=witness_baseline,
     )
     # wait_for_witness_event already validates row["event"] == "dod_controlpoints_init",
@@ -122,7 +124,7 @@ def test_dod_client_spawn_fires_on_bot_join(hlds):
     hlds.rcon("addbot")
     row = wait_for_witness_event(
         sf, "dod_client_spawn",
-        timeout=10.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     assert isinstance(row.get("args", {}).get("id"), int), \
@@ -149,7 +151,7 @@ def test_dod_client_changeteam_fires_on_bot_join(hlds):
     hlds.rcon("addbot")
     row = wait_for_witness_event(
         sf, "dod_client_changeteam",
-        timeout=10.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
@@ -177,7 +179,7 @@ def test_dod_client_changeclass_fires_on_bot_join(hlds):
     hlds.rcon("addbot")
     row = wait_for_witness_event(
         sf, "dod_client_changeclass",
-        timeout=10.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
@@ -215,7 +217,7 @@ def test_client_death_fires_on_kill(hlds):
     hlds.rcon("addbot")
     spawn_row = wait_for_witness_event(
         sf, "dod_client_spawn",
-        timeout=10.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=spawn_baseline,
     )
     bot_slot = spawn_row["args"]["id"]
@@ -227,7 +229,7 @@ def test_client_death_fires_on_kill(hlds):
     hlds.rcon(f"amx_witness_kill {bot_slot}")
     row = wait_for_witness_event(
         sf, "dod_client_death",
-        timeout=10.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=death_baseline,
     )
     args = row.get("args", {})
@@ -304,7 +306,7 @@ def test_client_damage_fires_with_full_args(hlds):
     hlds.rcon(f"amx_witness_dispatch_damage {ATTACKER} {VICTIM} {DAMAGE} {WPNIDX} {HITPLACE} {TA}")
     row = wait_for_witness_event(
         sf, "dod_client_damage",
-        timeout=5.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
@@ -339,7 +341,7 @@ def test_dod_grenade_explosion_fires_with_full_args(hlds):
     hlds.rcon(f"amx_witness_dispatch_grenade {SLOT} {X} {Y} {Z} {WPNID}")
     row = wait_for_witness_event(
         sf, "dod_grenade_explosion",
-        timeout=5.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
@@ -379,12 +381,12 @@ def test_dispatch_score_fires_both_client_score_and_dod_score_event(hlds):
     # but we filter by event label so order doesn't matter for the assertion.
     score_row = wait_for_witness_event(
         sf, "dod_client_score",
-        timeout=5.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     event_row = wait_for_witness_event(
         sf, "dod_score_event",
-        timeout=5.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
 
@@ -449,7 +451,7 @@ def test_dod_stats_flush_fires_on_match_end(hlds):
     spawn_baseline = witness_count(sf)
     hlds.rcon("addbot")
     spawn_row = wait_for_witness_event(
-        sf, "dod_client_spawn", timeout=10.0, after_count=spawn_baseline,
+        sf, "dod_client_spawn", timeout=WITNESS_TIMEOUT, after_count=spawn_baseline,
     )
     bot_slot = spawn_row["args"]["id"]
 
@@ -466,7 +468,7 @@ def test_dod_stats_flush_fires_on_match_end(hlds):
     flush_baseline = witness_count(sf)
     hlds.rcon("amx_ktp_test_end_match 5 3")
     row = wait_for_witness_event(
-        sf, "dod_stats_flush", timeout=5.0, after_count=flush_baseline,
+        sf, "dod_stats_flush", timeout=WITNESS_TIMEOUT, after_count=flush_baseline,
     )
     args = row.get("args", {})
     assert isinstance(args.get("id"), int) and args["id"] >= 1, \
@@ -500,7 +502,7 @@ def test_dod_control_point_captured_via_dispatch(hlds):
     hlds.rcon(f"amx_witness_dispatch_cp_captured {CP_INDEX} {NEW_OWNER} {OLD_OWNER}")
     row = wait_for_witness_event(
         sf, "dod_control_point_captured",
-        timeout=5.0,
+        timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
