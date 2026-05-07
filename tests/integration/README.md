@@ -61,17 +61,26 @@ The hlds server needs a `serverfiles/` tree with:
 - `dod/addons/ktpamx/plugins/` containing:
   - `KTPMatchHandler.amxx` — the test-mode build (replace the production one)
   - `KTPWitness.amxx`
+  - `KTPHudObserver.amxx` — required for `test_hud_observer_contract.py`
+    (build with the standard amxxpc Docker invocation in
+    `DoD-hud-observer/CLAUDE.md` § "Compiling the AMXX Plugin")
 - `dod/addons/ktpamx/configs/plugins.ini` listing them:
 
   ```
   admin.amxx
   KTPMatchHandler.amxx debug
   KTPWitness.amxx debug
+  KTPHudObserver.amxx debug   ; required for test_hud_observer_contract.py
   ```
 
   (Strip everything else for the tightest signal — production plugins
   pull in services that fail-loud when their server endpoints aren't
   reachable from the test host.)
+
+  KTPHudObserver's `dod_hud_url` and `dod_hud_key` cvars are overridden
+  per-session by the `_hud_cvars_setup` fixture (writes to `dod/server.cfg`).
+  The plugin POSTs every event to a `FakeIngest` loopback listener; the
+  contract tests assert the JSON envelope shape downstream consumers expect.
 
 ### Filesystem
 
@@ -175,6 +184,23 @@ runs on a dev box without the hlds environment.
 | 3 | `test_3_setup_match_enters_prestart` | `amx_ktp_test_setup_match 0` returns a `<systime>-TEST` match_id; state shows COMPETITIVE matchType + non-live + non-pending; synthetic captains in place; TEST_SETUP log line written. |
 | 4 | `test_4_advance_pending_enters_pending` | `amx_ktp_test_advance_pending` flips `matchPending` 0 → 1; PENDING_BEGIN log line emitted (production-shape event downstream consumers gate on). |
 | 6 | `test_6_advance_live_fires_match_start_forward` | `amx_ktp_test_advance_live 1` flips `matchLive` 0 → 1, sets `currentHalf=1`, fires `ktp_match_start` forward (witness.jsonl row with matching matchId/matchType/half). **The load-bearing test of the spine** — proves cross-plugin forward dispatch works end-to-end. |
+
+## Test surface — KTPHudObserver contract (DRAFT)
+
+`test_hud_observer_contract.py` adds a SECOND downstream consumer alongside
+KTPWitness — instead of just proving "the forward dispatched", it proves
+"HUD Observer's hook ran AND the JSON envelope it shipped matches the
+contract `DoD-hud-observer/backend/src/handler/ingest.ts` reads from."
+
+| Test | Asserts |
+|------|---------|
+| `test_hud_observer_loaded_and_version_pin` | `amx_ktp_versions` lists `KTP HUD Observer` at the version pinned in `EXPECTED_KTPHUDOBSERVER_VERSION`. Same shape as the spine `test_1`; catches stale-binary drift on the HUD Observer side. |
+| `test_ktp_match_start_envelope_shape` | After `advance_live(1)`, fake_ingest captured a `ktp_match_start` POST with `match_id`/`map`/`match_type`/`half`/`tick`/`plugin_sent_at` envelope fields populated. **The contract-validation core** — catches silent data-loss regressions from forward-arg refactors. |
+| `test_ktp_match_end_envelope_shape` | After `end_match(3, 1)`, fake_ingest captured a `ktp_match_end` POST with the same envelope + `allies_score=3`/`axis_score=1`. Asymmetric scores so a swap-bug surfaces. |
+
+Follow-up PRs (out of first-cut scope): DODX-forward consumption, alt
+match-type variants, half-2 transition + score carryover, flag events,
+roster dump, auth-rejection path.
 
 ## Future sessions
 
