@@ -21,16 +21,15 @@
 name: Tier 1 Config Tests
 
 on:
-  push:
-    paths:
-      - 'config/**'
-      - 'tests/config_parse/**'
-      - '.github/workflows/config-tests.yml'
-  pull_request:
-    paths:
-      - 'config/**'
-      - 'tests/config_parse/**'
-      - '.github/workflows/config-tests.yml'
+  # No `paths:` filter — workflow fires on every push/PR so the required
+  # status check `Config parse + assertions` always reports back. The job
+  # itself decides whether to run pytest based on what actually changed
+  # (see "Detect relevant changes" step). This avoids the GitHub-Actions
+  # gotcha where a `paths:`-filtered required check is silently skipped
+  # on `scripts/`-only / `docs/`-only PRs, leaving the PR un-mergeable
+  # without `--admin` override.
+  push: {}
+  pull_request: {}
   workflow_dispatch:
   workflow_call:
 
@@ -43,14 +42,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # Need diff against base for relevance detection on PRs.
+          fetch-depth: 0
+
+      - name: Detect relevant changes
+        id: changes
+        run: |
+          set -e
+          # Push events: always run (covers branch pushes + main).
+          # workflow_call / workflow_dispatch: always run (caller asked).
+          # PR events: only run if config/test files changed.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "Non-PR event ${{ github.event_name }}; will run pytest."
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$base" "$head" \
+              | grep -qE '^(config/|tests/config_parse/|\.github/workflows/config-tests\.yml$)'; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "Relevant files changed; will run pytest."
+          else
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::No config/ or tests/config_parse/ changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
+          fi
 
       - name: Set up Python
+        if: steps.changes.outputs.run == '1'
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
       - name: Install pytest
+        if: steps.changes.outputs.run == '1'
         run: pip install pytest
 
       - name: Run config-parse tests
+        if: steps.changes.outputs.run == '1'
         run: python -m pytest tests/config_parse/ -v --tb=short

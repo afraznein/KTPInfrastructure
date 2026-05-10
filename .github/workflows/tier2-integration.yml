@@ -62,7 +62,10 @@ jobs:
     env:
       # Self-hosted runner stages the test serverfiles tree at this path.
       # See tests/integration/CI_RUNNER_SETUP.md § "Stage test serverfiles".
-      KTP_HLDS_SERVERFILES: ${{ vars.KTP_HLDS_SERVERFILES || '/home/runner/ktphlds-test/serverfiles' }}
+      # Hardcoded (not `${{ vars.X || '...' }}`) because fork PRs cannot read
+      # repo-scoped Actions variables — the expression silently falls through
+      # to the default on every fork PR. We own the runner; path is canonical.
+      KTP_HLDS_SERVERFILES: /opt/ktp-tier2-runner/serverfiles
       # Timeout multiplier — manual runs can dial this up if the runner is
       # busy. Default 1.0 = same as local dev.
       KTP_TEST_TIMEOUT_MULTIPLIER: ${{ inputs.timeout_multiplier || '1.0' }}
