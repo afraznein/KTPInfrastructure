@@ -76,7 +76,8 @@ The tree must contain:
 | `dod/addons/ktpamx/modules/amxxcurl_ktp_i386.so` | KTPAmxxCurl build output | HTTP module |
 | `dod/addons/ktpamx/plugins/KTPMatchHandler.amxx` | **TEST-MODE build** | from `compiled/test/` |
 | `dod/addons/ktpamx/plugins/KTPWitness.amxx` | KTPInfrastructure | from `tests/integration/witness/compiled/` |
-| `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness |
+| `dod/addons/ktpamx/plugins/KTPHudObserver.amxx` | DoD-hud-observer build | required for `test_hud_observer_contract.py` |
+| `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness + KTPHudObserver |
 | `dod/addons/ktpamx/configs/dodserver.cfg` | (minimal test config) | rcon_password=`smoketest` per the conftest |
 
 **Critical: KTPMatchHandler MUST be the test-mode build** (compiled with
@@ -105,6 +106,13 @@ cp /path/to/KTPMatchHandler/compiled/test/KTPMatchHandler.amxx \
 cp /path/to/KTPInfrastructure/tests/integration/witness/compiled/KTPWitness.amxx \
    dod/addons/ktpamx/plugins/
 
+# Stage KTPHudObserver (required for test_hud_observer_contract.py).
+# Build with the standard amxxpc Docker invocation in
+# `DoD-hud-observer/CLAUDE.md` § "Compiling the AMXX Plugin", or pull
+# from the KTPInfrastructure CI artifact (Tier 1 smoke produces it).
+cp /path/to/DoD-hud-observer/compiled/KTPHudObserver.amxx \
+   dod/addons/ktpamx/plugins/
+
 # Set permissions
 chmod 755 hlds_linux
 ```
@@ -120,6 +128,8 @@ For now, refresh manually whenever:
 - KTPMatchHandler.sma's `-DKTP_TEST_MODE` block changes
 - KTPWitness.sma changes
 - DODX module's test natives change (less frequent — needs full KTPAMXX rebuild)
+- DoD-hud-observer/KTPHudObserver.sma version bumps (also bump the pin
+  in `tests/integration/test_hud_observer_contract.py:EXPECTED_KTPHUDOBSERVER_VERSION`)
 
 ## Set repository variables
 
