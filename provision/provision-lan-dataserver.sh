@@ -145,9 +145,31 @@ mkdir -p "$HLTV_DIR/configs"
 mkdir -p "$HLTV_DIR/demos"
 chown -R hltvserver:hltvserver "$HLTV_HOME"
 
-# Download HLTV binaries (you'll need to provide these)
-log_warn "HLTV binaries need to be copied manually to $HLTV_DIR"
-log_warn "Required files: hltv, hltv_i686.so, proxy.so"
+# Stage HLTV binaries if a pre-staged directory is provided. The directory
+# should mirror the destination /home/hltvserver/hlds/ layout — at minimum
+# hlds_linux + the HLTV/HLDS .so libs + dod/ game data. The companion
+# scripts/package-hltv-bundle.sh produces a clean tarball from an existing
+# data-server install for transfer to the LAN box. Empty path = manual
+# step (original behavior preserved for cloud deployments).
+if [ -n "${HLTV_BINARIES_PATH:-}" ]; then
+    if [ ! -d "$HLTV_BINARIES_PATH" ]; then
+        log_error "HLTV_BINARIES_PATH set but not a directory: $HLTV_BINARIES_PATH"
+        exit 1
+    fi
+    if [ ! -f "$HLTV_BINARIES_PATH/hlds_linux" ]; then
+        log_error "HLTV_BINARIES_PATH does not contain hlds_linux: $HLTV_BINARIES_PATH"
+        log_error "Expected a directory mirroring the production /home/hltvserver/hlds/ layout."
+        log_error "See scripts/package-hltv-bundle.sh for producing the bundle."
+        exit 1
+    fi
+    log_info "Staging HLTV binaries from $HLTV_BINARIES_PATH (this may take a minute)..."
+    cp -r "$HLTV_BINARIES_PATH"/. "$HLTV_DIR/"
+    chown -R hltvserver:hltvserver "$HLTV_HOME"
+    log_info "HLTV binaries staged ($(du -sh "$HLTV_DIR" 2>/dev/null | awk '{print $1}'))"
+else
+    log_warn "HLTV_BINARIES_PATH not set — HLTV binaries must be copied manually to $HLTV_DIR"
+    log_warn "Use scripts/package-hltv-bundle.sh on an existing data server to produce a tarball."
+fi
 
 # Create HLTV config generator
 cat > "$HLTV_HOME/generate-hltv-configs.sh" << 'SCRIPT'
