@@ -25,7 +25,7 @@
 # 11. Memory optimizations: THP disabled, KSM disabled, compaction disabled
 # 12. Network optimizations: GRO/LRO/TSO disabled, conntrack bypass, IRQ affinity
 # 13. Dirty ratio tuning (vm.dirty_ratio=5)
-# 14. Network budget tuning (netdev_budget=600)
+# 14. Network budget tuning (netdev_budget=1200)
 # 15. File descriptor limits (65535)
 # 16. Installs fail2ban for SSH protection
 # 17. CPU pinning + SCHED_FIFO scheduling (auto-applied every 30s)
@@ -606,8 +606,8 @@ vm.dirty_background_ratio = 5
 
 # KTP Game Server - Network device budget
 # Higher values allow more packets per softirq cycle, reducing latency spikes
-net.core.netdev_budget = 600
-net.core.netdev_budget_usecs = 4000
+net.core.netdev_budget = 1200
+net.core.netdev_budget_usecs = 8000
 EOF
 
 sysctl -p /etc/sysctl.d/99-ktp-gameserver.conf
@@ -1070,7 +1070,7 @@ echo "  - C-states: ALL disabled (max_cstate=0)"
 echo "  - NMI watchdog: disabled"
 echo "  - UDP buffers: 25MB"
 echo "  - Dirty ratio: 5% (reduced I/O stutter)"
-echo "  - netdev_budget: 600 (packet processing)"
+echo "  - netdev_budget: 1200 (packet processing)"
 echo "  - THP: madvise (disables khugepaged stalls)"
 echo "  - THP defrag: never"
 echo "  - KSM: disabled"
