@@ -48,9 +48,17 @@ The orchestrator runs five phases in order, each idempotent:
 
 Manual steps the operator still has to handle:
 
-- **HLTV binaries** are NOT shipped. After provisioning, copy them to
-  `/home/hltvserver/hlds/` and start with
-  `su - hltvserver -c './hltv-ctl.sh start'`.
+- **HLTV binaries** are not in the repo (they're the upstream HLDS+HLTV
+  bundle, ~1 GB compressed). Two options:
+  - **Stage them**: produce a tarball from an existing data server with
+    `scripts/package-hltv-bundle.sh` (excludes recorded demos and the
+    cstrike subtree), transfer it to the LAN box, extract somewhere, and
+    set `HLTV_BINARIES_PATH` in `lan-deploy.conf`. The orchestrator
+    copies the contents into `/home/hltvserver/hlds/` automatically.
+  - **Manual copy after provisioning** if you'd rather rsync from
+    another source. Leave `HLTV_BINARIES_PATH` empty; the script will
+    print a reminder at the end.
+  Either way, start the proxies with `su - hltvserver -c './hltv-ctl.sh start'`.
 - **HLStatsX setup** is a skeleton only — see `/opt/hlstatsx/INSTALL.txt`
   on the provisioned box for the manual SQL import / daemon start.
 - **FastDL game files** — if you want clients to download maps/sounds,

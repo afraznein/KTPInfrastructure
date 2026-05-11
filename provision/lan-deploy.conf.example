@@ -22,6 +22,14 @@ ARTIFACTS_PATH=""
 # * Path to the KTP libsteam_api.so (76KB version — NOT the 375KB stock one).
 LIBSTEAM_API_PATH=""
 
+# Optional but strongly recommended for LAN: pre-staged HLTV binaries
+# directory. The contents are copied wholesale into /home/hltvserver/hlds/.
+# Produce the bundle from an existing data server with
+# scripts/package-hltv-bundle.sh (excludes recorded .dem files and the
+# unused cstrike/ tree, ~5-15 GB depending on which maps you keep).
+# Leave empty to keep the original manual-copy workflow.
+HLTV_BINARIES_PATH=""
+
 # ============================================================================
 # Host config (optional, sensible defaults)
 # ============================================================================

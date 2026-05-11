@@ -49,6 +49,10 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 [ -d "$ARTIFACTS_PATH" ]      || { echo "ERROR: ARTIFACTS_PATH not a directory: $ARTIFACTS_PATH" >&2; exit 1; }
 [ -f "$LIBSTEAM_API_PATH" ]   || { echo "ERROR: LIBSTEAM_API_PATH not a file: $LIBSTEAM_API_PATH" >&2; exit 1; }
+if [ -n "${HLTV_BINARIES_PATH:-}" ]; then
+    [ -d "$HLTV_BINARIES_PATH" ]              || { echo "ERROR: HLTV_BINARIES_PATH not a directory: $HLTV_BINARIES_PATH" >&2; exit 1; }
+    [ -f "$HLTV_BINARIES_PATH/hlds_linux" ]   || { echo "ERROR: HLTV_BINARIES_PATH lacks hlds_linux: $HLTV_BINARIES_PATH" >&2; exit 1; }
+fi
 
 # Defaults for everything else (matches lan-deploy.conf.example)
 TIMEZONE="${TIMEZONE:-America/New_York}"
@@ -72,6 +76,7 @@ Server name prefix:    $SERVER_NAME_PREFIX
 Join password:         $SV_PASSWORD
 Artifacts:             $ARTIFACTS_PATH
 libsteam_api.so:       $LIBSTEAM_API_PATH
+HLTV binaries:         ${HLTV_BINARIES_PATH:-(unset — manual copy required after install)}
 
 Co-located dataserver: $ENABLE_DATASERVER
 Netdata:               $ENABLE_NETDATA
@@ -148,6 +153,7 @@ if [ "$ENABLE_DATASERVER" = "true" ]; then
     HLTV_PROXY_PASSWORD="${HLTV_PROXY_PASSWORD:-}" \
     HLTV_BASE_PORT="$HLTV_BASE_PORT" \
     NUM_HLTV_INSTANCES="$NUM_INSTANCES" \
+    HLTV_BINARIES_PATH="${HLTV_BINARIES_PATH:-}" \
         bash "$SCRIPT_DIR/provision-lan-dataserver.sh"
 else
     log_phase "Phase 4: skipped (ENABLE_DATASERVER=false — dataserver lives elsewhere)"
@@ -187,10 +193,20 @@ if [ "$ENABLE_DATASERVER" = "true" ]; then
 fi
 echo
 echo "Next steps (manual — this script does NOT do them):"
-echo "  1. Verify game servers:    su - dodserver -c '~/restart-all-servers.sh && ~/status.sh'"
+step=1
+printf "  %d. Verify game servers:    su - dodserver -c '~/restart-all-servers.sh && ~/status.sh'\n" $step
 if [ "$ENABLE_DATASERVER" = "true" ]; then
-    echo "  2. Copy HLTV binaries:     /home/hltvserver/hlds/  (then 'su - hltvserver -c ./hltv-ctl.sh start')"
-    echo "  3. (Optional) HLStatsX:    follow /opt/hlstatsx/INSTALL.txt"
-    echo "  4. (Optional) FastDL:      copy game files to /var/www/fastdl/dod/"
+    if [ -z "${HLTV_BINARIES_PATH:-}" ]; then
+        step=$((step + 1))
+        printf "  %d. Copy HLTV binaries:     /home/hltvserver/hlds/ (HLTV_BINARIES_PATH was unset)\n" $step
+        printf "                              then 'su - hltvserver -c ./hltv-ctl.sh start'\n"
+    else
+        step=$((step + 1))
+        printf "  %d. Start HLTV:             su - hltvserver -c './hltv-ctl.sh start'  (binaries already staged)\n" $step
+    fi
+    step=$((step + 1))
+    printf "  %d. (Optional) HLStatsX:    follow /opt/hlstatsx/INSTALL.txt\n" $step
+    step=$((step + 1))
+    printf "  %d. (Optional) FastDL:      copy game files to /var/www/fastdl/dod/\n" $step
 fi
 echo
