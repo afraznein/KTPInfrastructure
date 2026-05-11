@@ -1,6 +1,6 @@
 # Custom-Kernel Experiment Runbook
 
-**Status:** Experiment A (preempt=full) ROLLED BACK 2026-05-05 (p99 regression). Experiment C (idle=poll) ACTIVE on ATL since 2026-05-10 — soak in progress, rollback path in §2/Experiment C.
+**Status:** Experiment A (preempt=full) ROLLED BACK 2026-05-05 (p99 regression). Experiment C (idle=poll) ROLLED BACK 2026-05-10 21:28 ET — failed Stage C hypothesis (absgrid+idle=poll only reached 696 fps vs. hypothesized 999 fps; HLT-exit was NOT the bottleneck — CONFIG_HZ=1000 sleep-rounding is). All cmdline-only Phase 2 axes now exhausted on stock Ubuntu lowlatency kernel. Phase 3 (custom kernel build) is the only remaining path to close the 977→999 fps gap at low CPU. Other operational answer: NY:27019's perpetual `-pingboost 4` (999fps @ 100% CPU).
 **Target TODO:** `Custom-kernel research — can we beat 6.8.0-110-lowlatency?`
 **Last updated:** 2026-05-10
 
@@ -157,6 +157,30 @@ sudo reboot
 - ATL:27019 hits 990+ fps under absgrid: Stage C closes; absgrid+idle=poll documented as the 3rd 999fps path; consider rolling absgrid (NOT idle=poll) to wider canary on existing cmdline
 - ATL:27019 stays at ~643 fps: rules out wakeup-latency-from-HLT as the bottleneck; the floor is somewhere else (timer interrupt rate, cache miss?), Stage C closes as won't-fix on existing CONFIG_HZ=1000
 - ATL:27015-27018 regress: rollback + close idle=poll as not-host-safe; revisit per-CPU idle approaches if any exist
+
+#### Experiment C results (2026-05-10) — FAILED, ROLLED BACK
+
+**Test setup:** ATL host on `idle=poll` cmdline. ATL:27019 on `-pingboost 2 -absgrid` (clock_nanosleep TIMER_ABSTIME path). ATL:27015-27018 on plain `-pingboost 2` as same-host control. DAL/DEN/NY/CHI as cross-host control.
+
+**Result @ 21:23-21:25 ET (post-restart steady state, 8 consecutive samples):**
+
+| Configuration | avg interframe | implied fps | vs. hypothesis |
+|---|---|---|---|
+| ATL:27019 absgrid+idle=poll | 1.435 ms | 696 | hoped 999, got 696 |
+| ATL:27015-27018 idle=poll only | 1.005 ms | 995 | identical to control hosts |
+| ATL 4/23 absgrid (HLT idle) | ~1.555 ms | 643 | original Stage C ceiling |
+| DAL/DEN/NY:27015-27018 (no idle=poll) | 1.005-1.008 ms | ~993-995 | control |
+| NY:27019 -pingboost 4 (Sleep_Never) | 0.991 ms | 1009 | known 100% CPU canary |
+
+**Interpretation:** absgrid+idle=poll only gained +53 fps over absgrid alone (643→696). Removing HLT-exit wakeup latency was insufficient. The remaining gap to 995/1009 fps confirms the runbook's pre-Stage C prediction (line 41): **`clock_nanosleep` rounds sub-ms sleeps up to the next CONFIG_HZ tick (1ms granularity), so absgrid wants to sleep ~1ms but actually sleeps ~1.4ms.** No cmdline flag can override this — it's compile-time kernel behavior in `kernel/time/hrtimer.c`.
+
+**On pingboost-2 control instances (ATL:27015-27018), idle=poll showed ZERO measurable change** — same 1.005ms avg as DAL/DEN/NY baremetal controls. Sleep_Select returns near-immediately on quiet/empty servers; HLT-exit latency was never on the critical path for the default config.
+
+**Rollback executed 2026-05-10 21:28 ET:**
+1. Reverted `dodserver5.cfg` startparameters (removed `-absgrid`), restarted dodserver5 only (~30s outage on 27019).
+2. Restored `/etc/default/grub` from `grub.idle-poll-experiment-bak-20260510-204044`, ran `update-grub > /tmp/log 2>&1` (NO `head` pipe — see memory `update_grub_sigpipe_pitfall.md`), pinned saved_entry to 110, rebooted host (~3-5 min full ATL outage). Total experiment downtime ~10 min across 3 reboots (one wasted on the SIGPIPE bug).
+
+**Conclusion: Phase 2 is exhausted.** preempt=full (Experiment A) and idle=poll (Experiment C) both negative. rcu_nocb_poll (Experiment B) was lower-priority secondary; not worth running independently given the cmdline-floor evidence. The 977→999 fps gap at low CPU requires Phase 3 (custom kernel with CONFIG_HZ=2000+ + patched `hrtimer_nanosleep`). Multi-week build + monthly rebuild cost. **Recommended deferral:** accept NY:27019's `-pingboost 4` pattern as the operational answer for instances needing 999 fps; revisit Phase 3 only if a forcing function appears (e.g., a single-instance perf complaint that pingboost-4 can't address).
 
 #### Experiment D: `nohz=off` — **SKIP unless new evidence surfaces**
 
