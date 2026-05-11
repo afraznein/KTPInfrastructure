@@ -30,7 +30,8 @@
 # 16. Installs fail2ban for SSH protection
 # 17. CPU pinning + SCHED_FIFO scheduling (auto-applied every 30s)
 # 18. CPU isolation: isolcpus + nohz_full + rcu_nocbs (baremetals with 8+ CPUs only)
-# 19. (Optional) Co-located HLTV: proxies, control script, API, systemd service
+# 19. Deploys ktp-fleet-health.sh + cron (Discord alerter on instance shortfall)
+# 20. (Optional) Co-located HLTV: proxies, control script, API, systemd service
 
 set -e
 
@@ -797,7 +798,62 @@ systemctl start ktp-chrt.timer
 log_info "chrt auto-apply timer enabled (runs every 5 minutes, early-exit when already configured)"
 
 # ============================================
-# 16. Co-located HLTV Setup (Optional)
+# 16. Deploy ktp-fleet-health.sh Alerter
+# ============================================
+# Per-host alerter: fires a Discord embed when `pgrep -c hlds_linux` falls
+# below the expected instance count for THRESHOLD_MINUTES consecutive
+# minutes. Single post per state transition, silent when healthy.
+# Source-of-truth: KTPInfrastructure/monitoring/fleet-health/.
+# Config: /etc/ktp/fleet-health.conf — empty/missing WEBHOOK_URL = silent
+# local-only monitoring (state file still updated, no network call).
+log_info "Deploying ktp-fleet-health.sh alerter..."
+
+# Resolve the canonical script location relative to this provision script.
+# The repo layout is KTPInfrastructure/provision/<this>.sh and
+# KTPInfrastructure/monitoring/fleet-health/ktp-fleet-health.sh — siblings.
+PROVISION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FLEET_HEALTH_SRC="$PROVISION_DIR/../monitoring/fleet-health/ktp-fleet-health.sh"
+FLEET_HEALTH_CONF_TEMPLATE="$PROVISION_DIR/../monitoring/fleet-health/fleet-health.conf.example"
+
+if [ ! -f "$FLEET_HEALTH_SRC" ]; then
+    log_error "Cannot find canonical ktp-fleet-health.sh at: $FLEET_HEALTH_SRC"
+    log_error "Run this script from a KTPInfrastructure checkout."
+    exit 1
+fi
+
+DODSERVER_HOME="/home/$DODSERVER_USER"
+install -o "$DODSERVER_USER" -g "$DODSERVER_USER" -m 755 \
+    "$FLEET_HEALTH_SRC" "$DODSERVER_HOME/ktp-fleet-health.sh"
+
+# Seed /etc/ktp/fleet-health.conf only when absent — preserve operator edits
+# on idempotent re-runs.
+mkdir -p /etc/ktp
+if [ ! -f /etc/ktp/fleet-health.conf ]; then
+    if [ -f "$FLEET_HEALTH_CONF_TEMPLATE" ]; then
+        install -o root -g "$DODSERVER_USER" -m 640 \
+            "$FLEET_HEALTH_CONF_TEMPLATE" /etc/ktp/fleet-health.conf
+        log_info "Seeded /etc/ktp/fleet-health.conf from template (edit to enable Discord posts)"
+    else
+        log_warn "fleet-health.conf.example not found; skipping conf seed"
+    fi
+else
+    log_info "/etc/ktp/fleet-health.conf already present — left as-is"
+fi
+
+# Install cron entry as dodserver (idempotent — only adds if not already present).
+CRON_LINE="* * * * * $DODSERVER_HOME/ktp-fleet-health.sh >/dev/null 2>&1"
+EXISTING_CRON=$(crontab -u "$DODSERVER_USER" -l 2>/dev/null || true)
+if echo "$EXISTING_CRON" | grep -qF "ktp-fleet-health.sh"; then
+    log_info "ktp-fleet-health.sh cron entry already installed"
+else
+    { echo "$EXISTING_CRON"; echo "$CRON_LINE"; } \
+        | grep -v '^$' \
+        | crontab -u "$DODSERVER_USER" -
+    log_info "Installed ktp-fleet-health.sh cron entry (every minute)"
+fi
+
+# ============================================
+# 17. Co-located HLTV Setup (Optional)
 # ============================================
 if [ "$WITH_HLTV" = true ]; then
     log_info "Setting up co-located HLTV proxies..."

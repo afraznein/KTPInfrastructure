@@ -1,0 +1,30 @@
+# /etc/ktp/fleet-health.conf — system-wide config for ktp-fleet-health.sh
+#
+# Deploy as: /etc/ktp/fleet-health.conf
+# Owner:     root:dodserver
+# Mode:      0640 (root-writable, dodserver-readable)
+#
+# All keys are optional. With an empty file (or missing file), the alerter
+# falls back to local-only monitoring: tracks state, never posts to Discord.
+# Use that for LAN deployments that don't need or can't reach Discord.
+
+# Discord webhook for DEGRADED/RECOVERED embeds. Empty = no posts.
+WEBHOOK_URL=""
+
+# Discord user ID to @-mention on alerts. Empty = no ping in the embed.
+# Webhooks need explicit `allowed_mentions.users` to actually deliver the
+# ping; the script handles that automatically when this is set.
+MENTION_USER_ID=""
+
+# Instance topology. Defaults assume the standard 5-instance KTP host.
+BASE_PORT=27015
+NUM_INSTANCES=5
+
+# Minutes of consecutive shortfall before firing DEGRADED. Higher = quieter
+# but slower to alert; lower = noisier but faster.
+THRESHOLD_MINUTES=3
+
+# Short location code shown in the alert title. Leave blank to let the
+# script derive it from $(hostname -s) — works for the known KTP fleet
+# (neinatl* -> ATL, etc.). Set it explicitly for LAN venues.
+LOCATION=""
