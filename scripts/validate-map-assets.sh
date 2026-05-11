@@ -94,9 +94,57 @@ asset_severity() {
     esac
 }
 
+# classify_missing: for a CRASH-RISK miss, see if a nearby file might be what
+# the .bsp actually means. Sets globals MISS_CLASS and MISS_VARIANT.
+#   MISSING       — nothing similar in the same dir; real crash risk
+#   CASE-DIFF     — case-insensitive exact match exists in same dir; Linux
+#                   engine's filesystem_stdio.so usually resolves these
+#   RENAME-CHECK  — same-stem prefix variant exists (foo.mdl vs foo1k.mdl);
+#                   operator decides whether to symlink, rename, or source
+# Caller guarantees the case-sensitive file does NOT exist.
+classify_missing() {
+    local asset="$1"
+    local dir; dir="$SERVERFILES/$(dirname "$asset")"
+    local file; file=$(basename "$asset")
+    local stem="${file%.*}"
+    local ext="${file##*.}"
+
+    MISS_CLASS=MISSING
+    MISS_VARIANT=""
+
+    [ ! -d "$dir" ] && return
+
+    # Case-insensitive exact match in the same dir.
+    local exact
+    exact=$(find "$dir" -maxdepth 1 -iname "$file" -type f 2>/dev/null | head -1)
+    if [ -n "$exact" ]; then
+        MISS_CLASS=CASE-DIFF
+        MISS_VARIANT=$(basename "$exact")
+        return
+    fi
+
+    # Same-stem-prefix variant (e.g. woodgibs -> woodgibs1k, gib_a -> gib_a_v2).
+    local variants
+    variants=$(find "$dir" -maxdepth 1 -iname "${stem}*.${ext}" -type f 2>/dev/null | sort | head -3)
+    if [ -n "$variants" ]; then
+        MISS_CLASS=RENAME-CHECK
+        local first; first=$(echo "$variants" | head -1 | xargs -I{} basename {})
+        local count; count=$(echo "$variants" | wc -l)
+        if [ "$count" -gt 1 ]; then
+            MISS_VARIANT="$first (+$((count - 1)) more)"
+        else
+            MISS_VARIANT="$first"
+        fi
+    fi
+}
+
 TOTAL_CRASH=0
+TOTAL_RENAME=0
+TOTAL_CASE=0
 TOTAL_WARN=0
 MAPS_WITH_CRASH=0
+MAPS_WITH_RENAME=0
+MAPS_WITH_CASE=0
 MAPS_WITH_WARN=0
 
 for bsp in "${BSPS[@]}"; do
@@ -120,8 +168,12 @@ for bsp in "${BSPS[@]}"; do
     [ -z "$assets" ] && continue
 
     crash_missing=""
+    rename_missing=""
+    case_missing=""
     warn_missing=""
     crash_n=0
+    rename_n=0
+    case_n=0
     warn_n=0
 
     while IFS= read -r asset; do
@@ -129,42 +181,72 @@ for bsp in "${BSPS[@]}"; do
         [ -f "$SERVERFILES/$asset" ] && continue
         sev=$(asset_severity "$asset")
         if [ "$sev" = "CRASH" ]; then
-            crash_missing+="    [CRASH-RISK] $asset"$'\n'
-            crash_n=$((crash_n + 1))
+            classify_missing "$asset"
+            case "$MISS_CLASS" in
+                MISSING)
+                    crash_missing+="    [CRASH-RISK]   $asset"$'\n'
+                    crash_n=$((crash_n + 1))
+                    ;;
+                RENAME-CHECK)
+                    rename_missing+="    [RENAME-CHECK] $asset    (nearby: $MISS_VARIANT)"$'\n'
+                    rename_n=$((rename_n + 1))
+                    ;;
+                CASE-DIFF)
+                    case_missing+="    [CASE-DIFF]    $asset    (on-disk: $MISS_VARIANT — engine likely resolves)"$'\n'
+                    case_n=$((case_n + 1))
+                    ;;
+            esac
         else
             [ $INCLUDE_WARN -eq 0 ] && continue
-            warn_missing+="    [WARN] $asset"$'\n'
+            warn_missing+="    [WARN]         $asset"$'\n'
             warn_n=$((warn_n + 1))
         fi
     done <<< "$assets"
 
     TOTAL_CRASH=$((TOTAL_CRASH + crash_n))
+    TOTAL_RENAME=$((TOTAL_RENAME + rename_n))
+    TOTAL_CASE=$((TOTAL_CASE + case_n))
     TOTAL_WARN=$((TOTAL_WARN + warn_n))
-    [ $crash_n -gt 0 ] && MAPS_WITH_CRASH=$((MAPS_WITH_CRASH + 1))
-    [ $warn_n -gt 0 ]  && MAPS_WITH_WARN=$((MAPS_WITH_WARN + 1))
+    [ $crash_n -gt 0 ]  && MAPS_WITH_CRASH=$((MAPS_WITH_CRASH + 1))
+    [ $rename_n -gt 0 ] && MAPS_WITH_RENAME=$((MAPS_WITH_RENAME + 1))
+    [ $case_n -gt 0 ]   && MAPS_WITH_CASE=$((MAPS_WITH_CASE + 1))
+    [ $warn_n -gt 0 ]   && MAPS_WITH_WARN=$((MAPS_WITH_WARN + 1))
 
-    if [ -n "$crash_missing" ] || [ -n "$warn_missing" ]; then
+    if [ -n "$crash_missing$rename_missing$case_missing$warn_missing" ]; then
         echo
+        # Header reflects worst category present (FAIL > INVESTIGATE > INFO > WARN).
         if [ -n "$crash_missing" ]; then
             echo "FAIL: $name"
+        elif [ -n "$rename_missing" ]; then
+            echo "INVESTIGATE: $name"
+        elif [ -n "$case_missing" ]; then
+            echo "INFO: $name"
         else
             echo "WARN: $name"
         fi
-        [ -n "$crash_missing" ] && printf '%s' "$crash_missing"
-        [ -n "$warn_missing" ]  && printf '%s' "$warn_missing"
+        [ -n "$crash_missing" ]  && printf '%s' "$crash_missing"
+        [ -n "$rename_missing" ] && printf '%s' "$rename_missing"
+        [ -n "$case_missing" ]   && printf '%s' "$case_missing"
+        [ -n "$warn_missing" ]   && printf '%s' "$warn_missing"
     elif [ $QUIET -eq 0 ]; then
         echo "  OK: $name ($(echo "$assets" | wc -l) refs)"
     fi
 done
 
 echo
+echo "Summary:"
+echo "  FAIL         (CRASH-RISK)   — $MAPS_WITH_CRASH map(s),  $TOTAL_CRASH ref(s)"
+echo "  INVESTIGATE  (RENAME-CHECK) — $MAPS_WITH_RENAME map(s), $TOTAL_RENAME ref(s)"
+echo "  INFO         (CASE-DIFF)    — $MAPS_WITH_CASE map(s),  $TOTAL_CASE ref(s)"
 if [ $INCLUDE_WARN -eq 1 ]; then
-    echo "Summary: $MAPS_WITH_CRASH map(s) with CRASH-RISK assets missing ($TOTAL_CRASH refs),"
-    echo "         $MAPS_WITH_WARN map(s) with WARN-level missing ($TOTAL_WARN refs)."
+    echo "  WARN         (sound/tex)    — $MAPS_WITH_WARN map(s),  $TOTAL_WARN ref(s)"
 else
-    echo "Summary: $MAPS_WITH_CRASH map(s) with CRASH-RISK assets missing ($TOTAL_CRASH refs)."
-    echo "         (Pass --all to also list WARN-level missing sounds/textures/overviews.)"
+    echo "  (Pass --all to also list WARN-level missing sounds/textures/overviews.)"
 fi
+echo
+echo "Only FAIL contributes to exit code 1. RENAME-CHECK and CASE-DIFF are"
+echo "informational — operator decides whether to symlink, rename references,"
+echo "or source the canonical file."
 
 [ $MAPS_WITH_CRASH -gt 0 ] && exit 1
 exit 0
