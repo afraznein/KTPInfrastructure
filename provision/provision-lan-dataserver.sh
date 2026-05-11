@@ -16,11 +16,19 @@ set -e
 # ============================================
 # Configuration
 # ============================================
-TIMEZONE="America/New_York"
-MYSQL_ROOT_PASSWORD="KTPLanRoot2026"
-HLSTATSX_DB_PASSWORD="KTPLanStats2026"
-HLTV_ADMIN_PASSWORD="ktplanhltvadmin"
-HLTV_PROXY_PASSWORD="ktplanproxy"
+# All values below are env-overridable so the LAN orchestrator (and other
+# automation) can pass per-deployment values without editing the script.
+# For passwords, unset/empty env -> auto-generate a random 32-char value.
+# This guarantees fresh secrets per deployment even if the operator forgets
+# to set them, and avoids the prior committed-default footgun.
+TIMEZONE="${TIMEZONE:-America/New_York}"
+
+gen_pw() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32; }
+
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$(gen_pw)}"
+HLSTATSX_DB_PASSWORD="${HLSTATSX_DB_PASSWORD:-$(gen_pw)}"
+HLTV_ADMIN_PASSWORD="${HLTV_ADMIN_PASSWORD:-$(gen_pw)}"
+HLTV_PROXY_PASSWORD="${HLTV_PROXY_PASSWORD:-$(gen_pw)}"
 
 # Number of HLTV instances (one per game server you want to record)
 NUM_HLTV_INSTANCES=5
@@ -487,10 +495,26 @@ echo "  - HLTV API: Port 8087 (key: lan-api-key)"
 echo "  - FastDL: Port 80"
 echo "  - MySQL: localhost (hlstatsx / $HLSTATSX_DB_PASSWORD)"
 echo ""
+# Persist credentials so the operator can retrieve them after the install
+# (auto-generated random passwords would otherwise only exist in this stdout).
+CREDS_FILE=/root/ktp-dataserver-credentials.txt
+umask 077
+cat > "$CREDS_FILE" <<CREDS
+KTP LAN dataserver credentials (generated $(date -Iseconds))
+MYSQL_ROOT_PASSWORD=$MYSQL_ROOT_PASSWORD
+HLSTATSX_DB_PASSWORD=$HLSTATSX_DB_PASSWORD
+HLTV_ADMIN_PASSWORD=$HLTV_ADMIN_PASSWORD
+HLTV_PROXY_PASSWORD=$HLTV_PROXY_PASSWORD
+CREDS
+chmod 600 "$CREDS_FILE"
+
 echo "Credentials:"
 echo "  - MySQL root: $MYSQL_ROOT_PASSWORD"
 echo "  - MySQL hlstatsx: $HLSTATSX_DB_PASSWORD"
 echo "  - HLTV admin: $HLTV_ADMIN_PASSWORD"
+echo "  - HLTV proxy: $HLTV_PROXY_PASSWORD"
+echo ""
+echo "Credentials saved to: $CREDS_FILE (root-only, mode 0600)"
 echo ""
 echo "Manual steps required:"
 echo "  1. Copy HLTV binaries to $HLTV_DIR"

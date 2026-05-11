@@ -22,6 +22,8 @@
 #   --sv-password <pwd>     Server join password (sv_password in dodserver.cfg)
 #   --relay-url <url>       Discord relay URL for scheduled restart notifications
 #   --relay-secret <secret> Discord relay auth secret
+#   --data-server-ip <ip>   Data server IP for HLTV API (default: 74.91.112.242)
+#   --hltv-api-port <port>  HLTV API port on the data server (default: 8087)
 #
 # Run as: dodserver user
 #
@@ -65,6 +67,8 @@ show_usage() {
     echo "  --sv-password <pwd>     Server join password (sv_password)"
     echo "  --relay-url <url>       Discord relay URL for restart notifications"
     echo "  --relay-secret <secret> Discord relay auth secret"
+    echo "  --data-server-ip <ip>   Data server IP for HLTV API (default: 74.91.112.242)"
+    echo "  --hltv-api-port <port>  HLTV API port on data server (default: 8087)"
     echo ""
     echo "Examples:"
     echo "  $0 /path/to/artifacts --hostname atlanta --ip 74.91.112.182"
@@ -92,6 +96,11 @@ HLTV_API_KEY=""
 SV_PASSWORD=""
 RELAY_URL=""
 RELAY_SECRET=""
+# Data server hosting the HLTV API the recorder posts to. Defaults preserve
+# the public-cloud KTP deployment; LAN deployments pass --data-server-ip
+# (often the same host as the game server for all-in-one LAN boxes).
+DATA_SERVER_IP="74.91.112.242"
+HLTV_API_PORT="8087"
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
@@ -143,6 +152,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --relay-secret)
             RELAY_SECRET="$2"
+            shift 2
+            ;;
+        --data-server-ip)
+            DATA_SERVER_IP="$2"
+            shift 2
+            ;;
+        --hltv-api-port)
+            HLTV_API_PORT="$2"
             shift 2
             ;;
         *)
@@ -781,7 +798,7 @@ if [ -n "$HLTV_BASE_PORT" ]; then
         cat > "$HLTV_INI" << EOF
 ; KTP HLTV Recorder Configuration
 hltv_enabled = 1
-hltv_api_url = http://74.91.112.242:8087
+hltv_api_url = http://${DATA_SERVER_IP}:${HLTV_API_PORT}
 hltv_api_key = $EFFECTIVE_HLTV_KEY
 hltv_port = $HLTV_PORT
 EOF

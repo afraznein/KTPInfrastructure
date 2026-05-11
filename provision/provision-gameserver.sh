@@ -77,7 +77,8 @@ done
 # Configuration
 # ============================================
 DODSERVER_USER="dodserver"
-TIMEZONE="America/New_York"
+# TIMEZONE is overridable via env (e.g., LAN deployments outside ET).
+TIMEZONE="${TIMEZONE:-America/New_York}"
 SWAP_SIZE="2G"
 
 # Derived port ranges
