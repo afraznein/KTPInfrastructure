@@ -182,12 +182,18 @@ done
 log_info "Creating management scripts..."
 
 # restart-all-servers.sh
-cat > "$HOME/restart-all-servers.sh" << 'EOF'
+# Header sets BASE_PORT/NUM_INSTANCES from the install-time values; body stays
+# parameterized so re-running on a host with different port/instance counts is
+# a single-file edit rather than dozens of `27014`/`5` constants.
+cat > "$HOME/restart-all-servers.sh" << EOF
 #!/bin/bash
 # Restart all KTP game server instances
 # WARNING: This will disconnect all players!
-
 set -e
+BASE_PORT=$BASE_PORT
+NUM_INSTANCES=$NUM_INSTANCES
+EOF
+cat >> "$HOME/restart-all-servers.sh" << 'EOF'
 
 echo "========================================"
 echo "KTP Server Restart"
@@ -196,8 +202,8 @@ echo ""
 
 # Stop all servers
 echo "Stopping servers..."
-for i in 1 2 3 4 5; do
-    port=$((27014 + i))
+for i in $(seq 1 $NUM_INSTANCES); do
+    port=$((BASE_PORT + i - 1))
     name="dodserver"
     [ $i -gt 1 ] && name="dodserver$i"
 
@@ -211,8 +217,8 @@ sleep 5
 
 # Start all servers
 echo "Starting servers..."
-for i in 1 2 3 4 5; do
-    port=$((27014 + i))
+for i in $(seq 1 $NUM_INSTANCES); do
+    port=$((BASE_PORT + i - 1))
     name="dodserver"
     [ $i -gt 1 ] && name="dodserver$i"
 
@@ -227,8 +233,8 @@ echo "Verifying servers..."
 sleep 5
 
 running=0
-for i in 1 2 3 4 5; do
-    port=$((27014 + i))
+for i in $(seq 1 $NUM_INSTANCES); do
+    port=$((BASE_PORT + i - 1))
     if pgrep -f "hlds_linux.*-port $port" > /dev/null; then
         echo "  Port $port: RUNNING"
         ((running++))
@@ -238,22 +244,26 @@ for i in 1 2 3 4 5; do
 done
 
 echo ""
-echo "$running of 5 servers running"
+echo "$running of $NUM_INSTANCES servers running"
 echo "========================================"
 EOF
 chmod +x "$HOME/restart-all-servers.sh"
 
-# status.sh
-cat > "$HOME/status.sh" << 'EOF'
+# status.sh — same parameterization pattern as restart-all-servers.sh
+cat > "$HOME/status.sh" << EOF
 #!/bin/bash
 # Check status of all KTP game servers
+BASE_PORT=$BASE_PORT
+NUM_INSTANCES=$NUM_INSTANCES
+EOF
+cat >> "$HOME/status.sh" << 'EOF'
 
 echo "KTP Server Status"
 echo "================="
 echo ""
 
-for i in 1 2 3 4 5; do
-    port=$((27014 + i))
+for i in $(seq 1 $NUM_INSTANCES); do
+    port=$((BASE_PORT + i - 1))
     name="dodserver"
     [ $i -gt 1 ] && name="dodserver$i"
 

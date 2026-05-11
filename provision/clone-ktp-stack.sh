@@ -35,7 +35,7 @@
 # 7. Configures LinuxGSM instance settings
 # 8. Deploys KTP libsteam_api.so
 # 9. Applies LinuxGSM tmux session fix (prevents random restarts)
-# 10. Cleans up modules.ini (removes GLIBC 2.38 dependent modules)
+# 10. Masks apport systemd units (prevents core_pattern override at next reboot)
 # 11. Configures hltv_recorder.ini with correct HLTV ports
 # 12. Cleans up server.cfg hostname conflicts
 # 13. Deploys scheduled restart script and cron
@@ -731,28 +731,30 @@ if [ $TMUX_FIX_APPLIED -gt 0 ]; then
 fi
 
 # ============================================
-# 10. Clean Up modules.ini (Remove GLIBC 2.38 Modules)
+# 10. Mask Apport Units (Prevent core_pattern Override)
 # ============================================
-# Some modules require GLIBC 2.38+ but Ubuntu 22.04 has 2.35.
-# These modules aren't used by KTP anyway, so we comment them out.
-log_info "Cleaning up modules.ini (removing GLIBC 2.38 dependent modules)..."
+# Apport >=2.28.1-0ubuntu3.8 (shipped via Ubuntu 24.04 unattended-upgrades)
+# overrides /proc/sys/kernel/core_pattern at boot regardless of `enabled=0`
+# in /etc/default/apport. That clobbers /etc/sysctl.d/99-ktp-coredump.conf
+# (kernel.core_pattern = /tmp/core.%e.%p.%t), which breaks KTPCrashReporter's
+# core-file harvesting. Mask all apport units so systemd cannot start them.
+# Idempotent; safe even when the apport package isn't installed (symlinks
+# pre-empt future package install from auto-enabling the units).
+# Discovered 2026-05-11 (Atlanta drifted on 2026-05-10 reboot post-upgrade).
+log_info "Masking apport units (prevents core_pattern override at next reboot)..."
 
-GLIBC_MODULES="fun_ktp_i386.so engine_ktp_i386.so fakemeta_ktp_i386.so"
-
-for i in $(seq 1 $NUM_INSTANCES); do
-    PORT=$((BASE_PORT + i - 1))
-    MODULES_INI="$HOME/dod-$PORT/serverfiles/dod/addons/ktpamx/configs/modules.ini"
-
-    if [ -f "$MODULES_INI" ]; then
-        for module in $GLIBC_MODULES; do
-            # Comment out the module if it exists and isn't already commented
-            if grep -q "^$module" "$MODULES_INI" 2>/dev/null; then
-                sed -i "s|^$module|; $module ; DISABLED - requires GLIBC 2.38|" "$MODULES_INI"
-            fi
-        done
-    fi
-done
-log_info "modules.ini cleaned up"
+APPORT_UNITS=(
+    apport.service
+    apport-autoreport.timer
+    apport-autoreport.service
+    apport-autoreport.path
+    apport-forward.socket
+)
+if sudo systemctl mask "${APPORT_UNITS[@]}" >/dev/null 2>&1; then
+    log_info "  apport units masked"
+else
+    log_warn "  sudo systemctl mask returned non-zero; verify manually: systemctl is-enabled apport.service"
+fi
 
 # ============================================
 # 11. Configure hltv_recorder.ini with Correct HLTV Ports
