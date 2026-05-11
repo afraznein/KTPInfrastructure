@@ -1,8 +1,8 @@
 # Custom-Kernel Experiment Runbook
 
-**Status:** Prep phase. Nothing yet applied to production.
+**Status:** Experiment A (preempt=full) ROLLED BACK 2026-05-05 (p99 regression). Experiment C (idle=poll) ACTIVE on ATL since 2026-05-10 — soak in progress, rollback path in §2/Experiment C.
 **Target TODO:** `Custom-kernel research — can we beat 6.8.0-110-lowlatency?`
-**Last updated:** 2026-04-24
+**Last updated:** 2026-05-10
 
 This runbook exists to make the Phase 2 kernel-cmdline experiments (and the Phase 3 custom-kernel build, if warranted) executable from a pre-planned script rather than improvised during a maintenance window.
 
@@ -115,9 +115,48 @@ Same mechanical steps as Experiment A.
 
 **Rollback:** Same pattern.
 
-#### Experiment C: `idle=poll` — **SKIP, not proportionate**
+#### Experiment C: `idle=poll` (revised 2026-05-10 — was SKIP, now active)
 
-Would force idle task to busy-poll → CPU stays at 100% on isolated cores → ~same power/thermal cost as running pingboost 4 on every instance. We already have NY:27019 on pingboost 4 as the 999 fps canary; forcing the whole host into idle=poll just extends that pattern at higher aggregate CPU cost. No additional data we don't already have from pingboost 4. Not worth the slot.
+**Original 2026-04-24 SKIP rationale (preserved):** would force idle task to busy-poll → CPU stays at 100% on isolated cores → ~same power/thermal cost as running pingboost 4 on every instance. NY:27019 already on pingboost 4 as the 999 fps canary; forcing the whole host into idle=poll just extends that pattern at higher aggregate CPU cost. Argued no additional data over pingboost 4.
+
+**Why that was stale (Stage C evidence + cpuidle inspection):** Stage C's `-absgrid` test on ATL:27019 (2026-04-23) hit a 643 fps ceiling with `clock_nanosleep(TIMER_ABSTIME)` on isolated CPU + SCHED_FIFO + `PR_SET_TIMERSLACK=1`. Process at 2.8% CPU, sleep path active — kernel was waking the thread at ~500µs avg latency from hrtimer-fire. Inspection of ATL cpuidle state on 2026-05-10 confirmed POLL + C1 are disabled via rc.local (`disable=1` per state), but `intel_idle.max_cstate=0 + processor.max_cstate=0` only blocks the C-state drivers — the kernel falls back to `default_idle()` (HLT) when a core is idle. **idle=poll replaces HLT with `cpu_relax()`**, eliminating the HLT-exit + IRQ-deliver wakeup-latency floor. Different mechanism than pingboost 4 (which never sleeps in the first place).
+
+**Hypothesis:** absgrid + idle=poll = 999 fps at the absgrid instance's existing ~3% CPU (clock_nanosleep wakes instantly into a polling core). Pingboost 4's 100% CPU cost is then a function of `Sleep_Never` busy-wait, not the idle-state floor — so absgrid + idle=poll could be a 3rd operational path between pingboost 2 (977 fps @ 1-3%) and pingboost 4 (999 fps @ 100%).
+
+**GRUB edit:** Add `idle=poll` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
+
+```bash
+# On ATL host (74.91.121.9):
+TS=$(date +%Y%m%d-%H%M%S)
+sudo cp /etc/default/grub /etc/default/grub.idle-poll-experiment-bak-${TS}
+sudo sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\)|\1idle=poll |' /etc/default/grub
+grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
+sudo update-grub
+sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency"
+sudo grub-editenv list
+sudo reboot
+```
+
+**Soak:** 24-48 hours. Pull `[KTP_PROFILE]` data from ATL:27015-27019 + compare against the other 3 baremetals during the same window.
+
+**Success criteria (per-instance, NOT fleet-aggregate):**
+- ATL:27019 (`-absgrid`): fps p50 ≥ 990 (vs current 643 ceiling under absgrid). This is the primary signal.
+- ATL:27015-27018 (`-pingboost 2`): no regression in fps p50 / interframe p99 / spike rate vs control hosts. These instances aren't asking for sub-ms sleeps; idle=poll is overhead-without-benefit for them. Acceptable if neutral.
+- p99 interframe on ATL:27019 tightens (currently dominated by the wakeup-latency floor).
+
+**Cost expectations:** isolated cores 2-7 will report ~100% CPU utilization in `top` / `htop` because the idle task is now busy-polling instead of HLTing. This is cosmetic — the SCHED_FIFO game-server tasks still preempt the idle task as needed. Real "useful CPU" stays at the same ~3-5% per game-server core. Power/thermal: baremetal, ATL room, no concern in off-season.
+
+**Rollback:** `sudo cp /etc/default/grub.idle-poll-experiment-bak-<TS> /etc/default/grub && sudo update-grub && sudo grub-set-default 'Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency' && sudo reboot`. ~3 min window.
+
+**Stop conditions during soak:**
+- Any ATL instance shows >5% fps p50 regression vs control hosts in the same window
+- Any ATL instance shows new spike pattern (`steam`/`phys`/`send` >2.5σ) absent from control hosts
+- Player report of perceived perf change on ATL:27015-27018
+
+**Outcomes that close TODOs:**
+- ATL:27019 hits 990+ fps under absgrid: Stage C closes; absgrid+idle=poll documented as the 3rd 999fps path; consider rolling absgrid (NOT idle=poll) to wider canary on existing cmdline
+- ATL:27019 stays at ~643 fps: rules out wakeup-latency-from-HLT as the bottleneck; the floor is somewhere else (timer interrupt rate, cache miss?), Stage C closes as won't-fix on existing CONFIG_HZ=1000
+- ATL:27015-27018 regress: rollback + close idle=poll as not-host-safe; revisit per-CPU idle approaches if any exist
 
 #### Experiment D: `nohz=off` — **SKIP unless new evidence surfaces**
 
