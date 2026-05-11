@@ -56,9 +56,11 @@ fi
 
 if [ "$(whoami)" != "dodserver" ]; then
     log_warn "This script should run as 'dodserver' user"
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    if [ "${YES:-0}" != "1" ]; then
+        read -p "Continue anyway? (y/n) " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
 fi
 
 echo "========================================"
@@ -75,9 +77,11 @@ FIRST_DIR="$HOME/dod-$BASE_PORT"
 
 if [ -d "$FIRST_DIR" ]; then
     log_warn "Directory $FIRST_DIR already exists"
-    read -p "Continue with existing installation? (y/n) " -n 1 -r
-    echo
-    [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    if [ "${YES:-0}" != "1" ]; then
+        read -p "Continue with existing installation? (y/n) " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
 else
     log_info "Creating first instance at $FIRST_DIR..."
 

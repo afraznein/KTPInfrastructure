@@ -1,0 +1,81 @@
+# KTP LAN Deployment Config
+#
+# Copy this to lan-deploy.conf, fill in the required values, then run:
+#   sudo ./lan-deploy.sh
+#
+# Required keys are marked with *. Everything else has a sensible default.
+# Empty values are treated as "unset" (use defaults / disable feature).
+
+# ============================================================================
+# Required
+# ============================================================================
+
+# * Local network IP the game servers and (if co-located) the dataserver
+#   bind to. Must be reachable by every client at the LAN venue.
+LAN_IP=""
+
+# * Path to the directory holding pre-built KTP artifacts (engine_i486.so,
+#   hlds_linux, KTPAMXX dlls/, modules/, plugins/, etc). Same layout that
+#   clone-ktp-stack.sh expects.
+ARTIFACTS_PATH=""
+
+# * Path to the KTP libsteam_api.so (76KB version — NOT the 375KB stock one).
+LIBSTEAM_API_PATH=""
+
+# ============================================================================
+# Host config (optional, sensible defaults)
+# ============================================================================
+
+# Set to the LAN venue's local timezone if not Eastern.
+TIMEZONE="America/New_York"
+
+# Server display name prefix (each instance gets "<prefix> N" appended).
+SERVER_NAME_PREFIX="KTP LAN"
+
+# sv_password — server join password.
+SV_PASSWORD="ktplan"
+
+# Number of DoD game server instances and starting port.
+NUM_INSTANCES=5
+BASE_PORT=27015
+
+# HLTV proxy starting port (the dataserver provisioner uses this too).
+HLTV_BASE_PORT=27020
+
+# ============================================================================
+# Optional services
+# ============================================================================
+
+# Co-locate the dataserver (MySQL + HLStatsX + HLTV proxies + FastDL) on the
+# same host. Set false to skip this phase if dataserver lives on a separate
+# box (run provision-lan-dataserver.sh there manually).
+ENABLE_DATASERVER=true
+
+# Install Netdata. Requires internet access to fetch the installer.
+ENABLE_NETDATA=false
+
+# ============================================================================
+# Discord (all optional — empty URLs mean "skip Discord posts")
+# ============================================================================
+
+# Scheduled-restart relay (used by the nightly 3 AM ET ktp-scheduled-restart.sh
+# embed). Leave empty if the LAN venue can't reach the relay or doesn't
+# want restart notifications.
+DISCORD_RELAY_URL=""
+DISCORD_RELAY_SECRET=""
+
+# Fleet-health alerter (posts when game server count drops below NUM_INSTANCES
+# for THRESHOLD_MINUTES consecutive minutes). Leave empty to monitor silently.
+DISCORD_WEBHOOK_FLEET_HEALTH=""
+DISCORD_MENTION_USER_ID=""
+
+# ============================================================================
+# Dataserver passwords (optional — auto-generated random if empty)
+# ============================================================================
+# All values end up in /root/ktp-dataserver-credentials.txt after the run.
+# Leave empty to get fresh random 32-char passwords per deployment.
+
+MYSQL_ROOT_PASSWORD=""
+HLSTATSX_DB_PASSWORD=""
+HLTV_ADMIN_PASSWORD=""
+HLTV_PROXY_PASSWORD=""

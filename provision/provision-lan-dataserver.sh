@@ -70,9 +70,12 @@ echo "  - HLTV API (port 8087)"
 echo "  - MySQL + HLStatsX"
 echo "  - FastDL web server (port 80)"
 echo ""
-read -p "Continue? (y/n) " -n 1 -r
-echo
-[[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+# YES=1 skips the prompt — used by lan-deploy.sh orchestrator.
+if [ "${YES:-0}" != "1" ]; then
+    read -p "Continue? (y/n) " -n 1 -r
+    echo
+    [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+fi
 
 # ============================================
 # 1. System Setup
