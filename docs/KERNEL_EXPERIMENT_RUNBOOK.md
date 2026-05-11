@@ -249,6 +249,36 @@ Candidate sinks (pre-instrumentation hypotheses):
 
 **Required next step: instrumented build of KTPReHLDS that logs per-iteration sleep + work + total times for ~10 seconds, then writes a histogram.** Cheap (~100 LoC patch) but needs a deploy-and-test cycle. Filed as a separate engine-side investigation TODO.
 
+### Step 1 follow-up (2026-05-11 13:01-13:09 ET) — eliminates idle=poll as confound
+
+Question: was idle=poll the actual cause of the 5/10 absgrid regression, not a Stage C bottleneck disambiguator? Cheap test: re-add `-absgrid` to ATL:27019's dodserver5.cfg, restart that one instance (~30s outage), measure on the stock kernel (idle=poll OFF since 5/10 21:28 rollback).
+
+Result: **identical regression.** absgrid alone on stock kernel produces 686-691 fps / 1.43ms interframe — within 5 fps of the 5/10 measurement that had idle=poll active (696 fps / 1.435ms). idle=poll was NOT a confound.
+
+| Configuration | interframe avg | fps | sample |
+|---|---|---|---|
+| Default pingboost-2 (control) | 1.005ms | 978-979 | ATL:27015,27018 same minute |
+| **absgrid alone, stock kernel** | **1.426-1.438ms** | **685-691** | ATL:27019, 6 samples |
+| absgrid + idle=poll (5/10) | 1.435ms | 696 | ATL:27019, 8 samples |
+| Sleep_Never (`-pingboost 4`) reference | 0.991ms | 1009 | NY:27019, perpetual canary |
+
+**Per-iteration time budget reconciliation** (steady-state, empty server):
+
+| Component | Default pingboost-2 | absgrid (broken) | Δ |
+|---|---|---|---|
+| Sleep | ~989µs (Sleep_Select) | ~1002µs (clock_nanosleep, per diagnostic) | +13µs |
+| RunFrame work (KTP_PROFILE `full`) | ~16µs | ~16µs | 0 |
+| Block B + clock_gettime | ~3µs | ~3µs | 0 |
+| **Loop period (math)** | **~1008µs** | **~1021µs** | +13µs |
+| **Loop period (measured)** | **1005µs** | **1432µs** | **+427µs unaccounted** |
+
+The math predicts absgrid should be ~13µs slower than default. Measurement says it's ~427µs slower. **The 414µs gap is engine-side and reproducible.** Sources to instrument:
+- Inside `engineAPI->RunFrame()` outside SV_Frame_Internal (Host_Frame's wrapper work — Cmd_Buf_Execute, Sys_Frame, etc., not currently measured by KTP_PROFILE)
+- The `prctl(PR_SET_TIMERSLACK, 1, ...)` call in `Sys_InitPingboost` may have a kernel-side side effect on subsequent timer interrupt handling — worth toggling to confirm
+- Some interaction between `clock_nanosleep(TIMER_ABSTIME)` and the TSC-deadline timer subsystem that doesn't manifest in the standalone benchmark
+
+**Phase 3a follow-up:** the kernel diagnostic was correct (kernel sleep is fine). The Step 1 follow-up confirms the bug is engine-side. Phase 3 stays closed-as-not-needed; the engine-side investigation moves to a clear "deploy instrumented build, collect, analyze" workstream.
+
 ---
 
 ## 3. Phase 3 custom-kernel notes (only if Phase 2 suggests it's warranted)

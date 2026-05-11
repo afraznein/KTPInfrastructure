@@ -36,3 +36,41 @@
 # Headline: at every requested interval (100µs..5ms), SCHED_FIFO+pinned overshoots
 # by only 2-3µs. p99 = p50 + 1µs. CONFIG_HZ=1000 rounding hypothesis FALSIFIED.
 # Kernel sleep is fine; the absgrid 1.435ms floor is engine-side.
+
+# ----------------------------------------------------------------
+# Step 1 follow-up — 2026-05-11 13:01-13:09 ET
+# ----------------------------------------------------------------
+# Q: was idle=poll the confound that made absgrid fail on 5/10?
+# A: NO. absgrid alone (stock kernel, no idle=poll) reproduces the bug.
+
+## ATL:27019 with -absgrid (no idle=poll, stock kernel) — 6 KTP_PROFILE samples
+# timestamp     interframe_avg  interframe_peak  fps    edicts_max
+# 13:07:33      1.426ms         1.992ms          691.2  326
+# 13:07:43      1.427ms         1.992ms          690.5  326
+# 13:07:53      1.433ms         1.992ms          687.7  326
+# 13:08:03      1.438ms         1.992ms          684.8  326
+# 13:08:13      1.429ms         1.993ms          689.4  326
+# 13:08:23      1.436ms         1.992ms          686.3  326
+
+## Same-host control instances at same time (ATL:27015,27018; no -absgrid)
+# port  interframe_avg  fps
+# 27015 1.005ms         978-979
+# 27018 1.006ms         976-977
+
+# Conclusion: absgrid bug is engine-side, reproducible on stock kernel.
+# 5/10's idle=poll was not the cause; both 5/10 (with idle=poll) and tonight
+# (without) measured ~690 fps under absgrid. The ~290 fps regression vs
+# default pingboost-2 (~980 fps) is in the launcher loop or the engine's
+# Host_Frame work, not in clock_nanosleep itself.
+
+# Per-iteration time budget (loop math):
+#   sleep            ~1.002ms  (per nanosleep_bench above, SCHED_FIFO+pin)
+#   RunFrame work     ~0.016ms  (per KTP_PROFILE 'full' on empty server)
+#   clock_gettime/etc ~0.003ms
+#   --------------
+#   expected           ~1.020ms = 980 fps
+#   measured           ~1.430ms = 690 fps
+#   unaccounted        ~0.410ms per iteration
+
+# Required next step: instrumented build of KTPReHLDS that logs per-iteration
+# sleep + work + total times to find where the 410µs sink lives.
