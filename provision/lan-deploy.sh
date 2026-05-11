@@ -191,6 +191,28 @@ if [ -z "${DISCORD_WEBHOOK_FLEET_HEALTH:-}" ]; then
 fi
 
 # ----------------------------------------------------------------------------
+# Phase 6: validate-map-assets.sh sanity check — flag maps with crash-risk
+# asset misses BEFORE anyone tries to load them in-game. Informational only:
+# exit-1 from the validator is logged but doesn't fail the deploy, since the
+# operator may have intentional test maps that haven't been fully sourced yet.
+# ----------------------------------------------------------------------------
+log_phase "Phase 6: map asset validation"
+VALIDATE_SH="$SCRIPT_DIR/../scripts/validate-map-assets.sh"
+if [ -x "$VALIDATE_SH" ]; then
+    if "$VALIDATE_SH" --maps-dir "/home/dodserver/dod-${BASE_PORT}/serverfiles/dod" --quiet; then
+        echo "All staged maps pass crash-risk asset validation."
+    else
+        echo
+        echo "Some maps reference assets missing on disk (see FAIL list above)."
+        echo "Quarantine the failing .bsp files (mv to *.bsp.broken) or source the"
+        echo "missing assets before loading those maps in-game."
+        echo "Not failing the deploy — operator decision per map."
+    fi
+else
+    echo "validate-map-assets.sh not found at $VALIDATE_SH — skipping"
+fi
+
+# ----------------------------------------------------------------------------
 echo
 echo "========================================"
 echo "LAN deployment complete!"

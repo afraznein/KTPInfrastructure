@@ -70,6 +70,36 @@ empty if you'd rather do it manually post-install.
 Each `_PATH` is optional. Whatever you leave unset becomes a manual
 step listed in the script's post-install output.
 
+## Pre-flight map asset check
+
+The wrapper runs `scripts/validate-map-assets.sh` as Phase 6 — walks every
+`dod/maps/*.bsp`, cross-checks asset refs (from the sibling `.res` file
+plus a `strings`-fallback against the BSP itself) against on-disk files,
+and flags anything missing.
+
+This catches the failure mode that took ATL1 down on 2026-05-11: an
+admin changelevel to a test map whose `.bsp` referenced
+`bakery_counter3.mdl`, the asset was missing fleet-wide, engine
+`Sys_Error`'d from `Mod_LoadModel`, SIGSEGV, ~2 min outage.
+
+Phase 6 is informational only — it logs missing assets but does not
+fail the deploy. For each FAIL on the list, you decide:
+
+- **Source the asset** and copy into the right `dod/<path>` location, or
+- **Quarantine the map** so it can't accidentally be loaded:
+  `mv dod_X.bsp dod_X.bsp.broken` (and the same for the `.res`).
+
+You can also run the validator standalone any time:
+
+```bash
+sudo ./scripts/validate-map-assets.sh                    # crash-risk only
+sudo ./scripts/validate-map-assets.sh --all              # include WARN-level
+sudo ./scripts/validate-map-assets.sh dod_X.bsp          # one map only
+```
+
+Defaults to checking `/home/dodserver/dod-27015/serverfiles/dod`; use
+`--maps-dir <path>` to point elsewhere.
+
 ## Pre-flight requirements
 
 - Ubuntu 22.04 LTS or 24.04 LTS, fresh install.
