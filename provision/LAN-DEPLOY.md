@@ -46,24 +46,29 @@ The orchestrator runs five phases in order, each idempotent:
 
 ## What it does NOT do
 
-Manual steps the operator still has to handle:
+The internet-dependent and binary-distribution pieces. All three have
+the same bundle-staging pattern: run a `package-*-bundle.sh` helper on a
+current data server to produce a tarball, transfer it, set the matching
+`*_PATH` conf key, re-run `lan-deploy.sh`. Each is also fine to leave
+empty if you'd rather do it manually post-install.
 
-- **HLTV binaries** are not in the repo (they're the upstream HLDS+HLTV
-  bundle, ~1 GB compressed). Two options:
-  - **Stage them**: produce a tarball from an existing data server with
-    `scripts/package-hltv-bundle.sh` (excludes recorded demos and the
-    cstrike subtree), transfer it to the LAN box, extract somewhere, and
-    set `HLTV_BINARIES_PATH` in `lan-deploy.conf`. The orchestrator
-    copies the contents into `/home/hltvserver/hlds/` automatically.
-  - **Manual copy after provisioning** if you'd rather rsync from
-    another source. Leave `HLTV_BINARIES_PATH` empty; the script will
-    print a reminder at the end.
-  Either way, start the proxies with `su - hltvserver -c './hltv-ctl.sh start'`.
-- **HLStatsX setup** is a skeleton only — see `/opt/hlstatsx/INSTALL.txt`
-  on the provisioned box for the manual SQL import / daemon start.
-- **FastDL game files** — if you want clients to download maps/sounds,
-  copy them under `/var/www/fastdl/dod/` (note the mandatory `dod/`
-  subdirectory — the engine appends it to every download URL).
+- **HLTV binaries** — upstream HLDS+HLTV bundle (~1 GB compressed). Not
+  in the repo. Stage via `scripts/package-hltv-bundle.sh` →
+  `HLTV_BINARIES_PATH`. Excludes recorded demos and the cstrike subtree.
+- **HLStatsX install** — base `install.sql` schema is upstream (not in
+  our repo), plus our `KTPHLStatsX` scripts and migrations. Stage via
+  `scripts/package-hlstatsx-bundle.sh` (run on data server) →
+  `HLSTATSX_SOURCE_PATH`. The dataserver phase imports schemas, writes
+  `hlstats.conf` with the generated DB password, and enables the
+  `hlstatsx.service` systemd unit.
+- **FastDL game files** — DoD asset tree (`maps/`, `sprites/`, `sound/`,
+  `models/`). Stage via `scripts/package-fastdl-bundle.sh` (supports
+  `--maps-only` for a much smaller bundle) → `FASTDL_FILES_PATH`. Files
+  land at `/var/www/fastdl/dod/` (the mandatory `dod/` subdir — the
+  engine prepends gamedir to download URLs).
+
+Each `_PATH` is optional. Whatever you leave unset becomes a manual
+step listed in the script's post-install output.
 
 ## Pre-flight requirements
 

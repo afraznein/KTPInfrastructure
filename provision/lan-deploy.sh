@@ -53,6 +53,14 @@ if [ -n "${HLTV_BINARIES_PATH:-}" ]; then
     [ -d "$HLTV_BINARIES_PATH" ]              || { echo "ERROR: HLTV_BINARIES_PATH not a directory: $HLTV_BINARIES_PATH" >&2; exit 1; }
     [ -f "$HLTV_BINARIES_PATH/hlds_linux" ]   || { echo "ERROR: HLTV_BINARIES_PATH lacks hlds_linux: $HLTV_BINARIES_PATH" >&2; exit 1; }
 fi
+if [ -n "${HLSTATSX_SOURCE_PATH:-}" ]; then
+    [ -d "$HLSTATSX_SOURCE_PATH" ]                       || { echo "ERROR: HLSTATSX_SOURCE_PATH not a directory: $HLSTATSX_SOURCE_PATH" >&2; exit 1; }
+    [ -f "$HLSTATSX_SOURCE_PATH/scripts/hlstats.pl" ]    || { echo "ERROR: HLSTATSX_SOURCE_PATH lacks scripts/hlstats.pl: $HLSTATSX_SOURCE_PATH" >&2; exit 1; }
+    [ -f "$HLSTATSX_SOURCE_PATH/sql/install.sql" ]       || { echo "ERROR: HLSTATSX_SOURCE_PATH lacks sql/install.sql (use scripts/package-hlstatsx-bundle.sh)" >&2; exit 1; }
+fi
+if [ -n "${FASTDL_FILES_PATH:-}" ]; then
+    [ -d "$FASTDL_FILES_PATH" ] || { echo "ERROR: FASTDL_FILES_PATH not a directory: $FASTDL_FILES_PATH" >&2; exit 1; }
+fi
 
 # Defaults for everything else (matches lan-deploy.conf.example)
 TIMEZONE="${TIMEZONE:-America/New_York}"
@@ -77,6 +85,8 @@ Join password:         $SV_PASSWORD
 Artifacts:             $ARTIFACTS_PATH
 libsteam_api.so:       $LIBSTEAM_API_PATH
 HLTV binaries:         ${HLTV_BINARIES_PATH:-(unset — manual copy required after install)}
+HLStatsX bundle:       ${HLSTATSX_SOURCE_PATH:-(unset — HLStatsX left manual)}
+FastDL files:          ${FASTDL_FILES_PATH:-(unset — manual copy to /var/www/fastdl/dod/)}
 
 Co-located dataserver: $ENABLE_DATASERVER
 Netdata:               $ENABLE_NETDATA
@@ -154,6 +164,8 @@ if [ "$ENABLE_DATASERVER" = "true" ]; then
     HLTV_BASE_PORT="$HLTV_BASE_PORT" \
     NUM_HLTV_INSTANCES="$NUM_INSTANCES" \
     HLTV_BINARIES_PATH="${HLTV_BINARIES_PATH:-}" \
+    HLSTATSX_SOURCE_PATH="${HLSTATSX_SOURCE_PATH:-}" \
+    FASTDL_FILES_PATH="${FASTDL_FILES_PATH:-}" \
         bash "$SCRIPT_DIR/provision-lan-dataserver.sh"
 else
     log_phase "Phase 4: skipped (ENABLE_DATASERVER=false — dataserver lives elsewhere)"
@@ -204,9 +216,15 @@ if [ "$ENABLE_DATASERVER" = "true" ]; then
         step=$((step + 1))
         printf "  %d. Start HLTV:             su - hltvserver -c './hltv-ctl.sh start'  (binaries already staged)\n" $step
     fi
-    step=$((step + 1))
-    printf "  %d. (Optional) HLStatsX:    follow /opt/hlstatsx/INSTALL.txt\n" $step
-    step=$((step + 1))
-    printf "  %d. (Optional) FastDL:      copy game files to /var/www/fastdl/dod/\n" $step
+    if [ -z "${HLSTATSX_SOURCE_PATH:-}" ]; then
+        step=$((step + 1))
+        printf "  %d. HLStatsX setup:         see /opt/hlstatsx/INSTALL.txt (HLSTATSX_SOURCE_PATH was unset)\n" $step
+    else
+        printf "                              HLStatsX is running on UDP 27500 (hlstatsx.service)\n"
+    fi
+    if [ -z "${FASTDL_FILES_PATH:-}" ]; then
+        step=$((step + 1))
+        printf "  %d. FastDL files:           copy assets to /var/www/fastdl/dod/ (FASTDL_FILES_PATH was unset)\n" $step
+    fi
 fi
 echo

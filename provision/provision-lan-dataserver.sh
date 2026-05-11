@@ -458,37 +458,154 @@ systemctl enable nginx
 
 log_info "FastDL configured on port 80"
 
-# ============================================
-# 7. HLStatsX Setup (Basic)
-# ============================================
-log_info "HLStatsX requires manual installation..."
-log_warn "Download HLStatsX Community Edition and install to /opt/hlstatsx"
-log_warn "Then import the SQL schema and configure hlstats.conf"
+# Stage FastDL game files if a pre-staged directory is provided. The
+# directory contents are copied into /var/www/fastdl/dod/ (note: clients
+# request URLs under dod/ because the engine appends the gamedir before
+# asset paths — see CLAUDE.md FastDL section for the 2026-05-01 footgun).
+# Empty path = manual copy after install (original behavior).
+if [ -n "${FASTDL_FILES_PATH:-}" ]; then
+    if [ ! -d "$FASTDL_FILES_PATH" ]; then
+        log_error "FASTDL_FILES_PATH set but not a directory: $FASTDL_FILES_PATH"
+        exit 1
+    fi
+    log_info "Staging FastDL files from $FASTDL_FILES_PATH..."
+    mkdir -p "$FASTDL_DIR/dod"
+    cp -r "$FASTDL_FILES_PATH"/. "$FASTDL_DIR/dod/"
+    chown -R www-data:www-data "$FASTDL_DIR"
+    log_info "FastDL files staged at $FASTDL_DIR/dod ($(du -sh "$FASTDL_DIR/dod" 2>/dev/null | awk '{print $1}'))"
+else
+    log_warn "FASTDL_FILES_PATH not set — copy game files to $FASTDL_DIR/dod/ manually."
+    log_warn "Note: assets MUST be under the dod/ subdirectory (engine prepends gamedir to URLs)."
+fi
 
+# ============================================
+# 7. HLStatsX Setup
+# ============================================
+# Two paths:
+#  - HLSTATSX_SOURCE_PATH set:  install fully (deploy scripts/sql, import
+#    schemas, write hlstats.conf with the generated DB password, enable
+#    hlstatsx.service systemd unit). Produce the bundle with
+#    scripts/package-hlstatsx-bundle.sh on a current data server.
+#  - Unset: write INSTALL.txt with the manual recovery procedure (preserves
+#    the original behavior for cloud invocations of this script).
 mkdir -p /opt/hlstatsx
-cat > /opt/hlstatsx/INSTALL.txt << 'EOF'
-HLStatsX Installation for LAN:
 
-1. Download HLStatsX CE from: https://github.com/NomisCZ/hlstatsx-community-edition
+if [ -n "${HLSTATSX_SOURCE_PATH:-}" ]; then
+    log_info "Installing HLStatsX from $HLSTATSX_SOURCE_PATH..."
 
-2. Extract to /opt/hlstatsx/
+    if [ ! -d "$HLSTATSX_SOURCE_PATH" ]; then
+        log_error "HLSTATSX_SOURCE_PATH not a directory: $HLSTATSX_SOURCE_PATH"
+        exit 1
+    fi
+    if [ ! -f "$HLSTATSX_SOURCE_PATH/scripts/hlstats.pl" ]; then
+        log_error "HLSTATSX_SOURCE_PATH missing scripts/hlstats.pl"
+        exit 1
+    fi
+    if [ ! -f "$HLSTATSX_SOURCE_PATH/sql/install.sql" ]; then
+        log_error "HLSTATSX_SOURCE_PATH missing sql/install.sql (base schema)."
+        log_error "Produce the bundle with scripts/package-hlstatsx-bundle.sh on a current data server."
+        exit 1
+    fi
 
-3. Import SQL schema:
-   mysql -u hlstatsx -p hlstatsx < /opt/hlstatsx/sql/install.sql
+    # Deploy scripts + sql
+    mkdir -p /opt/hlstatsx/scripts /opt/hlstatsx/sql
+    cp -r "$HLSTATSX_SOURCE_PATH/scripts/." /opt/hlstatsx/scripts/
+    cp -r "$HLSTATSX_SOURCE_PATH/sql/." /opt/hlstatsx/sql/
 
-4. Configure /opt/hlstatsx/scripts/hlstats.conf:
-   DBHost=localhost
-   DBUsername=hlstatsx
-   DBPassword=<password from this script>
-   DBName=hlstatsx
+    # Schema import. install.sql is the upstream HLStatsX base; ktp_schema.sql
+    # + any migrate_*.sql are KTP additions on top. Skip if the canary
+    # hlstats_Actions table already exists (idempotent re-run).
+    SCHEMA_LOADED=$(mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx -sN -e \
+        "SHOW TABLES LIKE 'hlstats_Actions';" 2>/dev/null || true)
+    if [ -z "$SCHEMA_LOADED" ]; then
+        log_info "Importing base schema (install.sql)..."
+        mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx < /opt/hlstatsx/sql/install.sql
 
-5. Start daemon:
-   cd /opt/hlstatsx/scripts
-   ./run_hlstats start
+        if [ -f /opt/hlstatsx/sql/ktp_schema.sql ]; then
+            log_info "Importing KTP schema additions (ktp_schema.sql)..."
+            mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx < /opt/hlstatsx/sql/ktp_schema.sql
+        fi
+        # Apply migrate_*.sql in lexicographic order (matches numbered prefix
+        # convention: migrate_001_*, migrate_002_*, ...).
+        for migration in /opt/hlstatsx/sql/migrate_*.sql; do
+            [ -f "$migration" ] || continue
+            log_info "  applying $(basename "$migration")"
+            mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx < "$migration"
+        done
+    else
+        log_info "HLStatsX base schema already present — skipping import"
+    fi
 
-6. Configure game servers to log to this server:
-   log_address_add <DATA_SERVER_IP>:27500
+    # hlstats.conf — daemon reads this for DB connection params at startup.
+    cat > /opt/hlstatsx/scripts/hlstats.conf <<HLSTATSCONF
+# KTP HLStatsX Configuration (generated $(date -Iseconds))
+DBHost "localhost"
+DBUsername "hlstatsx"
+DBPassword "$HLSTATSX_DB_PASSWORD"
+DBName "hlstatsx"
+BindIP ""
+Port 27500
+DebugLevel 1
+EventQueueSize 10
+CpanelHack 0
+HLSTATSCONF
+    chown root:root /opt/hlstatsx/scripts/hlstats.conf
+    chmod 640 /opt/hlstatsx/scripts/hlstats.conf
+
+    # systemd unit — matches the production hlstatsx.service on the data
+    # server but without the ktp-systemd-alert OnFailure drop-in (LAN has no
+    # Discord relay by default).
+    cat > /etc/systemd/system/hlstatsx.service <<HLSTATSSVC
+[Unit]
+Description=KTP HLStatsX Daemon
+After=mysql.service network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/hlstatsx/scripts
+ExecStart=/usr/bin/perl /opt/hlstatsx/scripts/hlstats.pl --db-host=localhost --db-name=hlstatsx --db-username=hlstatsx --db-password=$HLSTATSX_DB_PASSWORD --port=27500
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+HLSTATSSVC
+    # Service file has the password baked into ExecStart args — same exposure
+    # as the production setup; lock to root-only just in case.
+    chmod 600 /etc/systemd/system/hlstatsx.service
+
+    systemctl daemon-reload
+    systemctl enable hlstatsx.service
+    systemctl start hlstatsx.service
+    log_info "HLStatsX installed and started (UDP port 27500)"
+else
+    log_warn "HLSTATSX_SOURCE_PATH not set — leaving HLStatsX setup manual."
+    log_warn "Use scripts/package-hlstatsx-bundle.sh on an existing data server to produce a bundle."
+    cat > /opt/hlstatsx/INSTALL.txt <<'EOF'
+HLStatsX Installation for LAN (manual fallback):
+
+This file is generated when HLSTATSX_SOURCE_PATH was not set during
+provisioning. For automated install, set HLSTATSX_SOURCE_PATH and re-run.
+
+Manual recovery:
+  1. On a current data server, run:
+     sudo scripts/package-hlstatsx-bundle.sh
+
+  2. Transfer hlstatsx-bundle-YYYYMMDD.tar.gz to this host.
+
+  3. Extract:
+       mkdir -p /tmp/hlstatsx-staging
+       tar -xzf hlstatsx-bundle-*.tar.gz -C /tmp/hlstatsx-staging
+
+  4. Re-run with the path set:
+       HLSTATSX_SOURCE_PATH=/tmp/hlstatsx-staging \
+         bash provision-lan-dataserver.sh
+
+     OR set HLSTATSX_SOURCE_PATH in lan-deploy.conf and re-run lan-deploy.sh.
+     The script will import the base schema + KTP migrations, generate
+     /opt/hlstatsx/scripts/hlstats.conf, and enable hlstatsx.service.
 EOF
+fi
 
 # ============================================
 # 8. Firewall

@@ -30,6 +30,21 @@ LIBSTEAM_API_PATH=""
 # Leave empty to keep the original manual-copy workflow.
 HLTV_BINARIES_PATH=""
 
+# Optional: pre-staged HLStatsX install directory (scripts/ + sql/).
+# Produce with scripts/package-hlstatsx-bundle.sh on a current data server.
+# When set, the dataserver phase will copy scripts/sql into /opt/hlstatsx/,
+# import the schemas, write hlstats.conf with the DB password generated
+# above, and enable hlstatsx.service. Empty = leave HLStatsX unconfigured
+# (an INSTALL.txt with manual steps is created instead).
+HLSTATSX_SOURCE_PATH=""
+
+# Optional: pre-staged FastDL game-files directory (maps/, sprites/, sound/,
+# models/ — the dod/ asset tree). Contents are copied to /var/www/fastdl/dod/.
+# Produce with scripts/package-fastdl-bundle.sh on a current data server
+# (use --maps-only for a much smaller bundle if you only need new maps).
+# Empty = clients can't download missing assets via HTTP.
+FASTDL_FILES_PATH=""
+
 # ============================================================================
 # Host config (optional, sensible defaults)
 # ============================================================================
