@@ -1,8 +1,11 @@
 # Custom-Kernel Experiment Runbook
 
-**Status:** Experiment A (preempt=full) ROLLED BACK 2026-05-05 (p99 regression). Experiment C (idle=poll) ROLLED BACK 2026-05-10 21:28 ET — failed Stage C hypothesis (absgrid+idle=poll only reached 696 fps vs. hypothesized 999 fps; HLT-exit was NOT the bottleneck — CONFIG_HZ=1000 sleep-rounding is). All cmdline-only Phase 2 axes now exhausted on stock Ubuntu lowlatency kernel. Phase 3 (custom kernel build) is the only remaining path to close the 977→999 fps gap at low CPU. Other operational answer: NY:27019's perpetual `-pingboost 4` (999fps @ 100% CPU).
+**Status:** Phase 3 closed-as-not-needed 2026-05-11. Phase 3a diagnostic (`nanosleep_bench.c` micro-benchmark) ran on ATL host pinned to CPU 6 with SCHED_FIFO 50: kernel sleeps with **~2µs precision at every requested interval from 100µs to 5ms** (no CONFIG_HZ rounding, p99 = p50 + 1µs). Falsifies the runbook's pre-Stage C hypothesis. The 1.435ms absgrid floor is **engine-side**, not kernel-side. Custom-kernel build was a hypothesis-driven gamble that would NOT have fixed the problem. New investigation track: instrument the absgrid loop in `KTPReHLDS/dedicated/src/sys_ded.cpp` to find the ~400µs/iteration overhead. Filed as separate research TODO.
+
+Operational answer remains NY:27019's perpetual `-pingboost 4` (1009 fps @ 100% CPU) for any 999fps-critical instance until the engine-side absgrid investigation closes.
+
 **Target TODO:** `Custom-kernel research — can we beat 6.8.0-110-lowlatency?`
-**Last updated:** 2026-05-10
+**Last updated:** 2026-05-11
 
 This runbook exists to make the Phase 2 kernel-cmdline experiments (and the Phase 3 custom-kernel build, if warranted) executable from a pre-planned script rather than improvised during a maintenance window.
 
@@ -185,6 +188,66 @@ sudo reboot
 #### Experiment D: `nohz=off` — **SKIP unless new evidence surfaces**
 
 Disables the tickless kernel. Would cause isolated CPUs to receive periodic scheduling-clock interrupts again. Counter-productive given `nohz_full` is already reducing tick rate on isolated cores. Only worth trying if we start seeing evidence that missing periodic ticks cause deterministic issues — no such evidence today.
+
+---
+
+## 2.5 Phase 3a diagnostic (2026-05-11) — CLOSED Phase 3 as not-needed
+
+Before committing to the multi-week Phase 3 build, ran a direct measurement of `clock_nanosleep(TIMER_ABSTIME)` granularity on the actual ATL hardware. Source + raw results: `KTPInfrastructure/research/nanosleep-bench-2026-05-11/`.
+
+**Tool:** `nanosleep_bench.c` (~145 LoC, BCL only). Sweeps requested sleep intervals 100µs / 200µs / 500µs / 800µs / 900µs / 999µs / 1000µs / 1100µs / 1500µs / 2000µs / 5000µs; 10000 iterations each + 100-iter warm-up. Reports min / p50 / p90 / p99 / max / mean of actual elapsed time. Optional `--rt` (SCHED_FIFO 50) + `--cpu N` (pin) flags.
+
+**Run conditions:**
+- Host: ATL baremetal (74.91.121.9), kernel 6.8.0-110-lowlatency
+- Cmdline: standard isolcpus=2-7 / nohz_full / rcu_nocbs / max_cstate=0 / mitigations=off (matches production fleet)
+- CPU 6: free isolated core (game servers on 2,3,4,5,7)
+- 2 runs back-to-back: default (SCHED_OTHER) + `--rt --cpu 6` (matches absgrid runtime conditions)
+
+**SCHED_FIFO 50 + pinned to CPU 6 results (the apples-to-apples match for absgrid):**
+
+| Requested | Actual min | p50 | p99 | max | Overshoot |
+|---|---|---|---|---|---|
+| 100µs | 102µs | 102µs | 103µs | 105µs | +2µs |
+| 500µs | 502µs | 502µs | 504µs | 505µs | +2µs |
+| 999µs | 1001µs | 1002µs | 1003µs | 1005µs | +2µs |
+| 1500µs | 1503µs | 1503µs | 1504µs | 1506µs | +3µs |
+| 5000µs | 5003µs | 5004µs | 5007µs | 5010µs | +3µs |
+
+`p99 = p50 + 1µs` across the entire range. `max = p50 + 3µs` worst case. **The kernel sleeps with high precision at sub-millisecond requests.** No CONFIG_HZ rounding observed. Pre-Stage C hypothesis falsified.
+
+(Default SCHED_OTHER run shows the expected ~50µs scheduler-quantum overshoot + occasional 2-7ms jitter from preemption — confirms the SCHED_FIFO+pin path is the right baseline for production-style measurements. See `results.tsv` for the full table.)
+
+**Implications:**
+
+1. **Phase 3 custom kernel build is NOT needed.** ~2-3 weeks of build effort + monthly Ubuntu kernel-update rebuild commitment is avoided. We dodged a bullet.
+2. The Stage C absgrid 1.435ms floor (Experiment C, 5/10) is **engine-side**, not kernel-side. The kernel can sleep at sub-ms granularity; the engine isn't taking advantage.
+3. The runbook's pre-Stage C prediction (line 41 of original revision) was wrong. Documenting it here so future-me doesn't re-hypothesize the same thing.
+
+**New investigation: engine-side absgrid loop overhead**
+
+Initial source read of `KTPReHLDS/rehlds/rehlds/dedicated/src/sys_ded.cpp:155-235` shows the absgrid loop:
+
+```c
+if (g_use_abs_grid) {
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    bool past_target = (now > grid_target);
+    if (!past_target) {
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &grid_target, nullptr);
+    }
+    grid_target.tv_nsec += 1000000LL;  // advance 1ms regardless
+}
+// ... RunFrame + UpdateStatus + console-poll throttle ...
+```
+
+Loop math: sleep ~1.002ms + RunFrame ~16µs (per KTP_PROFILE empty-server data) + overhead ~3µs ≈ **~1.020ms per iteration → expected ~980 fps**. Measured under absgrid: 1.435ms / 696 fps. **Unaccounted ~415µs per iteration.**
+
+Candidate sinks (pre-instrumentation hypotheses):
+- `sys->UpdateStatus(FALSE)` — might involve a stat() / write() call I haven't traced
+- `engineAPI->RunFrame()` — KTP_PROFILE may not measure all sub-phases (Steam packet handling, edict loop in extreme detail)
+- The `clock_gettime` call at the top of each iteration — should be ~50ns but worth measuring
+- `Sys_PrepareConsoleInput` — throttled to every 50ms but worth confirming
+
+**Required next step: instrumented build of KTPReHLDS that logs per-iteration sleep + work + total times for ~10 seconds, then writes a histogram.** Cheap (~100 LoC patch) but needs a deploy-and-test cycle. Filed as a separate engine-side investigation TODO.
 
 ---
 

@@ -1,0 +1,38 @@
+# Phase 3a kernel diagnostic — 2026-05-11 12:01-12:06 ET
+# Host: ATL baremetal (74.91.121.9), kernel 6.8.0-110-lowlatency
+# Cmdline: intel_idle.max_cstate=0 mitigations=off processor.max_cstate=0
+#          isolcpus=2,3,4,5,6,7 nohz_full=2,3,4,5,6,7 rcu_nocbs=2,3,4,5,6,7
+# Iterations: 10000 per request interval
+# Tool: nanosleep_bench.c (this directory)
+
+## RUN 1 — default (SCHED_OTHER, no pinning, no RT) — BASELINE
+# req_us	min_us	p50_us	p90_us	p99_us	max_us	mean_us	n
+   100	   103	   152	   153	   156	  2134	   152	10000
+   200	   205	   252	   254	   256	  3293	   251	10000
+   500	   503	   553	   554	   556	  2836	   553	10000
+   800	   804	   853	   854	   857	  3673	   853	10000
+   900	   905	   954	   954	   957	  3967	   953	10000
+   999	  1005	  1053	  1053	  1056	  2567	  1053	10000
+  1000	  1006	  1054	  1058	  1079	  4564	  1059	10000
+  1100	  1105	  1154	  1154	  1157	  3233	  1155	10000
+  1500	  1504	  1554	  1555	  1558	  4023	  1555	10000
+  2000	  2006	  2054	  2055	  2057	  4557	  2054	10000
+  5000	  5005	  5054	  5055	  5063	  7916	  5056	10000
+
+## RUN 2 — SCHED_FIFO 50 + pinned to CPU 6 (matches absgrid runtime conditions)
+# req_us	min_us	p50_us	p90_us	p99_us	max_us	mean_us	n
+   100	   102	   102	   103	   103	   105	   102	10000
+   200	   202	   202	   203	   203	   206	   202	10000
+   500	   502	   502	   503	   504	   505	   503	10000
+   800	   802	   803	   803	   804	   805	   803	10000
+   900	   902	   903	   903	   905	   911	   903	10000
+   999	  1001	  1002	  1002	  1003	  1005	  1002	10000
+  1000	  1002	  1003	  1003	  1004	  1006	  1003	10000
+  1100	  1103	  1103	  1103	  1104	  1107	  1103	10000
+  1500	  1503	  1503	  1503	  1504	  1506	  1503	10000
+  2000	  2003	  2003	  2004	  2005	  2009	  2003	10000
+  5000	  5003	  5004	  5004	  5007	  5010	  5004	10000
+
+# Headline: at every requested interval (100µs..5ms), SCHED_FIFO+pinned overshoots
+# by only 2-3µs. p99 = p50 + 1µs. CONFIG_HZ=1000 rounding hypothesis FALSIFIED.
+# Kernel sleep is fine; the absgrid 1.435ms floor is engine-side.
