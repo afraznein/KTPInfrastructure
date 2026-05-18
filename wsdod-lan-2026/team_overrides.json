@@ -1,0 +1,4 @@
+{
+  "_comment": "Overrides applied after CSV parse, before render. Key = current team name in CSV; value = fields to overwrite. Empty = CSV is the source of truth.",
+  "renames": {}
+}

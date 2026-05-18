@@ -1,0 +1,2183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="WSDoD LAN 2026 — Operations Dossier. Twelve companies. Three days. Philadelphia, 1–3 August.">
+<meta name="theme-color" content="#f0e9d6">
+<title>WSDoD / LAN 2026 / Operations Dossier</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Old+Standard+TT:ital,wght@0,400;0,700;1,400&family=Big+Shoulders+Stencil+Text:wght@500;700;900&display=swap" rel="stylesheet">
+
+<style>
+/* ──────────────────────────────────────────────────────────────────────
+   WSDoD/LAN-2026 — OPERATIONS DOSSIER
+   Field-manual aesthetic: declassified, typewritten, ink-stamped.
+   No external assets beyond Google Fonts (3 families). Pure CSS texture.
+   Inherits the field-manual DNA of /var/www/anticheat/index.html,
+   swaps the KTP-green stamp for a WSDoD field-blue divisional accent.
+   ────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Paper */
+  --paper:        #f0e9d6;
+  --paper-edge:   #e1d6b6;
+  --paper-fold:   #d8caa3;
+  --paper-deep:   #c4b690;
+  --paper-burn:   #b9a370;
+
+  /* Ink */
+  --ink:          #1a140e;
+  --ink-soft:     #4a3e30;
+  --ink-faint:    #8a7c64;
+  --ink-margin:   #b8a982;
+  --ink-strike:   #574833;
+
+  /* Period accents */
+  --olive:        #5a5e3a;
+  --olive-dark:   #3a3e22;
+  --olive-bright: #6f7349;
+  --khaki:        #b9a875;
+
+  --alert:        #8b1c1c;     /* Vintage red ink — stamps, censor marks */
+  --alert-deep:   #5e1212;
+  --alert-bleed:  #a8362f;
+
+  /* WSDoD divisional blue — primary brand accent */
+  --wsdod-blue:        #1e3a5f;
+  --wsdod-blue-deep:   #122742;
+  --wsdod-stamp:       #2a5286;     /* slightly brighter for stamp uses */
+  --wsdod-faint:       #4a6485;
+
+  /* Carbon-copy purple — period typewriter ribbon secondary */
+  --carbon:       #4a3550;
+
+  /* Typography */
+  --typed:   "Special Elite", "Courier New", "Courier", ui-monospace, monospace;
+  --serif:   "Old Standard TT", Georgia, "Times New Roman", serif;
+  --stencil: "Big Shoulders Stencil Text", "Stencil Std", "Impact", sans-serif;
+  --mono:    "Courier New", "Courier", ui-monospace, monospace;
+
+  /* Rhythm */
+  --rule:        var(--ink);
+  --rule-thin:   1px solid var(--ink);
+  --rule-thick:  3px double var(--ink);
+  --rule-faded:  1px solid var(--ink-margin);
+
+  --max-doc:     980px;
+  --margin-rule-x: 60px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 24px;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #2a2218;     /* the desk the dossier sits on — dim, warm */
+  color: var(--ink);
+  font-family: var(--typed);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ── Desk backdrop — slightly grainy wood/leather feel ────────────── */
+body {
+  background:
+    radial-gradient(ellipse at 20% 10%, rgba(255,220,160,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 90%, rgba(180,100,40,0.06) 0%, transparent 60%),
+    repeating-linear-gradient(
+      96deg,
+      #2a2218 0px, #2a2218 4px,
+      #2d2519 4px, #2d2519 8px
+    );
+  min-height: 100vh;
+  padding: clamp(16px, 4vw, 64px) 0 240px;
+}
+
+/* ── The dossier sheet ────────────────────────────────────────────── */
+.dossier {
+  position: relative;
+  max-width: var(--max-doc);
+  margin: 0 auto;
+  background: var(--paper);
+  color: var(--ink);
+  padding:
+    clamp(36px, 6vw, 80px)
+    clamp(28px, 5vw, 88px)
+    clamp(48px, 6vw, 96px)
+    var(--margin-rule-x);
+  border: 1px solid var(--paper-deep);
+  box-shadow:
+    0 1px 0 var(--paper-edge),
+    0 2px 0 var(--paper-fold),
+    0 24px 60px -20px rgba(0,0,0,0.55),
+    0 60px 120px -40px rgba(0,0,0,0.5);
+}
+
+/* Paper grain — SVG noise filter overlay */
+.dossier::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.10 0 0 0 0 0.08 0 0 0 0 0.05 0 0 0 0.10 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  mix-blend-mode: multiply;
+  opacity: 0.55;
+}
+
+/* Margin rule — vertical red line down the left, with binding holes */
+.dossier::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--margin-rule-x) - 18px);
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--alert);
+  opacity: 0.55;
+  z-index: 0;
+}
+
+.binding-holes {
+  position: absolute;
+  left: calc(var(--margin-rule-x) - 38px);
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  align-items: center;
+  z-index: 2;
+  pointer-events: none;
+}
+.binding-holes span {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 30%, #1a1410 0%, #2c241a 60%, #4a3e30 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(0,0,0,0.6),
+    1px 1px 0 rgba(255,235,200,0.4);
+}
+
+/* Lift content above the grain layer */
+.dossier > * { position: relative; z-index: 2; }
+
+/* Subtle horizontal fold crease lines (tri-fold document opened) */
+.fold-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background:
+    linear-gradient(90deg,
+      transparent 0%,
+      var(--paper-fold) 8%,
+      var(--paper-deep) 50%,
+      var(--paper-fold) 92%,
+      transparent 100%);
+  opacity: 0.7;
+  z-index: 1;
+  pointer-events: none;
+}
+.fold-line::after {
+  content: "";
+  position: absolute;
+  inset: -1px 0;
+  height: 4px;
+  background:
+    linear-gradient(180deg,
+      rgba(0,0,0,0.04) 0%,
+      transparent 60%);
+}
+.fold-1 { top: 33.33%; }
+.fold-2 { top: 66.66%; }
+
+/* ── Typography baseline ──────────────────────────────────────────── */
+.typed { font-family: var(--typed); }
+.serif { font-family: var(--serif); }
+.stencil {
+  font-family: var(--stencil);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+p { margin: 0 0 1.1em; }
+
+a {
+  color: var(--wsdod-blue);
+  text-decoration: underline;
+  text-decoration-color: rgba(30, 58, 95, 0.4);
+  text-underline-offset: 3px;
+  transition: text-decoration-color .15s ease;
+}
+a:hover {
+  text-decoration-color: var(--wsdod-stamp);
+}
+
+strong, b { font-weight: 700; }
+em, i { font-style: italic; }
+
+/* Strikethrough redaction */
+.redact {
+  background: var(--ink);
+  color: var(--ink);
+  user-select: none;
+  padding: 0 .4em;
+  text-decoration: none;
+}
+.redact::selection { background: var(--ink); color: var(--ink); }
+
+/* Censor mark (over text) */
+.censor {
+  background: linear-gradient(0deg, var(--ink) 38%, transparent 38%, transparent 62%, var(--ink) 62%);
+  color: transparent;
+  user-select: none;
+}
+
+/* ── Masthead ─────────────────────────────────────────────────────── */
+.masthead {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) 1fr auto;
+  gap: 36px;
+  align-items: start;
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+  border-bottom: var(--rule-thick);
+  position: relative;
+}
+
+.masthead .classification-strip {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 28px;
+  border: 2px solid var(--alert);
+  color: var(--alert);
+  font-family: var(--stencil);
+  font-size: 13px;
+  letter-spacing: 0.3em;
+  background: var(--paper);
+  text-transform: uppercase;
+}
+
+.patch-block { padding-top: 6px; }
+
+/* Divisional patch — circular, baseball-divisional-patch nod */
+.patch {
+  width: 160px;
+  height: 160px;
+  display: block;
+  filter:
+    drop-shadow(0 1px 0 rgba(0,0,0,0.15))
+    drop-shadow(0 4px 6px rgba(0,0,0,0.10));
+  transform: rotate(-3deg);
+}
+
+.masthead-meta {
+  padding-top: 10px;
+  font-family: var(--typed);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+}
+
+.masthead-meta .title-stamp {
+  display: block;
+  font-family: var(--stencil);
+  font-size: clamp(38px, 6vw, 64px);
+  line-height: 0.95;
+  color: var(--ink);
+  letter-spacing: 0.04em;
+  margin: 0 0 8px;
+  font-weight: 900;
+}
+.masthead-meta .title-stamp .lan {
+  display: inline-block;
+  background: var(--wsdod-blue);
+  color: var(--paper);
+  padding: 0 14px;
+  margin: 0 4px;
+  font-weight: 900;
+  transform: skew(-4deg);
+  box-shadow:
+    1px 1px 0 var(--wsdod-blue-deep),
+    2px 2px 0 var(--wsdod-blue-deep);
+}
+.masthead-meta .title-stamp .year {
+  font-family: var(--stencil);
+  color: var(--alert);
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.1);
+}
+
+.masthead-meta .subtitle {
+  display: block;
+  font-family: var(--typed);
+  font-size: 15px;
+  color: var(--ink-soft);
+  margin-bottom: 14px;
+  font-style: italic;
+}
+
+.masthead-meta dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 4px;
+  margin: 0;
+  font-size: 13.5px;
+  font-family: var(--mono);
+}
+.masthead-meta dt {
+  color: var(--ink-faint);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.masthead-meta dd {
+  margin: 0;
+  color: var(--ink);
+}
+
+/* DECLASSIFIED stamp — rotated red ink, slight bleed */
+.stamp-decl {
+  position: relative;
+  align-self: start;
+  margin-top: 18px;
+  padding: 10px 22px;
+  border: 3px solid var(--alert);
+  font-family: var(--stencil);
+  font-size: 20px;
+  color: var(--alert);
+  letter-spacing: 0.18em;
+  background: transparent;
+  transform: rotate(8deg);
+  text-shadow:
+    0 0 1px rgba(139, 28, 28, 0.4);
+  filter: url(#stamp-bleed);
+  white-space: nowrap;
+}
+.stamp-decl::after {
+  content: attr(data-doc);
+  display: block;
+  font-family: var(--typed);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  margin-top: 4px;
+  text-align: center;
+  color: var(--alert);
+  opacity: 0.85;
+}
+.stamp-decl::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border: 3px solid var(--alert);
+  opacity: 0.18;
+  transform: translate(2px, -2px);
+}
+
+/* Reusable ink-bleed SVG filter — applied via filter: url(#stamp-bleed) */
+.bleed-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* ── Table of Contents ────────────────────────────────────────────── */
+.toc {
+  margin: 0 0 56px;
+  padding: 22px 0 26px;
+  border-top: var(--rule-thin);
+  border-bottom: var(--rule-thin);
+}
+.toc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.toc-head h2 {
+  font-family: var(--stencil);
+  font-size: 18px;
+  letter-spacing: 0.32em;
+  margin: 0;
+  color: var(--ink);
+  font-weight: 700;
+}
+.toc-head .toc-classif {
+  font-family: var(--typed);
+  font-size: 11.5px;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+.toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 56px;
+  row-gap: 6px;
+  font-family: var(--typed);
+  font-size: 14.5px;
+}
+.toc-list li {
+  display: grid;
+  grid-template-columns: 38px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+}
+.toc-list a {
+  display: contents;
+  color: var(--ink);
+  text-decoration: none;
+}
+.toc-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--alert);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.toc-title {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.toc-title::after {
+  content: " . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .";
+  color: var(--ink-faint);
+  margin-left: 6px;
+  letter-spacing: 0.12em;
+}
+.toc-page {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-align: right;
+}
+.toc-list a:hover .toc-title { color: var(--wsdod-blue); }
+.toc-list a:hover .toc-num { color: var(--wsdod-stamp); }
+
+/* ── Section common ───────────────────────────────────────────────── */
+section.chapter {
+  margin: 0 0 72px;
+  scroll-margin-top: 24px;
+  position: relative;
+}
+
+.chapter-head {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: end;
+  gap: 18px;
+  margin: 0 0 28px;
+  padding-bottom: 8px;
+  border-bottom: var(--rule-thick);
+}
+.chapter-num {
+  font-family: var(--stencil);
+  font-size: 52px;
+  line-height: 0.9;
+  color: var(--alert);
+  letter-spacing: 0;
+  font-weight: 900;
+  text-shadow: 1px 1px 0 rgba(0,0,0,0.06);
+}
+.chapter-title {
+  font-family: var(--stencil);
+  font-size: clamp(24px, 3.4vw, 36px);
+  margin: 0;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  line-height: 1;
+  text-transform: uppercase;
+}
+.chapter-stamp {
+  font-family: var(--typed);
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding-bottom: 4px;
+}
+
+.chapter-body { font-size: 15px; }
+.chapter-body p { font-family: var(--serif); font-size: 17px; line-height: 1.7; }
+.chapter-body p.typed-line { font-family: var(--typed); font-size: 14.5px; }
+
+/* ── Briefing (Hero / §I) ─────────────────────────────────────────── */
+.briefing-orders {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 22px;
+  row-gap: 4px;
+  font-family: var(--typed);
+  font-size: 14.5px;
+  border: 1px dashed var(--ink-soft);
+  padding: 22px 26px;
+  margin: 0 0 26px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0px, transparent 23px,
+      rgba(74,62,48,0.07) 23px, rgba(74,62,48,0.07) 24px
+    );
+}
+.briefing-orders dt {
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: 11.5px;
+  align-self: center;
+  font-weight: 700;
+}
+.briefing-orders dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15.5px;
+  align-self: center;
+}
+.briefing-orders dd .stamp-inline {
+  display: inline-block;
+  padding: 0 7px;
+  background: var(--wsdod-blue);
+  color: var(--paper);
+  font-family: var(--stencil);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  vertical-align: 2px;
+  margin-left: 6px;
+}
+
+.briefing-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  max-width: 68ch;
+}
+.briefing-body p:first-letter {
+  font-family: var(--serif);
+  font-size: 3.4em;
+  line-height: 0.9;
+  float: left;
+  padding: 6px 8px 0 0;
+  color: var(--alert);
+  font-weight: 700;
+}
+.briefing-signoff {
+  margin-top: 26px;
+  font-family: var(--typed);
+  font-size: 14px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.briefing-signoff strong {
+  display: block;
+  font-style: normal;
+  font-family: var(--stencil);
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+/* ── Theater of Operations ────────────────────────────────────────── */
+.theater-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.05fr;
+  gap: 36px;
+  align-items: start;
+}
+@media (max-width: 760px) {
+  .theater-grid { grid-template-columns: 1fr; }
+}
+
+.venue-card {
+  font-family: var(--typed);
+  font-size: 14.5px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  padding: 20px 24px;
+  position: relative;
+  box-shadow: 3px 3px 0 var(--paper-deep);
+}
+.venue-card::before {
+  content: "TRAVEL ORDER № 1";
+  position: absolute;
+  top: -10px;
+  left: 14px;
+  background: var(--paper);
+  padding: 0 8px;
+  font-family: var(--stencil);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--alert);
+}
+.venue-card h3 {
+  font-family: var(--stencil);
+  font-size: 22px;
+  letter-spacing: 0.06em;
+  margin: 0 0 4px;
+  color: var(--ink);
+}
+.venue-card .venue-addr {
+  font-family: var(--typed);
+  font-size: 14px;
+  color: var(--ink-soft);
+  margin-bottom: 18px;
+  line-height: 1.4;
+}
+.venue-card dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 16px;
+  row-gap: 6px;
+  margin: 0;
+  font-size: 13.5px;
+}
+.venue-card dt {
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  align-self: baseline;
+  padding-top: 2px;
+}
+.venue-card dd { margin: 0; }
+
+.venue-quarters {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--ink-margin);
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* Theater map — SVG, hand-drawn-style */
+.venue-map {
+  position: relative;
+  padding: 18px;
+  background:
+    repeating-linear-gradient(0deg, var(--paper-fold) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(90deg, var(--paper-fold) 0 1px, transparent 1px 22px),
+    var(--paper);
+  border: 1px solid var(--ink-margin);
+  box-shadow: inset 0 0 0 6px var(--paper);
+}
+.venue-map::before {
+  content: "FIG. 1 — TERRAIN, PHILADELPHIA SECTOR";
+  position: absolute;
+  top: -10px;
+  left: 14px;
+  background: var(--paper);
+  padding: 0 8px;
+  font-family: var(--stencil);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+}
+.venue-map svg { width: 100%; height: auto; display: block; }
+.venue-map .map-legend {
+  margin-top: 12px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--typed);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+.venue-map .map-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.venue-map .map-legend i {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+}
+.legend-venue { background: var(--alert); border-radius: 50%; }
+.legend-rail  { background: var(--wsdod-blue); }
+.legend-arterial { background: var(--olive); }
+
+/* ── Order of Battle (Teams) ──────────────────────────────────────── */
+.units-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  font-family: var(--typed);
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--ink-margin);
+}
+.units-meta strong {
+  color: var(--ink);
+  font-family: var(--stencil);
+  letter-spacing: 0.14em;
+  font-size: 14px;
+}
+
+.units-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 28px 32px;
+}
+@media (max-width: 720px) {
+  .units-grid { grid-template-columns: 1fr; }
+}
+
+.unit-card {
+  position: relative;
+  padding: 22px 22px 18px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--paper-deep);
+  font-family: var(--typed);
+  font-size: 13.5px;
+}
+.unit-card::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  right: 26px;
+  width: 26px;
+  height: 44px;
+  background:
+    linear-gradient(180deg,
+      var(--ink-soft) 0%, var(--ink-soft) 18%,
+      transparent 18%, transparent 22%,
+      var(--ink-soft) 22%, var(--ink-soft) 100%);
+  clip-path: path("M 13 0 C 5 0 0 6 0 14 L 0 38 C 0 41 2 44 6 44 C 10 44 12 41 12 38 L 12 18 C 12 16 14 14 16 14 L 18 14 C 20 14 22 16 22 18 L 22 36 L 26 36 L 26 14 C 26 6 21 0 13 0 Z");
+  opacity: 0.85;
+  filter: drop-shadow(1px 2px 1px rgba(0,0,0,0.2));
+}
+.unit-card .unit-tag-strip {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px dashed var(--ink-margin);
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+}
+.unit-card .unit-name {
+  font-family: var(--stencil);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  margin: 0;
+  color: var(--ink);
+  /* deliberately do not uppercase — preserve team's chosen capitalization */
+  text-transform: none;
+}
+.unit-card .unit-tag {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: var(--paper-edge);
+  padding: 1px 6px;
+  border: 1px solid var(--ink-margin);
+  white-space: nowrap;
+  max-width: 12em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unit-roster {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 14px;
+  row-gap: 4px;
+  font-family: var(--typed);
+  font-size: 13.5px;
+}
+.unit-roster li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+}
+.unit-roster .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  min-width: 16px;
+  text-align: right;
+}
+.unit-roster .role {
+  font-family: var(--stencil);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  color: var(--alert);
+  padding: 1px 4px;
+  border: 1px solid var(--alert);
+  margin-right: 4px;
+  vertical-align: 2px;
+}
+.unit-roster .player { color: var(--ink); }
+.unit-roster .player.unassigned {
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
+.unit-card .registered {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px dotted var(--ink-margin);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.05em;
+}
+
+/* ── Communiqué (Schedule) ────────────────────────────────────────── */
+.comms-frame {
+  border: 1px solid var(--ink);
+  padding: 0;
+  background:
+    linear-gradient(180deg, var(--paper-edge) 0 32px, var(--paper) 32px 100%);
+}
+.comms-frame .comms-head {
+  padding: 8px 18px;
+  border-bottom: var(--rule-thin);
+  font-family: var(--stencil);
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  color: var(--ink);
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+}
+.comms-frame table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.comms-frame thead th {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: var(--rule-thin);
+  font-family: var(--stencil);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--alert);
+  text-transform: uppercase;
+}
+.comms-frame tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px dotted var(--ink-margin);
+  vertical-align: top;
+}
+.comms-frame tbody tr:last-child td { border-bottom: none; }
+.comms-frame tbody tr:nth-child(even) {
+  background: rgba(184, 169, 130, 0.10);
+}
+
+.comms-stub {
+  padding: 28px;
+  text-align: center;
+  font-family: var(--typed);
+  font-size: 14.5px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.comms-stub strong {
+  display: block;
+  font-family: var(--stencil);
+  font-style: normal;
+  font-size: 13px;
+  color: var(--alert);
+  letter-spacing: 0.18em;
+  margin-bottom: 8px;
+}
+
+/* ── After-Action Reports (Results) ───────────────────────────────── */
+.reports-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+@media (max-width: 720px) { .reports-grid { grid-template-columns: 1fr; } }
+
+.report {
+  position: relative;
+  padding: 18px 20px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  font-family: var(--typed);
+  font-size: 13.5px;
+  box-shadow: 2px 2px 0 var(--paper-deep);
+}
+.report-num {
+  font-family: var(--stencil);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--alert);
+  margin-bottom: 4px;
+}
+.report-engagement {
+  font-family: var(--stencil);
+  font-size: 17px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  margin-bottom: 10px;
+  text-transform: none;
+}
+.report dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  row-gap: 4px;
+  margin: 0 0 10px;
+}
+.report dt {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-faint);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.report dd { margin: 0; color: var(--ink); }
+.report .victory-stamp {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-family: var(--stencil);
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  padding: 3px 10px;
+  border: 2px solid currentColor;
+  transform: rotate(8deg);
+  opacity: 0.85;
+}
+.victory-allies { color: var(--wsdod-blue); border-color: var(--wsdod-blue); }
+.victory-axis   { color: var(--alert);     border-color: var(--alert); }
+
+/* ── Rules of Engagement ──────────────────────────────────────────── */
+.regs {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  font-family: var(--serif);
+  font-size: 16px;
+  line-height: 1.62;
+}
+.reg-section { padding: 0; }
+.reg-section > h3 {
+  font-family: var(--stencil);
+  font-size: 18px;
+  letter-spacing: 0.16em;
+  color: var(--ink);
+  margin: 22px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--ink-margin);
+  position: relative;
+}
+.reg-section > h3::before {
+  content: "§";
+  color: var(--alert);
+  margin-right: 8px;
+  font-family: var(--serif);
+}
+.reg {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 14px;
+  align-items: baseline;
+  padding: 4px 0;
+}
+.reg-no {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--alert);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-align: right;
+}
+.reg-body { color: var(--ink); }
+.reg-body em {
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.regs-foot {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--ink-margin);
+  font-family: var(--typed);
+  font-size: 13px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+/* ── Stub sections (legacy — retained in case re-used) ────────────── */
+.stub-block {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 32px;
+  padding: 26px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(139, 28, 28, 0.04) 0 14px,
+      transparent 14px 32px
+    ),
+    var(--paper);
+  border: 1px dashed var(--alert);
+  align-items: center;
+}
+.stub-block .stub-stamp {
+  font-family: var(--stencil);
+  font-size: 16px;
+  letter-spacing: 0.22em;
+  color: var(--alert);
+  text-align: center;
+  border: 3px double var(--alert);
+  padding: 18px 8px;
+  transform: rotate(-3deg);
+  background: var(--paper);
+}
+.stub-block .stub-body {
+  font-family: var(--typed);
+  font-size: 14.5px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+.stub-block .stub-body strong {
+  display: block;
+  font-family: var(--stencil);
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+/* ── Staff Roster (§VIII — LAN Command) ──────────────────────────── */
+.staff-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  font-family: var(--typed);
+  font-size: 13px;
+  color: var(--ink-soft);
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed var(--ink-margin);
+}
+.staff-meta strong {
+  color: var(--ink);
+  font-family: var(--stencil);
+  letter-spacing: 0.14em;
+  font-size: 14px;
+}
+
+.staff-roster {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px 28px;
+}
+@media (max-width: 600px) {
+  .staff-roster { grid-template-columns: 1fr; }
+}
+
+.staff-badge {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px 14px 14px;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--paper-deep);
+  font-family: var(--typed);
+}
+.staff-badge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 44px;
+  width: 1px;
+  background: var(--ink-margin);
+  opacity: 0.7;
+}
+
+.staff-badge .badge-num {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--alert);
+  font-weight: 700;
+  text-align: center;
+  border: 1px solid var(--alert);
+  padding: 8px 0;
+  background: var(--paper);
+}
+
+.staff-badge .badge-name {
+  font-family: var(--stencil);
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  /* preserve handle's chosen capitalization */
+  text-transform: none;
+  line-height: 1.05;
+}
+.staff-badge .badge-role {
+  display: block;
+  font-family: var(--typed);
+  font-size: 10.5px;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.staff-badge .badge-sworn {
+  font-family: var(--stencil);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--wsdod-blue);
+  border: 2px solid var(--wsdod-blue);
+  padding: 4px 8px;
+  transform: rotate(-4deg);
+  text-align: center;
+  line-height: 1.1;
+  white-space: nowrap;
+  opacity: 0.92;
+}
+.staff-badge .badge-sworn small {
+  display: block;
+  font-size: 7px;
+  margin-top: 2px;
+  color: var(--wsdod-blue);
+  letter-spacing: 0.12em;
+}
+
+/* ── Field Dispatches (Streams / Media) ───────────────────────────── */
+.dispatches {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 26px;
+}
+@media (max-width: 720px) { .dispatches { grid-template-columns: 1fr; } }
+
+.dispatch-card {
+  position: relative;
+  border: 1px solid var(--ink);
+  padding: 0;
+  background: var(--paper);
+  box-shadow: 3px 3px 0 var(--paper-deep);
+  overflow: hidden;
+}
+.dispatch-card .dispatch-screen {
+  height: 180px;
+  background:
+    repeating-linear-gradient(0deg,
+      rgba(0,0,0,0.04) 0 2px,
+      transparent 2px 4px),
+    radial-gradient(ellipse at center,
+      var(--olive-bright) 0%,
+      var(--olive) 60%,
+      var(--olive-dark) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--paper);
+  font-family: var(--stencil);
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  border-bottom: var(--rule-thin);
+  position: relative;
+}
+.dispatch-card .dispatch-screen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at center,
+      transparent 30%,
+      rgba(0,0,0,0.35) 100%);
+}
+.dispatch-card .dispatch-screen span { position: relative; z-index: 2; }
+.dispatch-card .dispatch-body {
+  padding: 14px 16px;
+  font-family: var(--typed);
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dispatch-card .caster {
+  font-family: var(--stencil);
+  font-size: 16px;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+.dispatch-card .role {
+  font-family: var(--typed);
+  font-size: 12px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.dispatch-card .channel {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-top: 4px;
+}
+
+/* ── Demo Archive ─────────────────────────────────────────────────── */
+.archive-block {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+@media (max-width: 720px) { .archive-block { grid-template-columns: 1fr; } }
+
+.archive-card {
+  border: 1px solid var(--ink);
+  padding: 20px 22px;
+  background: var(--paper);
+  font-family: var(--typed);
+  font-size: 14px;
+  position: relative;
+}
+.archive-card h4 {
+  font-family: var(--stencil);
+  font-size: 15px;
+  letter-spacing: 0.18em;
+  margin: 0 0 10px;
+  color: var(--ink);
+}
+.archive-card p { margin: 0 0 .8em; font-family: var(--typed); font-size: 13.5px; }
+.archive-card .ref {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--alert);
+  letter-spacing: 0.05em;
+}
+
+/* ── Sponsors / Partners ──────────────────────────────────────────── */
+.partners-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  padding: 26px;
+  background: var(--paper-edge);
+  border: 1px solid var(--ink-margin);
+}
+.partner {
+  flex: 1 1 200px;
+  text-align: center;
+  padding: 22px 14px;
+  background: var(--paper);
+  border: 1px solid var(--ink-margin);
+  font-family: var(--stencil);
+  font-size: 18px;
+  letter-spacing: 0.12em;
+  color: var(--ink-soft);
+  position: relative;
+}
+.partner::after {
+  content: attr(data-tag);
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  background: var(--paper-edge);
+  padding: 0 6px;
+  font-family: var(--typed);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+}
+.partner small {
+  display: block;
+  font-family: var(--typed);
+  font-size: 11px;
+  margin-top: 6px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  text-transform: uppercase;
+}
+
+/* ── Footer signature ─────────────────────────────────────────────── */
+.signature {
+  margin-top: 64px;
+  padding-top: 28px;
+  border-top: var(--rule-thick);
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 28px;
+  align-items: end;
+  font-family: var(--typed);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.signature .sign-block strong {
+  display: block;
+  font-family: var(--stencil);
+  letter-spacing: 0.18em;
+  color: var(--ink);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.signature .sign-block .doc-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin-top: 14px;
+}
+.stamp-auth {
+  font-family: var(--stencil);
+  font-size: 17px;
+  letter-spacing: 0.18em;
+  color: var(--wsdod-blue);
+  border: 3px solid var(--wsdod-blue);
+  padding: 12px 22px;
+  transform: rotate(-6deg);
+  filter: url(#stamp-bleed);
+}
+.stamp-auth small {
+  display: block;
+  font-family: var(--typed);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-align: center;
+  margin-top: 4px;
+  color: var(--wsdod-blue);
+  text-transform: uppercase;
+}
+
+/* ── Reveal animation on load ─────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .dossier {
+    animation: doc-unfold 0.55s ease-out both;
+  }
+  section.chapter {
+    animation: section-rise 0.5s ease-out both;
+  }
+  section.chapter:nth-of-type(1)  { animation-delay: 0.10s; }
+  section.chapter:nth-of-type(2)  { animation-delay: 0.18s; }
+  section.chapter:nth-of-type(3)  { animation-delay: 0.24s; }
+  section.chapter:nth-of-type(4)  { animation-delay: 0.30s; }
+  section.chapter:nth-of-type(5)  { animation-delay: 0.36s; }
+  section.chapter:nth-of-type(6)  { animation-delay: 0.42s; }
+  section.chapter:nth-of-type(7)  { animation-delay: 0.48s; }
+  section.chapter:nth-of-type(8)  { animation-delay: 0.54s; }
+  section.chapter:nth-of-type(9)  { animation-delay: 0.60s; }
+  section.chapter:nth-of-type(10) { animation-delay: 0.66s; }
+  section.chapter:nth-of-type(11) { animation-delay: 0.72s; }
+  .stamp-decl { animation: stamp-thud 0.55s 0.55s ease-out both; }
+  .stamp-auth { animation: stamp-thud 0.55s 0.95s ease-out both; }
+}
+@keyframes doc-unfold {
+  from { opacity: 0; transform: translateY(14px) rotateX(-1.5deg); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes section-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes stamp-thud {
+  0%   { opacity: 0; transform: scale(1.25) rotate(8deg); }
+  60%  { opacity: 1; transform: scale(0.94) rotate(8deg); }
+  100% { transform: scale(1) rotate(8deg); }
+}
+.stamp-auth { animation-name: stamp-thud-l; }
+@keyframes stamp-thud-l {
+  0%   { opacity: 0; transform: scale(1.25) rotate(-6deg); }
+  60%  { opacity: 1; transform: scale(0.94) rotate(-6deg); }
+  100% { transform: scale(1) rotate(-6deg); }
+}
+
+/* ── Print friendly ───────────────────────────────────────────────── */
+@media print {
+  body { background: white; padding: 0; }
+  .dossier { box-shadow: none; border: none; }
+  .dossier::before { display: none; }
+}
+
+/* ── Narrow viewport tweaks ───────────────────────────────────────── */
+@media (max-width: 680px) {
+  :root { --margin-rule-x: 40px; }
+  .masthead {
+    grid-template-columns: 1fr;
+    gap: 18px;
+    text-align: left;
+  }
+  .stamp-decl { justify-self: start; }
+  .toc-list { grid-template-columns: 1fr; }
+  .binding-holes { display: none; }
+  .dossier::after { left: calc(var(--margin-rule-x) - 14px); }
+  .chapter-head { grid-template-columns: 48px 1fr; }
+  .chapter-stamp { grid-column: 1 / -1; padding-bottom: 0; }
+}
+</style>
+</head>
+<body>
+
+<!-- Reusable SVG filter for the ink-bleed stamp effect -->
+<svg class="bleed-defs" aria-hidden="true">
+  <defs>
+    <filter id="stamp-bleed" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="3"/>
+      <feDisplacementMap in="SourceGraphic" scale="2.4"/>
+    </filter>
+  </defs>
+</svg>
+
+<article class="dossier" role="document">
+
+  <!-- Binding holes down the left margin -->
+  <div class="binding-holes" aria-hidden="true">
+    <span></span><span></span><span></span><span></span><span></span><span></span>
+  </div>
+
+  <!-- Tri-fold crease overlay -->
+  <div class="fold-line fold-1" aria-hidden="true"></div>
+  <div class="fold-line fold-2" aria-hidden="true"></div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       MASTHEAD
+       ══════════════════════════════════════════════════════════════════ -->
+  <header class="masthead">
+    <span class="classification-strip">FOR DISTRIBUTION TO ALL UNITS</span>
+
+    <div class="patch-block">
+      <!-- Divisional patch — circular, baseball-divisional nod, inline SVG -->
+      <svg class="patch" viewBox="0 0 200 200" role="img" aria-label="WSDoD divisional patch">
+        <!-- Outer rim -->
+        <circle cx="100" cy="100" r="96" fill="#1e3a5f" stroke="#122742" stroke-width="2"/>
+        <circle cx="100" cy="100" r="88" fill="none" stroke="#f0e9d6" stroke-width="1.5" stroke-dasharray="2 3"/>
+        <!-- Inner cream field -->
+        <circle cx="100" cy="100" r="74" fill="#f0e9d6" stroke="#122742" stroke-width="2"/>
+        <!-- Arched rim text -->
+        <defs>
+          <path id="rim-top" d="M 24 100 A 76 76 0 0 1 176 100" fill="none"/>
+          <path id="rim-bot" d="M 24 100 A 76 76 0 0 0 176 100" fill="none"/>
+        </defs>
+        <text font-family="Big Shoulders Stencil Text, Impact, sans-serif"
+              font-size="18" font-weight="900" fill="#f0e9d6"
+              letter-spacing="3">
+          <textPath href="#rim-top" startOffset="50%" text-anchor="middle">
+            WORLD SERIES OF
+          </textPath>
+        </text>
+        <text font-family="Big Shoulders Stencil Text, Impact, sans-serif"
+              font-size="18" font-weight="900" fill="#f0e9d6"
+              letter-spacing="3">
+          <textPath href="#rim-bot" startOffset="50%" text-anchor="middle">
+            DAY OF DEFEAT
+          </textPath>
+        </text>
+        <!-- Crossed rifle + bat motif -->
+        <g transform="translate(100 100)" stroke="#1e3a5f" stroke-width="2.4" stroke-linecap="round" fill="none">
+          <!-- Rifle, diagonal -->
+          <line x1="-32" y1="-30" x2="30" y2="32"/>
+          <line x1="-32" y1="-30" x2="-36" y2="-26"/>
+          <line x1="-32" y1="-30" x2="-26" y2="-36"/>
+          <line x1="-12" y1="-10" x2="-8" y2="-14"/>
+          <!-- Bat, opposite diagonal, slightly thicker -->
+          <line x1="-30" y1="32" x2="32" y2="-30" stroke-width="3.6"/>
+          <circle cx="32" cy="-30" r="3" fill="#1e3a5f"/>
+        </g>
+        <!-- Stamped "LAN" + "2026" inside the field -->
+        <text x="100" y="78" font-family="Big Shoulders Stencil Text, sans-serif"
+              font-size="16" fill="#8b1c1c" text-anchor="middle"
+              letter-spacing="4" font-weight="900">
+          ★ LAN ★
+        </text>
+        <text x="100" y="146" font-family="Special Elite, Courier New, monospace"
+              font-size="22" fill="#1a140e" text-anchor="middle"
+              letter-spacing="3" font-weight="700">
+          MMXXVI
+        </text>
+      </svg>
+    </div>
+
+    <div class="masthead-meta">
+      <span class="title-stamp">
+        WSDoD <span class="lan">LAN</span> <span class="year">26</span>
+      </span>
+      <span class="subtitle">Operations Dossier — Field Exercise, Philadelphia Theater</span>
+      <dl>
+        <dt>From</dt><dd>WSDoD COMMAND</dd>
+        <dt>To</dt><dd>ALL ENLISTED OPERATORS</dd>
+        <dt>Re</dt><dd>LAN 2026 / 31 JUL – 2 AUG / TAP ESPORT CENTER</dd>
+        <dt>Doc</dt><dd>WSDoD/LAN-26/OPORD-1</dd>
+        <dt>Rev</dt><dd>{{ last_updated }}</dd>
+      </dl>
+    </div>
+
+    <div class="stamp-decl" data-doc="DOC №WSDoD-26/I">
+      DECLASSIFIED
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       TABLE OF CONTENTS
+       ══════════════════════════════════════════════════════════════════ -->
+  <nav class="toc" aria-label="Document Index">
+    <div class="toc-head">
+      <h2>Index of Sections</h2>
+      <span class="toc-classif">Read in sequence</span>
+    </div>
+    <ol class="toc-list">
+      <li><a href="#briefing">     <span class="toc-num">§ I</span>   <span class="toc-title">Mission Briefing</span>           <span class="toc-page">p. 01</span></a></li>
+      <li><a href="#theater">      <span class="toc-num">§ II</span>  <span class="toc-title">Theater of Operations</span>      <span class="toc-page">p. 02</span></a></li>
+      <li><a href="#order-of-battle"><span class="toc-num">§ III</span><span class="toc-title">Order of Battle</span>            <span class="toc-page">p. 03</span></a></li>
+      <li><a href="#communique">   <span class="toc-num">§ IV</span>  <span class="toc-title">Communiqué — Schedule</span>      <span class="toc-page">p. 04</span></a></li>
+      <li><a href="#after-action"> <span class="toc-num">§ V</span>   <span class="toc-title">After-Action Reports</span>       <span class="toc-page">p. 05</span></a></li>
+      <li><a href="#rules">        <span class="toc-num">§ VI</span>  <span class="toc-title">Rules of Engagement</span>        <span class="toc-page">p. 06</span></a></li>
+      <li><a href="#conduct">      <span class="toc-num">§ VII</span> <span class="toc-title">Code of Conduct</span>            <span class="toc-page">p. 07</span></a></li>
+      <li><a href="#command">      <span class="toc-num">§ VIII</span><span class="toc-title">LAN Command</span>                <span class="toc-page">p. 08</span></a></li>
+      <li><a href="#dispatches">   <span class="toc-num">§ IX</span>  <span class="toc-title">Field Dispatches</span>           <span class="toc-page">p. 09</span></a></li>
+      <li><a href="#archive">      <span class="toc-num">§ X</span>   <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 10</span></a></li>
+    </ol>
+  </nav>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § I — MISSION BRIEFING (Hero)
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="briefing" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">I</div>
+      <h2 class="chapter-title">Mission Briefing</h2>
+      <span class="chapter-stamp">FILED 14 MAY 2026 / EDT</span>
+    </header>
+
+    <div class="chapter-body">
+      <dl class="briefing-orders">
+        <dt>Operation</dt> <dd>WORLD SERIES OF DAY OF DEFEAT — LAN 2026 <span class="stamp-inline">field exercise</span></dd>
+        <dt>D-Day</dt>     <dd>31 JULY 2026 / FRIDAY · DRAFT EVENT</dd>
+        <dt>D+1</dt>       <dd>01 AUGUST 2026 / SATURDAY · TEAM PLAY</dd>
+        <dt>D+2</dt>       <dd>02 AUGUST 2026 / SUNDAY · TEAM PLAY &amp; FINALS</dd>
+        <dt>Theater</dt>   <dd>Philadelphia, Pennsylvania — TAP Esport Center (Chinatown), basement floor, 924 Cherry St.</dd>
+        <dt>Forces</dt>    <dd>Twelve (12) companies cap, 5–7 enlisted apiece. <strong>{{ teams|length }}/12</strong> companies confirmed.</dd>
+        <dt>Fee</dt>       <dd><strong>$160</strong> full weekend &nbsp;·&nbsp; <strong>$50</strong> Friday draft only</dd>
+        <dt>Payment</dt>   <dd>Through your captain. Initial deposit fronted by <strong>las1k64</strong> — much obliged.</dd>
+        <dt>Comms</dt>     <dd>Official Discord: <a href="https://discord.gg/bDw2NmEFj2">discord.gg/bDw2NmEFj2</a></dd>
+      </dl>
+
+      <div class="briefing-body">
+        <p>We're convening twelve companies of Day of Defeat operators on the basement floor of the TAP Esport Center, Philadelphia — the same Chinatown room that hosted the 2025 LAN. Three days of competition: the last day of July through the first weekend of August, 2026. Whether you're old guard, new blood, or somewhere bewildered in between, this is your dossier. Read it. Sign it. Bring it with you.</p>
+
+        <p>The exercise runs across three days. Friday opens with the <strong>draft event</strong> — a pickup tournament open to anyone in attendance who wants in, with seats limited at the door. Saturday and Sunday belong to <strong>team play</strong>: the registered companies bracket up and engage to a verdict, finals Sunday evening.</p>
+
+        <p>Inside this dossier you'll find your <strong>order of battle</strong> (who's pre-registered and with whom), your <strong>communiqué</strong> (when those engagements happen — bracket to follow), your <strong>terrain</strong> (where to find the building and what's nearby once you do), your <strong>rules of engagement</strong> (what's a fair shot and what's a forfeit), and the <strong>discipline</strong> expected of you under fire.</p>
+
+        <p class="typed-line">— Get ready for a weekend of fun, sweat, and <em>dod innit</em>.</p>
+
+        <div class="briefing-signoff">
+          Filed in good order at headquarters,
+          <strong>WSDoD Tournament Staff</strong>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § II — THEATER OF OPERATIONS
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="theater" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">II</div>
+      <h2 class="chapter-title">Theater of Operations</h2>
+      <span class="chapter-stamp">GRID REFERENCE — PHL/CHERRY</span>
+    </header>
+
+    <div class="chapter-body theater-grid">
+      <div class="venue-card">
+        <h3>TAP Esport Center</h3>
+        <div class="venue-addr">
+          924 Cherry Street — <strong>basement floor</strong><br>
+          Philadelphia, PA 19107<br>
+          <em>2025's Chinatown location — same room, second year.</em>
+        </div>
+        <dl>
+          <dt>Air</dt>      <dd>PHL Intl. → SEPTA Regional Rail (~25 min)</dd>
+          <dt>Rail</dt>     <dd>30th Street Station → 10 min E on foot</dd>
+          <dt>Motor</dt>    <dd>I-95 / I-76 — street parking limited; commercial garages nearby</dd>
+          <dt>Subway</dt>   <dd>SEPTA Race-Vine (BSL) — 4 blocks south</dd>
+          <dt>Local</dt>    <dd>Chinatown gate, two blocks east. Dinner solves itself.</dd>
+        </dl>
+        <div class="venue-quarters">
+          <strong>Book your accommodations now.</strong> Billeting is your own affair — command does not coordinate lodging. Consult your captain or staff for venue-adjacent hotel suggestions.
+        </div>
+      </div>
+
+      <div class="venue-map">
+        <svg viewBox="0 0 360 240" role="img" aria-label="Schematic map of TAP Esport Center, Philadelphia">
+          <!-- Background "blueprint grid" already provided by parent bg -->
+          <!-- Arterial roads -->
+          <path d="M 0 70 L 360 70" stroke="#5a5e3a" stroke-width="6" stroke-opacity="0.55"/>
+          <path d="M 0 170 L 360 170" stroke="#5a5e3a" stroke-width="6" stroke-opacity="0.55"/>
+          <path d="M 90 0 L 90 240" stroke="#5a5e3a" stroke-width="6" stroke-opacity="0.55"/>
+          <path d="M 250 0 L 250 240" stroke="#5a5e3a" stroke-width="6" stroke-opacity="0.55"/>
+          <!-- Cross streets -->
+          <path d="M 0 30 L 360 30" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 0 110 L 360 110" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 0 210 L 360 210" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 30 0 L 30 240" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 140 0 L 140 240" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 190 0 L 190 240" stroke="#8a7c64" stroke-width="1"/>
+          <path d="M 310 0 L 310 240" stroke="#8a7c64" stroke-width="1"/>
+          <!-- Rail line (dashed blue) running diagonally -->
+          <path d="M 0 200 L 360 60" stroke="#1e3a5f" stroke-width="3" stroke-dasharray="6 4" fill="none"/>
+          <!-- 30th St Station marker -->
+          <g transform="translate(40 195)">
+            <rect x="-12" y="-8" width="24" height="16" fill="#f0e9d6" stroke="#1e3a5f" stroke-width="1.5"/>
+            <text x="0" y="-14" font-family="Special Elite, monospace" font-size="9" fill="#1e3a5f" text-anchor="middle">30TH ST</text>
+          </g>
+          <!-- River (Schuylkill) on the far left -->
+          <path d="M 10 0 Q 22 60 14 120 Q 6 180 18 240" stroke="#4a6485" stroke-width="3" fill="none" stroke-opacity="0.6"/>
+          <!-- Venue marker -->
+          <g transform="translate(220 120)">
+            <circle r="14" fill="#8b1c1c" stroke="#1a140e" stroke-width="2"/>
+            <text x="0" y="4" font-family="Big Shoulders Stencil Text, sans-serif" font-size="14" fill="#f0e9d6" text-anchor="middle" font-weight="900">X</text>
+            <text x="0" y="-22" font-family="Big Shoulders Stencil Text, sans-serif" font-size="11" fill="#1a140e" text-anchor="middle" letter-spacing="1.5">TAP ESPORT</text>
+            <text x="0" y="32" font-family="Special Elite, monospace" font-size="9" fill="#4a3e30" text-anchor="middle">924 CHERRY</text>
+          </g>
+          <!-- Compass rose -->
+          <g transform="translate(330 30)">
+            <circle r="14" fill="#f0e9d6" stroke="#1a140e" stroke-width="1"/>
+            <line x1="0" y1="-12" x2="0" y2="12" stroke="#1a140e" stroke-width="1"/>
+            <line x1="-12" y1="0" x2="12" y2="0" stroke="#1a140e" stroke-width="1"/>
+            <polygon points="0,-12 -3,-2 3,-2" fill="#8b1c1c"/>
+            <text x="0" y="-16" font-family="Big Shoulders Stencil Text, sans-serif" font-size="9" fill="#1a140e" text-anchor="middle" font-weight="900">N</text>
+          </g>
+          <!-- Scale bar -->
+          <g transform="translate(20 225)">
+            <line x1="0" y1="0" x2="60" y2="0" stroke="#1a140e" stroke-width="1.5"/>
+            <line x1="0" y1="-4" x2="0" y2="4" stroke="#1a140e" stroke-width="1"/>
+            <line x1="30" y1="-3" x2="30" y2="3" stroke="#1a140e" stroke-width="1"/>
+            <line x1="60" y1="-4" x2="60" y2="4" stroke="#1a140e" stroke-width="1"/>
+            <text x="30" y="14" font-family="Special Elite, monospace" font-size="8" fill="#4a3e30" text-anchor="middle">¼ MI</text>
+          </g>
+        </svg>
+        <div class="map-legend">
+          <span><i class="legend-venue"></i> Venue (TAP)</span>
+          <span><i class="legend-rail"></i> SEPTA rail</span>
+          <span><i class="legend-arterial"></i> Arterial</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § III — ORDER OF BATTLE
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="order-of-battle" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">III</div>
+      <h2 class="chapter-title">Order of Battle</h2>
+      <span class="chapter-stamp">REGISTERED COMPANIES</span>
+    </header>
+
+    <div class="chapter-body">
+      <div class="units-meta">
+        <span>Companies in muster: <strong>{{ teams|length }}/12</strong></span>
+        <span>Operators sworn in: <strong>{{ total_players }}</strong></span>
+        <span>Last muster pulled: {{ last_updated }}</span>
+      </div>
+
+      {% if teams|length < 12 %}
+      <div style="border: 2px dashed var(--alert); padding: 14px 18px; margin: 0 0 22px; font-family: var(--typed); font-size: 14px; background: rgba(139,28,28,0.04);">
+        <strong style="font-family: var(--stencil); letter-spacing: 0.16em; color: var(--alert); display: block; font-size: 13px; margin-bottom: 4px;">{{ 12 - teams|length }} VACANCY REMAINING ★ ENLISTMENT OPEN</strong>
+        Two companies are still recruiting. If you're looking for a slot, sign up via the
+        <a href="https://forms.gle/v7iHjA9fV1V6vpTW6">Player Registration Form</a>,
+        or coordinate a new team via the
+        <a href="https://forms.gle/er1VPETNHiXmAHWZ7">Team Registration Form</a>.
+        Twelve-company cap is firm.
+      </div>
+      {% endif %}
+
+      <div class="units-grid">
+        {% for team in teams %}
+        <article class="unit-card">
+          <div class="unit-tag-strip">
+            <h3 class="unit-name">{{ team.name }}</h3>
+            <span class="unit-tag" title="Team tag: {{ team.tag }}">{{ team.tag }}</span>
+          </div>
+          <ol class="unit-roster">
+            {% for player in team.players %}
+              {% if player %}
+            <li>
+              <span class="num">{{ loop.index }}.</span>
+              {% if loop.first %}<span class="role">CPT</span>{% endif %}
+              <span class="player">{{ player }}</span>
+            </li>
+              {% else %}
+            <li>
+              <span class="num">{{ loop.index }}.</span>
+              <span class="player unassigned">—</span>
+            </li>
+              {% endif %}
+            {% endfor %}
+          </ol>
+          <div class="registered">REGISTERED {{ team.registered_at }}</div>
+        </article>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § IV — COMMUNIQUÉ (Schedule)
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="communique" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">IV</div>
+      <h2 class="chapter-title">Communiqué</h2>
+      <span class="chapter-stamp">NETWORK ORDER OF TRAFFIC</span>
+    </header>
+
+    <div class="chapter-body">
+      <div class="comms-frame">
+        <div class="comms-head">
+          <span>Schedule — Saturday &amp; Sunday, 1–3 AUG 2026</span>
+          <span>All times Eastern</span>
+        </div>
+
+        {% if schedule and schedule|length > 0 %}
+        <table>
+          <thead>
+            <tr>
+              <th>№</th>
+              <th>Day</th>
+              <th>Time</th>
+              <th>Match</th>
+              <th>Map</th>
+              <th>Stream</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for match in schedule %}
+            <tr>
+              <td>{{ match.num }}</td>
+              <td>{{ match.day }}</td>
+              <td>{{ match.time }}</td>
+              <td>{{ match.allies }} <em>vs</em> {{ match.axis }}</td>
+              <td>{{ match.map }}</td>
+              <td>{{ match.stream }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="comms-stub">
+          <strong>TRANSMISSION PENDING</strong>
+          The bracket and schedule have not yet been posted. Once captains confirm and seating is drawn, the full network order of traffic will be reflected here, refreshed automatically from headquarters.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § V — AFTER-ACTION REPORTS
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="after-action" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">V</div>
+      <h2 class="chapter-title">After-Action Reports</h2>
+      <span class="chapter-stamp">ENGAGEMENT RECORD</span>
+    </header>
+
+    <div class="chapter-body">
+      {% if results and results|length > 0 %}
+      <div class="reports-grid">
+        {% for r in results %}
+        <article class="report">
+          <div class="report-num">REPORT №{{ r.num }}</div>
+          <div class="report-engagement">{{ r.allies }} <em>vs</em> {{ r.axis }}</div>
+          <div class="victory-stamp {% if r.winning_side == 'Allies' %}victory-allies{% else %}victory-axis{% endif %}">
+            {{ r.winning_side|upper }} ★ {{ r.score_winner }}–{{ r.score_loser }}
+          </div>
+          <dl>
+            <dt>Map</dt>     <dd>{{ r.map }}</dd>
+            <dt>Time</dt>    <dd>{{ r.time }}</dd>
+            <dt>Demos</dt>   <dd>{{ r.demos }}</dd>
+          </dl>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="comms-stub" style="border:1px dashed var(--ink-margin);">
+        <strong>NO ENGAGEMENTS RECORDED</strong>
+        After-action reports will populate here as the LAN progresses. Each completed match yields a stamped engagement record showing the victor, the field, and the demo signatures of record.
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § VI — RULES OF ENGAGEMENT
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="rules" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VI</div>
+      <h2 class="chapter-title">Rules of Engagement</h2>
+      <span class="chapter-stamp">PENDING VERIFICATION AGAINST ARCHIVE</span>
+    </header>
+
+    <div class="chapter-body regs">
+
+      <div class="reg-section">
+        <h3>1. General Conduct</h3>
+        <div class="reg"><div class="reg-no">1.1</div><div class="reg-body">LAN admins reserve the right to modify any rules as needed at any time as deemed necessary to the good continuation of the tournament.</div></div>
+        <div class="reg"><div class="reg-no">1.2</div><div class="reg-body">Matches require the correct map, configuration file, and LAN server. No exceptions.</div></div>
+        <div class="reg"><div class="reg-no">1.3</div><div class="reg-body"><strong>Server crash protocol.</strong> If the server goes down within the first five minutes of a half, the half is restarted in full. After five minutes, the half resumes with score restored and clock rounded up. No substitutions during recovery.</div></div>
+        <div class="reg"><div class="reg-no">1.4</div><div class="reg-body"><strong>Pixel-walking forbidden.</strong> Accessing an area via pixel walking, occupying an area only reachable by pixel walking (e.g., harrington ladder), or hanging in such an area results in suspension and/or forfeiture.</div></div>
+        <div class="reg"><div class="reg-no">1.5</div><div class="reg-body">Tied matches proceed to two five-minute overtime halves. <em>Failure to complete overtime rounds results in a loss for both teams.</em></div></div>
+        <div class="reg"><div class="reg-no">1.7</div><div class="reg-body">Seating assignments are final. LAN staff may modify seating as needed for operational reasons.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>2. Cheating, Penalties &amp; Disputes</h3>
+        <div class="reg"><div class="reg-no">2.1–2.3</div><div class="reg-body">Admins investigate suspicious activity. Matches involving cheaters may be overturned.</div></div>
+        <div class="reg"><div class="reg-no">2.4</div><div class="reg-body"><strong>Prohibited tooling.</strong> Visual player-location aids, recoil-control software, target-acquisition software, illegally modified game files, null binds, monitor or software crosshairs, and mouse-acceleration programs.</div></div>
+        <div class="reg"><div class="reg-no">2.5</div><div class="reg-body">Only default game files may be used unless explicitly approved or provided by LAN staff. Approved scoreboard modifiers and custom crosshairs (except sniper-rifle crosshair) are allowed.</div></div>
+        <div class="reg"><div class="reg-no">2.6</div><div class="reg-body">Spectating after a match goes live is considered cheating. Spec hopping is permitted only during full-map captures or stuck-player situations.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>3. Player Rules</h3>
+        <div class="reg"><div class="reg-no">3.1–3.2</div><div class="reg-body">Players must pass file and cvar checks, record POV demos each half, screenshot scoreboards, and remain through match conclusion.</div></div>
+        <div class="reg"><div class="reg-no">3.3</div><div class="reg-body">Player boosting <strong>is allowed</strong> so long as the destination area is accessible by a single player without boosting.</div></div>
+        <div class="reg"><div class="reg-no">3.4</div><div class="reg-body">Unauthorized voice commands and excessive opponent negging are prohibited.</div></div>
+        <div class="reg"><div class="reg-no">3.5–3.8</div><div class="reg-body">Prohibited binds: actions coupled with attack, duck-scrollwheel macros, automated attack or movement scripts, and any weapon-spawning exploits.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>4. Captain Rules</h3>
+        <div class="reg"><div class="reg-no">4.1–4.3</div><div class="reg-body">Captains: enhance scoreboard screenshot legibility, provide rcon status screenshots, and submit final scores with documentation to the shared drive.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>5. Pauses</h3>
+        <div class="reg"><div class="reg-no">5.1–5.2</div><div class="reg-body">Each team receives one two-minute pause per half, callable only immediately after a cap-out.</div></div>
+        <div class="reg"><div class="reg-no">5.3–5.4</div><div class="reg-body">Only captains may initiate pauses, with the exception of technical crashes (any team member may call).</div></div>
+        <div class="reg"><div class="reg-no">5.5</div><div class="reg-body"><strong>Unauthorized-pause penalties:</strong> first offense awards opposing team cap-out points; second offense results in immediate match forfeiture.</div></div>
+      </div>
+
+      <div class="regs-foot">
+        Above text is an abridged transcription pending verification against the original on file at WSDoD command. In any conflict, the original wording governs. Captains will be issued the authoritative copy on the day.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § VII — CODE OF CONDUCT
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="conduct" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VII</div>
+      <h2 class="chapter-title">Code of Conduct</h2>
+      <span class="chapter-stamp">ADULT COMPETITORS — IN GOOD FAITH</span>
+    </header>
+
+    <div class="chapter-body regs">
+
+      <div class="reg-section">
+        <h3>0. Purpose</h3>
+        <div class="reg"><div class="reg-no">—</div><div class="reg-body">This Code of Conduct exists to ensure a fair, respectful, and enjoyable experience for all participants. As adult competitors, we expect players to uphold the highest standards of integrity, sportsmanship, and professionalism throughout the weekend.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>1. Sportsmanship &amp; Respect</h3>
+        <div class="reg"><div class="reg-no">1.1</div><div class="reg-body">While toxic behavior is common in this community online, let's strive to do better in person. Treat all players, officials, and spectators with respect. <strong>Harassment, abuse, or discriminatory behavior — verbal, written, or physical — will not be tolerated.</strong></div></div>
+        <div class="reg"><div class="reg-no">1.2</div><div class="reg-body">Practice good sportsmanship. Healthy competition is encouraged, but win or lose, do so with dignity. Excessive taunting, gloating, or inflammatory behavior is prohibited. A little is normal in this community — keep it within reason.</div></div>
+        <div class="reg"><div class="reg-no">1.3</div><div class="reg-body">We are all here to have a good time, connect with others, and be competitive. Be considerate of the people around you.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>2. Fair Play</h3>
+        <div class="reg"><div class="reg-no">2.1</div><div class="reg-body"><strong>No cheating or exploiting of any kind.</strong> The LAN follows the KTP rules wherever applicable, including <em>Nein's CVAR checker</em> on all LAN servers.</div></div>
+        <div class="reg"><div class="reg-no">2.2</div><div class="reg-body">Use of third-party software, scripts, exploits, or tampering with game files — outside of approved files submitted to LAN organizers prior to the tournament — is grounds for immediate disqualification.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>3. Conduct During Matches</h3>
+        <div class="reg"><div class="reg-no">3.1</div><div class="reg-body">Follow all match rules and schedules. Be on time and ready to play. Chronic lateness may result in penalties or forfeits. Group-stage schedule will be posted prior to the tournament; knock-out stage prior to leaving for the day. Be responsible for your team and know when your matches will take place.</div></div>
+        <div class="reg"><div class="reg-no">3.2</div><div class="reg-body">To keep the tournament on time, matches will start no later than <strong>10 minutes</strong> after their scheduled start, regardless of how many players are ready. Teams can choose to forfeit at that time if they don't have a full squad. Ringers are not allowed during tournament play except in extenuating circumstances at tournament-staff discretion.</div></div>
+        <div class="reg"><div class="reg-no">3.3</div><div class="reg-body">Be mindful of noise levels and behavior. Keep noise at a reasonable level so everyone can enjoy the gaming experience.</div></div>
+        <div class="reg"><div class="reg-no">3.4</div><div class="reg-body"><strong>Stream sniping is prohibited.</strong> Using information not available to players within their (or their teammates') point of view, in a way that gains unfair advantage, can result in forfeit of the match.</div></div>
+        <div class="reg"><div class="reg-no">3.5</div><div class="reg-body"><strong>Mumble is the sole authorized comms tool.</strong> Using any tool outside of Mumble or in-game voice is prohibited.</div></div>
+        <div class="reg"><div class="reg-no">3.6</div><div class="reg-body">Follow instructions from Tournament Staff. They are here to ensure everyone has a good time and to maintain order. Respect their decisions — their decisions are final.</div></div>
+        <div class="reg"><div class="reg-no">3.7</div><div class="reg-body">Players are required to use the alias they signed up with, or some variation thereof. <strong>Aliasing is prohibited.</strong></div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>4. Conduct Outside of Matches</h3>
+        <div class="reg"><div class="reg-no">4.1</div><div class="reg-body">Outside of matches, available PCs can be claimed and used at will for other activities. Be aware that PCs are not permanently assigned — be respectful of other attendees and allow others a chance to use the PCs.</div></div>
+        <div class="reg"><div class="reg-no">4.2</div><div class="reg-body">No formal time limits on PC use — use your best judgement. Tournament Staff will intervene if necessary to free up PCs for others.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>5. Equipment and LAN Etiquette</h3>
+        <div class="reg"><div class="reg-no">5.1</div><div class="reg-body">Handle equipment with care. Take care of shared equipment and respect the venue. Treat the space responsibly.</div></div>
+        <div class="reg"><div class="reg-no">5.2</div><div class="reg-body">Be accountable for your own equipment. Neither the LAN Center nor Tournament Staff is responsible for any lost or stolen items. Bring a tote or box for your peripherals when not actively using a PC.</div></div>
+        <div class="reg"><div class="reg-no">5.3</div><div class="reg-body">Clean up your area after using a PC — including when leaving for an extended period — so that others may have a chance to play. Ask Tournament Staff before leaving peripherals at a specific PC.</div></div>
+        <div class="reg"><div class="reg-no">5.4</div><div class="reg-body">Be respectful of, and do not tamper with, others' equipment.</div></div>
+        <div class="reg"><div class="reg-no">5.5</div><div class="reg-body">Use the network responsibly. Don't abuse bandwidth or download anything illegal.</div></div>
+        <div class="reg"><div class="reg-no">5.6</div><div class="reg-body">Report any damaged or malfunctioning equipment to Tournament Staff immediately.</div></div>
+        <div class="reg"><div class="reg-no">5.7</div><div class="reg-body">Admin access is available on the PCs, but limit any changes to those necessary for your peripheral use. All changes are subject to review by Tournament Staff. <strong>This includes "Snap Tap."</strong> No unauthorized software or hardware modifications. If unsure, ask an official before making changes.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>6. Substance Use</h3>
+        <div class="reg"><div class="reg-no">6.1</div><div class="reg-body">We are here to have a good time — maintain control of yourself when consuming substances. Excessive rowdiness can result in expulsion from the LAN for the remainder of the day.</div></div>
+        <div class="reg"><div class="reg-no">6.2</div><div class="reg-body">The LAN center has banned smoking inside. Respect their rules.</div></div>
+        <div class="reg"><div class="reg-no">6.3</div><div class="reg-body">Vaping is allowed by the LAN center, but be considerate of others — keep excessive vaping outside.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>7. Penalties for Violations</h3>
+        <div class="reg"><div class="reg-no">7.1</div><div class="reg-body">Tournament organizers reserve the right to issue the following based on severity and frequency of misconduct:
+          <ul style="margin:8px 0 4px 0; padding-left:18px; font-family:var(--serif); font-size:15.5px;">
+            <li>Verbal or written warnings</li>
+            <li>Match or round forfeiture</li>
+            <li>Temporary or permanent removal from the tournament</li>
+            <li>Ban from future events</li>
+          </ul>
+        </div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>8. Agreement</h3>
+        <div class="reg"><div class="reg-no">8.1</div><div class="reg-body">By participating in this tournament, you agree to abide by this Code of Conduct. <em>Ignorance of the rules is not a valid defense.</em> Let's work together to foster a competitive but respectful community.</div></div>
+      </div>
+
+      <div class="regs-foot">
+        Operative copy. The Code of Conduct above is published verbatim from the WSDoD command archive; any future amendments will be reflected here on the next document refresh.
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § VIII — LAN COMMAND
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="command" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VIII</div>
+      <h2 class="chapter-title">LAN Command</h2>
+      <span class="chapter-stamp">TOURNAMENT STAFF — SWORN IN</span>
+    </header>
+
+    <div class="chapter-body">
+      <div class="staff-meta">
+        <span>On-site staff: <strong>10</strong></span>
+        <span>Decisions per §3.6 are final.</span>
+        <span>Address queries to the nearest admin on the floor.</span>
+      </div>
+
+      <div class="staff-roster">
+        <div class="staff-badge">
+          <div class="badge-num">№<br>01</div>
+          <div>
+            <div class="badge-name">nein</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>02</div>
+          <div>
+            <div class="badge-name">las1k64</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>03</div>
+          <div>
+            <div class="badge-name">kanguh</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>04</div>
+          <div>
+            <div class="badge-name">kr0d</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>05</div>
+          <div>
+            <div class="badge-name">twist</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>06</div>
+          <div>
+            <div class="badge-name">cK</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>07</div>
+          <div>
+            <div class="badge-name">seanality</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>08</div>
+          <div>
+            <div class="badge-name">shmaltz</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>09</div>
+          <div>
+            <div class="badge-name">stealthlol</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+
+        <div class="staff-badge">
+          <div class="badge-num">№<br>10</div>
+          <div>
+            <div class="badge-name">chi</div>
+            <div class="badge-role">LAN Staff</div>
+          </div>
+          <div class="badge-sworn">SWORN IN<small>WSDoD ★ 26</small></div>
+        </div>
+      </div>
+
+      <p class="typed-line" style="margin-top: 20px; font-size: 13px; color: var(--ink-soft);">
+        Per <span style="font-family: var(--mono);">§ 3.6</span> &mdash; staff decisions on the floor are final. Captains escalating disputes should approach the nearest admin and present the relevant demo or screenshot. Several of the staff above are also competing; they recuse on rulings touching their own teams.
+      </p>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § IX — FIELD DISPATCHES (Streams / Media)
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="dispatches" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">IX</div>
+      <h2 class="chapter-title">Field Dispatches</h2>
+      <span class="chapter-stamp">LIVE WIRE — STREAMING POSITIONS</span>
+    </header>
+
+    <div class="chapter-body">
+      <p class="typed-line" style="margin-bottom:18px;">Two casting positions are confirmed for the LAN. Stream URLs publish on the day; check this dispatch panel or the WSDoD Discord — <a href="https://discord.gg/bDw2NmEFj2">discord.gg/bDw2NmEFj2</a> — for live links.</p>
+
+      <div class="dispatches">
+        <article class="dispatch-card">
+          <div class="dispatch-screen"><span>SIGNAL · CHANNEL 1</span></div>
+          <div class="dispatch-body">
+            <span class="caster">COREY MARKO</span>
+            <span class="role">Lead Caster</span>
+            <span class="channel">URL: posted on the day</span>
+          </div>
+        </article>
+
+        <article class="dispatch-card">
+          <div class="dispatch-screen"><span>SIGNAL · CHANNEL 2</span></div>
+          <div class="dispatch-body">
+            <span class="caster">ALOPEX</span>
+            <span class="role">Caster</span>
+            <span class="channel">URL: posted on the day</span>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       § X — DEMO ARCHIVE
+       ══════════════════════════════════════════════════════════════════ -->
+  <section id="archive" class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">X</div>
+      <h2 class="chapter-title">Demo Archive</h2>
+      <span class="chapter-stamp">POV SUBMISSION — PER §3.1</span>
+    </header>
+
+    <div class="chapter-body archive-block">
+      <div class="archive-card">
+        <h4>Submission Requirements</h4>
+        <p>Per <span class="ref">§ 3.1</span>, every operator records a POV demo each half. Submit your two demos per match to LAN admin staff within thirty (30) minutes of match end.</p>
+        <p>Filename convention: <code>&lt;steamid&gt;_&lt;match-no&gt;_&lt;half&gt;.dem</code>. Demos missing or mislabeled may invalidate dispute claims.</p>
+      </div>
+      <div class="archive-card">
+        <h4>Channel of Submission</h4>
+        <p>Direct message your demos to an on-the-day admin via the <a href="https://discord.gg/bDw2NmEFj2">WSDoD Discord</a>, or hand them off on a labeled flash drive at the LAN admin table. A web upload form is under construction; details will be posted in this panel when available.</p>
+        <p class="ref">Late submissions: at admin discretion.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       FOOTER — Signature & Authentication
+       ══════════════════════════════════════════════════════════════════ -->
+  <footer class="signature">
+    <div class="sign-block">
+      <strong>End of Document</strong>
+      Operations Dossier compiled and filed for distribution to all enlisted operators.
+      Reproduction encouraged. Circulate freely among unit captains and rank-and-file.
+      <div class="doc-id">
+        WSDoD/LAN-26/OPORD-1 &nbsp;·&nbsp; Page 1 of 1 &nbsp;·&nbsp; Revision {{ last_updated }} &nbsp;·&nbsp; Compiled at hq.dodworldseries
+      </div>
+    </div>
+    <div class="stamp-auth">
+      AUTHENTICATED
+      <small>WSDoD ★ COMMAND</small>
+    </div>
+  </footer>
+
+</article>
+
+</body>
+</html>
