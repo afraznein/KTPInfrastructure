@@ -24,9 +24,19 @@
 #     introduce flakes in our 5s polling timeouts.
 #
 # Trigger model:
-#   - Manually via workflow_dispatch (operator-driven for now)
-#   - On PR to main (warn-only initially per the test-infra plan; flip to
-#     blocking after 2 weeks green-on-main per design decision 2026-04-24)
+#   - Manually via workflow_dispatch (operator-driven, with timeout multiplier)
+#   - On every PR to main — required status check per branch protection on
+#     `main` (flipped from warn-only after 2 weeks green-on-main, original
+#     design decision 2026-04-24, applied 2026-05-18).
+#
+# No `paths:` filter on `pull_request:` — workflow fires on every PR to main
+# so the required status check `Tier 2 Integration / integration` always
+# reports back. The job itself decides whether to run pytest based on what
+# actually changed (see "Detect relevant changes" step). This avoids the
+# GitHub-Actions gotcha where a `paths:`-filtered required check is silently
+# skipped on docs-only / scripts-only PRs, leaving the PR un-mergeable
+# without `--admin` override. Same self-skip-pass pattern as
+# `config-tests.yml` (commit `99b0abf`).
 
 name: Tier 2 Integration
 
@@ -40,12 +50,6 @@ on:
         default: '1.0'
   pull_request:
     branches: [main]
-    paths:
-      - 'tests/integration/**'
-      - 'tests/smoke/boot_subprocess.py'
-      # Trigger when KTPMatchHandler test-mode rcons or DODX test natives
-      # change — these are the production-path surfaces Tier 2 covers
-      - '.github/workflows/tier2-integration.yml'
 
 # Concurrency: only one Tier 2 run at a time per PR. Self-hosted runner
 # can't safely run two suites in parallel against the same hlds_linux
@@ -79,13 +83,44 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Need diff against base for relevance detection on PRs.
+          fetch-depth: 0
+
+      - name: Detect relevant changes
+        id: changes
+        run: |
+          set -e
+          # Non-PR events (workflow_dispatch / workflow_call / push) always run.
+          # PR events: only run if integration tests, the boot helper, or this
+          # workflow file itself changed. The self-hosted runner's pre-staged
+          # serverfiles tree covers everything else Tier 2 exercises; changes
+          # to scripts/, docs/, config/, or any other in-repo path don't
+          # invalidate the test surface so skipping pytest is safe.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "Non-PR event ${{ github.event_name }}; will run pytest."
+            exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$base" "$head" \
+              | grep -qE '^(tests/integration/|tests/smoke/boot_subprocess\.py$|\.github/workflows/tier2-integration\.yml$)'; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+            echo "Relevant files changed; will run pytest."
+          else
+            echo "run=0" >> "$GITHUB_OUTPUT"
+            echo "::notice::No tests/integration/ or boot_subprocess.py changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
+          fi
 
       - name: Set up Python
+        if: steps.changes.outputs.run == '1'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install test deps
+        if: steps.changes.outputs.run == '1'
         run: |
           python -m pip install --upgrade pip
           # Pinned to the same versions used in dev. pytest-rerunfailures
@@ -97,6 +132,7 @@ jobs:
           pip install pytest==9.0.3 pytest-rerunfailures==15.0 allure-pytest==2.13.5
 
       - name: Verify test artifacts present in serverfiles
+        if: steps.changes.outputs.run == '1'
         run: |
           set -e
           SF="$KTP_HLDS_SERVERFILES"
@@ -109,6 +145,7 @@ jobs:
           echo "All required artifacts present."
 
       - name: Run Tier 2 integration suite
+        if: steps.changes.outputs.run == '1'
         run: |
           # --reruns 2: retry transient failures up to 2 times before
           #   marking a test as failed. Catches I/O race flakes without
@@ -128,7 +165,7 @@ jobs:
             --alluredir=./allure-results
 
       - name: Upload Allure results (always)
-        if: always()
+        if: always() && steps.changes.outputs.run == '1'
         uses: actions/upload-artifact@v4
         with:
           # Always uploaded so passing runs also have a report on hand
@@ -140,7 +177,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Post Tier 2 result embed to Discord
-        if: always()
+        if: always() && steps.changes.outputs.run == '1'
         # Self-hosted runner is on the data server, so /etc/ktp/discord-relay.conf
         # is readable directly — no GH-Actions secrets needed for the relay
         # creds. Helper script reads RELAY_URL + AUTH_SECRET + TIER2_REPORT_CHANNEL
@@ -166,7 +203,7 @@ jobs:
             || echo "WARNING: post-tier2-result.py exited non-zero; embed not posted (test result unaffected)"
 
       - name: Upload Tier 2 report JSON (always)
-        if: always()
+        if: always() && steps.changes.outputs.run == '1'
         uses: actions/upload-artifact@v4
         with:
           # Useful for post-mortem analysis even after the embed has been
@@ -177,7 +214,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Collect crash artifacts on failure
-        if: failure()
+        if: failure() && steps.changes.outputs.run == '1'
         run: |
           # If hlds_linux crashed during the run, /tmp will have a core
           # file. Capture it for forensic analysis.
@@ -188,7 +225,7 @@ jobs:
           ls -la ci-artifacts/
 
       - name: Upload artifacts on failure
-        if: failure()
+        if: failure() && steps.changes.outputs.run == '1'
         uses: actions/upload-artifact@v4
         with:
           name: tier2-failure-artifacts-${{ github.run_id }}
