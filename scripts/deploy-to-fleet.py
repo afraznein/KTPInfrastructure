@@ -54,14 +54,29 @@ except ImportError:
     sys.exit(1)
 
 
+def _fleet_ssh_password():
+    """dodserver SSH password — from $KTP_FLEET_SSH_PASSWORD or ~/.ktp_fleet_ssh_password.
+    Never hardcoded: the prior value leaked in this public repo and was rotated 2026-05-31."""
+    import os
+    pw = os.environ.get('KTP_FLEET_SSH_PASSWORD')
+    if not pw:
+        p = os.path.expanduser('~/.ktp_fleet_ssh_password')
+        if os.path.exists(p):
+            pw = open(p).read().strip()
+    if not pw:
+        raise SystemExit('dodserver SSH password not configured — set $KTP_FLEET_SSH_PASSWORD '
+                         'or write it to ~/.ktp_fleet_ssh_password')
+    return pw
+
+
 # All five active fleet hosts.  Per CLAUDE.md root creds, but we use the
 # dodserver user since all deploy paths land under ~dodserver/.
 SERVERS = {
-    'atlanta': {'host': '74.91.121.9',   'user': 'dodserver', 'password': 'REDACTED', 'description': 'Atlanta Baremetal'},
-    'dallas':  {'host': '74.91.126.55',  'user': 'dodserver', 'password': 'REDACTED', 'description': 'Dallas Baremetal'},
-    'denver':  {'host': '66.163.114.109','user': 'dodserver', 'password': 'REDACTED', 'description': 'Denver Baremetal'},
-    'newyork': {'host': '74.91.123.64',  'user': 'dodserver', 'password': 'REDACTED', 'description': 'New York Baremetal'},
-    'chicago': {'host': '172.238.176.101','user': 'dodserver','password': 'REDACTED', 'description': 'Chicago VPS'},
+    'atlanta': {'host': '74.91.121.9',   'user': 'dodserver', 'description': 'Atlanta Baremetal'},
+    'dallas':  {'host': '74.91.126.55',  'user': 'dodserver', 'description': 'Dallas Baremetal'},
+    'denver':  {'host': '66.163.114.109','user': 'dodserver', 'description': 'Denver Baremetal'},
+    'newyork': {'host': '74.91.123.64',  'user': 'dodserver', 'description': 'New York Baremetal'},
+    'chicago': {'host': '172.238.176.101','user': 'dodserver', 'description': 'Chicago VPS'},
 }
 
 PORTS = [27015, 27016, 27017, 27018, 27019]   # 5 instances per host = 25 total
@@ -148,7 +163,7 @@ def deploy_to_instance(host_key: str, host_info: dict, port: int, artifacts: lis
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh.connect(host_info['host'], username=host_info['user'],
-                    password=host_info['password'], timeout=timeout)
+                    password=_fleet_ssh_password(), timeout=timeout)
     except Exception as e:
         for a in artifacts:
             results.append(Outcome(host_key, port, a.basename, 'ssh_fail', str(e)[:80]))

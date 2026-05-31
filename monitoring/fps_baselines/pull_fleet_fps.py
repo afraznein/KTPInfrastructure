@@ -31,12 +31,27 @@ import paramiko
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 
+def _fleet_ssh_password():
+    """dodserver SSH password — from $KTP_FLEET_SSH_PASSWORD or ~/.ktp_fleet_ssh_password.
+    Never hardcoded: the prior value leaked in this public repo and was rotated 2026-05-31."""
+    import os
+    pw = os.environ.get('KTP_FLEET_SSH_PASSWORD')
+    if not pw:
+        p = os.path.expanduser('~/.ktp_fleet_ssh_password')
+        if os.path.exists(p):
+            pw = open(p).read().strip()
+    if not pw:
+        raise SystemExit('dodserver SSH password not configured — set $KTP_FLEET_SSH_PASSWORD '
+                         'or write it to ~/.ktp_fleet_ssh_password')
+    return pw
+
+
 SERVERS = {
-    'atlanta': {'host': '74.91.121.9',     'user': 'dodserver', 'password': 'REDACTED'},
-    'dallas':  {'host': '74.91.126.55',    'user': 'dodserver', 'password': 'REDACTED'},
-    'denver':  {'host': '66.163.114.109',  'user': 'dodserver', 'password': 'REDACTED'},
-    'newyork': {'host': '74.91.123.64',    'user': 'dodserver', 'password': 'REDACTED'},
-    'chicago': {'host': '172.238.176.101', 'user': 'dodserver', 'password': 'REDACTED'},
+    'atlanta': {'host': '74.91.121.9',     'user': 'dodserver'},
+    'dallas':  {'host': '74.91.126.55',    'user': 'dodserver'},
+    'denver':  {'host': '66.163.114.109',  'user': 'dodserver'},
+    'newyork': {'host': '74.91.123.64',    'user': 'dodserver'},
+    'chicago': {'host': '172.238.176.101', 'user': 'dodserver'},
 }
 PORTS = [27015, 27016, 27017, 27018, 27019]
 
@@ -52,7 +67,7 @@ def ssh_pull(host_label: str, host_cfg: dict, ports: Iterable[int]) -> dict[str,
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         client.connect(host_cfg['host'], username=host_cfg['user'],
-                       password=host_cfg['password'], timeout=15,
+                       password=_fleet_ssh_password(), timeout=15,
                        allow_agent=False, look_for_keys=False)
     except Exception as e:
         print(f'  [{host_label}] connect failed: {e}', file=sys.stderr)

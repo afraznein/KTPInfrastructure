@@ -9,9 +9,24 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 FPS_RE = re.compile(r'L (\d{2}/\d{2}/\d{4}) - (\d{2}:\d{2}:\d{2}):\s*\[KTP_PROFILE\][^\n]*frames=(\d+)\s+fps=([\d.]+)')
 
+def _fleet_ssh_password():
+    """dodserver SSH password — from $KTP_FLEET_SSH_PASSWORD or ~/.ktp_fleet_ssh_password.
+    Never hardcoded: the prior value leaked in this public repo and was rotated 2026-05-31."""
+    import os
+    pw = os.environ.get('KTP_FLEET_SSH_PASSWORD')
+    if not pw:
+        p = os.path.expanduser('~/.ktp_fleet_ssh_password')
+        if os.path.exists(p):
+            pw = open(p).read().strip()
+    if not pw:
+        raise SystemExit('dodserver SSH password not configured — set $KTP_FLEET_SSH_PASSWORD '
+                         'or write it to ~/.ktp_fleet_ssh_password')
+    return pw
+
+
 c = paramiko.SSHClient()
 c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-c.connect('74.91.121.9', username='dodserver', password='REDACTED', timeout=15,
+c.connect('74.91.121.9', username='dodserver', password=_fleet_ssh_password(), timeout=15,
           allow_agent=False, look_for_keys=False)
 _, out, _ = c.exec_command(
     'grep "\\[KTP_PROFILE\\]" ~/dod-27019/log/console/*-console.log 2>/dev/null',

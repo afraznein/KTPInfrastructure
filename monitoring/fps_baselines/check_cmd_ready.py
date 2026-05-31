@@ -15,10 +15,25 @@ SERVERS = {
 }
 PORTS = [27015, 27016, 27017, 27018, 27019]
 
+def _fleet_ssh_password():
+    """dodserver SSH password — from $KTP_FLEET_SSH_PASSWORD or ~/.ktp_fleet_ssh_password.
+    Never hardcoded: the prior value leaked in this public repo and was rotated 2026-05-31."""
+    import os
+    pw = os.environ.get('KTP_FLEET_SSH_PASSWORD')
+    if not pw:
+        p = os.path.expanduser('~/.ktp_fleet_ssh_password')
+        if os.path.exists(p):
+            pw = open(p).read().strip()
+    if not pw:
+        raise SystemExit('dodserver SSH password not configured — set $KTP_FLEET_SSH_PASSWORD '
+                         'or write it to ~/.ktp_fleet_ssh_password')
+    return pw
+
+
 def grep_one(label, host):
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect(host, username='dodserver', password='REDACTED', timeout=15,
+    c.connect(host, username='dodserver', password=_fleet_ssh_password(), timeout=15,
               allow_agent=False, look_for_keys=False)
     parts = []
     for p in PORTS:
