@@ -64,10 +64,12 @@ async def player_add(request: Request):
     team_id = int(f["team_id"])
     display = (f.get("display_name") or "").strip()
     if not display:
-        raise HTTPException(400, "Player display name required.")
+        raise HTTPException(400, "Player alias required.")
+    steam = (f.get("steam_id") or "").strip()
+    if not steam:
+        raise HTTPException(400, "Player Steam ID required.")
     raw_discord = (f.get("discord_id") or "").strip()
     discord = int(raw_discord) if raw_discord.isdigit() else None
-    steam = (f.get("steam_id") or "").strip() or None
     is_cap = 1 if f.get("is_captain") else 0
     try:
         if is_cap:  # one captain per team

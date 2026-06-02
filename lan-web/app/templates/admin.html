@@ -54,8 +54,8 @@
         <form method="post" action="{{ url_for('admin_player_add') }}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">
           <input type="hidden" name="team_id" value="{{ t.id }}">
           <input name="display_name" placeholder="alias" required style="width:9rem;">
-          <input name="discord_id" placeholder="discord id" style="width:11rem;">
-          <input name="steam_id" placeholder="steam id" style="width:9rem;">
+          <input name="steam_id" placeholder="STEAM_0:1:… (required)" required style="width:12rem;">
+          <input name="discord_id" placeholder="discord id (optional)" style="width:11rem;">
           <label style="font-size:12px;"><input type="checkbox" name="is_captain"> captain</label>
           <button type="submit">Add player</button>
         </form>
