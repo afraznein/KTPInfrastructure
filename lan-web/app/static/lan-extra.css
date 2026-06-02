@@ -1,0 +1,102 @@
+/* lan-extra.css — WWII field-manual polish layered ON TOP of dossier.css.
+   Fully additive + reversible: remove the <link> in base.html to revert.
+   First pass: typography hierarchy, page-load motion, texture/stamps. */
+
+/* ── 1. Typography & hierarchy ───────────────────────────────────────── */
+.chapter-title { letter-spacing: 0.055em; }
+.chapter-stamp { opacity: 0.88; }
+.title-stamp   { letter-spacing: 0.04em; }
+/* tighten the section-number stamp a touch */
+.chapter-num { transform: translateY(2px); }
+
+/* ── 2. Page-load reveal (staggered), motion-safe ────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .masthead, nav.toc, section.chapter {
+    animation: lan-rise 0.5s cubic-bezier(.2,.7,.2,1) both;
+  }
+  nav.toc                       { animation-delay: 0.06s; }
+  section.chapter               { animation-delay: 0.12s; }
+  section.chapter:nth-of-type(2){ animation-delay: 0.18s; }
+  section.chapter:nth-of-type(3){ animation-delay: 0.24s; }
+  .stamp-decl { animation: lan-stamp 0.45s ease-out 0.55s both; transform-origin: center; }
+}
+@keyframes lan-rise  { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes lan-stamp { 0% { opacity: 0; transform: scale(1.7) rotate(-9deg); }
+                       70%{ opacity: 1; transform: scale(0.94) rotate(-4deg); }
+                       100%{ transform: scale(1) rotate(-4deg); } }
+
+/* ── 3. Texture & stamps (faint, decorative, non-interactive) ────────── */
+.lan-mark { position: absolute; pointer-events: none; user-select: none; z-index: 1; }
+/* faint coffee ring, lower-right of the sheet */
+.lan-coffee {
+  right: 46px; bottom: 96px; width: 88px; height: 88px; border-radius: 50%;
+  border: 7px solid #6b4423; opacity: 0.09; transform: rotate(8deg);
+  box-shadow: inset 0 0 0 2px rgba(107,68,35,0.5);
+}
+/* rotated "FILE COPY" intake stamp, upper-right */
+.lan-filecopy {
+  right: 54px; top: 158px; font-family: var(--stencil); font-size: 20px;
+  letter-spacing: 0.22em; color: var(--alert); opacity: 0.15;
+  border: 3px solid var(--alert); padding: 3px 10px; border-radius: 2px;
+  transform: rotate(-13deg);
+}
+@media (max-width: 720px) { .lan-mark { display: none; } }
+
+/* ── 4. Controls: buttons + inputs (were browser-default) ────────────── */
+button, input[type="submit"], input[type="button"] {
+  font-family: var(--stencil);
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--paper);
+  background: var(--olive);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  padding: 7px 15px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 rgba(26,20,14,0.3);   /* stamped / ammo-crate edge */
+  transition: background .1s, transform .05s, box-shadow .05s;
+}
+button:hover, input[type="submit"]:hover { background: var(--olive-bright); }
+button:active, input[type="submit"]:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0 0 0 rgba(26,20,14,0.3);
+}
+button:focus-visible { outline: 2px solid var(--wsdod-blue); outline-offset: 2px; }
+
+/* primary ops (open poll / compute / generate / upload / confirm) read blue */
+form[action*="open"] button,
+form[action*="compute"] button,
+form[action*="generate"] button,
+form[action*="upload"] button,
+form[action*="checkin"] button { background: var(--wsdod-blue); }
+form[action*="open"] button:hover,
+form[action*="compute"] button:hover,
+form[action*="generate"] button:hover,
+form[action*="upload"] button:hover,
+form[action*="checkin"] button:hover { background: var(--wsdod-stamp); }
+
+/* destructive / closing actions read alert-red */
+form[action*="delete"] button,
+form[action*="close"] button { background: var(--alert); }
+form[action*="delete"] button:hover,
+form[action*="close"] button:hover { background: var(--alert-bleed); }
+
+/* text/number/select inputs — typewriter on paper, hard edges */
+input[type="text"], input[type="number"], input[type="search"],
+input:not([type]), select, textarea {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--ink-margin);
+  border-radius: 0;
+  padding: 5px 7px;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--wsdod-blue);
+  box-shadow: inset 0 -2px 0 var(--wsdod-blue);
+}
+input::placeholder { color: var(--ink-faint); font-style: italic; }
