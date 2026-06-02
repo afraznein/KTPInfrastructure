@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+  <p class="stamp">Operation Order</p>
+  <h1>WSDoD LAN 2026</h1>
+  <p>Group stage Saturday &middot; playoffs Sunday. Captains submit seeding ballots; results report live as the rounds run.</p>
+  {% if ident %}
+    <p>Signed in as <strong>{{ ident.discord_name }}</strong> &mdash; {{ ident.team_name }}{% if ident.is_captain %} (captain){% endif %}.</p>
+  {% elif session_user %}
+    <p>Signed in via Discord as <strong>{{ session_user.discord_name }}</strong>, but your account isn't tied to a LAN roster yet.</p>
+  {% else %}
+    <p><a class="btn" href="{{ url_for('login') }}">Sign in with Discord</a></p>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,19 @@
+[Unit]
+Description=WSDoD LAN 2026 web service
+After=network.target mysql.service
+Wants=mysql.service
+
+[Service]
+Type=simple
+User=lanweb
+Group=lanweb
+WorkingDirectory=/opt/lan-web
+EnvironmentFile=/etc/ktp/lan-web.env
+ExecStart=/opt/lan-web/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8099
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

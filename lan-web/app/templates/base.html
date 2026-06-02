@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}WSDoD LAN 2026{% endblock %}</title>
+<style>
+  :root{--khaki:#c9b88a;--olive:#3b3a2a;--ink:#1c1b14;--stamp:#7a2f22;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ink);color:var(--khaki);font-family:"Courier New",monospace;line-height:1.5;}
+  header{border-bottom:3px double var(--khaki);padding:1rem 1.25rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;}
+  header .brand{font-weight:bold;letter-spacing:.25em;text-transform:uppercase;}
+  nav a{color:var(--khaki);text-decoration:none;margin-left:1.25rem;text-transform:uppercase;font-size:.78rem;letter-spacing:.15em;}
+  nav a:hover{color:#fff;}
+  main{max-width:880px;margin:0 auto;padding:2rem 1.25rem;}
+  h1{letter-spacing:.1em;text-transform:uppercase;}
+  table{border-collapse:collapse;width:100%;}
+  td{border-bottom:1px solid #444;padding:.5rem .25rem;}
+  td:first-child{color:#8f865f;text-transform:uppercase;font-size:.78rem;letter-spacing:.1em;width:9rem;}
+  .stamp{color:var(--stamp);border:2px solid var(--stamp);display:inline-block;padding:.15rem .55rem;text-transform:uppercase;letter-spacing:.2em;transform:rotate(-3deg);font-size:.8rem;}
+  .btn{display:inline-block;background:var(--olive);color:var(--khaki);border:1px solid var(--khaki);padding:.55rem 1.1rem;text-decoration:none;text-transform:uppercase;letter-spacing:.15em;}
+  .btn:hover{background:var(--khaki);color:var(--ink);}
+  footer{border-top:1px solid #444;color:#7c7458;font-size:.72rem;text-align:center;padding:1rem;}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">&#9670; WSDoD LAN 2026</span>
+  <nav>
+    <a href="{{ url_for('index') }}">Briefing</a>
+    {% if session_user %}
+      <a href="{{ url_for('me_page') }}">{{ session_user.discord_name }}</a>
+      <a href="{{ url_for('logout') }}">Sign out</a>
+    {% else %}
+      <a href="{{ url_for('login') }}">Discord Login</a>
+    {% endif %}
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>WSDoD &mdash; World Series of Day of Defeat &middot; transmitted via KTP infrastructure</footer>
+</body>
+</html>

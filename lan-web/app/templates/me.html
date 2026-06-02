@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Personnel File &mdash; WSDoD LAN 2026{% endblock %}
+{% block content %}
+  <h1>Personnel File</h1>
+  {% if not session_user %}
+    <p>Not signed in. <a class="btn" href="{{ url_for('login') }}">Sign in with Discord</a></p>
+  {% elif not ident %}
+    <p class="stamp">Unlinked</p>
+    <p>Signed in as <strong>{{ session_user.discord_name }}</strong> (Discord ID {{ session_user.discord_id }}),
+       but this Discord account isn't tied to a LAN roster. An admin links your Discord ID into
+       <code>lan_players</code> once your team is drafted.</p>
+  {% else %}
+    <table>
+      <tr><td>Callsign</td><td>{{ ident.display_name }}</td></tr>
+      <tr><td>Discord</td><td>{{ ident.discord_name }}</td></tr>
+      <tr><td>Team</td><td>{{ ident.team_name }}{% if ident.team_tag %} [{{ ident.team_tag }}]{% endif %}</td></tr>
+      <tr><td>Role</td><td>{% if ident.is_captain %}Captain &mdash; can submit seeding &amp; report results{% else %}Player{% endif %}</td></tr>
+      <tr><td>Group seed</td><td>{{ ident.seed if ident.seed is not none else "TBD" }}</td></tr>
+    </table>
+  {% endif %}
+{% endblock %}
