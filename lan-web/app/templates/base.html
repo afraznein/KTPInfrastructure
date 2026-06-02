@@ -77,9 +77,11 @@
       <li><a href="{{ url_for('seeds') }}"    class="{{ 'active' if active_page == 'seeds' }}"><span class="toc-num">03</span> <span class="toc-title">Seeding — Team Ballot</span> <span class="toc-page">p. 03</span></a></li>
       <li><a href="{{ url_for('schedule') }}" class="{{ 'active' if active_page == 'schedule' }}"><span class="toc-num">04</span> <span class="toc-title">Communiqué — Schedule</span>      <span class="toc-page">p. 04</span></a></li>
       <li><a href="{{ url_for('bracket') }}"  class="{{ 'active' if active_page == 'bracket' }}"><span class="toc-num">05</span> <span class="toc-title">Bracket — Playoffs</span>          <span class="toc-page">p. 05</span></a></li>
-      <li><a href="{{ url_for('checkin') }}" class="{{ 'active' if active_page == 'checkin' }}"><span class="toc-num">06</span> <span class="toc-title">Check-in</span>                   <span class="toc-page">p. 06</span></a></li>
-      <li><a href="{{ url_for('demos') }}"   class="{{ 'active' if active_page == 'demos' }}"><span class="toc-num">07</span> <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 07</span></a></li>
-      <li><a href="{{ url_for('rules') }}"    class="{{ 'active' if active_page == 'rules' }}"><span class="toc-num">08</span> <span class="toc-title">Rules &amp; Format</span>           <span class="toc-page">p. 08</span></a></li>
+      <li><a href="{{ url_for('stations') }}" class="{{ 'active' if active_page == 'stations' }}"><span class="toc-num">06</span> <span class="toc-title">Now Playing — Stations</span>     <span class="toc-page">p. 06</span></a></li>
+      <li><a href="{{ url_for('placements') }}" class="{{ 'active' if active_page == 'placements' }}"><span class="toc-num">07</span> <span class="toc-title">Final Placements</span>          <span class="toc-page">p. 07</span></a></li>
+      <li><a href="{{ url_for('checkin') }}" class="{{ 'active' if active_page == 'checkin' }}"><span class="toc-num">08</span> <span class="toc-title">Check-in</span>                   <span class="toc-page">p. 08</span></a></li>
+      <li><a href="{{ url_for('demos') }}"   class="{{ 'active' if active_page == 'demos' }}"><span class="toc-num">09</span> <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 09</span></a></li>
+      <li><a href="{{ url_for('rules') }}"    class="{{ 'active' if active_page == 'rules' }}"><span class="toc-num">10</span> <span class="toc-title">Rules &amp; Format</span>           <span class="toc-page">p. 10</span></a></li>
       {% if is_admin %}<li><a href="{{ url_for('admin') }}" class="{{ 'active' if active_page == 'admin' }}"><span class="toc-num">&#9733;</span> <span class="toc-title">Staff — Roster &amp; Control</span> <span class="toc-page">restricted</span></a></li>{% endif %}
     </ol>
   </nav>

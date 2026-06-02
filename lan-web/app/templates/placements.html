@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Final Placements{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">07</div>
+      <h2 class="chapter-title">Final Placements — Awards</h2>
+      <span class="chapter-stamp">ROAD'S END / FINAL STANDING</span>
+    </header>
+    <div class="chapter-body">
+      {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
+
+      <style>
+        .award { font-family:var(--stencil); letter-spacing:.1em; margin:6px 0; }
+        .award.champ { font-size:26px; color:var(--wsdod-blue); }
+        .award.lower { font-size:17px; color:var(--ink-soft); }
+        .place-table { width:100%; }
+        .place-rank { width:3.4rem; text-align:center; font-family:var(--mono); color:var(--ink-soft); }
+        .medal-1 .place-rank { background:#b8902f; color:var(--paper); font-weight:700; }
+        .medal-2 .place-rank { background:#9aa0a6; color:var(--paper); font-weight:700; }
+        .medal-3 .place-rank { background:#a9743c; color:var(--paper); font-weight:700; }
+      </style>
+
+      {% if champion %}<p class="award champ">&#9733; CHAMPION — {{ champion }}</p>{% endif %}
+      {% if lower_champion %}<p class="award lower">Lower-bracket champion — {{ lower_champion }}</p>{% endif %}
+
+      {% if placements %}
+      <h3 style="margin-top:18px;">Final standing</h3>
+      <table class="place-table">
+        <tbody>
+        {% for t in placements %}
+          <tr class="{{ 'medal-%d'|format(loop.index) if loop.index <= 3 }}">
+            <td class="place-rank">{{ loop.index }}</td>
+            <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} <span style="color:var(--ink-faint);">· {{ t.tag }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% elif not is_admin %}
+      <div class="pending-note">Final placements post here once the playoffs conclude.{% if champion %} The champion is in — the full standing follows.{% endif %}</div>
+      {% endif %}
+
+      {% if is_admin %}
+      <h3 style="margin-top:26px;">Publish placements <span style="font-size:12px;color:var(--ink-faint);">(staff)</span></h3>
+      <p style="font-size:13px;color:var(--ink-faint);">Pre-filled with a best-effort order from the bracket + group standings — adjust and publish. A blank slot is omitted; each team can be placed only once.</p>
+      <form method="post" action="{{ url_for('placements_set') }}">
+        <table>
+          <tbody>
+          {% for place, sel in slots %}
+            <tr>
+              <td class="place-rank">{{ place }}</td>
+              <td>
+                <select name="place_{{ place }}">
+                  <option value="">—</option>
+                  {% for t in all_teams %}<option value="{{ t.id }}" {{ 'selected' if sel == t.id }}>{{ t.name }}{% if t.tag %} · {{ t.tag }}{% endif %}</option>{% endfor %}
+                </select>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;gap:10px;align-items:center;">
+          <button type="submit">Publish placements</button>
+          <button type="submit" name="clear" value="1" formnovalidate onclick="return confirm('Clear published placements?');">Clear</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

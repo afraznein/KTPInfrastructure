@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Now Playing{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">06</div>
+      <h2 class="chapter-title">Now Playing — Stations</h2>
+      <span class="chapter-stamp">LIVE / STATION BOARD</span>
+    </header>
+    <div class="chapter-body">
+      {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
+
+      <style>
+        .stn-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; margin-top:6px; }
+        .stn { border:1px solid var(--ink-margin); background:var(--paper); padding:14px 16px; }
+        .stn.live { border-color:var(--wsdod-blue); border-left-width:4px; }
+        .stn.done { opacity:.7; }
+        .stn-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+        .stn-label { font-family:var(--stencil); letter-spacing:.06em; font-size:16px; color:var(--ink); }
+        .stn-badge { font-family:var(--typed); font-size:11px; letter-spacing:.16em; text-transform:uppercase; padding:1px 7px; border:1px solid var(--ink-margin); color:var(--ink-soft); }
+        .stn-badge.live { background:var(--wsdod-blue); color:var(--paper); border-color:var(--wsdod-blue); }
+        .stn-badge.done { color:var(--ink-faint); }
+        .stn-now { font-family:var(--typed); font-size:15px; color:var(--ink); margin:10px 0 4px; min-height:1.2em; }
+        .stn-now.idle { color:var(--ink-faint); font-style:italic; }
+        .stn-meta { font-family:var(--mono); font-size:12.5px; color:var(--ink-soft); }
+        .stn-meta .lbl { color:var(--ink-faint); }
+        .stn-locked { font-size:12px; color:var(--ink-faint); font-style:italic; }
+      </style>
+
+      {% if stations %}
+      <div class="stn-grid">
+        {% for s in stations %}
+        <div class="stn {{ s.status }}">
+          <div class="stn-top">
+            <span class="stn-label">{{ s.label }}</span>
+            <span class="stn-badge {{ s.status }}">{{ s.status }}</span>
+          </div>
+          <div class="stn-now {{ 'idle' if not s.now_playing }}">{{ s.now_playing or 'Idle — no match assigned' }}</div>
+          {% if logged_in %}
+            {% if s.connect %}<div class="stn-meta"><span class="lbl">connect</span> {{ s.connect }}</div>{% endif %}
+            {% if is_admin and s.password %}<div class="stn-meta"><span class="lbl">password</span> {{ s.password }}</div>{% endif %}
+          {% elif s.connect %}
+            <div class="stn-locked">Connect info — <a href="{{ url_for('login') }}">sign in</a> to view.</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="pending-note">No stations set up yet.{% if is_admin %} Add your servers below.{% endif %}</div>
+      {% endif %}
+
+      <p style="font-size:13px;color:var(--ink-faint);margin-top:12px;">
+        Connect strings show to signed-in operators; server passwords to staff only.</p>
+
+      {% if is_admin %}
+      <h3 style="margin-top:30px;">Manage stations <span style="font-size:12px;color:var(--ink-faint);">(staff)</span></h3>
+      {% if stations %}
+      <table>
+        <thead><tr><td>Label</td><td>Connect</td><td>Password</td><td>Now playing</td><td>Status</td><td>Ord</td><td></td></tr></thead>
+        <tbody>
+        {% for s in stations %}
+          <tr>
+            <td colspan="7" style="padding:2px 0;">
+              <form method="post" action="{{ url_for('station_edit') }}" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;">
+                <input type="hidden" name="station_id" value="{{ s.id }}">
+                <input name="label" value="{{ s.label }}" required style="width:8rem;">
+                <input name="connect" value="{{ s.connect or '' }}" placeholder="ip:port" style="width:9.5rem;">
+                <input name="password" value="{{ s.password or '' }}" placeholder="password" style="width:7rem;">
+                <input name="now_playing" value="{{ s.now_playing or '' }}" placeholder="now playing" style="width:11rem;">
+                <select name="status">{% for st in statuses %}<option value="{{ st }}" {{ 'selected' if s.status == st }}>{{ st }}</option>{% endfor %}</select>
+                <input name="sort_order" type="number" value="{{ s.sort_order }}" style="width:3.2rem;">
+                <button type="submit">Save</button>
+                <button type="submit" formaction="{{ url_for('station_delete') }}" formnovalidate onclick="return confirm('Delete {{ s.label }}?');">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <h3 style="margin-top:18px;">Add a station</h3>
+      <form method="post" action="{{ url_for('station_add') }}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+        <input name="label" placeholder="label (e.g. Server 1)" required style="width:9rem;">
+        <input name="connect" placeholder="ip:port" style="width:9.5rem;">
+        <input name="password" placeholder="password" style="width:7rem;">
+        <input name="now_playing" placeholder="now playing" style="width:11rem;">
+        <select name="status">{% for st in statuses %}<option value="{{ st }}">{{ st }}</option>{% endfor %}</select>
+        <input name="sort_order" type="number" value="0" style="width:3.2rem;">
+        <button type="submit">Add station</button>
+      </form>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

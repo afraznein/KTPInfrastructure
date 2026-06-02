@@ -17,6 +17,8 @@
           <tr><td>Seeds locked</td><td>{{ 'yes' if seeds_locked else 'no' }}</td></tr>
           <tr><td>Saturday matches</td><td>{{ 'generated' if matches_generated else 'not generated' }} — <a href="{{ url_for('schedule') }}">manage</a></td></tr>
           <tr><td>Playoff bracket</td><td>{{ 'generated' if bracket_generated else 'not generated' }} — <a href="{{ url_for('bracket') }}">manage</a></td></tr>
+          <tr><td>Station board</td><td><a href="{{ url_for('stations') }}">set "now playing" + connect info</a></td></tr>
+          <tr><td>Final placements</td><td><a href="{{ url_for('placements') }}">publish final standing</a></td></tr>
         </tbody>
       </table>
       <p style="font-size:13px;color:var(--ink-faint);">Order of operations: build rosters → open poll → captains submit → close + compute seeds → generate Saturday matches → report results → generate bracket.</p>
