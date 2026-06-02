@@ -1,5 +1,11 @@
 """LAN-day check-in. Players self-check-in via Discord login; captains confirm
-the team. Public board shows who's present."""
+the team. Public board shows who's present.
+
+TODO (pre-LAN): staff need a daily check-in RESET. The flow is two-pass —
+Friday's check-in is the draft-team headcount, then it must be purged and run
+fresh for Saturday group play. Add a staff "clear all check-ins" action
+(NULL checked_in_at on players + teams) and ideally scope check-in to a day so
+Friday vs Saturday don't bleed together."""
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 

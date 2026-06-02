@@ -52,7 +52,7 @@
       {# ---- live mode: matches materialized, results + standings ---- #}
 
       <h3>Standings</h3>
-      <table>
+      <table class="standings-sheet">
         <thead><tr><td>#</td><td>Company</td><td>W–L–D</td><td>Diff</td><td>Buch.</td></tr></thead>
         <tbody>
         {% for s in standings %}
@@ -116,7 +116,7 @@
          miss one for catching every contender early.</p>
 
       <h3 style="margin-top:30px;">Saturday timetable</h3>
-      <table>
+      <table class="ops-timetable">
         <tbody>
         {% for time, label, kind in timetable %}
           <tr><td style="width:11rem;">{{ time }}</td>

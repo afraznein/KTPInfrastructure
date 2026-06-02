@@ -31,18 +31,14 @@ def demos_page(request: Request):
 async def demos_upload(
     request: Request,
     file: UploadFile = File(...),
-    alias: str = Form(""),
     note: str = Form(""),
 ):
-    su = auth.session_user(request)
-    if not su:
-        raise HTTPException(401, "Discord login required to upload.")
+    # Upload requires a roster-linked Discord; the alias is taken from the
+    # player's registered roster name (never typed).
     ident = auth.current_identity(request)
-    # Prefer the uploader's REGISTERED alias (ties the demo to their roster identity);
-    # a typed alias is only the fallback for a logged-in user not yet on a roster.
-    alias = (ident["display_name"] if ident else alias.strip())
-    if not alias:
-        raise HTTPException(400, "No registered alias on file — enter one, or have staff link your Discord.")
+    if not ident:
+        raise HTTPException(403, "Your Discord must be linked to a roster to upload — ask staff.")
+    alias = ident["display_name"]
     # bounded read: pull at most max+1 bytes so an oversized file can't exhaust memory
     data = await file.read(settings.demo_max_bytes + 1)
     if not data:
@@ -51,12 +47,11 @@ async def demos_upload(
         raise HTTPException(413, f"File exceeds the {settings.demo_max_bytes // (1024 * 1024)} MB limit.")
     orig = (_SAFE.sub("_", file.filename or "demo.dem") or "demo.dem")[:255]
     already_zip = data[:2] == b"PK" or orig.lower().endswith(".zip")  # accept .dem OR an existing zip
-    team_id = ident["team_id"] if ident else None
 
     demo_id = db.execute(
         "INSERT INTO lan_demos (alias, team_id, original_filename, note, uploaded_by) "
         "VALUES (%s, %s, %s, %s, %s)",
-        (alias[:64], team_id, orig, (note or "").strip()[:255] or None, su["discord_id"]),
+        (alias[:64], ident["team_id"], orig, (note or "").strip()[:255] or None, ident["discord_id"]),
     )
     Path(settings.demo_dir).mkdir(parents=True, exist_ok=True)
     stored = f"{demo_id:06d}.zip"
