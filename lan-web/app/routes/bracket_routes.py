@@ -18,16 +18,26 @@ def _champ(row):
 @router.get("/bracket", name="bracket")
 def bracket_page(request: Request):
     ctx = common.base_ctx(request, "bracket")
-    rows = bracket.get_bracket()
-    for r in rows:  # the human label lives in the BRACKET constant, not the DB
-        r["label"] = bracket.BY_KEY.get(r["mkey"], {}).get("label", r["mkey"])
-    by_key = {r["mkey"]: r for r in rows}
+    db_rows = {r["mkey"]: r for r in bracket.get_bracket()}
+    # Always draw the full shape from the BRACKET constant; overlay DB data where present.
+    slots = []
+    for m in bracket.BRACKET:
+        r = db_rows.get(m["key"], {})
+        slots.append({
+            "mkey": m["key"], "label": m["label"], "bracket": m["bracket"], "stage": m["stage"],
+            "source_a": m["a"], "source_b": m["b"],
+            "a_name": r.get("a_name"), "b_name": r.get("b_name"),
+            "team_a_id": r.get("team_a_id"), "team_b_id": r.get("team_b_id"),
+            "score_a": r.get("score_a"), "score_b": r.get("score_b"),
+            "winner_team_id": r.get("winner_team_id"), "status": r.get("status", "pending"),
+        })
+    by_key = {s["mkey"]: s for s in slots}
     matches = sched.get_matches()
     ident = ctx["ident"]
     ctx.update(
-        exists=bool(rows),
-        upper=[r for r in rows if r["bracket"] == "upper"],
-        lower=[r for r in rows if r["bracket"] == "lower"],
+        generated=bool(db_rows),
+        upper=[s for s in slots if s["bracket"] == "upper"],
+        lower=[s for s in slots if s["bracket"] == "lower"],
         champion=_champ(by_key.get("F")),
         lower_champion=_champ(by_key.get("LF")),
         group_complete=bool(matches) and all(m["status"] == "final" for m in matches),

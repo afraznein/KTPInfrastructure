@@ -26,7 +26,7 @@ SATURDAY_TIMETABLE = [
     ("15:00 – 16:00", "Round 4", "round"),
     ("16:00 – 17:00", "Food break #2", "break"),
     ("17:00 – 18:00", "Round 5", "round"),
-    ("18:00 – 19:00", "Round 6 — 1v2", "round"),
+    ("18:00 – 19:00", "Round 6", "round"),
 ]
 
 
