@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Request
 
 from .. import common, db
+from .. import schedule as sched
 from ..templating import templates
 
 router = APIRouter()
@@ -46,7 +47,11 @@ def teams(request: Request):
 
 @router.get("/schedule", name="schedule")
 def schedule(request: Request):
-    return templates.TemplateResponse(request, "schedule.html", common.base_ctx(request, "schedule"))
+    ctx = common.base_ctx(request, "schedule")
+    ctx["rounds"] = sched.rounds_with_teams()
+    ctx["timetable"] = sched.SATURDAY_TIMETABLE
+    ctx["seeds_locked"] = sched.seeds_locked()
+    return templates.TemplateResponse(request, "schedule.html", ctx)
 
 
 @router.get("/bracket", name="bracket")

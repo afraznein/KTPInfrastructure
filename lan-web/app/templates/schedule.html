@@ -1,17 +1,64 @@
 {% extends "base.html" %}
 {% block title %}WSDoD / LAN 2026 / Communiqué{% endblock %}
+{% macro slot(seed, team) -%}
+  {%- if team -%}<strong>{{ team.name }}</strong> <span style="color:var(--ink-faint);">#{{ seed }}</span>
+  {%- else -%}<span style="color:var(--ink-faint);">Seed {{ seed }}</span>{%- endif -%}
+{%- endmacro %}
 {% block content %}
   <section id="communique" class="chapter">
     <header class="chapter-head">
-      <div class="chapter-num">III</div>
+      <div class="chapter-num">IV</div>
       <h2 class="chapter-title">Communiqué — Saturday Schedule</h2>
-      <span class="chapter-stamp">NETWORK ORDER OF TRAFFIC</span>
+      <span class="chapter-stamp">GROUP STAGE / BO1</span>
     </header>
+
     <div class="chapter-body">
-      <div class="pending-note">
-        <strong style="font-family: var(--stencil); letter-spacing:0.16em; color: var(--alert); display:block; margin-bottom:4px;">TRANSMISSION PENDING</strong>
-        The Saturday group schedule generates once seeds are locked from the captains' ballots. Result reporting and live standings come online here on the day.
+      {% if not seeds_locked %}
+      <div class="pending-note" style="margin-bottom:24px;">
+        <strong style="font-family:var(--stencil);letter-spacing:.14em;color:var(--alert);display:block;margin-bottom:4px;">PROVISIONAL — SEEDS NOT YET LOCKED</strong>
+        Pairings are fixed by <em>seed slot</em>. Company names drop in automatically once staff lock seeds from the
+        <a href="{{ url_for('seeds') }}">captains' ballot</a>.
       </div>
+      {% endif %}
+
+      <p>Ten companies, six rounds, single map each. The slate is fixed and balanced: no repeat
+         matchups, the top four seeds never meet before Round 4, and the <strong>1v2</strong> bye-decider
+         closes the day.</p>
+
+      <div class="units-grid">
+        {% for rnd in rounds %}
+        <article class="unit-card">
+          <div class="unit-tag-strip">
+            <h3 class="unit-name">Round {{ loop.index }}</h3>
+            {% if loop.index == 6 %}<span class="unit-tag">BYE DECIDER</span>{% endif %}
+          </div>
+          <ol class="unit-roster">
+            {% for m in rnd %}
+            <li>
+              <span class="num">{{ loop.index }}.</span>
+              <span class="player">{{ slot(m.a_seed, m.a_team) }} &nbsp;v&nbsp; {{ slot(m.b_seed, m.b_team) }}</span>
+            </li>
+            {% endfor %}
+          </ol>
+        </article>
+        {% endfor %}
+      </div>
+
+      <h3 style="margin-top:30px;">Saturday timetable</h3>
+      <table>
+        <tbody>
+        {% for time, label, kind in timetable %}
+          <tr>
+            <td style="width:11rem;">{{ time }}</td>
+            <td style="color:{{ 'var(--alert)' if kind == 'break' else 'var(--ink)' }};">
+              {{ label }}{% if kind == 'break' %} <span style="color:var(--ink-faint);">(1 hr)</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+          <tr><td style="width:11rem;">~19:00</td><td style="color:var(--ink-faint);">Final standings posted → Sunday seeds</td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:13px;color:var(--ink-faint);">Each block is a full hour to cover server setup between maps. All five matches of a round run concurrently.</p>
     </div>
   </section>
 {% endblock %}
