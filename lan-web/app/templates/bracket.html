@@ -52,11 +52,18 @@
     <div class="chapter-body">
       {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
       <style>
-        .bkt { display:flex; gap:18px; align-items:flex-start; overflow-x:auto; padding-bottom:10px; }
-        .bkt-col { display:flex; flex-direction:column; gap:14px; min-width:200px; }
+        .bkt { display:flex; gap:34px; align-items:flex-start; overflow-x:auto; padding-bottom:10px; }
+        .bkt-col { display:flex; flex-direction:column; gap:16px; min-width:200px; }
         .bkt-col > h4 { margin:0 0 2px; font-family:var(--stencil); letter-spacing:.12em; text-transform:uppercase;
                         font-size:13px; color:var(--ink-soft); border-bottom:1px solid var(--ink-margin); padding-bottom:3px; }
-        .bkt-match { border:1px solid var(--ink-margin); background:rgba(90,94,58,0.06); padding:6px 8px; }
+        .bkt-match { border:1px solid var(--ink-margin); background:rgba(90,94,58,0.06); padding:6px 8px; position:relative; }
+        /* drawn-bracket connectors: a stub out the right of each box + into the left of the next round */
+        .bkt-col:not(:last-child) .bkt-match::after {
+          content:""; position:absolute; top:50%; left:100%; width:17px; border-top:2px solid var(--ink-soft); opacity:.5;
+        }
+        .bkt-col:not(:first-child) .bkt-match::before {
+          content:""; position:absolute; top:50%; right:100%; width:17px; border-top:2px solid var(--ink-soft); opacity:.5;
+        }
         .bkt-label { font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.1em; margin-bottom:3px; }
         .bkt-side { display:flex; justify-content:space-between; gap:8px; padding:2px 0; color:var(--ink); }
         .bkt-side.win { font-weight:bold; color:var(--wsdod-blue); }
