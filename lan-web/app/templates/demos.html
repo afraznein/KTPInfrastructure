@@ -6,7 +6,7 @@
 {% block content %}
   <section class="chapter">
     <header class="chapter-head">
-      <div class="chapter-num">VII</div>
+      <div class="chapter-num">07</div>
       <h2 class="chapter-title">Demo Archive</h2>
       <span class="chapter-stamp">POV / HLTV — ZIPPED ON UPLOAD</span>
     </header>
@@ -14,21 +14,61 @@
 
       {% if session_user %}
       <h3>Upload a demo</h3>
-      <form method="post" action="/demos/upload" enctype="multipart/form-data"
-            style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--ink-margin);padding:14px;background:rgba(90,94,58,0.05);">
-        {% if ident %}
-        <span style="font-size:13px;">Uploading as <strong>{{ ident.display_name }}</strong> &middot; {{ ident.team_name }}</span>
-        {% else %}
-        <input name="alias" placeholder="your in-game alias" required style="width:12rem;">
-        {% endif %}
-        <input type="file" name="file" accept=".dem,.zip" required>
-        <input name="note" placeholder="note (map / match) — optional" style="width:14rem;">
-        <button type="submit">Upload</button>
-        <div style="width:100%;font-size:12px;color:var(--ink-faint);">
-          Accepts a <strong>.dem</strong> (zipped for you) or an already-zipped file. Your
-          {% if ident %}registered alias{% else %}alias{% endif %} is attached to the download name. Max {{ max_mb }} MB.
+      <style>
+        .dz { display:block; border:2px dashed var(--khaki); background:rgba(90,94,58,0.06);
+              padding:26px 18px; text-align:center; cursor:pointer; transition:.12s; position:relative; }
+        .dz:hover { border-color:var(--wsdod-blue); background:rgba(30,58,95,0.06); }
+        .dz.over { border-color:var(--wsdod-blue); background:rgba(30,58,95,0.12); border-style:solid; }
+        .dz.has { border-style:solid; border-color:var(--olive); }
+        .dz-stamp { font-family:var(--stencil); letter-spacing:.18em; font-size:20px; color:var(--ink-soft); text-transform:uppercase; }
+        .dz.over .dz-stamp, .dz.has .dz-stamp { color:var(--wsdod-blue); }
+        .dz-sub { font-family:var(--typed); font-size:12px; color:var(--ink-faint); margin-top:6px; }
+        .dz-file { font-family:var(--mono); font-size:13px; color:var(--olive-dark); margin-top:10px; font-weight:700; }
+        .demo-fields { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+      </style>
+      <form method="post" action="/demos/upload" enctype="multipart/form-data" id="demoform">
+        <label class="dz" id="dz" for="demofile">
+          <input id="demofile" type="file" name="file" accept=".dem,.zip" required hidden>
+          <div class="dz-stamp">&#9660; Drop demo here &#9660;</div>
+          <div class="dz-sub">or click to select &mdash; <strong>.dem</strong> (zipped for you) or an already-zipped file &middot; max {{ max_mb }} MB</div>
+          <div class="dz-file" id="dzfile"></div>
+        </label>
+        <div class="demo-fields">
+          {% if ident %}
+          <span style="font-size:13px;">Uploading as <strong>{{ ident.display_name }}</strong> &middot; {{ ident.team_name }}</span>
+          {% else %}
+          <input name="alias" placeholder="your in-game alias" required style="width:12rem;">
+          {% endif %}
+          <input name="note" placeholder="note (map / match) — optional" style="width:14rem;">
+          <button type="submit">Upload</button>
+          <span style="font-size:12px;color:var(--ink-faint);">Your {% if ident %}registered alias{% else %}alias{% endif %} is attached to the download name.</span>
         </div>
       </form>
+      <script>
+        (function () {
+          var dz = document.getElementById('dz'),
+              inp = document.getElementById('demofile'),
+              out = document.getElementById('dzfile');
+          function show() {
+            if (inp.files && inp.files.length) {
+              var f = inp.files[0];
+              out.textContent = 'LOADED — ' + f.name + ' (' + (f.size / 1048576).toFixed(1) + ' MB)';
+              dz.classList.add('has');
+            }
+          }
+          ['dragenter', 'dragover'].forEach(function (e) {
+            dz.addEventListener(e, function (ev) { ev.preventDefault(); dz.classList.add('over'); });
+          });
+          ['dragleave', 'dragend'].forEach(function (e) {
+            dz.addEventListener(e, function () { dz.classList.remove('over'); });
+          });
+          dz.addEventListener('drop', function (ev) {
+            ev.preventDefault(); dz.classList.remove('over');
+            if (ev.dataTransfer.files.length) { inp.files = ev.dataTransfer.files; show(); }
+          });
+          inp.addEventListener('change', show);
+        })();
+      </script>
       {% else %}
       <div class="pending-note"><a href="{{ url_for('login') }}">Sign in via Discord</a> to upload. Anyone may download.</div>
       {% endif %}
