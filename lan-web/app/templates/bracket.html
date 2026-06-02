@@ -2,39 +2,44 @@
 {% block title %}WSDoD / LAN 2026 / Bracket{% endblock %}
 
 {% macro who(name, source) -%}
-  {%- if name -%}<strong>{{ name }}</strong>
+  {%- if name -%}{{ name }}
   {%- else -%}
     {%- set p = source.split(':') -%}
-    <span style="color:var(--ink-faint);">
     {%- if p[0] == 'W' %}Winner {{ p[1] }}{% elif p[0] == 'L' %}Loser {{ p[1] }}{% else %}Seed {{ p[1] }}{% endif -%}
-    </span>
   {%- endif -%}
 {%- endmacro %}
 
-{% macro matchrow(m, is_admin, am_captain, my_team_id) %}
-  {% set ready = m.team_a_id and m.team_b_id %}
-  {% set can = is_admin or (am_captain and ready and (my_team_id == m.team_a_id or my_team_id == m.team_b_id)) %}
-  <tr>
-    <td style="color:var(--ink-faint);font-size:12px;width:9rem;">{{ m.label }}</td>
-    <td style="width:auto;color:var(--ink);">
-      <span style="{{ 'font-weight:bold;' if m.winner_team_id and m.winner_team_id == m.team_a_id }}">{{ who(m.a_name, m.source_a) }}</span>
-      <span style="color:var(--ink-faint);">v</span>
-      <span style="{{ 'font-weight:bold;' if m.winner_team_id and m.winner_team_id == m.team_b_id }}">{{ who(m.b_name, m.source_b) }}</span>
-    </td>
-    <td style="width:4rem;text-align:center;">
-      {% if m.status in ('live', 'final') %}{{ m.score_a or 0 }}–{{ m.score_b or 0 }}{% else %}<span style="color:var(--ink-faint);">BO3</span>{% endif %}
-    </td>
-    <td style="width:12rem;">
-      {% if can %}
-      <form method="post" action="{{ url_for('bracket_report') }}" style="display:flex;gap:4px;align-items:center;">
-        <input type="hidden" name="mkey" value="{{ m.mkey }}">
-        <input type="number" name="score_a" min="0" max="2" value="{{ m.score_a if m.score_a is not none else '' }}" style="width:3rem;" required>
-        <input type="number" name="score_b" min="0" max="2" value="{{ m.score_b if m.score_b is not none else '' }}" style="width:3rem;" required>
-        <button type="submit">{{ 'Edit' if m.status == 'final' else 'Report' }}</button>
-      </form>
-      {% endif %}
-    </td>
-  </tr>
+{% macro matchbox(m, can) %}
+  <div class="bkt-match">
+    <div class="bkt-label">{{ m.label }}</div>
+    <div class="bkt-side {{ 'win' if m.winner_team_id and m.winner_team_id == m.team_a_id }} {{ 'tbd' if not m.a_name }}">
+      <span>{{ who(m.a_name, m.source_a) }}</span>
+      <span class="sc">{% if m.score_a is not none %}{{ m.score_a }}{% endif %}</span>
+    </div>
+    <div class="bkt-side {{ 'win' if m.winner_team_id and m.winner_team_id == m.team_b_id }} {{ 'tbd' if not m.b_name }}">
+      <span>{{ who(m.b_name, m.source_b) }}</span>
+      <span class="sc">{% if m.score_b is not none %}{{ m.score_b }}{% endif %}</span>
+    </div>
+    {% if can %}
+    <form class="bkt-rep" method="post" action="{{ url_for('bracket_report') }}">
+      <input type="hidden" name="mkey" value="{{ m.mkey }}">
+      <input type="number" name="score_a" min="0" max="2" value="{{ m.score_a if m.score_a is not none else '' }}" required>
+      <input type="number" name="score_b" min="0" max="2" value="{{ m.score_b if m.score_b is not none else '' }}" required>
+      <button type="submit">{{ 'Edit' if m.status == 'final' else 'Report' }}</button>
+    </form>
+    {% endif %}
+  </div>
+{% endmacro %}
+
+{% macro column(slots, stage, title, generated, is_admin, am_captain, my_team_id) %}
+  <div class="bkt-col">
+    <h4>{{ title }}</h4>
+    {% for m in slots if m.stage == stage %}
+      {% set ready = m.team_a_id and m.team_b_id %}
+      {% set can = generated and (is_admin or (am_captain and ready and (my_team_id == m.team_a_id or my_team_id == m.team_b_id))) %}
+      {{ matchbox(m, can) }}
+    {% endfor %}
+  </div>
 {% endmacro %}
 
 {% block content %}
@@ -45,43 +50,55 @@
       <span class="chapter-stamp">ROAD TO THE VERDICT / BO3</span>
     </header>
     <div class="chapter-body">
-
-    {% if not exists %}
-      {% if is_admin and group_complete %}
-      <div class="pending-note" style="border-style:solid;border-color:var(--wsdod-blue);">
-        Group stage complete. <form method="post" action="{{ url_for('bracket_generate') }}" style="display:inline;">
-        <button type="submit">Generate playoff bracket</button></form>
-      </div>
-      {% else %}
-      <div class="pending-note">
-        <strong style="font-family:var(--stencil);letter-spacing:.14em;color:var(--alert);display:block;margin-bottom:4px;">TRANSMISSION PENDING</strong>
-        The bracket seeds from Saturday's final standings. It posts here once the group stage concludes
-        {% if not group_complete %}(all group matches must be final){% endif %}.
-      </div>
-      {% endif %}
-    {% else %}
+      <style>
+        .bkt { display:flex; gap:18px; align-items:flex-start; overflow-x:auto; padding-bottom:10px; }
+        .bkt-col { display:flex; flex-direction:column; gap:14px; min-width:200px; }
+        .bkt-col > h4 { margin:0 0 2px; font-family:var(--stencil); letter-spacing:.12em; text-transform:uppercase;
+                        font-size:13px; color:var(--ink-soft); border-bottom:1px solid var(--ink-margin); padding-bottom:3px; }
+        .bkt-match { border:1px solid var(--ink-margin); background:rgba(90,94,58,0.06); padding:6px 8px; }
+        .bkt-label { font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.1em; margin-bottom:3px; }
+        .bkt-side { display:flex; justify-content:space-between; gap:8px; padding:2px 0; color:var(--ink); }
+        .bkt-side.win { font-weight:bold; color:var(--wsdod-blue); }
+        .bkt-side.tbd { color:var(--ink-faint); font-style:italic; }
+        .bkt-side .sc { color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+        .bkt-rep { display:flex; gap:3px; margin-top:5px; }
+        .bkt-rep input { width:2.5rem; }
+      </style>
 
       {% if champion %}
-      <p style="font-family:var(--stencil);letter-spacing:.12em;font-size:22px;color:var(--wsdod-blue);">
-        &#9733; CHAMPION — {{ champion }}</p>
+      <p style="font-family:var(--stencil);letter-spacing:.12em;font-size:22px;color:var(--wsdod-blue);">&#9733; CHAMPION — {{ champion }}</p>
       {% endif %}
       {% if lower_champion %}
       <p style="font-family:var(--stencil);letter-spacing:.12em;color:var(--ink-soft);">Lower-bracket champion — {{ lower_champion }}</p>
       {% endif %}
 
+      {% if not generated %}
+      <div class="pending-note" style="margin-bottom:22px;">
+        {% if is_admin and group_complete %}
+        Group stage complete — <form method="post" action="{{ url_for('bracket_generate') }}" style="display:inline;"><button type="submit">Generate playoff bracket</button></form>
+        to seed teams into the slots below.
+        {% else %}
+        Structure shown below. Teams seed in automatically from Saturday's final standings once the group
+        stage concludes{% if not group_complete %} (all group matches must be final){% endif %}.
+        {% endif %}
+      </div>
+      {% endif %}
+
       <h3>Upper bracket &mdash; for the title</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 1–2 bye to the semifinals; QF losers drop to the lower bracket.</p>
-      <table><tbody>
-        {% for m in upper %}{{ matchrow(m, is_admin, am_captain, my_team_id) }}{% endfor %}
-      </tbody></table>
+      <div class="bkt">
+        {{ column(upper, 'QF', 'Quarterfinals', generated, is_admin, am_captain, my_team_id) }}
+        {{ column(upper, 'SF', 'Semifinals',    generated, is_admin, am_captain, my_team_id) }}
+        {{ column(upper, 'F',  'Final',          generated, is_admin, am_captain, my_team_id) }}
+      </div>
 
       <h3 style="margin-top:30px;">Lower bracket &mdash; for the lower championship</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus the two QF losers; single-elimination.</p>
-      <table><tbody>
-        {% for m in lower %}{{ matchrow(m, is_admin, am_captain, my_team_id) }}{% endfor %}
-      </tbody></table>
-
-    {% endif %}
+      <div class="bkt">
+        {{ column(lower, 'PI',  'Play-ins',           generated, is_admin, am_captain, my_team_id) }}
+        {{ column(lower, 'LSF', 'Lower Semifinals',   generated, is_admin, am_captain, my_team_id) }}
+        {{ column(lower, 'LF',  'Lower Final',        generated, is_admin, am_captain, my_team_id) }}
+      </div>
     </div>
   </section>
 {% endblock %}

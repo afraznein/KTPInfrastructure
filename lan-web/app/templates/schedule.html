@@ -29,15 +29,14 @@
       </div>
       {% endif %}
 
-      <p>Ten companies, six rounds, single map each. Fixed and balanced: no repeats, the top four
-         seeds never meet before Round 4, and the <strong>1v2</strong> bye-decider closes the day.</p>
+      <p>Ten companies, six rounds, one map each. The pairings are fixed in advance and balanced for
+         strength of schedule — no company draws a tougher slate than another. Why it's built this way is below.</p>
 
       <div class="units-grid">
         {% for rnd in rounds %}
         <article class="unit-card">
           <div class="unit-tag-strip">
             <h3 class="unit-name">Round {{ loop.index }}</h3>
-            {% if loop.index == 6 %}<span class="unit-tag">BYE DECIDER</span>{% endif %}
           </div>
           <ol class="unit-roster">
             {% for m in rnd %}
@@ -105,6 +104,16 @@
       </article>
       {% endfor %}
     {% endif %}
+
+      <h3 style="margin-top:30px;">Why this schedule — strength of schedule</h3>
+      <p>The six rounds aren't drawn at random. Each company plays six of the other nine, and we picked
+         those six so every team's slate is as even as possible. Across the field the average opponent
+         strength is near-identical — we measured the spread and it's roughly a third of what a naive
+         draw produces. No company runs a gauntlet while another coasts.</p>
+      <p>Two more rules are baked in: no rematches, and the top seeds are kept apart through the early
+         rounds. So Sunday's seeding reflects how teams actually played across the full slate — not who
+         they happened to draw. A team can't back into a bye on a soft schedule, and a strong team won't
+         miss one for catching every contender early.</p>
 
       <h3 style="margin-top:30px;">Saturday timetable</h3>
       <table>
