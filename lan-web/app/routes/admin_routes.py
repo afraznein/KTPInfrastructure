@@ -7,14 +7,54 @@ from fastapi.responses import RedirectResponse
 
 from .. import auth, bracket, common, db, seeding
 from .. import schedule as sched
+from ..config import settings
 from ..templating import templates
 
 router = APIRouter()
 
 
+def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
+    """Returns (current admins, promotable operators).
+
+    Admins merge env bootstrap ids with web-granted rows; labels resolve from
+    the roster where a Discord id is linked. Config admins are never removable;
+    you can't revoke yourself (so you can't lock yourself out)."""
+    roster = {
+        int(p["discord_id"]): p
+        for p in db.query_all(
+            "SELECT p.discord_id, p.display_name, t.name AS team "
+            "FROM lan_players p JOIN lan_teams t ON t.id = p.team_id "
+            "WHERE p.discord_id IS NOT NULL"
+        )
+    }
+    db_rows = {int(r["discord_id"]): r for r in auth.list_db_admins()}
+    env_ids = set(settings.admin_discord_ids)
+    admins = []
+    for did in sorted(env_ids | set(db_rows)):
+        rp = roster.get(did)
+        row = db_rows.get(did)
+        label = (row and row.get("label")) or (rp and rp["display_name"]) or None
+        is_env = did in env_ids
+        admins.append({
+            "discord_id": did,
+            "label": label,
+            "team": rp["team"] if rp else None,
+            "source": "config" if is_env else "web",
+            "is_self": did == me,
+            "removable": (not is_env) and did != me,
+        })
+    taken = env_ids | set(db_rows)
+    candidates = [
+        {"discord_id": did, "display_name": p["display_name"], "team": p["team"]}
+        for did, p in sorted(roster.items(), key=lambda kv: (kv[1]["team"] or "", kv[1]["display_name"]))
+        if did not in taken
+    ]
+    return admins, candidates
+
+
 @router.get("/admin", name="admin")
 def admin_home(request: Request):
-    auth.require_admin(request)
+    me = auth.require_admin(request)
     teams = db.query_all("SELECT id, name, tag, seed FROM lan_teams ORDER BY COALESCE(seed, 999), name")
     for t in teams:
         t["players"] = db.query_all(
@@ -22,6 +62,7 @@ def admin_home(request: Request):
             "FROM lan_players WHERE team_id=%s ORDER BY is_captain DESC, display_name",
             (t["id"],),
         )
+    admins, admin_candidates = _staff_view(int(me))
     ctx = common.base_ctx(request, "admin")
     ctx.update(
         teams=teams,
@@ -30,8 +71,42 @@ def admin_home(request: Request):
         seeds_locked=sched.seeds_locked(),
         matches_generated=sched.matches_exist(),
         bracket_generated=bracket.bracket_exists(),
+        admins=admins,
+        admin_candidates=admin_candidates,
     )
     return templates.TemplateResponse(request, "admin.html", ctx)
+
+
+@router.post("/admin/staff/add", name="admin_grant")
+async def admin_grant(request: Request):
+    granter = auth.require_admin(request)
+    f = await request.form()
+    raw = (f.get("discord_id") or "").strip()
+    if not raw.isdigit():
+        raise HTTPException(400, "A numeric Discord ID is required.")
+    did = int(raw)
+    label = (f.get("label") or "").strip() or None
+    if not label:  # fall back to the roster alias, if this id is on a team
+        rp = db.query_one("SELECT display_name FROM lan_players WHERE discord_id=%s LIMIT 1", (did,))
+        label = rp["display_name"] if rp else None
+    db.execute(
+        "INSERT INTO lan_admins (discord_id, label, added_by) VALUES (%s, %s, %s) "
+        "ON DUPLICATE KEY UPDATE label = COALESCE(VALUES(label), label)",
+        (did, label, int(granter)),
+    )
+    return RedirectResponse(request.url_for("admin"), status_code=303)
+
+
+@router.post("/admin/staff/remove", name="admin_revoke")
+async def admin_revoke(request: Request):
+    me = auth.require_admin(request)
+    f = await request.form()
+    did = int(f["discord_id"])
+    if did == int(me):
+        raise HTTPException(400, "You can't revoke your own staff access.")
+    # Config (env) admins aren't in this table, so this can't touch them.
+    db.execute("DELETE FROM lan_admins WHERE discord_id=%s", (did,))
+    return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
 @router.post("/admin/team/add", name="admin_team_add")

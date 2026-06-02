@@ -21,6 +21,49 @@
       </table>
       <p style="font-size:13px;color:var(--ink-faint);">Order of operations: build rosters → open poll → captains submit → close + compute seeds → generate Saturday matches → report results → generate bracket.</p>
 
+      <h3 style="margin-top:30px;">Staff access</h3>
+      <p style="font-size:13px;color:var(--ink-faint);">Everyone listed here can see this page and run every control. <strong>Config</strong> admins are
+         set in the server environment and can't be revoked here — that's the lockout guard.</p>
+      <table>
+        <tbody>
+        {% for a in admins %}
+          <tr>
+            <td style="width:auto;color:var(--ink);">{{ a.label or '(unnamed)' }}{% if a.team %} <span style="color:var(--ink-faint);">· {{ a.team }}</span>{% endif %}{% if a.is_self %} <span style="color:var(--wsdod-blue);">— you</span>{% endif %}</td>
+            <td style="font-size:12px;color:var(--ink-faint);">discord {{ a.discord_id }}</td>
+            <td style="width:10rem;">{% if a.source == 'config' %}<span style="color:var(--ink-faint);">config · permanent</span>{% else %}granted on staff page{% endif %}</td>
+            <td style="width:7rem;">
+              {% if a.removable %}
+              <form method="post" action="{{ url_for('admin_revoke') }}" onsubmit="return confirm('Revoke staff access for {{ a.label or a.discord_id }}?');" style="display:inline;">
+                <input type="hidden" name="discord_id" value="{{ a.discord_id }}"><button type="submit">Revoke</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+
+      <div style="display:flex;flex-wrap:wrap;gap:10px 28px;align-items:flex-end;margin-top:12px;">
+        {% if admin_candidates %}
+        <form method="post" action="{{ url_for('admin_grant') }}" style="display:flex;gap:6px;align-items:center;">
+          <label style="font-size:12px;color:var(--ink-soft);">Promote an operator&nbsp;
+            <select name="discord_id" required style="margin-left:4px;">
+              {% for c in admin_candidates %}<option value="{{ c.discord_id }}">{{ c.display_name }}{% if c.team %} · {{ c.team }}{% endif %}</option>{% endfor %}
+            </select>
+          </label>
+          <button type="submit">Grant staff</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('admin_grant') }}" style="display:flex;gap:6px;align-items:center;">
+          <label style="font-size:12px;color:var(--ink-soft);">or by Discord ID</label>
+          <input name="discord_id" placeholder="discord id" required style="width:11rem;">
+          <input name="label" placeholder="name (optional)" style="width:9rem;">
+          <button type="submit">Grant staff</button>
+        </form>
+      </div>
+      <p style="font-size:12px;color:var(--ink-faint);">The promote list is operators whose Discord is linked on a roster. For anyone else, paste their
+         Discord ID (Discord → Settings → Advanced → Developer Mode, then right-click the user → Copy User ID). Access takes effect on their next page load.</p>
+
       <h3 style="margin-top:30px;">Rosters</h3>
       {% for t in teams %}
       <article class="unit-card" style="margin-bottom:14px;">

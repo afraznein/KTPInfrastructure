@@ -72,9 +72,30 @@ def require_captain(request: Request) -> dict:
     return ident
 
 
+def list_db_admins() -> list[dict]:
+    """Web-granted admins (lan_admins). Empty if the table isn't there yet
+    (pre-migration), so admin checks degrade to env-only rather than 500."""
+    try:
+        return db.query_all(
+            "SELECT discord_id, label, added_by, added_at FROM lan_admins ORDER BY added_at"
+        )
+    except Exception:
+        return []
+
+
+def db_admin_ids() -> set:
+    return {int(r["discord_id"]) for r in list_db_admins()}
+
+
 def is_admin(request: Request) -> bool:
+    """Admin if the signed-in Discord id is a config bootstrap admin (env) or
+    has been granted access from the staff page (lan_admins)."""
     did = request.session.get(SESSION_ID)
-    return did is not None and did in settings.admin_discord_ids
+    if did is None:
+        return False
+    if int(did) in settings.admin_discord_ids:
+        return True
+    return int(did) in db_admin_ids()
 
 
 def require_admin(request: Request) -> int:
