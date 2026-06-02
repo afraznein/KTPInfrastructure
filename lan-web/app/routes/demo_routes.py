@@ -31,15 +31,18 @@ def demos_page(request: Request):
 async def demos_upload(
     request: Request,
     file: UploadFile = File(...),
-    alias: str = Form(...),
+    alias: str = Form(""),
     note: str = Form(""),
 ):
     su = auth.session_user(request)
     if not su:
         raise HTTPException(401, "Discord login required to upload.")
-    alias = alias.strip()
+    ident = auth.current_identity(request)
+    # Prefer the uploader's REGISTERED alias (ties the demo to their roster identity);
+    # a typed alias is only the fallback for a logged-in user not yet on a roster.
+    alias = (ident["display_name"] if ident else alias.strip())
     if not alias:
-        raise HTTPException(400, "Alias is required.")
+        raise HTTPException(400, "No registered alias on file — enter one, or have staff link your Discord.")
     # bounded read: pull at most max+1 bytes so an oversized file can't exhaust memory
     data = await file.read(settings.demo_max_bytes + 1)
     if not data:
@@ -47,7 +50,7 @@ async def demos_upload(
     if len(data) > settings.demo_max_bytes:
         raise HTTPException(413, f"File exceeds the {settings.demo_max_bytes // (1024 * 1024)} MB limit.")
     orig = (_SAFE.sub("_", file.filename or "demo.dem") or "demo.dem")[:255]
-    ident = auth.current_identity(request)
+    already_zip = data[:2] == b"PK" or orig.lower().endswith(".zip")  # accept .dem OR an existing zip
     team_id = ident["team_id"] if ident else None
 
     demo_id = db.execute(
@@ -58,8 +61,11 @@ async def demos_upload(
     Path(settings.demo_dir).mkdir(parents=True, exist_ok=True)
     stored = f"{demo_id:06d}.zip"
     zpath = Path(settings.demo_dir) / stored
-    with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        z.writestr(orig, data)
+    if already_zip:
+        zpath.write_bytes(data)  # already compressed — store as-is, no double-zip
+    else:
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            z.writestr(orig, data)
     db.execute(
         "UPDATE lan_demos SET stored_name=%s, size_bytes=%s WHERE id=%s",
         (stored, zpath.stat().st_size, demo_id),
@@ -77,5 +83,7 @@ def demos_download(demo_id: int):
     path = Path(settings.demo_dir) / row["stored_name"]
     if not path.is_file():
         raise HTTPException(404, "Stored file missing.")
-    dl = _SAFE.sub("_", f"{row['alias']}_{row['original_filename']}") + ".zip"
+    dl = _SAFE.sub("_", f"{row['alias']}_{row['original_filename']}")
+    if not dl.lower().endswith(".zip"):
+        dl += ".zip"
     return FileResponse(str(path), media_type="application/zip", filename=dl)

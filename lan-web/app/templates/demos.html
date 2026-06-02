@@ -16,12 +16,17 @@
       <h3>Upload a demo</h3>
       <form method="post" action="/demos/upload" enctype="multipart/form-data"
             style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;border:1px solid var(--ink-margin);padding:14px;background:rgba(90,94,58,0.05);">
+        {% if ident %}
+        <span style="font-size:13px;">Uploading as <strong>{{ ident.display_name }}</strong> &middot; {{ ident.team_name }}</span>
+        {% else %}
         <input name="alias" placeholder="your in-game alias" required style="width:12rem;">
-        <input type="file" name="file" required>
+        {% endif %}
+        <input type="file" name="file" accept=".dem,.zip" required>
         <input name="note" placeholder="note (map / match) — optional" style="width:14rem;">
         <button type="submit">Upload</button>
         <div style="width:100%;font-size:12px;color:var(--ink-faint);">
-          Alias is required. The file is compressed to a .zip on upload (max {{ max_mb }} MB).
+          Accepts a <strong>.dem</strong> (zipped for you) or an already-zipped file. Your
+          {% if ident %}registered alias{% else %}alias{% endif %} is attached to the download name. Max {{ max_mb }} MB.
         </div>
       </form>
       {% else %}
