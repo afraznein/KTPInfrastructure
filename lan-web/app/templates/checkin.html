@@ -31,7 +31,7 @@
         <tbody>
         {% for t in teams %}
           <tr>
-            <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}</td>
+            <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} · {{ t.tag }}{% endif %}</td>
             <td>{{ t.present }}/{{ t.total }}</td>
             <td style="color:{{ 'var(--wsdod-blue)' if t.checked_in_at else 'var(--ink-faint)' }};">
               {{ 'CHECKED IN' if t.checked_in_at else 'not yet' }}</td>

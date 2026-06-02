@@ -36,7 +36,7 @@
           {% for tid in standing %}
             <tr>
               <td style="color:var(--ink);">{{ loop.index }}</td>
-              <td style="width:auto;color:var(--ink);">{{ teams[tid].name }}{% if teams[tid].tag %} [{{ teams[tid].tag }}]{% endif %}</td>
+              <td style="width:auto;color:var(--ink);">{{ teams[tid].name }}{% if teams[tid].tag %} · {{ teams[tid].tag }}{% endif %}</td>
               <td>{{ '%.2f'|format(score[tid]) }}</td>
             </tr>
           {% endfor %}

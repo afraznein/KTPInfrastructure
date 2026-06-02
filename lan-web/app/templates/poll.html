@@ -21,7 +21,7 @@
             <tbody>
             {% for t in others %}
               <tr>
-                <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}</td>
+                <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} · {{ t.tag }}{% endif %}</td>
                 <td style="width:6rem;">
                   <select name="rank_{{ t.id }}" required>
                     <option value="">—</option>

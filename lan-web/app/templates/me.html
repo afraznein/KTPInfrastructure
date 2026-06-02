@@ -20,7 +20,7 @@
         <dl class="briefing-orders">
           <dt>Callsign</dt>   <dd>{{ ident.display_name }}</dd>
           <dt>Discord</dt>    <dd>{{ ident.discord_name }}</dd>
-          <dt>Company</dt>    <dd>{{ ident.team_name }}{% if ident.team_tag %} [{{ ident.team_tag }}]{% endif %}</dd>
+          <dt>Company</dt>    <dd>{{ ident.team_name }}{% if ident.team_tag %} · {{ ident.team_tag }}{% endif %}</dd>
           <dt>Role</dt>       <dd>{% if ident.is_captain %}Captain — submits seeding ballot &amp; reports results{% else %}Operator{% endif %}</dd>
           <dt>Group seed</dt> <dd>{{ ident.seed if ident.seed is not none else "TBD" }}</dd>
         </dl>

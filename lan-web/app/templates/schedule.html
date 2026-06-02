@@ -58,7 +58,7 @@
         {% for s in standings %}
           <tr>
             <td style="color:var(--ink);">{{ s.rank }}</td>
-            <td style="width:auto;color:var(--ink);">{{ s.team.name }}{% if s.team.tag %} [{{ s.team.tag }}]{% endif %}</td>
+            <td style="width:auto;color:var(--ink);">{{ s.team.name }}{% if s.team.tag %} · {{ s.team.tag }}{% endif %}</td>
             <td>{{ s.wins }}–{{ s.losses }}{% if s.draws %}–{{ s.draws }}{% endif %}</td>
             <td>{{ '%+d'|format(s.diff) }}</td>
             <td>{{ s.buchholz }}</td>
