@@ -1,18 +1,129 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Rules of Engagement{% endblock %}
+{% block title %}WSDoD / LAN 2026 / Rules &amp; Format{% endblock %}
 {% block content %}
-  <section id="rules" class="chapter">
+
+  <section class="chapter">
     <header class="chapter-head">
-      <div class="chapter-num">V</div>
-      <h2 class="chapter-title">Rules of Engagement</h2>
-      <span class="chapter-stamp">BINDING ON ALL UNITS</span>
+      <div class="chapter-num">VI</div>
+      <h2 class="chapter-title">Tournament Format</h2>
+      <span class="chapter-stamp">HOW THE WEEKEND IS WON</span>
     </header>
-    <div class="chapter-body">
-      <div class="pending-note">
-        Rules of Engagement, Code of Conduct, and LAN Command sections port here from the
-        original dossier next. For now, see the official Discord:
-        <a href="https://discord.gg/bDw2NmEFj2">discord.gg/bDw2NmEFj2</a>.
+    <div class="chapter-body regs">
+      <div class="reg-section">
+        <h3>Shape of the weekend</h3>
+        <div class="reg"><div class="reg-no">FRI</div><div class="reg-body"><strong>Draft event</strong> — a standalone pickup tournament, open at the door. Independent of the weekend team competition.</div></div>
+        <div class="reg"><div class="reg-no">SAT</div><div class="reg-body"><strong>Group stage</strong> — ten companies, six rounds, single map each (best-of-one). A fixed, strength-of-schedule-balanced slate settles seeding. See the <a href="{{ url_for('schedule') }}">Communiqué</a>.</div></div>
+        <div class="reg"><div class="reg-no">SUN</div><div class="reg-body"><strong>Playoffs</strong> — best-of-three throughout. The <a href="{{ url_for('bracket') }}">bracket</a> seeds from Saturday's final standings; finals Sunday evening.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>Seeding</h3>
+        <div class="reg"><div class="reg-no">1</div><div class="reg-body"><strong>Group seeds</strong> come from the captains' ballot — each captain ranks the other companies, weighted by their own standing. See <a href="{{ url_for('seeds') }}">Seeding</a>.</div></div>
+        <div class="reg"><div class="reg-no">2</div><div class="reg-body"><strong>Playoff seeds</strong> come from Saturday's results, not the ballot — record first, then head-to-head, then Buchholz (sum of opponents' wins), then round differential, then group seed.</div></div>
+        <div class="reg"><div class="reg-no">3</div><div class="reg-body"><strong>Why the schedule looks like it does:</strong> every company plays six of the other nine, chosen so each slate is near-equal in strength — no one runs a gauntlet while another coasts, and no rematches. Seeding reflects how teams played, not who they drew.</div></div>
+      </div>
+
+      <div class="reg-section">
+        <h3>Playoff bracket (BO3)</h3>
+        <div class="reg"><div class="reg-no">Upper</div><div class="reg-body">Seeds <strong>1–6</strong> contest the title. Seeds 1 &amp; 2 bye to the semifinals; 3–6 play the quarterfinals (3v6, 4v5). <strong>Quarterfinal losers drop into the lower bracket</strong> — a loss isn't the end.</div></div>
+        <div class="reg"><div class="reg-no">Lower</div><div class="reg-body">Seeds <strong>7–10</strong> plus the two QF losers, single-elimination, for the lower-bracket championship. The two QF losers seed in above the group's bottom four.</div></div>
+        <div class="reg"><div class="reg-no">Win</div><div class="reg-body">Best-of-three means first to two maps. The upper-bracket final crowns the champion; the lower-bracket final crowns the lower champion.</div></div>
       </div>
     </div>
   </section>
+
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VII</div>
+      <h2 class="chapter-title">Rules of Engagement</h2>
+      <span class="chapter-stamp">BINDING ON ALL UNITS</span>
+    </header>
+    <div class="chapter-body regs">
+      <div class="reg-section">
+        <h3>1. General Conduct</h3>
+        <div class="reg"><div class="reg-no">1.1</div><div class="reg-body">LAN admins reserve the right to modify any rules as needed at any time as deemed necessary to the good continuation of the tournament.</div></div>
+        <div class="reg"><div class="reg-no">1.2</div><div class="reg-body">Matches require the correct map, configuration file, and LAN server. No exceptions.</div></div>
+        <div class="reg"><div class="reg-no">1.3</div><div class="reg-body"><strong>Server crash protocol.</strong> If the server goes down within the first five minutes of a half, the half is restarted in full. After five minutes, the half resumes with score restored and clock rounded up. No substitutions during recovery.</div></div>
+        <div class="reg"><div class="reg-no">1.4</div><div class="reg-body"><strong>Pixel-walking forbidden.</strong> Accessing an area via pixel walking, occupying an area only reachable by pixel walking (e.g., harrington ladder), or hanging in such an area results in suspension and/or forfeiture.</div></div>
+        <div class="reg"><div class="reg-no">1.5</div><div class="reg-body">Tied matches proceed to two five-minute overtime halves. <em>Failure to complete overtime rounds results in a loss for both teams.</em></div></div>
+        <div class="reg"><div class="reg-no">1.7</div><div class="reg-body">Seating assignments are final. LAN staff may modify seating as needed for operational reasons.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>2. Cheating, Penalties &amp; Disputes</h3>
+        <div class="reg"><div class="reg-no">2.1–2.3</div><div class="reg-body">Admins investigate suspicious activity. Matches involving cheaters may be overturned.</div></div>
+        <div class="reg"><div class="reg-no">2.4</div><div class="reg-body"><strong>Prohibited tooling.</strong> Visual player-location aids, recoil-control software, target-acquisition software, illegally modified game files, null binds, monitor or software crosshairs, and mouse-acceleration programs.</div></div>
+        <div class="reg"><div class="reg-no">2.5</div><div class="reg-body">Only default game files may be used unless explicitly approved or provided by LAN staff. Approved scoreboard modifiers and custom crosshairs (except sniper-rifle crosshair) are allowed.</div></div>
+        <div class="reg"><div class="reg-no">2.6</div><div class="reg-body">Spectating after a match goes live is considered cheating. Spec hopping is permitted only during full-map captures or stuck-player situations.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>3. Player Rules</h3>
+        <div class="reg"><div class="reg-no">3.1–3.2</div><div class="reg-body">Players must pass file and cvar checks, record POV demos each half, screenshot scoreboards, and remain through match conclusion.</div></div>
+        <div class="reg"><div class="reg-no">3.3</div><div class="reg-body">Player boosting <strong>is allowed</strong> so long as the destination area is accessible by a single player without boosting.</div></div>
+        <div class="reg"><div class="reg-no">3.4</div><div class="reg-body">Unauthorized voice commands and excessive opponent negging are prohibited.</div></div>
+        <div class="reg"><div class="reg-no">3.5–3.8</div><div class="reg-body">Prohibited binds: actions coupled with attack, duck-scrollwheel macros, automated attack or movement scripts, and any weapon-spawning exploits.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>4. Captain Rules</h3>
+        <div class="reg"><div class="reg-no">4.1–4.3</div><div class="reg-body">Captains: enhance scoreboard screenshot legibility, provide rcon status screenshots, and submit final scores with documentation to the shared drive.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>5. Pauses</h3>
+        <div class="reg"><div class="reg-no">5.1–5.2</div><div class="reg-body">Each team receives one two-minute pause per half, callable only immediately after a cap-out.</div></div>
+        <div class="reg"><div class="reg-no">5.3–5.4</div><div class="reg-body">Only captains may initiate pauses, with the exception of technical crashes (any team member may call).</div></div>
+        <div class="reg"><div class="reg-no">5.5</div><div class="reg-body"><strong>Unauthorized-pause penalties:</strong> first offense awards opposing team cap-out points; second offense results in immediate match forfeiture.</div></div>
+      </div>
+      <div class="regs-foot">Abridged transcription pending verification against the original on file at WSDoD command. In any conflict, the original wording governs. Captains will be issued the authoritative copy on the day.</div>
+    </div>
+  </section>
+
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VIII</div>
+      <h2 class="chapter-title">Code of Conduct</h2>
+      <span class="chapter-stamp">ADULT COMPETITORS — IN GOOD FAITH</span>
+    </header>
+    <div class="chapter-body regs">
+      <div class="reg-section">
+        <h3>0. Purpose</h3>
+        <div class="reg"><div class="reg-no">—</div><div class="reg-body">This Code of Conduct exists to ensure a fair, respectful, and enjoyable experience for all participants. As adult competitors, we expect players to uphold the highest standards of integrity, sportsmanship, and professionalism throughout the weekend.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>1. Sportsmanship &amp; Respect</h3>
+        <div class="reg"><div class="reg-no">1.1</div><div class="reg-body">While toxic behavior is common in this community online, let's strive to do better in person. Treat all players, officials, and spectators with respect. <strong>Harassment, abuse, or discriminatory behavior — verbal, written, or physical — will not be tolerated.</strong></div></div>
+        <div class="reg"><div class="reg-no">1.2</div><div class="reg-body">Practice good sportsmanship. Win or lose, do so with dignity. Excessive taunting, gloating, or inflammatory behavior is prohibited. A little is normal in this community — keep it within reason.</div></div>
+        <div class="reg"><div class="reg-no">1.3</div><div class="reg-body">We are all here to have a good time, connect with others, and be competitive. Be considerate of the people around you.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>2. Fair Play</h3>
+        <div class="reg"><div class="reg-no">2.1</div><div class="reg-body"><strong>No cheating or exploiting of any kind.</strong> The LAN follows the KTP rules wherever applicable, including <em>Nein's CVAR checker</em> on all LAN servers.</div></div>
+        <div class="reg"><div class="reg-no">2.2</div><div class="reg-body">Use of third-party software, scripts, exploits, or tampering with game files — outside of approved files submitted to LAN organizers prior to the tournament — is grounds for immediate disqualification.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>3. Conduct During Matches</h3>
+        <div class="reg"><div class="reg-no">3.1</div><div class="reg-body">Follow all match rules and schedules. Be on time and ready to play. Chronic lateness may result in penalties or forfeits. Be responsible for your team and know when your matches take place.</div></div>
+        <div class="reg"><div class="reg-no">3.2</div><div class="reg-body">To keep the tournament on time, matches start no later than <strong>10 minutes</strong> after their scheduled start, regardless of how many players are ready. Teams may choose to forfeit at that time without a full squad. Ringers are not allowed during tournament play except in extenuating circumstances at staff discretion.</div></div>
+        <div class="reg"><div class="reg-no">3.3</div><div class="reg-body">Be mindful of noise levels and behavior so everyone can enjoy the experience.</div></div>
+        <div class="reg"><div class="reg-no">3.4</div><div class="reg-body"><strong>Stream sniping is prohibited.</strong> Using information not available within your (or teammates') point of view for unfair advantage can result in forfeit.</div></div>
+        <div class="reg"><div class="reg-no">3.5</div><div class="reg-body"><strong>Mumble is the sole authorized comms tool.</strong> Using any tool outside of Mumble or in-game voice is prohibited.</div></div>
+        <div class="reg"><div class="reg-no">3.6</div><div class="reg-body">Follow instructions from Tournament Staff. Respect their decisions — their decisions are final.</div></div>
+        <div class="reg"><div class="reg-no">3.7</div><div class="reg-body">Players must use the alias they signed up with, or some variation thereof. <strong>Aliasing is prohibited.</strong></div></div>
+      </div>
+      <div class="reg-section">
+        <h3>5. Equipment &amp; LAN Etiquette</h3>
+        <div class="reg"><div class="reg-no">5.7</div><div class="reg-body">Admin access is available on the PCs, but limit changes to those necessary for your peripherals. All changes are subject to staff review. <strong>This includes "Snap Tap."</strong> If unsure, ask an official before making changes.</div></div>
+        <div class="reg"><div class="reg-no">5.x</div><div class="reg-body">Handle shared equipment with care, be accountable for your own gear (staff aren't responsible for lost/stolen items), clean up your area, and use the network responsibly.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>6. Substance Use</h3>
+        <div class="reg"><div class="reg-no">6.1</div><div class="reg-body">Maintain control of yourself when consuming substances. Excessive rowdiness can result in expulsion for the remainder of the day. No smoking inside (venue rule); vaping is allowed but keep excessive vaping outside.</div></div>
+      </div>
+      <div class="reg-section">
+        <h3>7. Penalties &amp; 8. Agreement</h3>
+        <div class="reg"><div class="reg-no">7.1</div><div class="reg-body">Staff may issue warnings, match/round forfeiture, temporary or permanent removal, or a ban from future events, based on severity and frequency.</div></div>
+        <div class="reg"><div class="reg-no">8.1</div><div class="reg-body">By participating you agree to abide by this Code of Conduct. <em>Ignorance of the rules is not a valid defense.</em></div></div>
+      </div>
+      <div class="regs-foot">Published from the WSDoD command archive; amendments reflected here on the next document refresh.</div>
+    </div>
+  </section>
+
 {% endblock %}

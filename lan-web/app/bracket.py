@@ -100,6 +100,10 @@ def get_bracket() -> list[dict]:
         return []
 
 
+def bracket_exists() -> bool:
+    return len(get_bracket()) > 0
+
+
 def report_series(mkey: str, sa: int, sb: int):
     from . import db
     row = db.query_one("SELECT team_a_id, team_b_id FROM lan_bracket WHERE mkey=%s", (mkey,))

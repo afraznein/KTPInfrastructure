@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Staff{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">&#9733;</div>
+      <h2 class="chapter-title">Staff — Roster &amp; Control</h2>
+      <span class="chapter-stamp">RESTRICTED</span>
+    </header>
+    <div class="chapter-body">
+
+      <h3>Event control</h3>
+      <table>
+        <tbody>
+          <tr><td>Companies / operators</td><td>{{ teams|length }} teams · {{ total_players }} players</td></tr>
+          <tr><td>Seeding poll</td><td>{{ 'OPEN' if poll_open else 'closed' }} — <a href="{{ url_for('seeds') }}">manage</a></td></tr>
+          <tr><td>Seeds locked</td><td>{{ 'yes' if seeds_locked else 'no' }}</td></tr>
+          <tr><td>Saturday matches</td><td>{{ 'generated' if matches_generated else 'not generated' }} — <a href="{{ url_for('schedule') }}">manage</a></td></tr>
+          <tr><td>Playoff bracket</td><td>{{ 'generated' if bracket_generated else 'not generated' }} — <a href="{{ url_for('bracket') }}">manage</a></td></tr>
+        </tbody>
+      </table>
+      <p style="font-size:13px;color:var(--ink-faint);">Order of operations: build rosters → open poll → captains submit → close + compute seeds → generate Saturday matches → report results → generate bracket.</p>
+
+      <h3 style="margin-top:30px;">Rosters</h3>
+      {% for t in teams %}
+      <article class="unit-card" style="margin-bottom:14px;">
+        <div class="unit-tag-strip">
+          <h3 class="unit-name">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}{% if t.seed %} · seed {{ t.seed }}{% endif %}</h3>
+          <form method="post" action="/admin/team/delete" onsubmit="return confirm('Delete {{ t.name }} and its roster?');" style="display:inline;">
+            <input type="hidden" name="team_id" value="{{ t.id }}"><button type="submit">Delete team</button>
+          </form>
+        </div>
+        <table>
+          <tbody>
+          {% for p in t.players %}
+            <tr>
+              <td style="width:auto;color:var(--ink);">{% if p.is_captain %}<strong>CPT</strong> {% endif %}{{ p.display_name }}</td>
+              <td style="font-size:12px;color:var(--ink-faint);">discord {{ p.discord_id or '—' }} · steam {{ p.steam_id or '—' }}</td>
+              <td style="width:14rem;">
+                {% if not p.is_captain %}
+                <form method="post" action="/admin/player/captain" style="display:inline;">
+                  <input type="hidden" name="player_id" value="{{ p.id }}"><input type="hidden" name="team_id" value="{{ t.id }}">
+                  <button type="submit">Make captain</button>
+                </form>
+                {% endif %}
+                <form method="post" action="/admin/player/delete" style="display:inline;">
+                  <input type="hidden" name="player_id" value="{{ p.id }}"><button type="submit">Remove</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+        <form method="post" action="/admin/player/add" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">
+          <input type="hidden" name="team_id" value="{{ t.id }}">
+          <input name="display_name" placeholder="alias" required style="width:9rem;">
+          <input name="discord_id" placeholder="discord id" style="width:11rem;">
+          <input name="steam_id" placeholder="steam id" style="width:9rem;">
+          <label style="font-size:12px;"><input type="checkbox" name="is_captain"> captain</label>
+          <button type="submit">Add player</button>
+        </form>
+      </article>
+      {% endfor %}
+
+      <h3 style="margin-top:24px;">Add company</h3>
+      <form method="post" action="/admin/team/add" style="display:flex;gap:6px;align-items:center;">
+        <input name="name" placeholder="team name" required style="width:14rem;">
+        <input name="tag" placeholder="tag" style="width:6rem;">
+        <button type="submit">Add team</button>
+      </form>
+
+    </div>
+  </section>
+{% endblock %}

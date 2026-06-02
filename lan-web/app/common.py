@@ -21,4 +21,5 @@ def base_ctx(request: Request, active: str = "") -> dict:
         "last_updated": now_edt(),
         "session_user": auth.session_user(request),
         "ident": auth.current_identity(request),
+        "is_admin": auth.is_admin(request),
     }
