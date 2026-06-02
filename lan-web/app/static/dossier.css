@@ -561,14 +561,21 @@ section.chapter {
   gap: 18px;
   max-width: 68ch;
 }
-.briefing-body p:first-letter {
-  font-family: var(--serif);
-  font-size: 3.4em;
-  line-height: 0.9;
-  float: left;
-  padding: 6px 8px 0 0;
-  color: var(--alert);
+/* Opening dispatch: a left "transmission" rule down the margin + a bold lede,
+   replacing the old drop-cap (the malformed p:first-letter selector applied a
+   giant initial to EVERY paragraph, not just the first). */
+.briefing-body {
+  border-left: 3px solid var(--olive);
+  padding-left: 22px;
+}
+.briefing-body p:first-of-type {
   font-weight: 700;
+  color: var(--ink);
+}
+.briefing-body p:first-of-type::before {
+  content: "\25B8  ";          /* small field-dispatch tick */
+  color: var(--alert);
+  font-weight: 900;
 }
 .briefing-signoff {
   margin-top: 26px;
