@@ -1,15 +1,20 @@
 # Reverse-proxy the LAN web service under /lan/.
-# Drop inside the TLS server{} block for your LAN domain (Let's Encrypt).
+# Drop inside the server{} block for your LAN host (add TLS once you have a domain).
 #
-# The trailing slash on proxy_pass strips the /lan prefix before the app sees
-# the path; LAN_WEB_ROOT_PATH=/lan makes the app emit correct /lan/... links.
-# The Discord OAuth redirect URI must be:  https://YOUR_DOMAIN/lan/auth/callback
+# IMPORTANT: NO trailing slash on proxy_pass. The app runs with
+# LAN_WEB_ROOT_PATH=/lan and serves every route AND its /static mount under the
+# /lan/ prefix, so the full /lan/... path must reach it unchanged. A trailing
+# slash (proxy_pass .../;) strips the prefix and breaks static assets — the
+# dossier CSS 404s and the page renders unstyled. (Learned the hard way on the
+# first live deploy.)
+#
+# Discord OAuth redirect URI must match exactly:  http(s)://YOUR_HOST/lan/auth/callback
 
 location /lan/ {
-    proxy_pass http://127.0.0.1:8099/;
+    proxy_pass http://127.0.0.1:8099;
     proxy_set_header Host              $host;
     proxy_set_header X-Real-IP         $remote_addr;
     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-Prefix /lan;
 }
+location = /lan { return 301 /lan/; }
