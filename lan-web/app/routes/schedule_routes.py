@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import auth, common, db, standings
+from .. import auth, common, db, seeding, standings
 from .. import schedule as sched
 from ..templating import templates
 
@@ -24,6 +24,7 @@ def schedule_page(request: Request):
         is_admin=auth.is_admin(request),
         my_team_id=ident["team_id"] if ident else None,
         am_captain=bool(ident and ident["is_captain"]),
+        preview=seeding.get_setting("preview_banner") == "1",
     )
     return templates.TemplateResponse(request, "schedule.html", ctx)
 

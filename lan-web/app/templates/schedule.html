@@ -13,6 +13,7 @@
     </header>
 
     <div class="chapter-body">
+      {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
 
     {% if not matches %}
       {# ---- template mode: seeds not yet materialized into matches ---- #}
@@ -106,14 +107,33 @@
     {% endif %}
 
       <h3 style="margin-top:30px;">Why this schedule — strength of schedule</h3>
-      <p>The six rounds aren't drawn at random. Each company plays six of the other nine, and we picked
-         those six so every team's slate is as even as possible. Across the field the average opponent
-         strength is near-identical — we measured the spread and it's roughly a third of what a naive
-         draw produces. No company runs a gauntlet while another coasts.</p>
-      <p>Two more rules are baked in: no rematches, and the top seeds are kept apart through the early
-         rounds. So Sunday's seeding reflects how teams actually played across the full slate — not who
-         they happened to draw. A team can't back into a bye on a soft schedule, and a strong team won't
-         miss one for catching every contender early.</p>
+      <p><strong>The format.</strong> Ten companies, six rounds, one map each (best-of-one). It's a
+         <em>partial</em> round-robin — each team plays six of the other nine, never the same opponent twice.</p>
+      <p><strong>How the six opponents are chosen.</strong> A careless draw can hand one team a
+         murderers' row while another cruises, which would distort the standings. To prevent that we score
+         each team's slate by its <em>strength of schedule</em> — the sum of its six opponents' seed numbers —
+         and pick the set of pairings that makes that number as equal as possible across all ten teams.
+         On the locked schedule every team's slate lands near the fair average (about <strong>33</strong> on
+         the 1–10 seed scale), and the spread between the easiest and hardest slate is roughly a
+         <strong>third</strong> of what a naive seed-fold produces (variance ≈ 6.6 vs ≈ 19). No one runs a
+         gauntlet; no one coasts.</p>
+      <p><strong>Two rules baked in.</strong> No rematches, and the top four seeds never meet before
+         Round 4 — so the marquee games land late and no contender's standing is settled by a brutal
+         early draw. The upshot: Sunday's seeding reflects how teams actually played, not who they drew.</p>
+
+      <h3 style="margin-top:30px;">How standings are decided</h3>
+      <p>Companies are ranked by, in order:</p>
+      <ol style="font-family:var(--typed);font-size:14px;line-height:1.6;padding-left:20px;max-width:64ch;">
+        <li><strong>Record</strong> — wins first.</li>
+        <li><strong>Head-to-head</strong> — among teams tied on record, whoever won the meeting ranks higher.</li>
+        <li><strong>Buchholz</strong> — the sum of <em>your opponents'</em> win totals. A high Buchholz means
+            the teams you faced did well themselves — i.e. you came through a tougher field — so ties break in
+            favor of the harder road. (It's the classic Swiss-chess tiebreaker.)</li>
+        <li><strong>Round / flag differential</strong> — capped, so a blowout doesn't snowball.</li>
+        <li><strong>Group seed</strong> — the pre-event captains'-ballot seed, as the final fallback.</li>
+      </ol>
+      <p style="font-size:13px;color:var(--ink-faint);">Top two earn byes to the playoff semifinals; seeds
+         3–6 enter the upper bracket, 7–10 the lower.</p>
 
       <h3 style="margin-top:30px;">Saturday timetable</h3>
       <table class="ops-timetable">
