@@ -1,43 +1,45 @@
 {% extends "base.html" %}
 {% block title %}WSDoD / LAN 2026 / Bracket{% endblock %}
 
-{% macro who(name, source) -%}
-  {%- if name -%}{{ name }}
-  {%- else -%}
-    {%- set p = source.split(':') -%}
-    {%- if p[0] == 'W' %}Winner {{ p[1] }}{% elif p[0] == 'L' %}Loser {{ p[1] }}{% else %}Seed {{ p[1] }}{% endif -%}
-  {%- endif -%}
-{%- endmacro %}
+{% macro competitor(c) %}
+  <div class="bkt-c {{ 'win' if c.win }} {{ 'tbd' if c.tbd }}">
+    <span class="bkt-seed">{{ c.seed if c.seed is not none else '' }}</span>
+    <span class="bkt-name">{{ c.name }}</span>
+    <span class="bkt-score">{{ c.score if c.score is not none else '' }}</span>
+  </div>
+{% endmacro %}
 
-{% macro matchbox(m, can) %}
-  <div class="bkt-match">
-    <div class="bkt-label">{{ m.label }}</div>
-    <div class="bkt-side {{ 'win' if m.winner_team_id and m.winner_team_id == m.team_a_id }} {{ 'tbd' if not m.a_name }}">
-      <span>{{ who(m.a_name, m.source_a) }}</span>
-      <span class="sc">{% if m.score_a is not none %}{{ m.score_a }}{% endif %}</span>
+{% macro matchbox(m, is_admin, am_captain, my_team_id) %}
+  <div class="bkt-m">
+    <div class="bkt-card">
+      {{ competitor(m.top) }}
+      {{ competitor(m.bottom) }}
     </div>
-    <div class="bkt-side {{ 'win' if m.winner_team_id and m.winner_team_id == m.team_b_id }} {{ 'tbd' if not m.b_name }}">
-      <span>{{ who(m.b_name, m.source_b) }}</span>
-      <span class="sc">{% if m.score_b is not none %}{{ m.score_b }}{% endif %}</span>
-    </div>
-    {% if can %}
-    <form class="bkt-rep" method="post" action="{{ url_for('bracket_report') }}">
-      <input type="hidden" name="mkey" value="{{ m.mkey }}">
-      <input type="number" name="score_a" min="0" max="2" value="{{ m.score_a if m.score_a is not none else '' }}" required>
-      <input type="number" name="score_b" min="0" max="2" value="{{ m.score_b if m.score_b is not none else '' }}" required>
-      <button type="submit">{{ 'Edit' if m.status == 'final' else 'Report' }}</button>
-    </form>
+    {% if m.slot %}
+      {% set s = m.slot %}
+      {% set ready = s.team_a_id and s.team_b_id %}
+      {% set can = is_admin or (am_captain and ready and (my_team_id == s.team_a_id or my_team_id == s.team_b_id)) %}
+      {% if can %}
+      <form class="bkt-rep" method="post" action="{{ url_for('bracket_report') }}">
+        <input type="hidden" name="mkey" value="{{ s.mkey }}">
+        <input type="number" name="score_a" min="0" max="2" value="{{ s.score_a if s.score_a is not none else '' }}" required>
+        <input type="number" name="score_b" min="0" max="2" value="{{ s.score_b if s.score_b is not none else '' }}" required>
+        <button type="submit">{{ 'Edit' if s.status == 'final' else 'Report' }}</button>
+      </form>
+      {% endif %}
     {% endif %}
   </div>
 {% endmacro %}
 
-{% macro column(slots, stage, title, generated, is_admin, am_captain, my_team_id) %}
-  <div class="bkt-col">
-    <h4>{{ title }}</h4>
-    {% for m in slots if m.stage == stage %}
-      {% set ready = m.team_a_id and m.team_b_id %}
-      {% set can = generated and (is_admin or (am_captain and ready and (my_team_id == m.team_a_id or my_team_id == m.team_b_id))) %}
-      {{ matchbox(m, can) }}
+{% macro tree(rounds, is_admin, am_captain, my_team_id) %}
+  <div class="bkt-tree">
+    {% for rnd in rounds %}
+    <div class="bkt-round">
+      <div class="bkt-round-head">{{ rnd.title }}<span>Best of 3</span></div>
+      <div class="bkt-body">
+        {% for m in rnd.matches %}{{ matchbox(m, is_admin, am_captain, my_team_id) }}{% endfor %}
+      </div>
+    </div>
     {% endfor %}
   </div>
 {% endmacro %}
@@ -52,25 +54,29 @@
     <div class="chapter-body">
       {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
       <style>
-        .bkt { display:flex; gap:34px; align-items:flex-start; overflow-x:auto; padding-bottom:10px; }
-        .bkt-col { display:flex; flex-direction:column; gap:16px; min-width:200px; }
-        .bkt-col > h4 { margin:0 0 2px; font-family:var(--stencil); letter-spacing:.12em; text-transform:uppercase;
-                        font-size:13px; color:var(--ink-soft); border-bottom:1px solid var(--ink-margin); padding-bottom:3px; }
-        .bkt-match { border:1px solid var(--ink-margin); background:rgba(90,94,58,0.06); padding:6px 8px; position:relative; }
-        /* drawn-bracket connectors: a stub out the right of each box + into the left of the next round */
-        .bkt-col:not(:last-child) .bkt-match::after {
-          content:""; position:absolute; top:50%; left:100%; width:17px; border-top:2px solid var(--ink-soft); opacity:.5;
-        }
-        .bkt-col:not(:first-child) .bkt-match::before {
-          content:""; position:absolute; top:50%; right:100%; width:17px; border-top:2px solid var(--ink-soft); opacity:.5;
-        }
-        .bkt-label { font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.1em; margin-bottom:3px; }
-        .bkt-side { display:flex; justify-content:space-between; gap:8px; padding:2px 0; color:var(--ink); }
-        .bkt-side.win { font-weight:bold; color:var(--wsdod-blue); }
-        .bkt-side.tbd { color:var(--ink-faint); font-style:italic; }
-        .bkt-side .sc { color:var(--ink-soft); font-variant-numeric:tabular-nums; }
-        .bkt-rep { display:flex; gap:3px; margin-top:5px; }
-        .bkt-rep input { width:2.5rem; }
+        .bkt-tree { display:flex; align-items:stretch; overflow-x:auto; padding:4px 0 14px; min-height:300px; }
+        .bkt-round { display:flex; flex-direction:column; min-width:198px; }
+        .bkt-round + .bkt-round { margin-left:36px; }
+        .bkt-round-head { flex:0 0 auto; text-align:center; font-family:var(--stencil); text-transform:uppercase;
+          letter-spacing:.1em; font-size:13px; color:var(--ink-soft); border-bottom:1px solid var(--ink-margin);
+          padding-bottom:4px; margin-bottom:6px; }
+        .bkt-round-head span { display:block; font-family:var(--typed); font-size:11px; letter-spacing:.14em; color:var(--wsdod-blue); }
+        .bkt-body { display:flex; flex-direction:column; flex:1; }
+        .bkt-m { flex:1; display:flex; flex-direction:column; justify-content:center; position:relative; }
+        .bkt-c { display:flex; align-items:center; height:24px; border:1px solid var(--ink-margin); border-bottom:none; background:var(--paper); font-size:13px; }
+        .bkt-card .bkt-c:last-child { border-bottom:1px solid var(--ink-margin); }
+        .bkt-c.win .bkt-name { font-weight:700; color:var(--wsdod-blue); }
+        .bkt-c.tbd .bkt-name { color:var(--ink-faint); font-style:italic; }
+        .bkt-seed { width:22px; min-width:22px; text-align:center; line-height:24px; background:var(--olive); color:var(--paper); font-family:var(--mono); font-size:11px; }
+        .bkt-name { flex:1; padding:0 7px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--ink); }
+        .bkt-score { width:22px; min-width:22px; text-align:center; color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+        .bkt-rep { display:flex; gap:3px; margin-top:3px; justify-content:flex-end; }
+        .bkt-rep input { width:2.2rem; }
+        /* elbow connectors — clean 4->2->1 tree */
+        .bkt-round:not(:last-child) .bkt-m::after { content:''; position:absolute; left:100%; width:18px; }
+        .bkt-round:not(:last-child) .bkt-m:nth-child(odd)::after  { top:50%;    height:50%; border-top:2px solid var(--ink-margin);    border-right:2px solid var(--ink-margin); }
+        .bkt-round:not(:last-child) .bkt-m:nth-child(even)::after { bottom:50%; height:50%; border-bottom:2px solid var(--ink-margin); border-right:2px solid var(--ink-margin); }
+        .bkt-round:not(:first-child) .bkt-m::before { content:''; position:absolute; right:100%; top:50%; width:18px; border-top:2px solid var(--ink-margin); }
       </style>
 
       {% if champion %}
@@ -94,19 +100,11 @@
 
       <h3>Upper bracket &mdash; for the title</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 1–2 bye to the semifinals; QF losers drop to the lower bracket.</p>
-      <div class="bkt">
-        {{ column(upper, 'QF', 'Quarterfinals', generated, is_admin, am_captain, my_team_id) }}
-        {{ column(upper, 'SF', 'Semifinals',    generated, is_admin, am_captain, my_team_id) }}
-        {{ column(upper, 'F',  'Final',          generated, is_admin, am_captain, my_team_id) }}
-      </div>
+      {{ tree(upper_rounds, is_admin, am_captain, my_team_id) }}
 
-      <h3 style="margin-top:30px;">Lower bracket &mdash; for the lower championship</h3>
-      <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus the two QF losers; single-elimination.</p>
-      <div class="bkt">
-        {{ column(lower, 'PI',  'Play-ins',           generated, is_admin, am_captain, my_team_id) }}
-        {{ column(lower, 'LSF', 'Lower Semifinals',   generated, is_admin, am_captain, my_team_id) }}
-        {{ column(lower, 'LF',  'Lower Final',        generated, is_admin, am_captain, my_team_id) }}
-      </div>
+      <h3 style="margin-top:32px;">Lower bracket &mdash; for the lower championship</h3>
+      <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus the two QF losers (which drop in); single-elimination.</p>
+      {{ tree(lower_rounds, is_admin, am_captain, my_team_id) }}
     </div>
   </section>
 {% endblock %}
