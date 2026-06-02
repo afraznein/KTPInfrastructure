@@ -24,8 +24,14 @@
       <h3 style="margin-top:30px;">Rosters</h3>
       {% for t in teams %}
       <article class="unit-card" style="margin-bottom:14px;">
-        <div class="unit-tag-strip">
+        <div class="unit-tag-strip" style="flex-wrap:wrap;gap:8px;">
           <h3 class="unit-name">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}{% if t.seed %} · seed {{ t.seed }}{% endif %}</h3>
+          <form method="post" action="{{ url_for('admin_team_edit') }}" style="display:flex;gap:4px;align-items:center;">
+            <input type="hidden" name="team_id" value="{{ t.id }}">
+            <input name="name" value="{{ t.name }}" required style="width:9rem;">
+            <input name="tag" value="{{ t.tag or '' }}" placeholder="tag" style="width:5rem;">
+            <button type="submit">Rename</button>
+          </form>
           <form method="post" action="{{ url_for('admin_team_delete') }}" onsubmit="return confirm('Delete {{ t.name }} and its roster?');" style="display:inline;">
             <input type="hidden" name="team_id" value="{{ t.id }}"><button type="submit">Delete team</button>
           </form>

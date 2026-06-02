@@ -49,6 +49,22 @@ async def team_add(request: Request):
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
+@router.post("/admin/team/edit", name="admin_team_edit")
+async def team_edit(request: Request):
+    auth.require_admin(request)
+    f = await request.form()
+    team_id = int(f["team_id"])
+    name = (f.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Team name required.")
+    tag = (f.get("tag") or "").strip() or None
+    try:
+        db.execute("UPDATE lan_teams SET name=%s, tag=%s WHERE id=%s", (name, tag, team_id))
+    except Exception:
+        raise HTTPException(400, f"Could not rename (name {name!r} may already be taken).")
+    return RedirectResponse(request.url_for("admin"), status_code=303)
+
+
 @router.post("/admin/team/delete", name="admin_team_delete")
 async def team_delete(request: Request):
     auth.require_admin(request)
