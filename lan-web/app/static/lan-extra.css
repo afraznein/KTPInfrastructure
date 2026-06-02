@@ -78,6 +78,14 @@ input:focus, select:focus, textarea:focus {
 }
 input::placeholder { color: var(--ink-faint); font-style: italic; }
 
+/* PREVIEW banner (toggled by the preview_banner setting) */
+.preview-banner {
+  background: var(--alert); color: var(--paper); font-family: var(--stencil);
+  letter-spacing: .2em; text-transform: uppercase; text-align: center;
+  padding: 7px 10px; margin: 0 0 20px; font-size: 13px; font-weight: 700;
+  box-shadow: 2px 2px 0 rgba(26,20,14,0.25);
+}
+
 /* ── 5. Per-page flourishes ──────────────────────────────────────────── */
 /* Bracket as a plotting board — faint blueprint grid behind the columns */
 .bkt {
