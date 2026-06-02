@@ -2,8 +2,8 @@
 """Apply lan-web SQL migrations idempotently.
 
 Each file in migrations/*.sql runs once; applied filenames are recorded in
-lan_schema_migrations so re-runs are no-ops. Statements are split on ';'
-(safe here — migrations are pure DDL with no semicolons in data)."""
+lan_schema_migrations so re-runs are no-ops. `--` comments are stripped before
+splitting on ';' (a comment may legally contain a semicolon)."""
 from __future__ import annotations
 
 import sys
@@ -14,6 +14,18 @@ import pymysql
 from app.config import settings
 
 MIG_DIR = Path(__file__).resolve().parent / "migrations"
+
+
+def split_statements(sql_text: str) -> list[str]:
+    """Split a migration into statements, stripping `--` comments first.
+
+    Comments can contain ';', which would otherwise tear a statement in half.
+    Safe for our DDL (no string literals containing '--')."""
+    out = []
+    for line in sql_text.splitlines():
+        i = line.find("--")
+        out.append(line[:i] if i != -1 else line)
+    return [s.strip() for s in "\n".join(out).split(";") if s.strip()]
 
 TRACK_TABLE = """
 CREATE TABLE IF NOT EXISTS lan_schema_migrations (
@@ -45,7 +57,7 @@ def main() -> int:
 
     for f in pending:
         print(f"Applying {f.name} ...")
-        statements = [s.strip() for s in f.read_text(encoding="utf-8").split(";") if s.strip()]
+        statements = split_statements(f.read_text(encoding="utf-8"))
         with conn.cursor() as cur:
             for stmt in statements:
                 cur.execute(stmt)

@@ -53,7 +53,7 @@ def save_ballot(voting_team_id: int, ranks: dict[int, int], submitted_by: int | 
         cur.execute("DELETE FROM lan_seed_ballots WHERE voting_team_id=%s", (voting_team_id,))
         for ranked_id, rank in ranks.items():
             cur.execute(
-                "INSERT INTO lan_seed_ballots (voting_team_id, ranked_team_id, rank, submitted_by) "
+                "INSERT INTO lan_seed_ballots (voting_team_id, ranked_team_id, rank_pos, submitted_by) "
                 "VALUES (%s, %s, %s, %s)",
                 (voting_team_id, ranked_id, rank, submitted_by),
             )
@@ -61,20 +61,20 @@ def save_ballot(voting_team_id: int, ranks: dict[int, int], submitted_by: int | 
 
 def get_all_ballots() -> dict[int, dict[int, int]]:
     from . import db
-    rows = db.query_all("SELECT voting_team_id, ranked_team_id, rank FROM lan_seed_ballots")
+    rows = db.query_all("SELECT voting_team_id, ranked_team_id, rank_pos FROM lan_seed_ballots")
     out: dict[int, dict[int, int]] = {}
     for r in rows:
-        out.setdefault(r["voting_team_id"], {})[r["ranked_team_id"]] = r["rank"]
+        out.setdefault(r["voting_team_id"], {})[r["ranked_team_id"]] = r["rank_pos"]
     return out
 
 
 def get_team_ballot(voting_team_id: int) -> dict[int, int]:
     from . import db
     rows = db.query_all(
-        "SELECT ranked_team_id, rank FROM lan_seed_ballots WHERE voting_team_id=%s ORDER BY rank",
+        "SELECT ranked_team_id, rank_pos FROM lan_seed_ballots WHERE voting_team_id=%s ORDER BY rank_pos",
         (voting_team_id,),
     )
-    return {r["ranked_team_id"]: r["rank"] for r in rows}
+    return {r["ranked_team_id"]: r["rank_pos"] for r in rows}
 
 
 def compute_and_store():

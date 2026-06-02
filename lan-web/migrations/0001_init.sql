@@ -3,7 +3,7 @@
 -- lan_schedule + lan_bracket are foundational stubs for Phases 3-4; the
 -- columns may grow as the result-reporting and bracket logic land.
 
-CREATE TABLE lan_teams (
+CREATE TABLE IF NOT EXISTS lan_teams (
   id          INT UNSIGNED NOT NULL AUTO_INCREMENT,
   name        VARCHAR(64) NOT NULL,
   tag         VARCHAR(16) NULL,
@@ -13,7 +13,7 @@ CREATE TABLE lan_teams (
   UNIQUE KEY uq_lan_teams_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE lan_players (
+CREATE TABLE IF NOT EXISTS lan_players (
   id            INT UNSIGNED NOT NULL AUTO_INCREMENT,
   team_id       INT UNSIGNED NOT NULL,
   discord_id    BIGINT UNSIGNED NULL,         -- Discord snowflake; the OAuth identity linchpin
@@ -28,11 +28,11 @@ CREATE TABLE lan_players (
   CONSTRAINT fk_lan_players_team FOREIGN KEY (team_id) REFERENCES lan_teams(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE lan_seed_ballots (
+CREATE TABLE IF NOT EXISTS lan_seed_ballots (
   id              INT UNSIGNED NOT NULL AUTO_INCREMENT,
   voting_team_id  INT UNSIGNED NOT NULL,       -- team casting the ballot
   ranked_team_id  INT UNSIGNED NOT NULL,       -- team being ranked
-  rank            INT NOT NULL,                -- 1 = strongest
+  rank_pos        INT NOT NULL,                -- 1 = strongest (rank is a reserved word in MySQL 8)
   submitted_by    BIGINT UNSIGNED NULL,        -- captain discord_id
   submitted_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -43,7 +43,7 @@ CREATE TABLE lan_seed_ballots (
   CONSTRAINT chk_ballot_not_self CHECK (voting_team_id <> ranked_team_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE lan_schedule (
+CREATE TABLE IF NOT EXISTS lan_schedule (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   round          INT NOT NULL,                 -- group round 1-6 (BO1)
   station        INT NULL,                     -- server/station number
@@ -62,7 +62,7 @@ CREATE TABLE lan_schedule (
   CONSTRAINT fk_sched_b FOREIGN KEY (team_b_id) REFERENCES lan_teams(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE lan_bracket (
+CREATE TABLE IF NOT EXISTS lan_bracket (
   id             INT UNSIGNED NOT NULL AUTO_INCREMENT,
   bracket        ENUM('upper','lower') NOT NULL,
   stage          VARCHAR(16) NOT NULL,         -- QF/SF/F, playin/lsemi/lfinal
