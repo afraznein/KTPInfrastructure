@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,8 @@ class Settings:
     db_user: str
     db_password: str
     db_name: str
+    demo_dir: str
+    demo_max_bytes: int
 
     @property
     def is_prod(self) -> bool:
@@ -49,6 +52,11 @@ def load() -> Settings:
         db_user=os.getenv("LAN_DB_USER", "ktp_lan"),
         db_password=os.getenv("LAN_DB_PASSWORD", ""),
         db_name=os.getenv("LAN_DB_NAME", "ktp_lan"),
+        demo_dir=os.getenv(
+            "LAN_DEMO_DIR",
+            str(Path(__file__).resolve().parent.parent / "data" / "demos"),
+        ),
+        demo_max_bytes=int(os.getenv("LAN_DEMO_MAX_MB", "250")) * 1024 * 1024,
     )
 
 

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Check-in{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">VI</div>
+      <h2 class="chapter-title">Check-in</h2>
+      <span class="chapter-stamp">REPORT FOR DUTY</span>
+    </header>
+    <div class="chapter-body">
+
+      {% if not session_user %}
+        <div class="pending-note">Sign in to check in. <a href="{{ url_for('login') }}">Report for duty via Discord</a>.</div>
+      {% elif not ident %}
+        <div class="pending-note">Signed in as <strong>{{ session_user.discord_name }}</strong>, but your Discord isn't linked to a roster yet — see staff.</div>
+      {% else %}
+        <div class="pending-note" style="border-style:solid;border-color:var(--wsdod-blue);">
+          You are <strong>{{ ident.display_name }}</strong> — {{ ident.team_name }}{% if ident.is_captain %} (captain){% endif %}.
+          <div style="margin-top:8px;">
+            <form method="post" action="/checkin/me" style="display:inline;"><button type="submit">Check me in</button></form>
+            {% if ident.is_captain %}
+            <form method="post" action="/checkin/team" style="display:inline;"><button type="submit">Confirm team checked in</button></form>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+
+      <h3 style="margin-top:24px;">Check-in board</h3>
+      <table>
+        <thead><tr><td>Company</td><td>Present</td><td>Team status</td></tr></thead>
+        <tbody>
+        {% for t in teams %}
+          <tr>
+            <td style="width:auto;color:var(--ink);">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}</td>
+            <td>{{ t.present }}/{{ t.total }}</td>
+            <td style="color:{{ 'var(--wsdod-blue)' if t.checked_in_at else 'var(--ink-faint)' }};">
+              {{ 'CHECKED IN' if t.checked_in_at else 'not yet' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p style="font-size:13px;color:var(--ink-faint);">Each operator checks themselves in from their own Discord login; captains confirm the team once the roster is present.</p>
+    </div>
+  </section>
+{% endblock %}
