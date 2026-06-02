@@ -27,7 +27,7 @@ def demos_page(request: Request):
     return templates.TemplateResponse(request, "demos.html", ctx)
 
 
-@router.post("/demos/upload")
+@router.post("/demos/upload", name="demo_upload")
 async def demos_upload(
     request: Request,
     file: UploadFile = File(...),

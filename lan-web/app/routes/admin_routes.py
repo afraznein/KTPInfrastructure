@@ -34,7 +34,7 @@ def admin_home(request: Request):
     return templates.TemplateResponse(request, "admin.html", ctx)
 
 
-@router.post("/admin/team/add")
+@router.post("/admin/team/add", name="admin_team_add")
 async def team_add(request: Request):
     auth.require_admin(request)
     f = await request.form()
@@ -49,7 +49,7 @@ async def team_add(request: Request):
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
-@router.post("/admin/team/delete")
+@router.post("/admin/team/delete", name="admin_team_delete")
 async def team_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
@@ -57,7 +57,7 @@ async def team_delete(request: Request):
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
-@router.post("/admin/player/add")
+@router.post("/admin/player/add", name="admin_player_add")
 async def player_add(request: Request):
     auth.require_admin(request)
     f = await request.form()
@@ -82,7 +82,7 @@ async def player_add(request: Request):
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
-@router.post("/admin/player/delete")
+@router.post("/admin/player/delete", name="admin_player_delete")
 async def player_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
@@ -90,7 +90,7 @@ async def player_delete(request: Request):
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
-@router.post("/admin/player/captain")
+@router.post("/admin/player/captain", name="admin_player_captain")
 async def player_captain(request: Request):
     auth.require_admin(request)
     f = await request.form()

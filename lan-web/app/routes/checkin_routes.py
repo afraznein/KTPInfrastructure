@@ -32,14 +32,14 @@ def checkin_page(request: Request):
     return templates.TemplateResponse(request, "checkin.html", ctx)
 
 
-@router.post("/checkin/me")
+@router.post("/checkin/me", name="checkin_me")
 def checkin_me(request: Request):
     ident = auth.require_login(request)
     db.execute("UPDATE lan_players SET checked_in_at=NOW() WHERE id=%s", (ident["player_id"],))
     return RedirectResponse(request.url_for("checkin"), status_code=303)
 
 
-@router.post("/checkin/team")
+@router.post("/checkin/team", name="checkin_team")
 def checkin_team(request: Request):
     ident = auth.require_captain(request)
     db.execute("UPDATE lan_teams SET checked_in_at=NOW() WHERE id=%s", (ident["team_id"],))

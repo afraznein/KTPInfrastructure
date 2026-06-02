@@ -26,7 +26,7 @@
       <article class="unit-card" style="margin-bottom:14px;">
         <div class="unit-tag-strip">
           <h3 class="unit-name">{{ t.name }}{% if t.tag %} [{{ t.tag }}]{% endif %}{% if t.seed %} · seed {{ t.seed }}{% endif %}</h3>
-          <form method="post" action="/admin/team/delete" onsubmit="return confirm('Delete {{ t.name }} and its roster?');" style="display:inline;">
+          <form method="post" action="{{ url_for('admin_team_delete') }}" onsubmit="return confirm('Delete {{ t.name }} and its roster?');" style="display:inline;">
             <input type="hidden" name="team_id" value="{{ t.id }}"><button type="submit">Delete team</button>
           </form>
         </div>
@@ -38,12 +38,12 @@
               <td style="font-size:12px;color:var(--ink-faint);">discord {{ p.discord_id or '—' }} · steam {{ p.steam_id or '—' }}</td>
               <td style="width:14rem;">
                 {% if not p.is_captain %}
-                <form method="post" action="/admin/player/captain" style="display:inline;">
+                <form method="post" action="{{ url_for('admin_player_captain') }}" style="display:inline;">
                   <input type="hidden" name="player_id" value="{{ p.id }}"><input type="hidden" name="team_id" value="{{ t.id }}">
                   <button type="submit">Make captain</button>
                 </form>
                 {% endif %}
-                <form method="post" action="/admin/player/delete" style="display:inline;">
+                <form method="post" action="{{ url_for('admin_player_delete') }}" style="display:inline;">
                   <input type="hidden" name="player_id" value="{{ p.id }}"><button type="submit">Remove</button>
                 </form>
               </td>
@@ -51,7 +51,7 @@
           {% endfor %}
           </tbody>
         </table>
-        <form method="post" action="/admin/player/add" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">
+        <form method="post" action="{{ url_for('admin_player_add') }}" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;">
           <input type="hidden" name="team_id" value="{{ t.id }}">
           <input name="display_name" placeholder="alias" required style="width:9rem;">
           <input name="discord_id" placeholder="discord id" style="width:11rem;">
@@ -63,7 +63,7 @@
       {% endfor %}
 
       <h3 style="margin-top:24px;">Add company</h3>
-      <form method="post" action="/admin/team/add" style="display:flex;gap:6px;align-items:center;">
+      <form method="post" action="{{ url_for('admin_team_add') }}" style="display:flex;gap:6px;align-items:center;">
         <input name="name" placeholder="team name" required style="width:14rem;">
         <input name="tag" placeholder="tag" style="width:6rem;">
         <button type="submit">Add team</button>

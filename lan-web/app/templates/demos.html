@@ -26,7 +26,7 @@
         .dz-file { font-family:var(--mono); font-size:13px; color:var(--olive-dark); margin-top:10px; font-weight:700; }
         .demo-fields { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
       </style>
-      <form method="post" action="/demos/upload" enctype="multipart/form-data" id="demoform">
+      <form method="post" action="{{ url_for('demo_upload') }}" enctype="multipart/form-data" id="demoform">
         <label class="dz" id="dz" for="demofile">
           <input id="demofile" type="file" name="file" accept=".dem,.zip" required hidden>
           <div class="dz-stamp">&#9660; Drop demo here &#9660;</div>
@@ -86,7 +86,7 @@
             <td>{{ d.team_name or '—' }}</td>
             <td>{{ fmtsize(d.size_bytes) }}</td>
             <td style="font-size:12px;color:var(--ink-faint);">{{ d.uploaded_at }}</td>
-            <td>{% if d.stored_name %}<a href="/demos/{{ d.id }}/download">download</a>{% else %}<span style="color:var(--ink-faint);">processing</span>{% endif %}</td>
+            <td>{% if d.stored_name %}<a href="{{ url_for('demos_download', demo_id=d.id) }}">download</a>{% else %}<span style="color:var(--ink-faint);">processing</span>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>
