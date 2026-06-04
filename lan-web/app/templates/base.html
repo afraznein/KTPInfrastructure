@@ -57,7 +57,9 @@
         <dt>Re</dt><dd>LAN 2026 / 31 JUL – 2 AUG / TAP ESPORT CENTER</dd>
         <dt>Operator</dt>
         <dd class="op-line">
-          {% if session_user %}{{ session_user.discord_name }} — <a href="{{ url_for('logout') }}">stand down</a>
+          {% if session_user %}{{ session_user.discord_name }}{% if ident %} &middot;
+            <a href="{{ url_for('team', team_id=ident.team_id) }}" title="Your company — roster, schedule &amp; bracket">{{ ident.team_name }}{% if ident.is_captain %} (CPT){% endif %}</a>{% endif %} &mdash;
+            <a href="{{ url_for('logout') }}">stand down</a>
           {% else %}<a href="{{ url_for('login') }}">report for duty (Discord)</a>{% endif %}
         </dd>
         <dt>Rev</dt><dd>{{ last_updated }}</dd>
