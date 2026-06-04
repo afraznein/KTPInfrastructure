@@ -167,10 +167,9 @@ def set_map(match_id: int, mapname):
     db.execute("UPDATE lan_schedule SET `map`=%s WHERE id=%s", (mapname, match_id))
 
 
-# Common DoD competitive maps — drives the map-picker datalist (free text still allowed).
+# LAN 2026 map pool — drives the map-picker datalist (free text still allowed).
 COMP_MAPS = [
-    "dod_anzio", "dod_avalanche", "dod_caen", "dod_charlie", "dod_donner",
-    "dod_flash", "dod_jagd", "dod_kalt", "dod_kraftstoff", "dod_merderet",
-    "dod_saints", "dod_switch", "dod_vossenack",
+    "Harrington", "Lennon", "Anzio", "Saints",
+    "Thunder2", "Railroad2", "Armory", "Halle",
 ]
 

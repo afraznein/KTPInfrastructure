@@ -48,8 +48,8 @@
   </div>
 {% endmacro %}
 
-{% macro tree(rounds, is_admin, am_captain, my_team_id) %}
-  <div class="bkt-tree">
+{% macro tree(rounds, is_admin, am_captain, my_team_id, flow=false) %}
+  <div class="bkt-tree {{ 'bkt-flow' if flow }}">
     {% for rnd in rounds %}
     <div class="bkt-round">
       <div class="bkt-round-head">{{ rnd.title }}<span>{% if rnd.time %}{{ rnd.time }} · {% endif %}Best of {{ rnd.bo or 3 }}</span></div>
@@ -95,6 +95,11 @@
         .bkt-round:not(:last-child) .bkt-m:nth-child(odd)::after  { top:50%;    height:50%; border-top:2px solid var(--ink-margin);    border-right:2px solid var(--ink-margin); }
         .bkt-round:not(:last-child) .bkt-m:nth-child(even)::after { bottom:50%; height:50%; border-bottom:2px solid var(--ink-margin); border-right:2px solid var(--ink-margin); }
         .bkt-round:not(:first-child) .bkt-m::before { content:''; position:absolute; right:100%; top:50%; width:18px; border-top:2px solid var(--ink-margin); }
+        /* lower bracket flows 1:1 with cross-overs + upper-bracket drop-ins, so the
+           clean pair-merge elbows don't apply — drop them; each box names its feeders. */
+        .bkt-flow .bkt-m::before, .bkt-flow .bkt-m::after { display:none !important; }
+        .bkt-flow .bkt-body { justify-content:flex-start; gap:10px; padding-top:2px; }
+        .bkt-flow .bkt-m { flex:0 0 auto; }
         /* grand final — the headline match */
         .bkt-grand { max-width:360px; margin:6px 0 6px; }
         .bkt-grand .bkt-c { height:34px; font-size:15px; }
@@ -139,7 +144,8 @@
 
       <h3 style="margin-top:32px;">Lower bracket &mdash; for the lower championship</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus every upper-bracket dropout (QF losers at R2, SF losers at R3, the Upper Final loser into the Lower Final). Best-of-one until the Lower Final; its champion advances to the Grand Final.</p>
-      {{ tree(lower_rounds, is_admin, am_captain, my_team_id) }}
+      <p style="font-size:12px;color:var(--ink-soft);margin:-4px 0 8px;">Read left to right — each match box names its two feeders: the winner advancing from the previous round and the team dropping in from the upper bracket.</p>
+      {{ tree(lower_rounds, is_admin, am_captain, my_team_id, flow=true) }}
 
       <h3 style="margin-top:32px;">Placement matches &mdash; final standings</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Played off to the side on spare stations. Each starts at the next round time after those teams are eliminated. Best of 3.</p>
