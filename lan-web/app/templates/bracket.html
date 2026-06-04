@@ -20,6 +20,7 @@
       {% set need = ((m.best_of or 3) // 2 + 1) %}
       {% if s.station %}<div class="bkt-srv">Server {{ s.station }}</div>{% endif %}
       {% if m.map %}<div class="bkt-srv">{{ m.map }}</div>{% endif %}
+      {% if (m.best_of or 1) == 3 and s.team_a_id and s.team_b_id %}<div class="bkt-srv"><a href="{{ url_for('veto', mkey=s.mkey) }}" style="color:var(--wsdod-blue);">map veto &rsaquo;</a></div>{% endif %}
       {% set ready = s.team_a_id and s.team_b_id %}
       {% set can = is_admin or (am_captain and ready and (my_team_id == s.team_a_id or my_team_id == s.team_b_id)) %}
       {% if can %}

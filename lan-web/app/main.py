@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .config import settings
 from .routes import (admin_routes, auth_routes, bracket_routes, checkin_routes,
                      demo_routes, extras_routes, placements_routes, poll_routes,
-                     public, schedule_routes, stations_routes)
+                     public, schedule_routes, stations_routes, veto_routes)
 
 app = FastAPI(title="WSDoD LAN 2026", root_path=settings.root_path)
 
@@ -35,6 +35,7 @@ app.include_router(auth_routes.router)
 app.include_router(poll_routes.router)
 app.include_router(schedule_routes.router)
 app.include_router(bracket_routes.router)
+app.include_router(veto_routes.router)
 app.include_router(stations_routes.router)
 app.include_router(placements_routes.router)
 app.include_router(checkin_routes.router)

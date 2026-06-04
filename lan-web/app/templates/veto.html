@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Map Veto{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">05</div>
+      <h2 class="chapter-title">Map Veto — {{ st.label }}</h2>
+      <span class="chapter-stamp">PICK / BAN</span>
+    </header>
+    <div class="chapter-body">
+      <p style="font-size:12px;"><a href="{{ url_for('bracket') }}">&larr; Bracket</a></p>
+      <style>
+        .vt-pool { display:flex; flex-wrap:wrap; gap:8px; margin:10px 0 4px; }
+        .vt-map { border:1px solid var(--ink-margin); background:var(--paper); padding:8px 12px; min-width:120px; }
+        .vt-map .nm { font-family:var(--stencil); letter-spacing:.04em; font-size:14px; color:var(--ink); }
+        .vt-map .tag { font-family:var(--mono); font-size:11px; color:var(--ink-faint); display:block; margin-top:2px; }
+        .vt-map.banned { opacity:.5; }
+        .vt-map.banned .nm { text-decoration:line-through; color:var(--alert); }
+        .vt-map.pick { border-color:var(--wsdod-blue); border-left-width:4px; }
+        .vt-map.pick .nm { color:var(--wsdod-blue); font-weight:700; }
+        .vt-turn { border:2px solid var(--olive); padding:12px 16px; margin:14px 0; background:rgba(90,94,58,0.06); }
+        .vt-turn.you { border-color:var(--wsdod-blue); background:rgba(30,58,95,0.07); }
+        .vt-act { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-top:8px; }
+        .vt-log { font-family:var(--mono); font-size:12px; color:var(--ink-soft); }
+        .vt-log li { margin:2px 0; }
+        .vt-result { border:2px solid var(--wsdod-blue); padding:12px 16px; margin:12px 0; }
+      </style>
+
+      {% if not st.supported %}
+      <div class="pending-note">Map veto applies to best-of-three matches only. This match uses a single map.</div>
+      {% elif not st.ready %}
+      <div class="pending-note">Both teams must be decided before the veto can start. Check back once the feeding matches are final.</div>
+      {% else %}
+
+      <p style="font-size:14px;">
+        <strong style="color:var(--wsdod-blue);">{{ st.ts_name }}</strong> <span style="color:var(--ink-faint);">(top seed)</span>
+        &nbsp;vs&nbsp;
+        <strong>{{ st.ls_name }}</strong> <span style="color:var(--ink-faint);">(lower seed)</span>
+      </p>
+
+      {# ---- map pool ---- #}
+      <div class="vt-pool">
+        {% for mp in st.pool %}
+        {% set s = st.map_status.get(mp) %}
+        <div class="vt-map {{ s.kind if s }}">
+          <span class="nm">{{ mp }}</span>
+          {% if s and s.kind == 'ban' %}<span class="tag">banned · {{ s.actor }}</span>
+          {% elif s and s.kind == 'pick' %}<span class="tag">map {{ s.order }} · {{ s.actor }} · {{ s.side }}</span>
+          {% else %}<span class="tag">available</span>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      {% if st.complete %}
+      <div class="vt-result">
+        <strong style="font-family:var(--stencil);letter-spacing:.1em;">SERIES SET</strong>
+        <ol style="margin:6px 0 0 18px;font-family:var(--typed);">
+          {% for a in st.actions if a.action in ('pick','decider') %}
+          <li>{{ a.map }} <span style="color:var(--ink-faint);">— {{ a.actor }} ·
+            {{ 'decider' if a.action == 'decider' else 'pick' }} · {{ a.side }} side</span></li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% else %}
+      {# ---- current step ---- #}
+      {% set c = st.current %}
+      {% set who = st.ts_name if c.actor == 'TS' else st.ls_name %}
+      <div class="vt-turn {{ 'you' if my_turn }}">
+        <strong style="font-family:var(--stencil);letter-spacing:.08em;">
+          {{ who }} ({{ c.actor }}) to
+          {% if c.action == 'ban' %}BAN a map{% elif c.action == 'pick' %}PICK a map &amp; side{% else %}choose the DECIDER side{% endif %}
+        </strong>
+        {% if my_turn %}
+          <div class="vt-act">
+          {% if c.action == 'ban' %}
+            <form method="post" action="{{ url_for('veto_act', mkey=st.mkey) }}" style="display:flex;flex-wrap:wrap;gap:6px;">
+              {% for mp in st.remaining %}<button type="submit" name="map" value="{{ mp }}">Ban {{ mp }}</button>{% endfor %}
+            </form>
+          {% elif c.action == 'pick' %}
+            <form method="post" action="{{ url_for('veto_act', mkey=st.mkey) }}" style="display:flex;gap:6px;align-items:center;">
+              <select name="map" required>{% for mp in st.remaining %}<option value="{{ mp }}">{{ mp }}</option>{% endfor %}</select>
+              <select name="side" required>{% for sd in st.sides %}<option value="{{ sd }}">{{ sd }}</option>{% endfor %}</select>
+              <button type="submit">Pick</button>
+            </form>
+          {% else %}
+            <span style="font-size:13px;">Decider map: <strong>{{ st.remaining[0] if st.remaining }}</strong> — pick your side:</span>
+            <form method="post" action="{{ url_for('veto_act', mkey=st.mkey) }}" style="display:flex;gap:6px;">
+              {% for sd in st.sides %}<button type="submit" name="side" value="{{ sd }}">{{ sd }}</button>{% endfor %}
+            </form>
+          {% endif %}
+          </div>
+        {% else %}
+          <div style="font-size:13px;color:var(--ink-faint);margin-top:6px;">Waiting for {{ who }}… (this page refreshes itself)</div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# ---- history ---- #}
+      {% if st.actions %}
+      <h3 style="margin-top:20px;">Veto log</h3>
+      <ol class="vt-log">
+        {% for a in st.actions %}
+        <li>{{ a.actor }} {{ a.action }}{% if a.map %} <strong>{{ a.map }}</strong>{% endif %}{% if a.side %} ({{ a.side }}){% endif %}</li>
+        {% endfor %}
+      </ol>
+      {% endif %}
+
+      {% if is_admin %}
+      <form method="post" action="{{ url_for('veto_reset', mkey=st.mkey) }}" onsubmit="return confirm('Reset this veto and start over?');" style="margin-top:14px;">
+        <button type="submit">Reset veto (staff)</button>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}
