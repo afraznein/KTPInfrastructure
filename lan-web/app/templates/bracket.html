@@ -17,13 +17,14 @@
     </div>
     {% if m.slot %}
       {% set s = m.slot %}
+      {% set need = ((m.best_of or 3) // 2 + 1) %}
       {% set ready = s.team_a_id and s.team_b_id %}
       {% set can = is_admin or (am_captain and ready and (my_team_id == s.team_a_id or my_team_id == s.team_b_id)) %}
       {% if can %}
       <form class="bkt-rep" method="post" action="{{ url_for('bracket_report') }}">
         <input type="hidden" name="mkey" value="{{ s.mkey }}">
-        <input type="number" name="score_a" min="0" max="2" value="{{ s.score_a if s.score_a is not none else '' }}" required>
-        <input type="number" name="score_b" min="0" max="2" value="{{ s.score_b if s.score_b is not none else '' }}" required>
+        <input type="number" name="score_a" min="0" max="{{ need }}" value="{{ s.score_a if s.score_a is not none else '' }}" required>
+        <input type="number" name="score_b" min="0" max="{{ need }}" value="{{ s.score_b if s.score_b is not none else '' }}" required>
         <button type="submit">{{ 'Edit' if s.status == 'final' else 'Report' }}</button>
       </form>
       {% endif %}
@@ -77,13 +78,19 @@
         .bkt-round:not(:last-child) .bkt-m:nth-child(odd)::after  { top:50%;    height:50%; border-top:2px solid var(--ink-margin);    border-right:2px solid var(--ink-margin); }
         .bkt-round:not(:last-child) .bkt-m:nth-child(even)::after { bottom:50%; height:50%; border-bottom:2px solid var(--ink-margin); border-right:2px solid var(--ink-margin); }
         .bkt-round:not(:first-child) .bkt-m::before { content:''; position:absolute; right:100%; top:50%; width:18px; border-top:2px solid var(--ink-margin); }
+        /* grand final — the headline match */
+        .bkt-grand { max-width:360px; margin:6px 0 6px; }
+        .bkt-grand .bkt-c { height:34px; font-size:15px; }
+        .bkt-grand .bkt-name { font-weight:600; }
+        /* placement matches — settle the tied tiers, off to the side */
+        .bkt-placements { display:flex; flex-wrap:wrap; gap:16px 28px; }
+        .bkt-place { min-width:212px; }
+        .bkt-place-head { font-family:var(--stencil); text-transform:uppercase; letter-spacing:.1em; font-size:12px; color:var(--ink-soft); margin-bottom:4px; }
       </style>
 
       {% if champion %}
-      <p style="font-family:var(--stencil);letter-spacing:.12em;font-size:22px;color:var(--wsdod-blue);">&#9733; CHAMPION — {{ champion }}</p>
-      {% endif %}
-      {% if lower_champion %}
-      <p style="font-family:var(--stencil);letter-spacing:.12em;color:var(--ink-soft);">Lower-bracket champion — {{ lower_champion }}</p>
+      <p style="font-family:var(--stencil);letter-spacing:.12em;font-size:22px;color:var(--wsdod-blue);margin-bottom:2px;">&#9733; CHAMPION — {{ champion }}</p>
+      {% if runner_up %}<p style="font-family:var(--stencil);letter-spacing:.12em;color:var(--ink-soft);">Runner-up — {{ runner_up }}</p>{% endif %}
       {% endif %}
 
       {% if not generated %}
@@ -98,13 +105,31 @@
       </div>
       {% endif %}
 
-      <h3>Upper bracket &mdash; for the title</h3>
+      <h3>Grand Final &mdash; Best of 5</h3>
+      <p style="font-size:13px;color:var(--ink-faint);">The upper-bracket champion meets the lower-bracket champion. One best-of-five &mdash; no bracket reset.</p>
+      <div class="bkt-grand">{{ matchbox(grand_final, is_admin, am_captain, my_team_id) }}</div>
+      {% if upper_champion or lower_champion %}
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:2px;">{% if upper_champion %}Upper champion: <b>{{ upper_champion }}</b>{% endif %}{% if upper_champion and lower_champion %} &nbsp;·&nbsp; {% endif %}{% if lower_champion %}Lower champion: <b>{{ lower_champion }}</b>{% endif %}</p>
+      {% endif %}
+
+      <h3 style="margin-top:32px;">Upper bracket &mdash; for the title</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 1–2 bye to the semifinals; QF losers drop to the lower bracket.</p>
       {{ tree(upper_rounds, is_admin, am_captain, my_team_id) }}
 
       <h3 style="margin-top:32px;">Lower bracket &mdash; for the lower championship</h3>
-      <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus the two QF losers (which drop in); single-elimination.</p>
+      <p style="font-size:13px;color:var(--ink-faint);">Seeds 7–10 plus the two QF losers (which drop in); single-elimination. Its champion advances to the Grand Final.</p>
       {{ tree(lower_rounds, is_admin, am_captain, my_team_id) }}
+
+      <h3 style="margin-top:32px;">Placement matches &mdash; final standings</h3>
+      <p style="font-size:13px;color:var(--ink-faint);">Played off to the side on spare stations to settle each tied tier. Best of 3.</p>
+      <div class="bkt-placements">
+        {% for m in placements %}
+        <div class="bkt-place">
+          <div class="bkt-place-head">{{ m.label }}</div>
+          {{ matchbox(m, is_admin, am_captain, my_team_id) }}
+        </div>
+        {% endfor %}
+      </div>
     </div>
   </section>
 {% endblock %}

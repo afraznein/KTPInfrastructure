@@ -56,7 +56,9 @@ def bracket_page(request: Request):
 
     def _match(mkey):
         s = by[mkey]
-        return {"top": _comp(s, "a"), "bottom": _comp(s, "b"), "slot": s}
+        return {"top": _comp(s, "a"), "bottom": _comp(s, "b"), "slot": s,
+                "best_of": bracket.BY_KEY[mkey]["best_of"],
+                "label": bracket.BY_KEY[mkey]["label"]}
 
     def _adv(team_id, label, bottom):
         if team_id and team_id in teamrows:
@@ -83,6 +85,15 @@ def bracket_page(request: Request):
         {"title": "Lower Semifinals", "matches": [_match("LSF1"), _match("LSF2")]},
         {"title": "Lower Final", "matches": [_match("LF")]},
     ]
+    # Grand Final reunites the two bracket champions (BO5). Placement matches
+    # settle each tied tier off to the side.
+    grand_final = _match("GF")
+    placements = [_match("P34"), _match("P56"), _match("P78"), _match("P910")]
+
+    def _runner(row):
+        if not row or row["status"] != "final" or not row["winner_team_id"]:
+            return None
+        return row["b_name"] if row["winner_team_id"] == row["team_a_id"] else row["a_name"]
 
     matches = sched.get_matches()
     ident = ctx["ident"]
@@ -90,7 +101,11 @@ def bracket_page(request: Request):
         generated=bool(db_rows),
         upper_rounds=upper_rounds,
         lower_rounds=lower_rounds,
-        champion=_champ(by.get("F")),
+        grand_final=grand_final,
+        placements=placements,
+        champion=_champ(by.get("GF")),               # overall grand champion
+        runner_up=_runner(by.get("GF")),
+        upper_champion=_champ(by.get("F")),           # the two grand-final entrants
         lower_champion=_champ(by.get("LF")),
         group_complete=bool(matches) and all(m["status"] == "final" for m in matches),
         is_admin=auth.is_admin(request),

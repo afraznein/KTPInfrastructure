@@ -53,6 +53,38 @@ def test_qf_loser_never_meets_upper_again():
     assert 105 in s["LSF1"] and 106 in s["LSF2"]
 
 
+# Full outcomes through both finals so the Grand Final + every placement match resolve.
+_FULL = {
+    "QF1": (103, 106), "QF2": (104, 105),
+    "SF1": (101, 104), "SF2": (102, 103),
+    "F":   (101, 102),                       # upper champ 101, upper runner-up 102
+    "PA":  (107, 110), "PB": (108, 109),
+    "LSF1": (105, 107), "LSF2": (108, 106),
+    "LF":  (105, 108),                       # lower champ 105, lower runner-up 108
+}
+
+
+def test_grand_final_reunites_the_two_champions():
+    s = resolve_slots(RANK, _FULL)
+    assert s["GF"] == (101, 105)   # upper champ (W:F) v lower champ (W:LF)
+
+
+def test_placement_matches_pair_same_tier_losers():
+    s = resolve_slots(RANK, _FULL)
+    assert s["P34"]  == (102, 108)   # L:F  v L:LF  → 3rd/4th
+    assert s["P56"]  == (104, 103)   # L:SF1 v L:SF2 → 5th/6th
+    assert s["P78"]  == (107, 106)   # L:LSF1 v L:LSF2 → 7th/8th
+    assert s["P910"] == (110, 109)   # L:PA v L:PB → 9th/10th
+
+
+def test_grand_final_waits_on_both_finals():
+    # GF unresolved until BOTH the upper Final and Lower Final are decided
+    partial = {**_FULL}
+    del partial["LF"]
+    s = resolve_slots(RANK, partial)
+    assert s["GF"] == (101, None)   # upper champ known, lower side waiting
+
+
 if __name__ == "__main__":
     import sys
     funcs = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

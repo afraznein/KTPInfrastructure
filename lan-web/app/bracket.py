@@ -1,27 +1,43 @@
-"""Sunday playoffs — bracket auto-fed from final group standings.
+"""Sunday playoffs — bracket auto-fed from final group standings (Format C).
 
-Upper (standings 1-6): seeds 1-2 bye to the SF, 3-6 into QFs; QF losers drop
-into the lower bracket. Lower (7-10 + the two QF losers): single-elim, crowns a
-lower champion. All BO3 (first to 2). 'seed:N' = group-standings rank N."""
+Two brackets run in parallel and reunite in a Grand Final:
+- Upper (standings 1-6): seeds 1-2 bye to the SF, 3-6 into QFs; QF losers drop
+  into the lower bracket. Crowns the upper champion (Upper Final winner).
+- Lower (7-10 + the two QF losers): single-elim, crowns the lower champion.
+- Grand Final: upper champ vs lower champ, BO5, no bracket reset.
+- Placement matches (3/4, 5/6, 7/8, 9/10) decide each tied tier off to the side.
+
+Series default BO3 (first to 2); the Grand Final is BO5. 'seed:N' = group rank N,
+'W:KEY' = winner of KEY, 'L:KEY' = loser of KEY."""
 from __future__ import annotations
 
 import json
 
-BEST_OF = 3
-WINS_NEEDED = BEST_OF // 2 + 1  # 2
+BEST_OF = 3                       # default series length
+WINS_NEEDED = BEST_OF // 2 + 1    # 2 (kept for callers; report_series uses per-match best_of)
+
+
+def wins_for(best_of: int) -> int:
+    return best_of // 2 + 1
+
 
 # Each slot: source 'seed:N' (standings rank), 'W:KEY' (winner of), 'L:KEY' (loser of).
 BRACKET = [
-    {"key": "QF1",  "bracket": "upper", "stage": "QF",  "slot": 1, "a": "seed:3", "b": "seed:6", "label": "Quarterfinal 1"},
-    {"key": "QF2",  "bracket": "upper", "stage": "QF",  "slot": 2, "a": "seed:4", "b": "seed:5", "label": "Quarterfinal 2"},
-    {"key": "SF1",  "bracket": "upper", "stage": "SF",  "slot": 1, "a": "seed:1", "b": "W:QF2", "label": "Semifinal 1"},
-    {"key": "SF2",  "bracket": "upper", "stage": "SF",  "slot": 2, "a": "seed:2", "b": "W:QF1", "label": "Semifinal 2"},
-    {"key": "F",    "bracket": "upper", "stage": "F",   "slot": 1, "a": "W:SF1", "b": "W:SF2", "label": "Final"},
-    {"key": "PA",   "bracket": "lower", "stage": "PI",  "slot": 1, "a": "seed:7", "b": "seed:10", "label": "Play-in A"},
-    {"key": "PB",   "bracket": "lower", "stage": "PI",  "slot": 2, "a": "seed:8", "b": "seed:9", "label": "Play-in B"},
-    {"key": "LSF1", "bracket": "lower", "stage": "LSF", "slot": 1, "a": "L:QF2", "b": "W:PA", "label": "Lower Semifinal 1"},
-    {"key": "LSF2", "bracket": "lower", "stage": "LSF", "slot": 2, "a": "L:QF1", "b": "W:PB", "label": "Lower Semifinal 2"},
-    {"key": "LF",   "bracket": "lower", "stage": "LF",  "slot": 1, "a": "W:LSF1", "b": "W:LSF2", "label": "Lower Final"},
+    {"key": "QF1",  "bracket": "upper", "stage": "QF",  "slot": 1, "a": "seed:3", "b": "seed:6",  "best_of": 3, "label": "Quarterfinal 1"},
+    {"key": "QF2",  "bracket": "upper", "stage": "QF",  "slot": 2, "a": "seed:4", "b": "seed:5",  "best_of": 3, "label": "Quarterfinal 2"},
+    {"key": "SF1",  "bracket": "upper", "stage": "SF",  "slot": 1, "a": "seed:1", "b": "W:QF2",   "best_of": 3, "label": "Semifinal 1"},
+    {"key": "SF2",  "bracket": "upper", "stage": "SF",  "slot": 2, "a": "seed:2", "b": "W:QF1",   "best_of": 3, "label": "Semifinal 2"},
+    {"key": "F",    "bracket": "upper", "stage": "F",   "slot": 1, "a": "W:SF1", "b": "W:SF2",    "best_of": 3, "label": "Upper Final"},
+    {"key": "PA",   "bracket": "lower", "stage": "PI",  "slot": 1, "a": "seed:7", "b": "seed:10", "best_of": 3, "label": "Play-in A"},
+    {"key": "PB",   "bracket": "lower", "stage": "PI",  "slot": 2, "a": "seed:8", "b": "seed:9",  "best_of": 3, "label": "Play-in B"},
+    {"key": "LSF1", "bracket": "lower", "stage": "LSF", "slot": 1, "a": "L:QF2", "b": "W:PA",     "best_of": 3, "label": "Lower Semifinal 1"},
+    {"key": "LSF2", "bracket": "lower", "stage": "LSF", "slot": 2, "a": "L:QF1", "b": "W:PB",     "best_of": 3, "label": "Lower Semifinal 2"},
+    {"key": "LF",   "bracket": "lower", "stage": "LF",  "slot": 1, "a": "W:LSF1", "b": "W:LSF2",  "best_of": 3, "label": "Lower Final"},
+    {"key": "GF",   "bracket": "grand", "stage": "GF",  "slot": 1, "a": "W:F",   "b": "W:LF",     "best_of": 5, "label": "Grand Final"},
+    {"key": "P34",  "bracket": "placement", "stage": "P34",  "slot": 1, "a": "L:F",    "b": "L:LF",    "best_of": 3, "label": "3rd / 4th place"},
+    {"key": "P56",  "bracket": "placement", "stage": "P56",  "slot": 1, "a": "L:SF1",  "b": "L:SF2",   "best_of": 3, "label": "5th / 6th place"},
+    {"key": "P78",  "bracket": "placement", "stage": "P78",  "slot": 1, "a": "L:LSF1", "b": "L:LSF2",  "best_of": 3, "label": "7th / 8th place"},
+    {"key": "P910", "bracket": "placement", "stage": "P910", "slot": 1, "a": "L:PA",   "b": "L:PB",    "best_of": 3, "label": "9th / 10th place"},
 ]
 BY_KEY = {m["key"]: m for m in BRACKET}
 
@@ -92,8 +108,8 @@ def get_bracket() -> list[dict]:
             FROM lan_bracket b
             LEFT JOIN lan_teams ta ON ta.id = b.team_a_id
             LEFT JOIN lan_teams tb ON tb.id = b.team_b_id
-            ORDER BY FIELD(b.bracket,'upper','lower'),
-                     FIELD(b.stage,'QF','SF','F','PI','LSF','LF'), b.slot
+            ORDER BY FIELD(b.bracket,'upper','lower','grand','placement'),
+                     FIELD(b.stage,'QF','SF','F','PI','LSF','LF','GF','P34','P56','P78','P910'), b.slot
             """
         )
     except Exception:
@@ -111,10 +127,12 @@ def report_series(mkey: str, sa: int, sb: int):
         raise ValueError("No such bracket match.")
     if row["team_a_id"] is None or row["team_b_id"] is None:
         raise ValueError("Both teams for this match aren't determined yet.")
-    if sa > WINS_NEEDED or sb > WINS_NEEDED:
-        raise ValueError(f"Best-of-{BEST_OF}: a side can win at most {WINS_NEEDED}.")
+    best_of = BY_KEY.get(mkey, {}).get("best_of", BEST_OF)
+    need = wins_for(best_of)
+    if sa > need or sb > need:
+        raise ValueError(f"Best-of-{best_of}: a side can win at most {need}.")
     winner, status = None, "pending"
-    if sa >= WINS_NEEDED or sb >= WINS_NEEDED:
+    if sa >= need or sb >= need:
         winner = row["team_a_id"] if sa > sb else row["team_b_id"] if sb > sa else None
         status = "final" if winner else "live"
     elif sa or sb:
