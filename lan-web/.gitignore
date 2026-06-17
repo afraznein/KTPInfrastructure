@@ -7,3 +7,6 @@ data/
 
 # local screenshot/iteration tooling (Playwright)
 .shotvenv/
+_shots/
+_mock_*.py
+_shoot*.py
