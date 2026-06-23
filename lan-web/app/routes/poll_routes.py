@@ -46,9 +46,14 @@ async def poll_submit(request: Request):
 @router.get("/seeds", name="seeds")
 def seeds_page(request: Request):
     teams = _teams_by_id()
-    ballots = seeding.get_all_ballots()
-    if ballots:
-        standing, score, weight = seeding.compute_seeds(ballots, list(teams.keys()))
+    all_ballots = seeding.get_all_ballots()
+    poll_open = seeding.poll_is_open()
+    # Blind poll: standings and ballots stay hidden from captains/public while
+    # voting is open, so no one can see results before they cast. Staff always
+    # see them; everyone sees them once the poll is closed.
+    show_results = auth.is_admin(request) or not poll_open
+    if show_results and all_ballots:
+        standing, score, weight = seeding.compute_seeds(all_ballots, list(teams.keys()))
     else:
         standing, score, weight = [], {}, {}
     ctx = common.base_ctx(request, "seeds")
@@ -56,9 +61,11 @@ def seeds_page(request: Request):
         teams=teams,
         standing=standing,
         score=score,
-        ballots=ballots,
-        submitted=sorted(ballots.keys()),
-        poll_open=seeding.poll_is_open(),
+        ballots=all_ballots if show_results else {},
+        submitted=sorted(all_ballots.keys()) if show_results else [],
+        submitted_count=len(all_ballots),
+        poll_open=poll_open,
+        show_results=show_results,
         is_admin=auth.is_admin(request),
     )
     return templates.TemplateResponse(request, "seeds.html", ctx)

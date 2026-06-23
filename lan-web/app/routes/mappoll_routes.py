@@ -45,18 +45,26 @@ async def mappoll_submit(request: Request):
 @router.get("/mapskip", name="mapskip")
 def mapskip_page(request: Request):
     teams = _teams_by_id()
-    ballots = mapskip.get_all_ballots()
-    ordered, counts = mapskip.tally(ballots, mapskip.pool_maps())
+    all_ballots = mapskip.get_all_ballots()
+    poll_open = mapskip.poll_is_open()
+    # Blind poll: the tally and ballots stay hidden from captains/public while
+    # voting is open. Staff always see them; everyone sees them once it closes.
+    show_results = auth.is_admin(request) or not poll_open
+    ordered, counts = mapskip.tally(all_ballots, mapskip.pool_maps())
     ctx = common.base_ctx(request, "mapskip")
     ctx.update(
         teams=teams,
-        ballots=ballots,
-        submitted=sorted(ballots.keys()),
-        ordered=ordered,
-        counts=counts,
-        total=sum(counts.values()),
-        poll_open=mapskip.poll_is_open(),
+        ballots=all_ballots if show_results else {},
+        submitted=sorted(all_ballots.keys()) if show_results else [],
+        submitted_count=len(all_ballots),
+        # When blind, fall back to pool order (not vote-count order) so the
+        # leading map isn't even implied by ordering; tally/counts are withheld.
+        ordered=ordered if show_results else mapskip.pool_maps(),
+        counts=counts if show_results else {},
+        total=sum(counts.values()) if show_results else 0,
+        poll_open=poll_open,
         locked=mapskip.locked_skip_map(),
+        show_results=show_results,
         is_admin=auth.is_admin(request),
     )
     return templates.TemplateResponse(request, "mapskip.html", ctx)

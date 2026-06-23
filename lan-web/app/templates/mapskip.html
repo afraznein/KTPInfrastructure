@@ -15,7 +15,7 @@
 
       <div class="units-meta">
         <span>Poll: <strong>{{ 'OPEN' if poll_open else 'CLOSED' }}</strong></span>
-        <span>Ballots in: <strong>{{ submitted|length }}/{{ teams|length }}</strong></span>
+        <span>Ballots in: <strong>{{ submitted_count }}/{{ teams|length }}</strong></span>
         <span>Pulled: {{ last_updated }}</span>
       </div>
 
@@ -40,41 +40,45 @@
       </div>
       {% endif %}
 
-      {% if total %}
-        <h3>Tally</h3>
-        <table>
-          <thead><tr><td>Map</td><td>Votes</td><td style="width:auto;">Share</td></tr></thead>
-          <tbody>
-          {% for m in ordered %}
-            <tr>
-              <td style="color:var(--ink);">{{ m }}{% if loop.first and counts[m] > 0 %} <span style="color:var(--alert);font-family:var(--stencil);font-size:12px;letter-spacing:.1em;">LEADING</span>{% endif %}</td>
-              <td>{{ counts[m] }}</td>
-              <td style="width:auto;">
-                <span style="display:inline-block;height:12px;background:var(--wsdod-blue);
-                             width:{{ (counts[m] / total * 220)|round|int if total else 0 }}px;"></span>
-              </td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
-        <p style="font-size:13px;color:var(--ink-faint);">Most-voted map is skipped on Saturday. Staff lock it with “Compute &amp; lock”.</p>
-      {% else %}
-        <div class="pending-note">No ballots yet — the tally appears once captains submit.</div>
-      {% endif %}
+      {% if show_results %}
+        {% if total %}
+          <h3>Tally</h3>
+          <table>
+            <thead><tr><td>Map</td><td>Votes</td><td style="width:auto;">Share</td></tr></thead>
+            <tbody>
+            {% for m in ordered %}
+              <tr>
+                <td style="color:var(--ink);">{{ m }}{% if loop.first and counts[m] > 0 %} <span style="color:var(--alert);font-family:var(--stencil);font-size:12px;letter-spacing:.1em;">LEADING</span>{% endif %}</td>
+                <td>{{ counts[m] }}</td>
+                <td style="width:auto;">
+                  <span style="display:inline-block;height:12px;background:var(--wsdod-blue);
+                               width:{{ (counts[m] / total * 220)|round|int if total else 0 }}px;"></span>
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          <p style="font-size:13px;color:var(--ink-faint);">Most-voted map is skipped on Saturday. Staff lock it with “Compute &amp; lock”.</p>
+        {% else %}
+          <div class="pending-note">No ballots yet — the tally appears once captains submit.</div>
+        {% endif %}
 
-      {% if submitted %}
-        <h3 style="margin-top:28px;">Ballots</h3>
-        <table style="font-size:13px;">
-          <thead><tr><td>Company</td><td style="width:auto;">Voted to skip</td></tr></thead>
-          <tbody>
-          {% for v in submitted %}
-            <tr>
-              <td style="color:var(--ink);">{{ teams[v].name }}{% if teams[v].tag %} · {{ teams[v].tag }}{% endif %}</td>
-              <td style="width:auto;">{{ ballots[v] }}</td>
-            </tr>
-          {% endfor %}
-          </tbody>
-        </table>
+        {% if submitted %}
+          <h3 style="margin-top:28px;">Ballots</h3>
+          <table style="font-size:13px;">
+            <thead><tr><td>Company</td><td style="width:auto;">Voted to skip</td></tr></thead>
+            <tbody>
+            {% for v in submitted %}
+              <tr>
+                <td style="color:var(--ink);">{{ teams[v].name }}{% if teams[v].tag %} · {{ teams[v].tag }}{% endif %}</td>
+                <td style="width:auto;">{{ ballots[v] }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        {% endif %}
+      {% else %}
+        <div class="pending-note">Voting is <strong>blind</strong> — the tally and ballots stay hidden while the poll is open, so no captain sees results before voting closes. Staff reveal them once the poll is closed.</div>
       {% endif %}
 
     </div>
