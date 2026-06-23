@@ -46,10 +46,15 @@ def bracket_page(request: Request):
     teamrows = {t["id"]: t for t in db.query_all("SELECT id, name FROM lan_teams")}
     seed_of = {tid: rank for rank, tid in rank_map.items()}
 
+    # Seeding stays blind on the bracket too: while the seeding poll is open,
+    # non-staff see structure only (Seed N), never which team holds which seed —
+    # otherwise the locked seeds would leak the poll result during open voting.
+    reveal_seeds = auth.is_admin(request) or not seeding.poll_is_open()
+
     def _comp(slot, side):
         tid = slot["team_%s_id" % side]
         name = slot["%s_name" % side]
-        if not name:  # unresolved — show the source (Seed 3 / Winner QF2 / Loser QF1)
+        if not name or not reveal_seeds:  # unresolved, or seeding still blind — show the source
             kind, ref = slot["source_%s" % side].split(":")
             label = {"W": "Winner ", "L": "Loser ", "seed": "Seed "}[kind] + ref
             return {"name": label, "seed": None, "score": None, "win": False, "tbd": True}
