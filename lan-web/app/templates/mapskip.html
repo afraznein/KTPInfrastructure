@@ -23,7 +23,7 @@
         <p><a href="{{ url_for('mappoll') }}">→ Submit or revise your team's ballot</a></p>
       {% endif %}
 
-      {% if locked %}
+      {% if locked and show_results %}
         <div class="pending-note" style="border-style:solid;border-color:var(--alert);">
           <strong style="font-family:var(--stencil);letter-spacing:.14em;color:var(--alert);">LOCKED — SKIP / PLAY-IN MAP:</strong>
           {{ locked }}
