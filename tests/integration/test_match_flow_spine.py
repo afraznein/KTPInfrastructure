@@ -40,7 +40,7 @@ from .match_flow import MatchDriver, MatchType
 # 0.10.123 routed test rcons through the production deferred-fwd path. When
 # the source PLUGIN_VERSION bumps, this test pin updates in lockstep
 # (memory `feedback_commit_hygiene.md`).
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.131"
+EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.140"
 
 
 def _serverfiles() -> Path | None:
