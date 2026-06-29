@@ -1,0 +1,4 @@
+# Shell scripts must stay LF regardless of platform — CRLF makes bash die with
+# `$'\r': command not found` (bit the LAN dry-run + the WSL build env repeatedly).
+*.sh   text eol=lf
+*.bash text eol=lf
