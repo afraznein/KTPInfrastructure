@@ -1,0 +1,9 @@
+# KTP Tier 2 heartbeat — alert if the integration suite hasn't run / last failed.
+# Install: sudo cp scripts/ktp-tier2-heartbeat.cron /etc/cron.d/ktp-tier2-heartbeat
+#
+# Every 6h. Alerts only on state transitions (see ktp-tier2-heartbeat.sh), so a
+# 6h cadence won't spam while persistently down — it just confirms recovery
+# promptly. Mirrors the ktp-data-server-health cron.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+0 */6 * * *  root  /usr/local/bin/ktp-tier2-heartbeat.sh >> /var/log/ktp-tier2-heartbeat.log 2>&1

@@ -48,6 +48,14 @@ on:
         required: false
         type: string
         default: '1.0'
+  schedule:
+    # Tier 2 is otherwise dormant — on PRs it only runs when tests/integration/
+    # changes (see "Detect relevant changes"), so the suite can go weeks without
+    # exercising the live plugin. This nightly closes that gap; the "Refresh +
+    # stage" step below pulls KTPHudObserver from master each run so the suite
+    # tests current code. 09:00 UTC (~04-05 ET) — after the 03:00 ET game
+    # restart + perf rollups so the runner is idle.
+    - cron: '0 9 * * *'
   pull_request:
     branches: [main]
 
@@ -131,6 +139,76 @@ jobs:
           # (operators run `allure serve <downloaded-results>` locally).
           pip install pytest==9.0.3 pytest-rerunfailures==15.0 allure-pytest==2.13.5
 
+      - name: Refresh + stage KTPHudObserver.amxx from DoD-hud-observer master
+        if: steps.changes.outputs.run == '1'
+        # Without this, Tier 2 tested whatever KTPHudObserver.amxx was MANUALLY
+        # staged on the runner — drifting silently from the live plugin (the
+        # existing test_hud_observer_contract.py had the same staleness). Recompile
+        # from master every run so the suite always exercises current code.
+        #
+        # Compiles natively with an amxxpc toolchain staged once on the runner at
+        # $TOOLCHAIN (amxxpc + amxxpc32.so + include/), the same pattern as the
+        # pre-staged serverfiles/ tree. No Docker: amxxpc is 32-bit, so the runner
+        # needs i386 multiarch (libc6:i386 + lib32stdc++6) — already present on the
+        # data server. Refresh the toolchain when KTPAMXX's compiler or includes
+        # change. Hard-fails if the plugin can't be rebuilt — better than silently
+        # testing a stale binary. See PR notes.
+        env:
+          TOOLCHAIN: /opt/ktp-tier2-runner/toolchain
+        run: |
+          set -euo pipefail
+          SF="$KTP_HLDS_SERVERFILES"
+          SRC="${RUNNER_TEMP:-/tmp}/dod-hud-src"
+          rm -rf "$SRC"
+          git clone --depth 1 https://github.com/JimmyLockhart65616/DoD-hud-observer.git "$SRC"
+          GIT_SHA="$(git -C "$SRC" rev-parse --short HEAD)"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%MZ)"
+          WORK="$(mktemp -d)"
+          mkdir -p "$WORK/include"
+          cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
+          printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' "$GIT_SHA" "$BUILD_TIME" > "$WORK/include/build_info.inc"
+          tr -d '\r' < "$SRC/KTPHudObserver.sma" > "$WORK/KTPHudObserver.sma"
+          VER="$(grep -oE '#define VERSION "[^"]+"' "$SRC/KTPHudObserver.sma" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          ( cd "$WORK" && LD_LIBRARY_PATH="$TOOLCHAIN" "$TOOLCHAIN/amxxpc" KTPHudObserver.sma -i"$WORK/include" -oKTPHudObserver.amxx )
+          install -D "$WORK/KTPHudObserver.amxx" "$SF/dod/addons/ktpamx/plugins/KTPHudObserver.amxx"
+          rm -rf "$WORK"
+          # Export the just-built version so the contract test asserts against it
+          # instead of a hardcoded pin (no lockstep edits, no silent staleness).
+          echo "KTP_EXPECTED_HUDOBSERVER_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "Staged KTPHudObserver.amxx ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPHudObserver.amxx") bytes, v$VER, sha $GIT_SHA)"
+
+      - name: Refresh + stage test-mode KTPMatchHandler from source
+        if: steps.changes.outputs.run == '1'
+        # Same never-stale pattern as the HUD step: recompile the test-mode
+        # KTPMatchHandler (KTP_TEST_MODE=1) from current source each run with the
+        # staged toolchain, so the runner can't drift from the deployed plugin.
+        # Mirrors KTPMatchHandler/compile.sh (toolchain include set + repo-root
+        # *.inc + generated build_info.inc). Requires the runner's module stack to
+        # provide the natives this version uses (e.g. dodx_broadcast_scoreboard,
+        # KTPAMXX 2.7.17+) — kept current via the fleet-matched runtime stack.
+        env:
+          TOOLCHAIN: /opt/ktp-tier2-runner/toolchain
+        run: |
+          set -euo pipefail
+          SF="$KTP_HLDS_SERVERFILES"
+          SRC="${RUNNER_TEMP:-/tmp}/ktpmh-src"
+          rm -rf "$SRC"
+          git clone --depth 1 https://github.com/afraznein/KTPMatchHandler.git "$SRC"
+          GIT_SHA="$(git -C "$SRC" rev-parse --short HEAD)"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%MZ)"
+          VER="$(grep -oE '#define PLUGIN_VERSION "[^"]+"' "$SRC/KTPMatchHandler.sma" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          WORK="$(mktemp -d)"
+          cp -r "$TOOLCHAIN/include" "$WORK/include"
+          printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' "$GIT_SHA" "$BUILD_TIME" > "$WORK/include/build_info.inc"
+          tr -d '\r' < "$SRC/KTPMatchHandler.sma" > "$WORK/KTPMatchHandler.sma"
+          for inc in "$SRC"/*.inc; do [ -f "$inc" ] && tr -d '\r' < "$inc" > "$WORK/$(basename "$inc")"; done
+          # KTP_TEST_MODE=1 enables the amx_ktp_test_* state-machine driver rcons.
+          ( cd "$WORK" && LD_LIBRARY_PATH="$TOOLCHAIN" "$TOOLCHAIN/amxxpc" KTPMatchHandler.sma -i./include -i. -oKTPMatchHandler.amxx KTP_TEST_MODE=1 )
+          install -D "$WORK/KTPMatchHandler.amxx" "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"
+          rm -rf "$WORK"
+          echo "KTP_EXPECTED_MATCHHANDLER_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "Staged KTPMatchHandler.amxx ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes, v$VER, sha $GIT_SHA, test-mode)"
+
       - name: Verify test artifacts present in serverfiles
         if: steps.changes.outputs.run == '1'
         run: |
@@ -142,9 +220,11 @@ jobs:
           test -f "$SF/dod/addons/ktpamx/modules/dodx_ktp_i386.so" || { echo "MISSING: dodx_ktp_i386.so"; exit 1; }
           test -f "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx" || { echo "MISSING: KTPMatchHandler.amxx (must be test-mode build)"; exit 1; }
           test -f "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx" || { echo "MISSING: KTPWitness.amxx"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/plugins/KTPHudObserver.amxx" || { echo "MISSING: KTPHudObserver.amxx (should have been staged by the refresh step)"; exit 1; }
           echo "All required artifacts present."
 
       - name: Run Tier 2 integration suite
+        id: pytest
         if: steps.changes.outputs.run == '1'
         run: |
           # --reruns 2: retry transient failures up to 2 times before
@@ -231,3 +311,17 @@ jobs:
           name: tier2-failure-artifacts-${{ github.run_id }}
           path: ci-artifacts/
           retention-days: 14
+
+      - name: Record Tier 2 last-run marker (heartbeat input)
+        if: always() && steps.changes.outputs.run == '1'
+        # scripts/ktp-tier2-heartbeat.sh (cron) reads this marker and alerts to
+        # Discord if Tier 2 hasn't run within its window or the last run failed —
+        # so a dead self-hosted runner / broken schedule is VISIBLE instead of
+        # looking identical to "all green". Written to a runner-writable path
+        # next to the serverfiles tree; the cron (root) reads it.
+        run: |
+          MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
+          printf '{"ts": %s, "outcome": "%s", "run_id": "%s", "event": "%s"}\n' \
+            "$(date +%s)" "${{ steps.pytest.outcome }}" "${{ github.run_id }}" "${{ github.event_name }}" \
+            > "$MARKER"
+          echo "Wrote $MARKER ($(cat "$MARKER"))"

@@ -36,11 +36,14 @@ from .log_tail import (
 from .match_flow import MatchDriver, MatchType
 
 
-# Pinned version: KTPMatchHandler 0.10.122 added the test-mode build flag;
-# 0.10.123 routed test rcons through the production deferred-fwd path. When
-# the source PLUGIN_VERSION bumps, this test pin updates in lockstep
-# (memory `feedback_commit_hygiene.md`).
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.131"
+# Expected version: the KTPMatchHandler refresh step in tier2-integration.yml
+# compiles the plugin from current source each run and exports its
+# PLUGIN_VERSION here, so the suite asserts loaded==built with no hardcoded pin
+# to maintain. The literal is only a fallback for local/external-server runs
+# where the refresh step didn't set the env var.
+EXPECTED_KTPMATCHHANDLER_VERSION = os.environ.get(
+    "KTP_EXPECTED_MATCHHANDLER_VERSION", "0.10.140"
+)
 
 
 def _serverfiles() -> Path | None:
