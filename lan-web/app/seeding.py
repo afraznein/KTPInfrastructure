@@ -106,3 +106,41 @@ def set_setting(key: str, value):
 
 def poll_is_open() -> bool:
     return get_setting("poll_open", "0") == "1"
+
+
+# ── publish gates (staff review before public reveal) ─────────────────────
+# Results/schedules are computed the moment a poll closes or a schedule is
+# generated, but stay staff-only until an admin explicitly publishes them —
+# so staff can eyeball everything before it goes public. Admins always see the
+# unpublished view; publishing is a reversible toggle. Same shape as the
+# final-placements gate (published-or-nothing for the public).
+PUBLISH_FLAGS = frozenset({
+    "seeding_results_published",
+    "map_skip_results_published",
+    "schedule_sat_published",
+    "schedule_sun_published",
+})
+
+
+def is_published(flag: str) -> bool:
+    return get_setting(flag, "0") == "1"
+
+
+def reveal_poll_results(is_admin: bool, poll_open: bool, published: bool,
+                        viewer_on_team: bool = False) -> bool:
+    """Who may see a poll's tally/ballots.
+
+    While voting is OPEN the poll is blind: anyone on a competing team is hidden
+    from the results — including staff who are also captains/players — so no one
+    peeks before their team votes. Only neutral (teamless) staff may watch it
+    fill in. Once voting CLOSES, staff see everything; the public sees it only
+    after an admin publishes the result."""
+    if poll_open:
+        return is_admin and not viewer_on_team
+    return is_admin or published
+
+
+def reveal_schedule(is_admin: bool, published: bool) -> bool:
+    """A generated schedule/bracket shows to the public only once staff publish
+    it. Staff always see it for review."""
+    return is_admin or published

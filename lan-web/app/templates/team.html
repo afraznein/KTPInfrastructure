@@ -64,12 +64,14 @@
       {% endmacro %}
 
       <h3 style="margin-top:28px;">Saturday &mdash; group stage</h3>
-      {% if saturday %}{{ sched_table(saturday, 'sat') }}{% else %}
-      <p class="tm-empty">Saturday matches post here once the group stage is generated.</p>{% endif %}
+      {% if saturday %}{{ sched_table(saturday, 'sat') }}
+      {% elif sat_hidden %}<p class="tm-empty">The Saturday schedule is being finalised by staff — it posts here once published.</p>
+      {% else %}<p class="tm-empty">Saturday matches post here once the group stage is generated.</p>{% endif %}
 
       <h3 style="margin-top:28px;">Sunday &mdash; playoffs</h3>
-      {% if sunday %}{{ sched_table(sunday, 'sun') }}{% else %}
-      <p class="tm-empty">Sunday bracket matches appear here once the playoff bracket is seeded.</p>{% endif %}
+      {% if sunday %}{{ sched_table(sunday, 'sun') }}
+      {% elif sun_hidden %}<p class="tm-empty">The Sunday bracket is being finalised by staff — it posts here once published.</p>
+      {% else %}<p class="tm-empty">Sunday bracket matches appear here once the playoff bracket is seeded.</p>{% endif %}
     </div>
   </section>
 {% endblock %}

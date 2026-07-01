@@ -48,10 +48,14 @@ def seeds_page(request: Request):
     teams = _teams_by_id()
     all_ballots = seeding.get_all_ballots()
     poll_open = seeding.poll_is_open()
-    # Blind poll: standings and ballots stay hidden from captains/public while
-    # voting is open, so no one can see results before they cast. Staff always
-    # see them; everyone sees them once the poll is closed.
-    show_results = auth.is_admin(request) or not poll_open
+    published = seeding.is_published("seeding_results_published")
+    ident = auth.current_identity(request)
+    # Blind poll: standings and ballots stay hidden while voting is open from
+    # anyone on a competing team — staff-captains included — so no one peeks
+    # before their team votes. After it closes they stay staff-only until an
+    # admin publishes the result.
+    show_results = seeding.reveal_poll_results(
+        auth.is_admin(request), poll_open, published, viewer_on_team=bool(ident and ident["team_id"]))
     if show_results and all_ballots:
         standing, score, weight = seeding.compute_seeds(all_ballots, list(teams.keys()))
     else:
@@ -66,6 +70,7 @@ def seeds_page(request: Request):
         submitted_count=len(all_ballots),
         poll_open=poll_open,
         show_results=show_results,
+        published=published,
         is_admin=auth.is_admin(request),
     )
     return templates.TemplateResponse(request, "seeds.html", ctx)

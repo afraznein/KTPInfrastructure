@@ -37,6 +37,17 @@
         <form method="post" action="{{ url_for('mappoll_close') }}"   style="display:inline;"><button type="submit">Close poll</button></form>
         <form method="post" action="{{ url_for('mappoll_compute') }}" style="display:inline;"><button type="submit">Compute &amp; lock skip map</button></form>
         <p style="font-size:13px;color:var(--ink-faint);margin:8px 0 0;">A tie resolves to pool order — break the tie, then re-compute.</p>
+        <div style="margin-top:8px;">
+          <form method="post" action="{{ url_for('admin_publish') }}" style="display:inline;">
+            <input type="hidden" name="flag" value="map_skip_results_published">
+            {% if not published %}<input type="hidden" name="publish" value="1">{% endif %}
+            <input type="hidden" name="next" value="{{ request.url.path }}">
+            <button type="submit">{{ 'Unpublish results' if published else 'Publish results to public' }}</button>
+          </form>
+          <span style="font-size:12px;color:{{ 'var(--olive)' if published else 'var(--ink-faint)' }};">
+            {{ 'PUBLIC — the skip map &amp; tally are visible' if published else 'staff-only — hidden from public until you publish' }}</span>
+          <p style="font-size:12px;color:var(--ink-faint);margin:4px 0 0;">Publishing only reveals to the public once the poll is closed.</p>
+        </div>
       </div>
       {% endif %}
 
@@ -78,7 +89,11 @@
           </table>
         {% endif %}
       {% else %}
-        <div class="pending-note">Voting is <strong>blind</strong> — the tally and ballots stay hidden while the poll is open, so no captain sees results before voting closes. Staff reveal them once the poll is closed.</div>
+        {% if poll_open %}
+        <div class="pending-note">Voting is <strong>blind</strong> — the tally and ballots stay hidden while the poll is open, so no one on a competing team sees results before voting closes.</div>
+        {% else %}
+        <div class="pending-note">The poll is closed. Results are <strong>pending staff review</strong> — they'll appear here once staff publish them.</div>
+        {% endif %}
       {% endif %}
 
     </div>

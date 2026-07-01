@@ -76,8 +76,28 @@ def admin_home(request: Request):
         admins=admins,
         admin_candidates=admin_candidates,
         announcement=seeding.get_setting("announcement") or "",
+        seeding_published=seeding.is_published("seeding_results_published"),
+        map_skip_published=seeding.is_published("map_skip_results_published"),
+        schedule_sat_published=seeding.is_published("schedule_sat_published"),
+        schedule_sun_published=seeding.is_published("schedule_sun_published"),
     )
     return templates.TemplateResponse(request, "admin.html", ctx)
+
+
+@router.post("/admin/publish", name="admin_publish")
+async def admin_publish(request: Request):
+    """Toggle a public-reveal gate (seeding/map-skip results, Sat/Sun schedule).
+    Reversible: publish to reveal, unpublish to pull it back. Redirects to the
+    page the button was on (validated to a local path) so staff stay in place."""
+    auth.require_admin(request)
+    f = await request.form()
+    flag = (f.get("flag") or "").strip()
+    if flag not in seeding.PUBLISH_FLAGS:
+        raise HTTPException(400, "Unknown publish target.")
+    seeding.set_setting(flag, "1" if f.get("publish") else "0")
+    nxt = (f.get("next") or "").strip()
+    target = nxt if nxt.startswith("/") and not nxt.startswith("//") else str(request.url_for("admin"))
+    return RedirectResponse(target, status_code=303)
 
 
 @router.post("/admin/announce", name="admin_announce")

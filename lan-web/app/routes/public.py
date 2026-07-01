@@ -2,8 +2,8 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import bracket as bkt
-from .. import common, db, ics
+from .. import auth, bracket as bkt
+from .. import common, db, ics, seeding
 from .. import schedule as sched
 from ..templating import templates
 
@@ -79,12 +79,26 @@ def team_detail(request: Request, team_id: int):
     )
     saturday = sched.team_schedule(team_id)
     sunday = bkt.team_bracket(team_id)
+    # Per-team match lists follow the same publish gate as the full schedule/
+    # bracket pages: staff-only until an admin publishes. Hidden ones become a
+    # "pending publish" note rather than exposing pairings.
+    is_admin = auth.is_admin(request)
+    sat_hidden = bool(saturday) and not seeding.reveal_schedule(
+        is_admin, seeding.is_published("schedule_sat_published"))
+    sun_hidden = bool(sunday) and not seeding.reveal_schedule(
+        is_admin, seeding.is_published("schedule_sun_published"))
+    if sat_hidden:
+        saturday = []
+    if sun_hidden:
+        sunday = []
     ctx = common.base_ctx(request, "teams")
     ctx.update(
         team=team,
         players=players,
         saturday=saturday,
         sunday=sunday,
+        sat_hidden=sat_hidden,
+        sun_hidden=sun_hidden,
         wins=sum(1 for m in saturday if m["result"] == "W"),
         losses=sum(1 for m in saturday if m["result"] == "L"),
     )

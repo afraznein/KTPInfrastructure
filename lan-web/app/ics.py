@@ -95,8 +95,22 @@ def schedule_feed() -> str:
 
 
 def team_feed(team_id: int, team_name: str) -> str:
-    """Per-match events for one team across both days."""
+    """Per-match events for one team across both days.
+
+    A public calendar URL has no admin context, so it follows the schedule
+    publish gate strictly: matches appear only once staff publish that day's
+    schedule/bracket (an empty calendar until then), so subscribers can't scrape
+    pairings before they're public."""
+    from . import seeding
     ev: list[str] = []
+    if seeding.is_published("schedule_sat_published"):
+        _sat_events(ev, team_id, team_name)
+    if seeding.is_published("schedule_sun_published"):
+        _sun_events(ev, team_id, team_name)
+    return _wrap(f"WSDoD LAN 2026 — {team_name}", ev)
+
+
+def _sat_events(ev: list[str], team_id: int, team_name: str) -> None:
     sat = _sat_round_times()
     for m in sched.team_schedule(team_id):
         rng = sat.get(m["round"])
@@ -107,6 +121,9 @@ def team_feed(team_id: int, team_name: str) -> str:
         ev += _event(f"team{team_id}-sat-r{m['round']}", _dt(SAT_DATE, rng[0]), _dt(SAT_DATE, rng[1]),
                      f"{team_name} vs {opp} — R{m['round']}", where,
                      m.get("map") or "")
+
+
+def _sun_events(ev: list[str], team_id: int, team_name: str) -> None:
     for m in bkt.team_bracket(team_id):
         if not m.get("time"):
             continue
@@ -116,4 +133,3 @@ def team_feed(team_id: int, team_name: str) -> str:
         where = f"Server {m['station']}" if m.get("station") else LOC
         ev += _event(f"team{team_id}-{_esc(m['label'])}", _dt(SUN_DATE, start), _dt(SUN_DATE, _plus(start, dur)),
                      f"{team_name} — {m['label']} vs {opp}", where, m.get("map") or "")
-    return _wrap(f"WSDoD LAN 2026 — {team_name}", ev)

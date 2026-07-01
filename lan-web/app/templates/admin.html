@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block title %}WSDoD / LAN 2026 / Staff{% endblock %}
+{# publish gate toggle — reveal to / hide from the public, reversible #}
+{% macro pubtoggle(flag, published) %}
+  <span style="color:{{ 'var(--olive)' if published else 'var(--ink-faint)' }};font-family:var(--stencil);letter-spacing:.06em;font-size:11px;">{{ 'PUBLIC' if published else 'STAFF-ONLY' }}</span>
+  <form method="post" action="{{ url_for('admin_publish') }}" style="display:inline;margin-left:4px;">
+    <input type="hidden" name="flag" value="{{ flag }}">
+    {% if not published %}<input type="hidden" name="publish" value="1">{% endif %}
+    <button type="submit" style="font-size:11px;">{{ 'Unpublish' if published else 'Publish' }}</button>
+  </form>
+{% endmacro %}
 {% block content %}
   <section class="chapter">
     <header class="chapter-head">
@@ -13,11 +22,11 @@
       <table>
         <tbody>
           <tr><td>Companies / operators</td><td>{{ teams|length }} teams · {{ total_players }} players</td></tr>
-          <tr><td>Saturday map-skip poll</td><td>{{ 'OPEN' if map_skip_poll_open else 'closed' }}{% if skip_map %} · skip = <strong>{{ skip_map }}</strong>{% endif %} — <a href="{{ url_for('mapskip') }}">manage</a></td></tr>
-          <tr><td>Seeding poll</td><td>{{ 'OPEN' if poll_open else 'closed' }} — <a href="{{ url_for('seeds') }}">manage</a></td></tr>
+          <tr><td>Saturday map-skip poll</td><td>{{ 'OPEN' if map_skip_poll_open else 'closed' }}{% if skip_map %} · skip = <strong>{{ skip_map }}</strong>{% endif %} — <a href="{{ url_for('mapskip') }}">manage</a> · {{ pubtoggle('map_skip_results_published', map_skip_published) }}</td></tr>
+          <tr><td>Seeding poll</td><td>{{ 'OPEN' if poll_open else 'closed' }} — <a href="{{ url_for('seeds') }}">manage</a> · {{ pubtoggle('seeding_results_published', seeding_published) }}</td></tr>
           <tr><td>Seeds locked</td><td>{{ 'yes' if seeds_locked else 'no' }}</td></tr>
-          <tr><td>Saturday matches</td><td>{{ 'generated' if matches_generated else 'not generated' }} — <a href="{{ url_for('schedule') }}">manage</a></td></tr>
-          <tr><td>Playoff bracket</td><td>{{ 'generated' if bracket_generated else 'not generated' }} — <a href="{{ url_for('bracket') }}">manage</a></td></tr>
+          <tr><td>Saturday matches</td><td>{{ 'generated' if matches_generated else 'not generated' }} — <a href="{{ url_for('schedule') }}">manage</a> · {{ pubtoggle('schedule_sat_published', schedule_sat_published) }}</td></tr>
+          <tr><td>Playoff bracket</td><td>{{ 'generated' if bracket_generated else 'not generated' }} — <a href="{{ url_for('bracket') }}">manage</a> · {{ pubtoggle('schedule_sun_published', schedule_sun_published) }}</td></tr>
           <tr><td>Station board</td><td><a href="{{ url_for('stations') }}">set "now playing" + connect info</a></td></tr>
           <tr><td>Final placements</td><td><a href="{{ url_for('placements') }}">publish final standing</a></td></tr>
         </tbody>

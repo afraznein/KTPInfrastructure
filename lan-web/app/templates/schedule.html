@@ -15,6 +15,20 @@
     <div class="chapter-body">
       {% if preview %}<div class="preview-banner">Preview — sample data · not real results</div>{% endif %}
 
+    {% if is_admin and matches %}
+    <div class="pending-note" style="border-style:solid;border-color:var(--wsdod-blue);margin-bottom:20px;">
+      <strong style="font-family:var(--stencil);letter-spacing:.14em;color:var(--wsdod-blue);">STAFF</strong>
+      <form method="post" action="{{ url_for('admin_publish') }}" style="display:inline;margin-left:6px;">
+        <input type="hidden" name="flag" value="schedule_sat_published">
+        {% if not schedule_sat_published %}<input type="hidden" name="publish" value="1">{% endif %}
+        <input type="hidden" name="next" value="{{ request.url.path }}">
+        <button type="submit">{{ 'Unpublish schedule' if schedule_sat_published else 'Publish schedule to public' }}</button>
+      </form>
+      <span style="font-size:12px;color:{{ 'var(--olive)' if schedule_sat_published else 'var(--ink-faint)' }};">
+        {{ 'PUBLIC — everyone can see the Saturday schedule' if schedule_sat_published else 'staff-only — the public sees a “pending” note until you publish' }}</span>
+    </div>
+    {% endif %}
+
     {% if not matches %}
       {# ---- template mode: seeds not yet materialized into matches ---- #}
       {% if not seeds_locked %}
@@ -48,6 +62,10 @@
         </article>
         {% endfor %}
       </div>
+
+    {% elif not show_schedule %}
+      {# ---- generated but not yet published: public waits ---- #}
+      <div class="pending-note">The Saturday schedule is being finalised by staff — it posts here once published.</div>
 
     {% else %}
       {# ---- live mode: matches materialized, results + standings ---- #}

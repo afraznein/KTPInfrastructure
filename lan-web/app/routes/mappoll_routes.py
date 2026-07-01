@@ -5,7 +5,7 @@ map is dropped from the Saturday rotation and used as the play-in map."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import auth, common, db, mapskip
+from .. import auth, common, db, mapskip, seeding
 from ..templating import templates
 
 router = APIRouter()
@@ -47,9 +47,14 @@ def mapskip_page(request: Request):
     teams = _teams_by_id()
     all_ballots = mapskip.get_all_ballots()
     poll_open = mapskip.poll_is_open()
-    # Blind poll: the tally and ballots stay hidden from captains/public while
-    # voting is open. Staff always see them; everyone sees them once it closes.
-    show_results = auth.is_admin(request) or not poll_open
+    published = seeding.is_published("map_skip_results_published")
+    ident = auth.current_identity(request)
+    # Blind poll: the tally and ballots stay hidden while voting is open from
+    # anyone on a competing team — staff-captains included — so no one peeks
+    # before their team votes. After it closes they stay staff-only until an
+    # admin publishes the result.
+    show_results = seeding.reveal_poll_results(
+        auth.is_admin(request), poll_open, published, viewer_on_team=bool(ident and ident["team_id"]))
     ordered, counts = mapskip.tally(all_ballots, mapskip.pool_maps())
     ctx = common.base_ctx(request, "mapskip")
     ctx.update(
@@ -65,6 +70,7 @@ def mapskip_page(request: Request):
         poll_open=poll_open,
         locked=mapskip.locked_skip_map(),
         show_results=show_results,
+        published=published,
         is_admin=auth.is_admin(request),
     )
     return templates.TemplateResponse(request, "mapskip.html", ctx)

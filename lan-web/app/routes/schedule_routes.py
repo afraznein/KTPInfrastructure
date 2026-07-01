@@ -25,6 +25,10 @@ def schedule_page(request: Request):
         seeds_locked=sched.seeds_locked(),
         standings=standings.compute_standings(teams, matches) if matches else [],
         is_admin=auth.is_admin(request),
+        # Generated matches/standings stay staff-only until an admin publishes.
+        schedule_sat_published=seeding.is_published("schedule_sat_published"),
+        show_schedule=seeding.reveal_schedule(
+            auth.is_admin(request), seeding.is_published("schedule_sat_published")),
         my_team_id=ident["team_id"] if ident else None,
         am_captain=bool(ident and ident["is_captain"]),
         preview=seeding.get_setting("preview_banner") == "1",

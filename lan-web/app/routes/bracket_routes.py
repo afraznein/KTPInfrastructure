@@ -127,6 +127,10 @@ def bracket_page(request: Request):
         placements=bracket.placement_order() if db_rows else [],
         group_complete=bool(matches) and all(m["status"] == "final" for m in matches),
         is_admin=auth.is_admin(request),
+        # A generated bracket stays staff-only until an admin publishes it.
+        schedule_sun_published=seeding.is_published("schedule_sun_published"),
+        show_bracket=seeding.reveal_schedule(
+            auth.is_admin(request), seeding.is_published("schedule_sun_published")),
         my_team_id=ident["team_id"] if ident else None,
         am_captain=bool(ident and ident["is_captain"]),
         preview=seeding.get_setting("preview_banner") == "1",
