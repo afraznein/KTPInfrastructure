@@ -1,0 +1,11 @@
+# KTP AntiCheat data retention — uploads day-dirs (60d), weapon-timeline rows
+# (30d, batched), expired session tokens (7d past expiry).
+# Script: /usr/local/bin/ktp-ac-retention.sh (canonical: KTPInfrastructure/scripts/).
+# 04:40 ET daily — after ktp-backup so the nightly dump still contains the day
+# about to age out.
+#
+# STAGED DISABLED: uncomment the job line to activate (first activation deletes
+# bundles back to the retention horizon — verify DRY_RUN=1 output first).
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+#40 4 * * * root /usr/local/bin/ktp-ac-retention.sh >> /var/log/ktp-ac-retention.log 2>&1
