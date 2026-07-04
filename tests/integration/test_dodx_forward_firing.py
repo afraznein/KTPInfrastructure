@@ -1,21 +1,17 @@
 """DODX forward-firing tests.
 
-Phase 1 (`controlpoints_init`) is implemented and runs when the suite has a
-booted hlds with KTPWitness 1.1.0+ staged. Phases 2-4 remain skip-marked
-pending bot-driver / rate-limit / hookchain work spec'd in
-`DODX_FORWARD_FIRING_DESIGN.md`.
+All phases are now executable — no skip-marked scaffolds remain:
 
-Why scaffolds for unimplemented phases stay here:
+  Phase 1  — `controlpoints_init`, engine-driven on map load.
+  Phase 2c — the five formerly bot-gated forwards (spawn / changeteam /
+             changeclass / client_death / stats_flush), dispatch-driven
+             since 2026-07-04 (KTPAMXX 127f39fc + KTPWitness 1.7.0), plus
+             the 2.7.18 `dod_client_weapon_fire` per-shot forward.
+  Phase 3  — hot-path forwards via dodx_test_dispatch_* (2026-05-05).
+  Phase 4  — dod_control_point_captured via dispatch (2026-05-05).
 
-  1. Pins the fixture interface — future implementation work doesn't
-     need to re-derive what shape the witness rows should take or what
-     rcons drive the events.
-  2. Documents the contract in version-controlled code, not just
-     ephemeral session notes. A future contributor (or future Claude)
-     can read this file and know exactly what's TBD.
-  3. Forces the design doc + implementation to stay in sync — if
-     `DODX_FORWARD_FIRING_DESIGN.md` adds a new phase, a corresponding
-     test stub should land here in the same commit.
+Environment: needs dodx_ktp_i386.so from the KTPAMXX 2.7.19+ tree and
+KTPWitness 1.7.0+ staged (see CI_RUNNER_SETUP.md).
 """
 from __future__ import annotations
 
@@ -25,15 +21,6 @@ from pathlib import Path
 import pytest
 
 from ._timing import WITNESS_TIMEOUT, scaled
-
-
-SKIP_REASON = (
-    "DODX forward-firing tests are scaffolded but not yet executable. "
-    "Phase 1 implementation (witness plugin extension to hook "
-    "`controlpoints_init`) is documented in DODX_FORWARD_FIRING_DESIGN.md. "
-    "Remove this skip mark once the witness extension lands + is staged "
-    "to the test serverfiles tree."
-)
 
 
 def _serverfiles() -> Path | None:
@@ -87,56 +74,34 @@ def test_controlpoints_init_fires_on_map_load(hlds):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 — player-interaction (bot-driven; deterministic-enough)
+# Phase 2c — formerly bot-gated forwards, now dispatch-driven
 # ---------------------------------------------------------------------------
 #
-# A single `addbot` rcon triggers a deterministic forward sequence in DoD:
+# These five forwards (`dod_client_spawn`, `dod_client_changeteam`,
+# `dod_client_changeclass`, `client_death`, `dod_stats_flush`) were
+# skip-marked from 2026-05-06 to 2026-07-04 because their only driver was a
+# real player chain: `addbot` creates a fake-client slot but DoD ships no
+# bot AI, so the client never joins/spawns/dies. The bot-mod path was
+# empirically closed 2026-05-24 — Marine Bot's gamedll-wrapper breaks
+# DODX's g_pGameRules symbol scan (see TODO.md "bot AI mod install").
 #
-#   1. Bot connects (no DODX forward; `client_putinserver` only)
-#   2. Bot AI auto-joins a team -> `dod_client_changeteam(id, team, 3)`
-#      (3 = Spectators, the bot's initial side)
-#   3. Bot picks class             -> `dod_client_changeclass(id, class, 0)`
-#   4. Bot spawns                  -> `dod_client_spawn(id)`
+# KTPAMXX 2.7.19+ (commit 127f39fc) added dodx_test_dispatch_* natives for
+# all five, and KTPWitness 1.7.0 wraps them in amx_witness_dispatch_* rcons
+# — the same Phase 3b pattern the hot-path tests below already use. Same
+# honest caveat as Phase 3b: this exercises DODX's forward-dispatch
+# primitive and the consumer contract, NOT the natural engine→DODX event
+# chain (which has no test driver without bots).
 #
-# All four fire within a few seconds of `addbot`. Tests assert occurrence +
-# structural shape (`args.id` is a positive int, etc.), not exact values —
-# the design doc's "≥N times in T seconds" contract.
-#
-# `client_death` is excluded from the addbot path (needs an attacker source),
-# and stays scaffold-skipped pending a deterministic kill driver (rcon-based
-# admin slay or bot-vs-bot combat).
-#
-# DoD bot-AI dependency (surfaced 2026-05-06 Tier 2 first-fire):
-#
-# `addbot` is a stock HLDS console command that creates a fake-client slot
-# but does NOT drive AI — the client never picks a team or spawns. DoD
-# itself ships no bot AI; production game servers also don't run bots.
-# Without an external bot DLL (HPB_Bot, RCBot, etc.) installed in the test
-# serverfiles tree, all 4 addbot-driven tests + the stats-flush test (which
-# transitively requires a connected player) timeout with `dod_client_spawn`
-# never observed in witness.jsonl.
-#
-# The five tests below skip-mark with this reason. To re-enable: install
-# a DoD bot AI mod into the test serverfiles tree, document the addition in
-# CI_RUNNER_SETUP.md, and remove the skip markers. Until then, the deter-
-# ministic-dispatch test natives (Phase 3+) cover the dispatch primitive
-# without requiring a real player chain.
-BOT_AI_REQUIRED_REASON = (
-    "DoD ships no bot AI; production fleet doesn't run bots; test serverfiles "
-    "tree doesn't include a bot DLL. `addbot` rcon creates a fake client that "
-    "never spawns into a team, so dod_client_spawn / changeteam / changeclass "
-    "/ death witness events never fire. To re-enable, install a DoD bot AI mod "
-    "(HPB_Bot, RCBot, etc.) and remove this marker."
-)
+# Deterministic dispatch means exact round-trip assertions (vs the old
+# scaffolds' "plausible shape" checks).
 
 
-@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
-def test_dod_client_spawn_fires_on_bot_join(hlds):
-    """`dod_client_spawn(id)` fires when a bot spawns into the round.
-    `addbot` rcon -> wait for witness row.
+def test_dod_client_spawn_via_dispatch(hlds):
+    """`dod_client_spawn(id)` round-trips through dispatch → witness.
 
-    Witness arg shape: `{"id": <client-slot>}`. Test asserts the row
-    appears within 10s and `id` is a positive integer (slot index).
+    Driver: `amx_witness_dispatch_client_spawn <id>` rcon ->
+    `dodx_test_dispatch_client_spawn` native -> MF_ExecuteForward ->
+    witness public dod_client_spawn handler -> JSONL row.
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -144,27 +109,22 @@ def test_dod_client_spawn_fires_on_bot_join(hlds):
     if sf is None:
         pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
 
+    SLOT = 5
+
     witness_baseline = witness_count(sf)
-    hlds.rcon("addbot")
+    hlds.rcon(f"amx_witness_dispatch_client_spawn {SLOT}")
     row = wait_for_witness_event(
         sf, "dod_client_spawn",
         timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
-    assert isinstance(row.get("args", {}).get("id"), int), \
-        f"args.id missing or not int: {row!r}"
-    assert row["args"]["id"] >= 1, f"args.id must be a positive client slot: {row['args']['id']}"
+    assert row.get("args", {}).get("id") == SLOT, f"id mismatch: {row!r}"
 
 
-@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
-def test_dod_client_changeteam_fires_on_bot_join(hlds):
-    """`dod_client_changeteam(id, team, oldteam)` fires when a bot is
-    auto-assigned a team. `addbot` -> bot starts in Spectators (team 3) ->
-    AI auto-joins Allies/Axis -> changeteam fires.
-
-    Witness arg shape: `{"id": <slot>, "team": <new>, "oldteam": <prev>}`.
-    Test asserts shape + plausible team values (1=Allies, 2=Axis, 3=Spec).
-    Doesn't assert which team the bot picks (DoD AI is non-deterministic).
+def test_dod_client_changeteam_via_dispatch(hlds):
+    """`dod_client_changeteam(id, team, oldteam)` round-trips through
+    dispatch → witness. Values mirror the initial spectator->Allies
+    transition a real join produces (team=1, oldteam=3).
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -172,28 +132,24 @@ def test_dod_client_changeteam_fires_on_bot_join(hlds):
     if sf is None:
         pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
 
+    SLOT, TEAM, OLDTEAM = 5, 1, 3
+
     witness_baseline = witness_count(sf)
-    hlds.rcon("addbot")
+    hlds.rcon(f"amx_witness_dispatch_changeteam {SLOT} {TEAM} {OLDTEAM}")
     row = wait_for_witness_event(
         sf, "dod_client_changeteam",
         timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
-    assert isinstance(args.get("id"), int) and args["id"] >= 1, f"args.id invalid: {args!r}"
-    assert args.get("team") in (1, 2, 3), f"args.team must be 1/2/3: {args!r}"
-    assert args.get("oldteam") in (0, 1, 2, 3), f"args.oldteam must be 0..3: {args!r}"
+    assert args.get("id")      == SLOT,    f"id mismatch: {args!r}"
+    assert args.get("team")    == TEAM,    f"team mismatch: {args!r}"
+    assert args.get("oldteam") == OLDTEAM, f"oldteam mismatch: {args!r}"
 
 
-@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
-def test_dod_client_changeclass_fires_on_bot_join(hlds):
-    """`dod_client_changeclass(id, class, oldclass)` fires when a bot
-    picks a class (just after spawn per dodx.inc). `addbot` -> bot picks
-    class within seconds.
-
-    Witness arg shape: `{"id": <slot>, "class": <new>, "oldclass": <prev>}`.
-    DoD class IDs are 1-6 per side; oldclass=0 on initial pick. Test
-    asserts shape + plausible class values.
+def test_dod_client_changeclass_via_dispatch(hlds):
+    """`dod_client_changeclass(id, class, oldclass)` round-trips through
+    dispatch → witness. Values mirror an initial class pick (oldclass=0).
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -201,37 +157,26 @@ def test_dod_client_changeclass_fires_on_bot_join(hlds):
     if sf is None:
         pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
 
+    SLOT, NEWCLASS, OLDCLASS = 5, 4, 0
+
     witness_baseline = witness_count(sf)
-    hlds.rcon("addbot")
+    hlds.rcon(f"amx_witness_dispatch_changeclass {SLOT} {NEWCLASS} {OLDCLASS}")
     row = wait_for_witness_event(
         sf, "dod_client_changeclass",
         timeout=WITNESS_TIMEOUT,
         after_count=witness_baseline,
     )
     args = row.get("args", {})
-    assert isinstance(args.get("id"), int) and args["id"] >= 1, f"args.id invalid: {args!r}"
-    assert isinstance(args.get("class"), int) and args["class"] >= 0, f"args.class invalid: {args!r}"
-    assert isinstance(args.get("oldclass"), int) and args["oldclass"] >= 0, f"args.oldclass invalid: {args!r}"
+    assert args.get("id")       == SLOT,     f"id mismatch: {args!r}"
+    assert args.get("class")    == NEWCLASS, f"class mismatch: {args!r}"
+    assert args.get("oldclass") == OLDCLASS, f"oldclass mismatch: {args!r}"
 
 
-@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
-def test_client_death_fires_on_kill(hlds):
-    """`client_death(killer, victim, wpnindex, hitplace, TK)` fires on
-    any player death. Witness label: `dod_client_death`. Args shape:
-    `{"killer": <slot>, "victim": <slot>, "wpnindex": <int>, "hitplace": <int>, "TK": 0|1}`.
-
-    Driver path (Phase 2b shipped 2026-05-05): `amx_witness_kill <slot>`
-    rcon, registered by KTPWitness 1.3.0+, calls `user_kill(slot, 0)`
-    internally. user_kill is a core AMXX native (no extra module load),
-    same registration pattern as KTPMatchHandler's -DKTP_TEST_MODE rcons.
-
-    Test sequence:
-      1. addbot -> wait for `dod_client_spawn` row to confirm the bot is
-         actually in-world (kill before spawn would no-op).
-      2. Capture the bot's slot from the spawn row's args.id.
-      3. amx_witness_kill <slot> -> user_kill -> client_death dispatch.
-      4. Wait for the `dod_client_death` row, assert shape + victim slot
-         matches the bot we killed.
+def test_client_death_via_dispatch(hlds):
+    """`client_death(killer, victim, wpnindex, hitplace, TK)` round-trips
+    through dispatch → witness (label `dod_client_death`). Killer-first
+    arg order matches the production dispatch sites (NBase.cpp:561,
+    usermsg.cpp:761).
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -239,33 +184,21 @@ def test_client_death_fires_on_kill(hlds):
     if sf is None:
         pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
 
-    # 1+2. addbot, wait for spawn, capture slot
-    spawn_baseline = witness_count(sf)
-    hlds.rcon("addbot")
-    spawn_row = wait_for_witness_event(
-        sf, "dod_client_spawn",
-        timeout=WITNESS_TIMEOUT,
-        after_count=spawn_baseline,
-    )
-    bot_slot = spawn_row["args"]["id"]
-    assert isinstance(bot_slot, int) and bot_slot >= 1, \
-        f"spawn row has invalid slot: {spawn_row!r}"
+    KILLER, VICTIM, WPNIDX, HITPLACE, TK = 7, 8, 13, 2, 0
 
-    # 3+4. Kill the bot, wait for death row
-    death_baseline = witness_count(sf)
-    hlds.rcon(f"amx_witness_kill {bot_slot}")
+    witness_baseline = witness_count(sf)
+    hlds.rcon(f"amx_witness_dispatch_client_death {KILLER} {VICTIM} {WPNIDX} {HITPLACE} {TK}")
     row = wait_for_witness_event(
         sf, "dod_client_death",
         timeout=WITNESS_TIMEOUT,
-        after_count=death_baseline,
+        after_count=witness_baseline,
     )
     args = row.get("args", {})
-    assert isinstance(args.get("killer"), int), f"args.killer missing/wrong type: {args!r}"
-    assert args.get("victim") == bot_slot, \
-        f"victim slot {args.get('victim')!r} does not match killed bot slot {bot_slot}"
-    assert isinstance(args.get("wpnindex"), int), f"args.wpnindex missing/wrong type: {args!r}"
-    assert isinstance(args.get("hitplace"), int), f"args.hitplace missing/wrong type: {args!r}"
-    assert args.get("TK") in (0, 1), f"args.TK must be 0 or 1: {args!r}"
+    assert args.get("killer")   == KILLER,   f"killer mismatch: {args!r}"
+    assert args.get("victim")   == VICTIM,   f"victim mismatch: {args!r}"
+    assert args.get("wpnindex") == WPNIDX,   f"wpnindex mismatch: {args!r}"
+    assert args.get("hitplace") == HITPLACE, f"hitplace mismatch: {args!r}"
+    assert args.get("TK")       == TK,       f"TK mismatch: {args!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +285,11 @@ def test_dod_grenade_explosion_fires_with_full_args(hlds):
 
     Driver: `amx_witness_dispatch_grenade <slot> <x> <y> <z> <wpnid>` rcon
     -> `dodx_test_dispatch_grenade_explosion` native. pos round-trip
-    tolerance is ±0.01 (witness serializes with %.2f precision).
+    tolerance is one %.2f grid step plus slack: AMXX's float formatter
+    truncates rather than rounds, and the parsed float can land an ulp
+    below the literal (build-env-dependent — surfaced 2026-07-04 when the
+    2.7.19 core rebuild serialized 88.00 as "87.99"), so a full hundredth
+    of error is legitimate.
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -375,9 +312,9 @@ def test_dod_grenade_explosion_fires_with_full_args(hlds):
     assert args.get("id") == SLOT, f"id mismatch: {args!r}"
     pos = args.get("pos")
     assert isinstance(pos, list) and len(pos) == 3, f"pos must be 3-element list: {pos!r}"
-    assert abs(pos[0] - X) < 0.01, f"pos.x off: {pos[0]} vs expected {X}"
-    assert abs(pos[1] - Y) < 0.01, f"pos.y off: {pos[1]} vs expected {Y}"
-    assert abs(pos[2] - Z) < 0.01, f"pos.z off: {pos[2]} vs expected {Z}"
+    assert abs(pos[0] - X) < 0.011, f"pos.x off: {pos[0]} vs expected {X}"
+    assert abs(pos[1] - Y) < 0.011, f"pos.y off: {pos[1]} vs expected {Y}"
+    assert abs(pos[2] - Z) < 0.011, f"pos.z off: {pos[2]} vs expected {Z}"
     assert args.get("wpnid") == WPNID, f"wpnid mismatch: {args!r}"
 
 
@@ -438,12 +375,10 @@ def test_dispatch_score_fires_both_client_score_and_dod_score_event(hlds):
 # `dod_control_point_captured(cp_index, new_owner, old_owner)`
 # (engine-driven via DoD's flag-cap usermsg path).
 #
-# `dod_stats_flush` test (full match-flow drive):
-#   addbot -> wait for spawn -> setup_match -> advance_pending ->
-#   advance_live -> end_match -> wait for stats_flush row with bot's id.
-#   Exercises the entire engine -> KTPMatchHandler -> DODX -> witness
-#   chain. Requires KTPMatchHandler 0.10.124+ (test-mode end_match calls
-#   dodx_flush_all_stats — same as production match-end flow).
+# `dod_stats_flush` moved to the Phase 2c dispatch driver above (2026-07-04)
+# — the full match-flow variant (end_match -> dodx_flush_all_stats -> per-
+# connected-player fan-out) needs a connected client and stays untestable
+# without bots; see the coverage note on test_dod_stats_flush_via_dispatch.
 #
 # `dod_control_point_captured` test uses the dispatch primitive
 # (Phase 4b — same pattern as Phase 3b): KTPWitness 1.6.0+ exposes
@@ -453,21 +388,16 @@ def test_dispatch_score_fires_both_client_score_and_dod_score_event(hlds):
 # (CP capture timing is non-deterministic enough for test-suite use).
 
 
-@pytest.mark.skip(reason=BOT_AI_REQUIRED_REASON)
-def test_dod_stats_flush_fires_on_match_end(hlds):
-    """`dod_stats_flush(id)` fires for each connected player at match
-    end. KTPMatchHandler 0.10.124+ test-mode `cmd_test_end_match` calls
-    `dodx_flush_all_stats()` (same as production match-end), which in
-    turn fires the forward per-player.
+def test_dod_stats_flush_via_dispatch(hlds):
+    """`dod_stats_flush(id)` round-trips through dispatch → witness.
 
-    Test sequence:
-      1. addbot -> wait for `dod_client_spawn` row -> capture bot slot.
-      2. amx_ktp_test_setup_match COMPETITIVE pass1 (whatever string is
-         needed; we drive through to live).
-      3. amx_ktp_test_advance_pending -> advance_live -> end_match.
-      4. Wait for `dod_stats_flush` row with `args.id` matching the bot.
-
-    Witness arg shape: `{"id": <int>}` (single per-player int).
+    Coverage note: production fires this via `dodx_flush_all_stats()`
+    looping every CONNECTED player at match end — with zero players that
+    loop fires zero forwards, so the full match-end chain stays untestable
+    without a connected client. The per-player dispatch native covers the
+    forward-delivery contract (dispatch → subscribed plugins) that the
+    match-end variant would have exercised; the flush-all loop itself is
+    plain NRank.cpp iteration.
     """
     from .log_tail import wait_for_witness_event, witness_count
 
@@ -475,35 +405,45 @@ def test_dod_stats_flush_fires_on_match_end(hlds):
     if sf is None:
         pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
 
-    # 1. addbot, capture bot slot
-    spawn_baseline = witness_count(sf)
-    hlds.rcon("addbot")
-    spawn_row = wait_for_witness_event(
-        sf, "dod_client_spawn", timeout=WITNESS_TIMEOUT, after_count=spawn_baseline,
-    )
-    bot_slot = spawn_row["args"]["id"]
+    SLOT = 6
 
-    # 2-3. Drive match-flow state machine to end. cmd_test_setup_match
-    # takes `<matchType_int_0..5> <map>` (KTPMatchHandler.sma:7680-7720).
-    # advance_pending / advance_live take no args. end_match takes the
-    # two final scores.
-    #   matchType: 0=COMPETITIVE, 1=SCRIM, 2=12MAN, 3=DRAFT, 4=KTP_OT, 5=DRAFT_OT
-    hlds.rcon("amx_ktp_test_setup_match 0 dod_anzio")
-    hlds.rcon("amx_ktp_test_advance_pending")
-    hlds.rcon("amx_ktp_test_advance_live")
-
-    # 4. End match -> dodx_flush_all_stats() -> dod_stats_flush per-player
-    flush_baseline = witness_count(sf)
-    hlds.rcon("amx_ktp_test_end_match 5 3")
+    witness_baseline = witness_count(sf)
+    hlds.rcon(f"amx_witness_dispatch_stats_flush {SLOT}")
     row = wait_for_witness_event(
-        sf, "dod_stats_flush", timeout=WITNESS_TIMEOUT, after_count=flush_baseline,
+        sf, "dod_stats_flush", timeout=WITNESS_TIMEOUT, after_count=witness_baseline,
+    )
+    assert row.get("args", {}).get("id") == SLOT, f"id mismatch: {row!r}"
+
+
+def test_dod_client_weapon_fire_via_dispatch(hlds):
+    """`dod_client_weapon_fire(id, weapon, Float:gametime)` — the KTPAMXX
+    2.7.18 per-shot forward (dormant in production until the Season-10
+    Rule 4.6 cadence consumer) round-trips through dispatch → witness.
+
+    gametime is a Pawn Float cell passed through unchanged by the native
+    (pre-encoded IEEE 754 — see the native's comment); witness serializes
+    %.2f, so assert with ±0.01 tolerance like the grenade pos check.
+    """
+    from .log_tail import wait_for_witness_event, witness_count
+
+    sf = _serverfiles()
+    if sf is None:
+        pytest.skip("test requires KTP_HLDS_SERVERFILES for witness.jsonl read")
+
+    SLOT, WEAPON, GAMETIME = 4, 7, 123.25  # 7 = a rifle-class weapon id
+
+    witness_baseline = witness_count(sf)
+    hlds.rcon(f"amx_witness_dispatch_weapon_fire {SLOT} {WEAPON} {GAMETIME}")
+    row = wait_for_witness_event(
+        sf, "dod_client_weapon_fire",
+        timeout=WITNESS_TIMEOUT,
+        after_count=witness_baseline,
     )
     args = row.get("args", {})
-    assert isinstance(args.get("id"), int) and args["id"] >= 1, \
-        f"args.id missing/invalid: {args!r}"
-    # The forward fires once per connected client. The bot is the only
-    # player, so its slot should be in the args. (HLTV is also connected
-    # in some setups but with a high slot — accept any valid slot.)
+    assert args.get("id")     == SLOT,   f"id mismatch: {args!r}"
+    assert args.get("weapon") == WEAPON, f"weapon mismatch: {args!r}"
+    assert isinstance(args.get("gametime"), (int, float)) and \
+        abs(args["gametime"] - GAMETIME) < 0.011, f"gametime off: {args!r}"
 
 
 def test_dod_control_point_captured_via_dispatch(hlds):

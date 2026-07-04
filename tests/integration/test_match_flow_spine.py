@@ -39,8 +39,9 @@ from .match_flow import MatchDriver, MatchType
 # Pinned version: KTPMatchHandler 0.10.122 added the test-mode build flag;
 # 0.10.123 routed test rcons through the production deferred-fwd path. When
 # the source PLUGIN_VERSION bumps, this test pin updates in lockstep
-# (memory `feedback_commit_hygiene.md`).
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.131"
+# (memory `feedback_commit_hygiene.md`). 0.10.140 = the fleet-deployed
+# version, staged test-mode on the runner since the 2026-06-28 stack sync.
+EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.140"
 
 
 def _serverfiles() -> Path | None:

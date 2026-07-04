@@ -142,6 +142,7 @@ jobs:
           test -f "$SF/dod/addons/ktpamx/modules/dodx_ktp_i386.so" || { echo "MISSING: dodx_ktp_i386.so"; exit 1; }
           test -f "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx" || { echo "MISSING: KTPMatchHandler.amxx (must be test-mode build)"; exit 1; }
           test -f "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx" || { echo "MISSING: KTPWitness.amxx"; exit 1; }
+          test -f "$SF/dod/addons/ktpamx/plugins/KTPPracticeMode.amxx" || { echo "MISSING: KTPPracticeMode.amxx (must be test-mode build)"; exit 1; }
           echo "All required artifacts present."
 
       - name: Run Tier 2 integration suite

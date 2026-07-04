@@ -77,7 +77,8 @@ The tree must contain:
 | `dod/addons/ktpamx/plugins/KTPMatchHandler.amxx` | **TEST-MODE build** | from `compiled/test/` |
 | `dod/addons/ktpamx/plugins/KTPWitness.amxx` | KTPInfrastructure | from `tests/integration/witness/compiled/` |
 | `dod/addons/ktpamx/plugins/KTPHudObserver.amxx` | DoD-hud-observer build | required for `test_hud_observer_contract.py` |
-| `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness + KTPHudObserver |
+| `dod/addons/ktpamx/plugins/KTPPracticeMode.amxx` | **TEST-MODE build** (`KTP_TEST_MODE=1 bash compile.sh`, from `compiled/test/`) | required for `test_practice_mode_grenade_refill.py` (needs `amx_ktp_prac_test_enable` + entry diagnostic) |
+| `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness + KTPHudObserver + KTPPracticeMode |
 | `dod/addons/ktpamx/configs/dodserver.cfg` | (minimal test config) | rcon_password=`smoketest` per the conftest |
 
 **Critical: KTPMatchHandler MUST be the test-mode build** (compiled with

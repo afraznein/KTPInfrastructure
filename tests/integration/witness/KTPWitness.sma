@@ -45,7 +45,7 @@
 #include <dodx>
 
 #define PLUGIN_NAME    "KTP Witness (test-only)"
-#define PLUGIN_VERSION "1.6.0"
+#define PLUGIN_VERSION "1.7.0"
 #define PLUGIN_AUTHOR  "Nein_"
 
 // JSONL output path. The integration test harness tails this file.
@@ -102,7 +102,25 @@ public plugin_init() {
     register_concmd("amx_witness_dispatch_cp_captured", "cmd_witness_dispatch_cp_captured",
         -1, "<cp_index> <new_owner> <old_owner> — test-only: dispatch dod_control_point_captured");
 
-    log_amx("[KTP-WITNESS] Initialized — observing match-flow + DODX forwards (controlpoints_init, client_spawn, client_changeteam, client_changeclass, client_death, client_damage, dod_grenade_explosion, client_score, dod_score_event, dod_stats_flush, dod_control_point_captured) + amx_witness_kill + amx_witness_dispatch_* rcons");
+    // Phase 2c (1.7.0): dispatch rcons for the five formerly bot-gated
+    // forwards (KTPAMXX 2.7.19+ dodx natives) + the 2.7.18 per-shot
+    // weapon-fire forward. Replaces the addbot driver path that never
+    // worked (DoD ships no bot AI — see BOT_AI_REQUIRED_REASON history
+    // in test_dodx_forward_firing.py).
+    register_concmd("amx_witness_dispatch_client_spawn", "cmd_witness_dispatch_client_spawn",
+        -1, "<id> — test-only: dispatch dod_client_spawn");
+    register_concmd("amx_witness_dispatch_changeteam", "cmd_witness_dispatch_changeteam",
+        -1, "<id> <team> <oldteam> — test-only: dispatch dod_client_changeteam");
+    register_concmd("amx_witness_dispatch_changeclass", "cmd_witness_dispatch_changeclass",
+        -1, "<id> <class> <oldclass> — test-only: dispatch dod_client_changeclass");
+    register_concmd("amx_witness_dispatch_client_death", "cmd_witness_dispatch_client_death",
+        -1, "<killer> <victim> <wpnindex> <hitplace> <TK> — test-only: dispatch client_death");
+    register_concmd("amx_witness_dispatch_stats_flush", "cmd_witness_dispatch_stats_flush",
+        -1, "<id> — test-only: dispatch dod_stats_flush");
+    register_concmd("amx_witness_dispatch_weapon_fire", "cmd_witness_dispatch_weapon_fire",
+        -1, "<id> <weapon> <gametime> — test-only: dispatch dod_client_weapon_fire");
+
+    log_amx("[KTP-WITNESS] Initialized — observing match-flow + DODX forwards (controlpoints_init, client_spawn, client_changeteam, client_changeclass, client_death, client_damage, dod_grenade_explosion, client_score, dod_score_event, dod_stats_flush, dod_control_point_captured, dod_client_weapon_fire) + amx_witness_kill + amx_witness_dispatch_* rcons");
 }
 
 // Test-only kill-trigger. Validates the slot, calls user_kill(slot, 0), and
@@ -182,6 +200,66 @@ public cmd_witness_dispatch_cp_captured() {
     read_argv(3, buf, charsmax(buf)); new old_owner = str_to_num(buf);
 
     dodx_test_dispatch_cp_captured(cp_index, new_owner, old_owner);
+    return PLUGIN_HANDLED;
+}
+
+// Phase 2c rcon handlers (1.7.0) — same pattern as Phase 3b above.
+
+public cmd_witness_dispatch_client_spawn() {
+    new buf[8];
+    read_argv(1, buf, charsmax(buf)); new id = str_to_num(buf);
+
+    dodx_test_dispatch_client_spawn(id);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_changeteam() {
+    new buf[8];
+    read_argv(1, buf, charsmax(buf)); new id      = str_to_num(buf);
+    read_argv(2, buf, charsmax(buf)); new team    = str_to_num(buf);
+    read_argv(3, buf, charsmax(buf)); new oldteam = str_to_num(buf);
+
+    dodx_test_dispatch_changeteam(id, team, oldteam);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_changeclass() {
+    new buf[8];
+    read_argv(1, buf, charsmax(buf)); new id       = str_to_num(buf);
+    read_argv(2, buf, charsmax(buf)); new newclass = str_to_num(buf);
+    read_argv(3, buf, charsmax(buf)); new oldclass = str_to_num(buf);
+
+    dodx_test_dispatch_changeclass(id, newclass, oldclass);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_client_death() {
+    new buf[8];
+    read_argv(1, buf, charsmax(buf)); new killer   = str_to_num(buf);
+    read_argv(2, buf, charsmax(buf)); new victim   = str_to_num(buf);
+    read_argv(3, buf, charsmax(buf)); new wpnindex = str_to_num(buf);
+    read_argv(4, buf, charsmax(buf)); new hitplace = str_to_num(buf);
+    read_argv(5, buf, charsmax(buf)); new TK       = str_to_num(buf);
+
+    dodx_test_dispatch_client_death(killer, victim, wpnindex, hitplace, TK);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_stats_flush() {
+    new buf[8];
+    read_argv(1, buf, charsmax(buf)); new id = str_to_num(buf);
+
+    dodx_test_dispatch_stats_flush(id);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_weapon_fire() {
+    new buf[16];
+    read_argv(1, buf, charsmax(buf)); new id             = str_to_num(buf);
+    read_argv(2, buf, charsmax(buf)); new weapon         = str_to_num(buf);
+    read_argv(3, buf, charsmax(buf)); new Float:gametime = str_to_float(buf);
+
+    dodx_test_dispatch_weapon_fire(id, weapon, gametime);
     return PLUGIN_HANDLED;
 }
 
@@ -307,6 +385,19 @@ public dod_grenade_explosion(id, Float:pos[3], wpnid) {
     formatex(line, charsmax(line),
         "{^"event^":^"dod_grenade_explosion^",^"ts^":%d,^"args^":{^"id^":%d,^"pos^":[%.2f,%.2f,%.2f],^"wpnid^":%d}}",
         get_systime(), id, pos[0], pos[1], pos[2], wpnid);
+    write_jsonl(line);
+}
+
+// Phase 2c: dod_client_weapon_fire(id, weapon, Float:gametime) — fires on
+// every primary-attack actuation incl. pure misses (KTPAMXX 2.7.18+, the
+// per-shot forward feeding the future Rule 4.6 cadence detector). gametime
+// is gpGlobals->time at the shot; %.2f is plenty for round-trip asserts.
+// Production consumer: none yet (dormant until the Season-10 cadence work).
+public dod_client_weapon_fire(id, weapon, Float:gametime) {
+    new line[256];
+    formatex(line, charsmax(line),
+        "{^"event^":^"dod_client_weapon_fire^",^"ts^":%d,^"args^":{^"id^":%d,^"weapon^":%d,^"gametime^":%.2f}}",
+        get_systime(), id, weapon, gametime);
     write_jsonl(line);
 }
 
