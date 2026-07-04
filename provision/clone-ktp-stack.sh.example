@@ -813,12 +813,17 @@ if [ -n "$HLTV_BASE_PORT" ]; then
         HLTV_PORT=$((HLTV_BASE_PORT + i - 1))
         HLTV_INI="$HOME/dod-$PORT/serverfiles/dod/addons/ktpamx/configs/hltv_recorder.ini"
 
-        # Determine API key: flag > existing file > default
+        # Determine API key: flag > existing file. No default — a wrong key
+        # fails silently at runtime (HLTV recording just never starts).
         EFFECTIVE_HLTV_KEY="$HLTV_API_KEY"
         if [ -z "$EFFECTIVE_HLTV_KEY" ] && [ -f "$HLTV_INI" ]; then
             EFFECTIVE_HLTV_KEY=$(grep -E "^hltv_api_key" "$HLTV_INI" 2>/dev/null | head -1 | sed 's/^hltv_api_key\s*=\s*//' | tr -d '[:space:]')
         fi
-        : "${EFFECTIVE_HLTV_KEY:=CHANGEME_HLTV_API_KEY}"
+        if [ -z "$EFFECTIVE_HLTV_KEY" ]; then
+            log_error "No HLTV API key available for instance $i (port $PORT)."
+            log_error "Pass --hltv-api-key <key>, or pre-seed hltv_api_key in $HLTV_INI"
+            exit 1
+        fi
 
         # Always create/overwrite with correct per-instance port
         cat > "$HLTV_INI" << EOF
