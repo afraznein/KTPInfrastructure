@@ -16,13 +16,23 @@ One config file, one script invocation.
 ## TL;DR
 
 ```bash
-# On the LAN box, as root:
-git clone <KTPInfrastructure repo>
-cd KTPInfrastructure/provision
+# On the LAN box, as root. Clone somewhere world-readable (NOT under /root —
+# Phases 2-3 run as the dodserver user and must be able to read the repo):
+git clone <KTPInfrastructure repo> /opt/ktp/KTPInfrastructure
+cd /opt/ktp/KTPInfrastructure/provision
+
+# clone-ktp-stack.sh is gitignored (it can carry embedded secrets) — a fresh
+# clone ships only the .example. Copy it; flag-driven values are fine as-is
+# for LAN (lan-deploy.sh passes everything it needs via flags):
+cp clone-ktp-stack.sh.example clone-ktp-stack.sh
+
 cp lan-deploy.conf.example lan-deploy.conf
 $EDITOR lan-deploy.conf            # set LAN_IP, ARTIFACTS_PATH, LIBSTEAM_API_PATH
 ./lan-deploy.sh                    # confirms once, then runs
 ```
+
+(`lan-deploy.sh` preflights both of the above and fails with instructions
+before touching the host if either is missing.)
 
 ## What gets installed
 
@@ -46,9 +56,21 @@ The orchestrator runs five phases in order, each idempotent:
    nightly 3 AM scheduled restart cron.
 
 4. **`provision-lan-dataserver.sh`** *(optional, `ENABLE_DATASERVER=true`)*
-   — sets up co-located MySQL, HLStatsX skeleton, HLTV proxies, HLTV API,
-   FastDL nginx. Auto-generates random passwords if the config left them
-   empty. Saves them to `/root/ktp-dataserver-credentials.txt`.
+   — sets up co-located MySQL, HLStatsX skeleton, HLTV proxies (systemd
+   `hltv@<port>` units with FIFO cmdpipes — the production runtime shape),
+   the HLTV API (production v2.2: `X-Auth-Key` auth, `GET /hltv/<port>/state`,
+   `POST /hltv/<port>/restart` — exactly what KTPHLTVRecorder 1.7.0 calls),
+   FastDL nginx. HLTV configs are generated in the 1.7.0 always-on profile:
+   each proxy autoconnects to its paired game server and records continuously
+   (`record auto_lanN`); demos accumulate under `/home/hltvserver/hlds/dod/`
+   and are browsable at `http://<LAN_IP>/demos`. The `HLTV_API_KEY` is
+   auto-generated and plumbed to BOTH the API service and every game
+   instance's `hltv_recorder.ini`. Auto-generates random passwords if the
+   config left them empty. Saves them to
+   `/root/ktp-dataserver-credentials.txt`.
+   **No demo cleanup cron is installed on LAN** — the production 6h purge
+   would delete unrenamed demos and there is no renamer here; budget
+   ~3 GB/day/instance of disk and archive after the event.
 
 5. **`/etc/ktp/fleet-health.conf`** — writes the alerter config with
    LAN-specific values. Empty `WEBHOOK_URL` means the alerter runs in

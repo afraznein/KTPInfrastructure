@@ -12,3 +12,7 @@ __pycache__/
 # Editor
 *.swp
 *~
+
+# Retired credential-bearing local scripts (renamed out of runnable form
+# 2026-07-07; kept for reference, never committed)
+*.retired-vps-era-*

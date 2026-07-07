@@ -22,7 +22,20 @@ TS_USER="teamspeak"
 TS_DIR="/opt/teamspeak"
 # Housekeeping cores: physical 0,1 + their HT siblings 8,9 on the W-2245 (8C/16T).
 # Game servers own the isolated cores 2-7; HLTV + TeamSpeak + OS live here.
+# Guarded below: CPUAffinity naming nonexistent CPUs fails the unit on smaller
+# boxes, so pins outside 0..nproc-1 are dropped (empty result = no pinning).
 TS_CPUS="${TS_CPUS:-0 1 8 9}"
+NCPU=$(nproc)
+TS_CPUS_VALID=""
+for c in $TS_CPUS; do
+    if [ "$c" -lt "$NCPU" ]; then
+        TS_CPUS_VALID="${TS_CPUS_VALID:+$TS_CPUS_VALID }$c"
+    fi
+done
+if [ "$TS_CPUS_VALID" != "$TS_CPUS" ]; then
+    echo "[WARN] TS_CPUS '$TS_CPUS' exceeds this box's $NCPU CPUs — using '${TS_CPUS_VALID:-none}'"
+fi
+TS_CPUS="$TS_CPUS_VALID"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()  { echo -e "${GREEN}[INFO]${NC} $1"; }

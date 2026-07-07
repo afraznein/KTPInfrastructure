@@ -1,11 +1,14 @@
 # KTP Tier 1 — Fast config-parse pre-merge gate
 #
 # Runs the pytest suite in tests/config_parse/ against the committed
-# config/{local,online}/* tree. ~0.1s on a warm runner; intended as the
-# first gate in any merge — fails fast on a typo before the slow smoke
-# workflow even spins up Docker.
+# config/{local,online}/* tree, PLUS the smoke-harness unit tests
+# (tests/smoke/test_parse.py + test_asserts.py — the parser/assert layer
+# every caller repo's smoke gate depends on) and tests/unit/. All stdlib +
+# pytest, sub-second on a warm runner; intended as the first gate in any
+# merge — fails fast on a typo before the slow smoke workflow even spins
+# up Docker.
 #
-# Triggers narrowly: only when the configs OR the tests themselves
+# Triggers narrowly: only when the configs OR the tests/tested code
 # change. Pure refactors of unrelated code don't pay the round-trip.
 #
 # Catches:
@@ -14,6 +17,8 @@
 #   - `debug` flag accidentally promoted to online (would kill JIT fleet-wide)
 #   - Missing required Discord / HLTV / dodserver.cfg keys
 #   - HLTV port outside the 27020-27044 production range
+#   - Regressions in the smoke rcon-output parsers/assert helpers
+#   - Regressions in the spike-signature parser
 #
 # This is also exposed as a reusable workflow (workflow_call) so per-project
 # repos that ship their own configs can pull it in.
@@ -61,12 +66,12 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           if git diff --name-only "$base" "$head" \
-              | grep -qE '^(config/|tests/config_parse/|\.github/workflows/config-tests\.yml$)'; then
+              | grep -qE '^(config/|tests/config_parse/|tests/smoke/|tests/unit/|scripts/spike_signatures\.py$|\.github/workflows/config-tests\.yml$)'; then
             echo "run=1" >> "$GITHUB_OUTPUT"
             echo "Relevant files changed; will run pytest."
           else
             echo "run=0" >> "$GITHUB_OUTPUT"
-            echo "::notice::No config/ or tests/config_parse/ changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
+            echo "::notice::No config/, tests/, or spike_signatures changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
           fi
 
       - name: Set up Python
@@ -79,6 +84,6 @@ jobs:
         if: steps.changes.outputs.run == '1'
         run: pip install pytest
 
-      - name: Run config-parse tests
+      - name: Run config-parse + harness unit tests
         if: steps.changes.outputs.run == '1'
-        run: python -m pytest tests/config_parse/ -v --tb=short
+        run: python -m pytest tests/config_parse/ tests/smoke/test_parse.py tests/smoke/test_asserts.py tests/unit/ -v --tb=short

@@ -1,9 +1,10 @@
 """Pure-Python unit tests for scripts/spike_signatures.
 
 No I/O, no MySQL, no hlds dependency. Runnable on any Python 3.10+ box
-without setup. Designed to be wired into Tier 1 smoke alongside the
-existing `tests/smoke/config_parse/` pytest gate (one more line in
-the smoke caller workflow).
+without setup. Wired into CI via the Tier 1 config-tests workflow
+(.github/workflows/config-tests.yml runs tests/unit/ alongside
+tests/config_parse/ and the smoke-harness unit tests; added 2026-07-07 —
+before that this file ran in no workflow at all).
 
 Test data is real production output sampled 2026-05-04 across the ATL
 fleet. When the engine instrumentation format changes, these golden-

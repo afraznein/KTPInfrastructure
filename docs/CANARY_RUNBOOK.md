@@ -35,9 +35,10 @@ The rewrite: **compute md5sum + stat size of the live binaries on the canary ins
    - `grep -E '<YYYY-MM-DD>.*03:0' ~/log/scheduled-restart.log | tail -10`
    - `grep -E '<YYYY-MM-DD>.*Verification: [0-9]+/[0-9]+ servers running' ~/log/scheduled-restart.log`
    - Confirms the swap actually ran. `5/5` (4/4 CHI) confirms all instances came back.
-3. **Restart-script md5 matches expected** (currently `02f498247cdf65d37ac1e7b8095d7ea5` post-`e0d571c` + lockfile patch, sized for plugin glob in 1.5.3+).
+3. **Restart-script md5 matches operator-supplied baseline** (same sourcing rule as assert #4 — the operator provides the current fleet md5 at canary-creation time; `scripts/deploy-restart-script.py`'s Phase-1 consensus fetch prints it).
    - `md5sum ~/ktp-scheduled-restart.sh`
    - Detects regression of the swap script itself.
+   - Do NOT hardcode the value in this runbook — the script changes with deploy waves (a stale pinned md5 false-aborted this assert against the 2026-07 R8-assert build; the old `02f49824…` pin predates it).
 4. **Live-binary md5 matches operator-supplied baseline** for every canary-relevant plugin/binary.
    - `md5sum ~/dod-<PORT>/serverfiles/dod/addons/ktpamx/plugins/<X>.amxx`
    - This is the load-bearing assertion. The whole point.

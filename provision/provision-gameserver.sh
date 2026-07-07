@@ -7,7 +7,8 @@
 # OPTIONS:
 #   -y, --yes           Non-interactive mode (accept all defaults, install Netdata)
 #   --no-netdata        Skip Netdata installation (only with -y)
-#   --password <pass>   Set dodserver password (default: ktp)
+#   --password <pass>   Set dodserver password (default: randomly generated,
+#                       recorded to /root/ktp-gameserver-credentials.txt)
 #   --num-servers <N>   Number of game server instances (default: 5)
 #   --with-hltv         Set up co-located HLTV proxies + API on the same machine
 #
@@ -40,7 +41,10 @@ set -e
 # ============================================
 NON_INTERACTIVE=false
 INSTALL_NETDATA=true
-DODSERVER_PASSWORD="REDACTED"
+# Empty = generate a random password at user creation (never a well-known
+# default); --password overrides. The value used is recorded in
+# /root/ktp-gameserver-credentials.txt and the final summary.
+DODSERVER_PASSWORD=""
 NUM_SERVERS=5
 WITH_HLTV=false
 
@@ -147,7 +151,23 @@ log_info "Creating dodserver user..."
 
 if id "$DODSERVER_USER" &>/dev/null; then
     log_warn "User $DODSERVER_USER already exists"
+    # An explicitly-passed --password must still converge on a re-run —
+    # otherwise the orchestrator records a password that was never applied.
+    # (Non-empty here ⟺ --password was given; generation only happens in the
+    # creation branch below.)
+    if [ -n "$DODSERVER_PASSWORD" ]; then
+        echo "$DODSERVER_USER:$DODSERVER_PASSWORD" | chpasswd
+        log_info "Applied --password to existing user $DODSERVER_USER"
+    fi
 else
+    if [ -z "$DODSERVER_PASSWORD" ]; then
+        DODSERVER_PASSWORD=$(head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 32)  # pipefail-safe form
+        log_warn "No --password given — generated a random dodserver password"
+        umask 077
+        echo "DODSERVER_PASSWORD=$DODSERVER_PASSWORD  # generated $(date -Iseconds)" >> /root/ktp-gameserver-credentials.txt
+        chmod 600 /root/ktp-gameserver-credentials.txt
+        log_warn "Recorded in /root/ktp-gameserver-credentials.txt"
+    fi
     useradd -m -s /bin/bash "$DODSERVER_USER"
     echo "$DODSERVER_USER:$DODSERVER_PASSWORD" | chpasswd
     usermod -aG sudo "$DODSERVER_USER"
@@ -976,6 +996,15 @@ fi
 # 17. Co-located HLTV Setup (Optional)
 # ============================================
 if [ "$WITH_HLTV" = true ]; then
+    # Guard: this legacy section bakes credentials into a 0.0.0.0:8087 API
+    # service and HLTV configs. Refuse to run with placeholder values instead
+    # of silently shipping "REDACTED_*" secrets. (The LAN path doesn't come
+    # through here — lan-deploy.sh Phase 4 owns HLTV with generated keys.)
+    if [ -z "${HLTV_API_KEY:-}" ]; then
+        log_error "--with-hltv requires HLTV_API_KEY set in the environment"
+        log_error "(the embedded API would otherwise ship a placeholder key on 0.0.0.0:8087)."
+        exit 1
+    fi
     log_info "Setting up co-located HLTV proxies..."
 
     # Install Python dependencies for HLTV API
@@ -1134,7 +1163,10 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-API_KEY = os.environ.get('HLTV_API_KEY', 'REDACTED_RCON')
+import sys
+API_KEY = os.environ.get('HLTV_API_KEY', '')
+if not API_KEY:
+    sys.exit('HLTV_API_KEY empty - refusing to start (would auth anonymous requests)')
 
 def send_hltv_command(port, command):
     """Send command to HLTV via screen."""
@@ -1204,7 +1236,7 @@ After=network.target
 Type=simple
 User=$DODSERVER_USER
 WorkingDirectory=$HLTV_HOME/hltv
-Environment="HLTV_API_KEY=REDACTED_RCON"
+Environment="HLTV_API_KEY=$HLTV_API_KEY"
 ExecStart=$HLTV_HOME/hltv/api-venv/bin/gunicorn -w 2 -b 0.0.0.0:8087 hltv-api:app
 Restart=always
 

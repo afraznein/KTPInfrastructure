@@ -92,11 +92,16 @@ jobs:
         run: |
           set -e
           # Non-PR events (workflow_dispatch / workflow_call / push) always run.
-          # PR events: only run if integration tests, the boot helper, or this
-          # workflow file itself changed. The self-hosted runner's pre-staged
-          # serverfiles tree covers everything else Tier 2 exercises; changes
-          # to scripts/, docs/, config/, or any other in-repo path don't
-          # invalidate the test surface so skipping pytest is safe.
+          # PR events: only run if integration tests, the smoke harness, or
+          # this workflow file itself changed. ALL of tests/smoke/ is in the
+          # filter — the integration conftest imports rcon/server_handle/
+          # parse/asserts from it, so a PR breaking any of those must not
+          # green-by-self-skip (it would then fail every Tier 2 run and all
+          # caller smoke workflows post-merge). The self-hosted runner's
+          # pre-staged serverfiles tree covers everything else Tier 2
+          # exercises; changes to scripts/, docs/, config/, or any other
+          # in-repo path don't invalidate the test surface so skipping
+          # pytest is safe.
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "run=1" >> "$GITHUB_OUTPUT"
             echo "Non-PR event ${{ github.event_name }}; will run pytest."
@@ -105,12 +110,12 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           if git diff --name-only "$base" "$head" \
-              | grep -qE '^(tests/integration/|tests/smoke/boot_subprocess\.py$|\.github/workflows/tier2-integration\.yml$)'; then
+              | grep -qE '^(tests/integration/|tests/smoke/|\.github/workflows/tier2-integration\.yml$)'; then
             echo "run=1" >> "$GITHUB_OUTPUT"
             echo "Relevant files changed; will run pytest."
           else
             echo "run=0" >> "$GITHUB_OUTPUT"
-            echo "::notice::No tests/integration/ or boot_subprocess.py changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
+            echo "::notice::No tests/integration/, tests/smoke/, or workflow changes in this PR; skipping pytest (job still passes so the required check is satisfied)."
           fi
 
       - name: Set up Python

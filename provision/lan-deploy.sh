@@ -62,10 +62,64 @@ if [ -n "${FASTDL_FILES_PATH:-}" ]; then
     [ -d "$FASTDL_FILES_PATH" ] || { echo "ERROR: FASTDL_FILES_PATH not a directory: $FASTDL_FILES_PATH" >&2; exit 1; }
 fi
 
+# Phase-3 preflight: clone-ktp-stack.sh is gitignored (it can carry embedded
+# secrets), so a fresh clone has only the .example. Fail HERE, before Phases
+# 1-2 mutate the host, instead of dying with bash 127 mid-deploy.
+if [ ! -f "$SCRIPT_DIR/clone-ktp-stack.sh" ]; then
+    echo "ERROR: $SCRIPT_DIR/clone-ktp-stack.sh not found (it is gitignored — fresh clones ship only the .example)." >&2
+    echo "       cp '$SCRIPT_DIR/clone-ktp-stack.sh.example' '$SCRIPT_DIR/clone-ktp-stack.sh'" >&2
+    echo "       Review it (flag-driven values are fine as-is for LAN), then re-run." >&2
+    exit 1
+fi
+# Phases 2-3 run as dodserver via su — a repo cloned under /root is unreadable
+# there and fails confusingly partway through. Check up front.
+if ! su -l dodserver -c "test -r $(printf '%q' "$SCRIPT_DIR/clone-ktp-stack.sh")" 2>/dev/null; then
+    if id dodserver &>/dev/null; then
+        echo "ERROR: the dodserver user cannot read $SCRIPT_DIR (repo under /root?)." >&2
+        echo "       Move/clone the repo somewhere world-readable (e.g. /opt/ktp) and re-run." >&2
+        exit 1
+    fi
+    # dodserver doesn't exist yet (Phase 1 creates it) — check world-readability
+    # of the path components instead so the post-Phase-1 su calls will work.
+    case "$SCRIPT_DIR" in
+        /root/*|/root)
+            echo "ERROR: repo lives under /root — Phases 2-3 run as dodserver and cannot read it." >&2
+            echo "       Move/clone the repo somewhere world-readable (e.g. /opt/ktp) and re-run." >&2
+            exit 1 ;;
+    esac
+fi
+
 # Defaults for everything else (matches lan-deploy.conf.example)
+# gen_pw is pipefail-safe: a bounded head feeds tr, so tr exits on EOF instead
+# of taking SIGPIPE when the tail head closes (under this script's
+# `set -eu -o pipefail`, the naive `tr </dev/urandom | head -c 32` form dies
+# with a silent exit 141 on EVERY default-config run). 512 random bytes yield
+# ~300 alnum chars — comfortably ≥ the 32 we keep, and all writes fit one
+# pipe buffer.
+gen_pw() { head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 32; }
 TIMEZONE="${TIMEZONE:-America/New_York}"
 SERVER_NAME_PREFIX="${SERVER_NAME_PREFIX:-KTP LAN}"
 SV_PASSWORD="${SV_PASSWORD:-REDACTED}"
+# Secrets: never leave these at a well-known value. Resolution order:
+# conf/env > previous run's credentials file > fresh generation. Sourcing the
+# previous run's values keeps re-runs convergent — regenerating on a re-run
+# would (a) record a dodserver password that was never applied (chpasswd only
+# runs at user creation) while Phase 4's creds rewrite erases the record of
+# the working one, and (b) churn the HLTV key out from under written inis.
+CREDS_FILE=/root/ktp-dataserver-credentials.txt
+if [ -f "$CREDS_FILE" ]; then
+    while IFS='=' read -r k v; do
+        v="${v%%  \#*}"   # strip the trailing "  # generated ..." comment form
+        case "$k" in
+            HLTV_API_KEY)
+                if [ -z "${HLTV_API_KEY:-}" ]; then HLTV_API_KEY="$v"; fi ;;
+            DODSERVER_PASSWORD)
+                if [ -z "${DODSERVER_PASSWORD:-}" ]; then DODSERVER_PASSWORD="$v"; fi ;;
+        esac
+    done < "$CREDS_FILE"
+fi
+HLTV_API_KEY="${HLTV_API_KEY:-$(gen_pw)}"
+DODSERVER_PASSWORD="${DODSERVER_PASSWORD:-$(gen_pw)}"
 NUM_INSTANCES="${NUM_INSTANCES:-5}"
 BASE_PORT="${BASE_PORT:-27015}"
 # HLTV starts right after the last game port so it never collides with the game
@@ -92,6 +146,8 @@ FastDL files:          ${FASTDL_FILES_PATH:-(unset — manual copy to /var/www/f
 DoD base content:      ${DOD_BASE_PATH:-(unset — STOCK maps only; custom KTP maps/overviews NOT deployed)}
 
 Co-located dataserver: $ENABLE_DATASERVER
+HLTV API key:          (set — plumbed to hltv-api + every hltv_recorder.ini; recorded in /root/ktp-dataserver-credentials.txt)
+dodserver password:    (set — recorded in /root/ktp-dataserver-credentials.txt)
 Netdata:               $ENABLE_NETDATA
 Discord relay:         $([ -n "${DISCORD_RELAY_URL:-}" ] && echo enabled || echo disabled)
 Discord fleet-health:  $([ -n "${DISCORD_WEBHOOK_FLEET_HEALTH:-}" ] && echo enabled || echo disabled)
@@ -117,7 +173,7 @@ log_phase() {
 # Phase 1: provision-gameserver.sh — host hardening, kernel, sysctls, services
 # ----------------------------------------------------------------------------
 log_phase "Phase 1: host hardening (provision-gameserver.sh)"
-PROV_FLAGS=(-y --num-servers "$NUM_INSTANCES")
+PROV_FLAGS=(-y --num-servers "$NUM_INSTANCES" --password "$DODSERVER_PASSWORD")
 [ "$ENABLE_NETDATA" != "true" ] && PROV_FLAGS+=(--no-netdata)
 # Co-located HLTV is set up by Phase 4 (provision-lan-dataserver.sh), not by
 # the gameserver script's --with-hltv flag, so we omit --with-hltv here.
@@ -146,6 +202,7 @@ CLONE_FLAGS=(
     --server-name "$SERVER_NAME_PREFIX"
     --sv-password "$SV_PASSWORD"
     --data-server-ip "$LAN_IP"
+    --hltv-api-key "$HLTV_API_KEY"
 )
 [ -n "${DOD_BASE_PATH:-}" ]        && CLONE_FLAGS+=(--dod-base "$DOD_BASE_PATH")
 [ -n "${DISCORD_RELAY_URL:-}" ]    && CLONE_FLAGS+=(--relay-url "$DISCORD_RELAY_URL")
@@ -165,15 +222,36 @@ if [ "$ENABLE_DATASERVER" = "true" ]; then
     HLSTATSX_DB_PASSWORD="${HLSTATSX_DB_PASSWORD:-}" \
     HLTV_ADMIN_PASSWORD="${HLTV_ADMIN_PASSWORD:-}" \
     HLTV_PROXY_PASSWORD="${HLTV_PROXY_PASSWORD:-}" \
+    HLTV_API_KEY="$HLTV_API_KEY" \
     HLTV_BASE_PORT="$HLTV_BASE_PORT" \
     NUM_HLTV_INSTANCES="$NUM_INSTANCES" \
     HLTV_BINARIES_PATH="${HLTV_BINARIES_PATH:-}" \
     HLSTATSX_SOURCE_PATH="${HLSTATSX_SOURCE_PATH:-}" \
     FASTDL_FILES_PATH="${FASTDL_FILES_PATH:-}" \
+    GAME_SERVER_IP="$LAN_IP" \
+    GAME_BASE_PORT="$BASE_PORT" \
+    GAME_SV_PASSWORD="$SV_PASSWORD" \
+    HLTV_NAME_PREFIX="$SERVER_NAME_PREFIX" \
         bash "$SCRIPT_DIR/provision-lan-dataserver.sh"
 else
     log_phase "Phase 4: skipped (ENABLE_DATASERVER=false — dataserver lives elsewhere)"
+    echo "NOTE: game instances were configured with the HLTV API key recorded in"
+    echo "      /root/ktp-dataserver-credentials.txt (HLTV_API_KEY=...) — set the"
+    echo "      SAME key on the remote dataserver's hltv-api service."
 fi
+
+# Record the orchestrator-level secrets. Phase 4 writes the dataserver
+# credentials file (including HLTV_API_KEY via env); append what only this
+# script knows. Appended AFTER Phase 4 so its end-of-run rewrite can't
+# clobber these lines.
+CREDS_FILE=/root/ktp-dataserver-credentials.txt
+umask 077
+touch "$CREDS_FILE"; chmod 600 "$CREDS_FILE"
+{
+    echo "# lan-deploy.sh $(date -Iseconds)"
+    echo "DODSERVER_PASSWORD=$DODSERVER_PASSWORD"
+    grep -q "^HLTV_API_KEY=" "$CREDS_FILE" || echo "HLTV_API_KEY=$HLTV_API_KEY"
+} >> "$CREDS_FILE"
 
 # ----------------------------------------------------------------------------
 # Phase 5: seed /etc/ktp/fleet-health.conf with LAN-specific values

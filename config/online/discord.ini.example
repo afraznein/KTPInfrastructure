@@ -5,23 +5,37 @@
 ; 1. Copy this file to discord.ini
 ; 2. Fill in your Discord relay URL and secrets
 ; 3. discord.ini is gitignored and won't be committed
+;
+; Key names MUST match what the plugins parse (ktp_discord.inc =
+; discord_relay_url / discord_auth_secret / discord_channel_id* incl. _12man,
+; _admin, and any *_audit* key; ktp_matchhandler_discord.inc additionally
+; reads discord_channel_id_default).
+;
+; VALUES MUST NOT BE QUOTED — the parsers do copy+trim only, so quotes become
+; part of the value ("" is a 2-char value that defeats the empty-key skip).
+; Empty = nothing after the '='.
 
-; Discord Relay URL (Cloud Run service)
-; Format: https://[service]-[hash]-[region].a.run.app/webhook
-relay_url = ""
+; Discord Relay URL (Cloud Run service "discord-relay" in project ktp-score-bot)
+; Format: https://discord-relay-<hash>-<region>.run.app/reply
+; The URL MUST end in /reply (the plugin POSTs verbatim; /health is derived).
+discord_relay_url =
 
 ; Authentication secret (shared with relay service)
 ; Generate with: openssl rand -hex 32
-auth_secret = ""
+discord_auth_secret =
 
-; Channel IDs for different notification types
-; Get from Discord: Right-click channel -> Copy ID
+; Channel IDs (right-click channel in Discord -> Copy ID)
 
-; Match notifications (start, end, scores)
-match_channel = ""
+; Primary match channel; per-mode channels fall back to it when empty
+discord_channel_id =
+discord_channel_id_default =
+discord_channel_id_12man =
+discord_channel_id_scrim =
+discord_channel_id_draft =
 
-; Admin alerts (kicks, bans, config changes)
-admin_channel = ""
+; Admin channel (ktp_discord.inc consumers; also joins the audit set)
+discord_channel_id_admin =
 
-; Optional: Server status channel
-status_channel = ""
+; Audit channels (kicks, bans, file-check violations; any *_audit* key is collected)
+discord_channel_id_audit =
+discord_channel_id_audit_external =

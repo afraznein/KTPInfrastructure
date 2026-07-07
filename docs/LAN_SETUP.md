@@ -121,9 +121,9 @@ cp config/lan/dodserver.cfg.example ~/dod-27015/serverfiles/dod/dodserver.cfg
 ### 4. Start Everything
 
 ```bash
-# On data server (as hltvserver)
-./hltv-ctl.sh start
-sudo systemctl start hltv-api
+# On data server (as root — hltv-ctl.sh wraps the systemd hltv@<port> units)
+/home/hltvserver/hltv-ctl.sh start
+systemctl start hltv-api    # usually already enabled + started by provisioning
 
 # On game servers (as dodserver)
 ~/restart-all-servers.sh
@@ -208,12 +208,16 @@ su - dodserver
 
 #### 2. Configure for LAN
 
-Edit each config file to point to your data server:
+Edit each config file to point to your data server. (`lan-deploy.sh` writes
+these automatically — manual editing is only needed for standalone installs.)
 
-**hltv_recorder.ini:**
+**hltv_recorder.ini** — values must be UNQUOTED (the plugin parser keeps
+quotes as part of the value); the key comes from
+`/root/ktp-dataserver-credentials.txt` (`HLTV_API_KEY=`):
 ```ini
-hltv_api_url = "http://192.168.1.100:8087"
-hltv_api_key = "lan-api-key"
+hltv_enabled = 1
+hltv_api_url = http://192.168.1.100:8087
+hltv_api_key = <HLTV_API_KEY from the credentials file>
 hltv_port = 27020
 ```
 
@@ -275,42 +279,42 @@ done
 
 ### Connecting HLTV to Game Servers
 
-After starting HLTV instances, connect them to game servers:
+The generated `hltv-<port>.cfg` files already carry `connect` + `serverpassword`
+lines pairing each proxy 1:1 with its game server (KTPHLTVRecorder 1.7.0
+always-on architecture) — no manual connect step. To re-point one manually:
 
 ```bash
-# Via HLTV API
-curl -X POST http://192.168.1.100:8087/connect \
-    -H "Authorization: Bearer lan-api-key" \
-    -H "Content-Type: application/json" \
-    -d '{"port": 27020, "server": "192.168.1.10:27015"}'
+# Via the HLTV API's command passthrough (auth is X-Auth-Key; the key is in
+# /root/ktp-dataserver-credentials.txt):
+curl -X POST http://192.168.1.100:8087/hltv/27020/command \
+    -H "X-Auth-Key: <HLTV_API_KEY>" \
+    -d '{"command": "connect 192.168.1.10:27015"}'
 
-# Or via screen directly
-screen -r hltv-27020
-> connect 192.168.1.10:27015
+# Or write to the instance's FIFO cmdpipe directly (as root/hltvserver):
+echo 'connect 192.168.1.10:27015' > /home/hltvserver/cmdpipes/hltv-27020.pipe
 ```
 
-### Manual Recording
+### Recording (always-on — 1.7.0 architecture)
+
+Recording is NOT started/stopped per match. Each HLTV config carries
+`record auto_lanN`, so every instance records continuously from boot; demos
+accumulate as `auto_lanN*.dem` under `/home/hltvserver/hlds/dod/` and are
+browsable at `http://<LAN_IP>/demos`. The KTPHLTVRecorder plugin only:
+- health-checks `GET /hltv/<port>/state` at match start (players get a chat
+  warning if the paired HLTV is down or not recording), and
+- drives `POST /hltv/<port>/restart` via the `.hltvrestart` admin command.
+
+There is no renamer/organizer at the LAN — identify match demos by timestamp
+and map (each map change rotates to a new `auto_lanN-<date>-<map>.dem`).
+No cleanup cron is installed (it would delete unrenamed demos); budget
+~3 GB/day/instance and archive demos after the event.
+
+Manual state check:
 
 ```bash
-# Start recording
-curl -X POST http://192.168.1.100:8087/record \
-    -H "Authorization: Bearer lan-api-key" \
-    -H "Content-Type: application/json" \
-    -d '{"port": 27020, "filename": "match1_semifinal"}'
-
-# Stop recording
-curl -X POST http://192.168.1.100:8087/stoprecording \
-    -H "Authorization: Bearer lan-api-key" \
-    -H "Content-Type: application/json" \
-    -d '{"port": 27020}'
+curl -H "X-Auth-Key: <HLTV_API_KEY>" http://192.168.1.100:8087/hltv/27020/state
+# -> {"recording": true, "basename": "auto_lan1-...", "process_running": true, ...}
 ```
-
-### Automatic Recording
-
-With KTPHLTVRecorder configured, recording starts automatically when matches begin:
-- Plugin sends HTTP request to HLTV API
-- HLTV starts recording with match ID as filename
-- Recording stops when match ends
 
 ### HLTV Spectators
 

@@ -260,6 +260,44 @@ RUNNING=${RUNNING//[^0-9]/}  # Strip non-numeric chars
 RUNNING=${RUNNING:-0}
 log "Verification: $RUNNING/5 servers running"
 
+# ============================================================================
+# KTP extension-loader assert (soft, version-aware) — ReHLDS .928+
+# ============================================================================
+# .928 exposes `ktp_extension_loaded` — the count of extensions the loader
+# initialized this process. 0 after a start means KTPAMXX never loaded and the
+# whole plugin stack is silently absent. Query each instance's console via
+# LinuxGSM `send` and read the reply from the console log. Version-aware by
+# construction: pre-.928 engines print nothing for the unknown name (server
+# console ignores unknown commands silently — verified on .927), so absence of
+# a reply is N/A, never a failure. Soft assert — logs + flags the Discord
+# status; never aborts the restart.
+log "Checking KTP extension loader (ktp_extension_loaded, .928+)..."
+EXT_FAILED_PORTS=""
+for port in 27015 27016 27017 27018 27019; do
+    n=$((port - 27014))
+    if [ $n -eq 1 ]; then SERVER_EXEC="dodserver"; else SERVER_EXEC="dodserver$n"; fi
+    ( cd ~/dod-$port && ./$SERVER_EXEC send "ktp_extension_loaded" >/dev/null 2>&1 )
+done
+sleep 3
+for port in 27015 27016 27017 27018 27019; do
+    CONSOLE_LOG=$(ls -t ~/dod-$port/log/console/*-console*.log 2>/dev/null | head -1)
+    if [ -z "$CONSOLE_LOG" ]; then
+        log "  [$port] no console log found — extension check skipped"
+        continue
+    fi
+    # Reply line is `"ktp_extension_loaded" is "N"` at column 0; the echoed
+    # typed command is unquoted, so the anchored quote can't false-match it.
+    VAL=$(tail -80 "$CONSOLE_LOG" | grep -oP '^"ktp_extension_loaded" is "\K[0-9]+' | tail -1)
+    if [ -z "$VAL" ]; then
+        log "  [$port] ktp_extension_loaded not reported (pre-.928 engine or no console echo) — skipped"
+    elif [ "$VAL" -ge 1 ]; then
+        log "  [$port] ktp_extension_loaded=$VAL OK"
+    else
+        log "  [$port] WARNING: ktp_extension_loaded=$VAL — extension loader FAILED, KTPAMXX not loaded!"
+        EXT_FAILED_PORTS="$EXT_FAILED_PORTS $port"
+    fi
+done
+
 # Identify any failed ports
 FAILED_PORTS=""
 if [ "$RUNNING" -ne 5 ]; then
@@ -287,6 +325,14 @@ else
     FINAL_TITLE="$KTP_EMOJI Server Restart Failed"
     FINAL_DESC="All servers failed to restart!"
     FINAL_COLOR=$COLOR_RED
+fi
+
+# Extension-loader failure rides into the embed (never downgrades a red)
+if [ -n "$EXT_FAILED_PORTS" ]; then
+    FINAL_DESC="$FINAL_DESC\\n**KTP extension loader FAILED on:**$EXT_FAILED_PORTS"
+    if [ "$FINAL_COLOR" -eq "$COLOR_GREEN" ]; then
+        FINAL_COLOR=$COLOR_ORANGE
+    fi
 fi
 
 log "Updating Discord messages with final status..."

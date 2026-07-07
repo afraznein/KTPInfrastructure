@@ -7,14 +7,15 @@ should hash + verify against expected SHA256s during session collection.
 
 Three sources combined:
   1. .res files on the source server (maps/*.res — custom community map assets)
-  2. KTPFileChecker filelist.ini (base/stock game files: player models,
-     grenade models, player sounds — assets NOT referenced by any .res because
-     they ship with stock DoD)
+  2. KTPFileChecker ktp_file.ini (the engine consistency-check list the plugin
+     actually loads: player models, player sounds — assets NOT referenced by
+     any .res because they ship with stock DoD)
   3. Explicit additions (user policy: standard US-vs-Wehrmacht weapon kit
-     in p_/w_ variants + _l/l review-grade variants)
+     in p_/w_ primary variants + grenade viewmodels; _l/l pose variants
+     pruned 2026-05-13)
 
 Excluded buckets (allowed modification): gfx/env/* (skybox), overviews/*,
-flag models (w_aflag/gflag/wflag), snow footstep sounds.
+flag models (w_aflag/gflag/wflag).
 
 Usage:
   python3 build-game-files-manifest.py [--source-server <host>] [--out <path>]
@@ -31,6 +32,7 @@ via /api/game-files-manifest with ETag-based caching.
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -50,9 +52,9 @@ EXCLUDED_EXACT = {
     "models/w_gflag.mdl",
     "models/w_wflag.mdl",
 }
-EXCLUDED_FILELIST_PATTERNS = [
-    re.compile(r"^sound/player/pl_snow\d+\.wav$"),  # snow footsteps removed by user 2026-05-02
-]
+# (pl_snow* exclusion removed 2026-07-07 — snow footsteps are back in
+# ktp_file.ini enforcement, so the manifest must cover them again.)
+EXCLUDED_FILELIST_PATTERNS = []
 
 # Operator-curated alternate hashes — files where a community-distributed
 # replacement is present on most player installs and should be accepted
@@ -80,9 +82,11 @@ ALTERNATE_HASHES = {
 }
 
 # Standard US-vs-Wehrmacht weapon kit. Each tuple: (family, p_base, w_base).
-# Builder finds <base>.mdl, <base>_l.mdl, <base>l.mdl variants.
-# `.mdl` extension implicit; suffixes for left/lowered variants are
-# enforced as severity=review (see severity_semantics in manifest meta).
+# `.mdl` extension implicit. Primary variants only: the _l/l lowered/left-hand
+# pose variants were PRUNED 2026-05-13 (operator call — not stock DoD, likely
+# community-mod files; they put MissingFiles noise in every clean-install
+# session without contributing verdict weight). Do not re-add without checking
+# CHANGES_SUMMARY_2026-06-26.md § "AC manifest prune".
 WEAPON_FAMILIES = [
     ("amerk_grenade",  "p_amerk",   "w_amerk"),
     ("bar",            "p_bar",     "w_bar"),
@@ -100,8 +104,10 @@ WEAPON_FAMILIES = [
     ("tommy",          "p_tommy",   "w_tommy"),
 ]
 
-# Mixed-naming variants the regex doesn't catch (caught explicitly):
-EXTRA_K98_VARIANTS = ["p_k98sl", "p_k98s_l"]
+# Grenade first-person viewmodels — the one v_* exception to the "viewmodels
+# not enforced" policy (ktp_file.ini consistency-checks them; manifest must
+# match). Other v_*.mdl stay unenforced.
+GRENADE_VIEWMODELS = ["models/v_grenade.mdl", "models/v_mills.mdl", "models/v_stick.mdl"]
 
 
 # --------------------------------------------------------------------------
@@ -126,7 +132,9 @@ def parse_res_files(ssh, dod_path):
 
 
 def parse_filelist_ini(filelist_path):
-    """Parse local KTPFileChecker filelist.ini. Drop excluded patterns."""
+    """Parse local KTPFileChecker ktp_file.ini (or legacy filelist.ini).
+    Handles both bare `player/...` and prefixed `sound/player/...` sound paths.
+    Drop excluded patterns."""
     paths = []
     with open(filelist_path) as f:
         for line in f:
@@ -188,13 +196,6 @@ def categorize(path):
     return "other"
 
 
-def is_l_variant(leaf):
-    """True if leaf is a _l or l-suffixed lowered/lefty variant."""
-    return leaf.endswith("_l") or (
-        len(leaf) > 1 and leaf.endswith("l") and leaf[-2] != "_" and not leaf.endswith("ll")
-    )
-
-
 def build_manifest(ssh, dod_path, filelist_path):
     entries = []
 
@@ -250,7 +251,8 @@ def build_manifest(ssh, dod_path, filelist_path):
         cat = categorize(path)
         # Override for grenade models from filelist (catches p_grenade/p_mills/etc.)
         leaf = path.split("/")[-1].replace(".mdl", "")
-        if leaf in ("p_grenade", "p_mills", "p_stick", "w_grenade", "w_mills", "w_stick"):
+        if leaf in ("p_grenade", "p_mills", "p_stick", "w_grenade", "w_mills", "w_stick",
+                    "v_grenade", "v_mills", "v_stick"):
             cat = "grenade_model"
         entries.append({
             "path": path,
@@ -287,6 +289,24 @@ def build_manifest(ssh, dod_path, filelist_path):
         })
         seen.add(path)
 
+    # 3b. Grenade viewmodels — guaranteed regardless of filelist content
+    print(f"[build] Grenade viewmodels ({len(GRENADE_VIEWMODELS)})...", file=sys.stderr)
+    for path in GRENADE_VIEWMODELS:
+        if path in seen:
+            continue
+        result = hash_remote_file(ssh, f"{dod_path}/{path}")
+        if result is None:
+            print(f"[build]   ⚠ {path} not found on server", file=sys.stderr)
+            continue
+        sha, size = result
+        entries.append({
+            "path": path, "sha256": sha, "size": size,
+            "origin": "explicit_2026-07-07_grenade_viewmodels",
+            "category": "grenade_model",
+            "severity": "violation",
+        })
+        seen.add(path)
+
     # 4. Weapon kit families — find .mdl + _l.mdl + l.mdl variants
     print(f"[build] Weapon-kit families ({len(WEAPON_FAMILIES)})...", file=sys.stderr)
     # Drop any prior weapon model entries from the .res / filelist sources so
@@ -299,45 +319,23 @@ def build_manifest(ssh, dod_path, filelist_path):
     weapon_added = 0
     for family, p_base, w_base in WEAPON_FAMILIES:
         for base in (p_base, w_base):
-            for variant_leaf in (base, base + "_l", base + "l"):
-                rel = f"models/{variant_leaf}.mdl"
-                if rel in seen:
-                    continue
-                result = hash_remote_file(ssh, f"{dod_path}/{rel}")
-                if result is None:
-                    continue
-                sha, size = result
-                is_review = is_l_variant(variant_leaf) and variant_leaf != base
-                entries.append({
-                    "path": rel, "sha256": sha, "size": size,
-                    "origin": "explicit_2026-05-02_full_kit",
-                    "category": "weapon_player_model" if variant_leaf.startswith("p_") else "weapon_world_model",
-                    "severity": "review" if is_review else "violation",
-                    "weapon_family": family,
-                    "variant": "lowered_or_lefthand" if is_review else "primary",
-                })
-                seen.add(rel)
-                weapon_added += 1
-
-    # Mixed-naming k98 left-hand variants
-    for leaf in EXTRA_K98_VARIANTS:
-        rel = f"models/{leaf}.mdl"
-        if rel in seen:
-            continue
-        result = hash_remote_file(ssh, f"{dod_path}/{rel}")
-        if result is None:
-            continue
-        sha, size = result
-        entries.append({
-            "path": rel, "sha256": sha, "size": size,
-            "origin": "explicit_2026-05-02_full_kit",
-            "category": "weapon_player_model",
-            "severity": "review",
-            "weapon_family": "k98_scoped",
-            "variant": "lowered_or_lefthand",
-        })
-        seen.add(rel)
-        weapon_added += 1
+            rel = f"models/{base}.mdl"
+            if rel in seen:
+                continue
+            result = hash_remote_file(ssh, f"{dod_path}/{rel}")
+            if result is None:
+                continue
+            sha, size = result
+            entries.append({
+                "path": rel, "sha256": sha, "size": size,
+                "origin": "explicit_2026-05-02_full_kit",
+                "category": "weapon_player_model" if base.startswith("p_") else "weapon_world_model",
+                "severity": "violation",
+                "weapon_family": family,
+                "variant": "primary",
+            })
+            seen.add(rel)
+            weapon_added += 1
 
     print(f"[build]   weapon-kit added: {weapon_added}", file=sys.stderr)
 
@@ -401,14 +399,13 @@ def assemble_manifest(entries, source_server_label, dod_path):
             },
             "scope_notes": [
                 "Standard US-vs-Wehrmacht 6v6 weapon kit. British/commonwealth and paratrooper-class weapons NOT enforced.",
-                "v_*.mdl (first-person view models) intentionally NOT enforced.",
-                "_l / l-suffix variants enforced as severity=review (lowered-carry / left-handed pose models).",
+                "v_*.mdl (first-person view models) NOT enforced, EXCEPT grenade viewmodels (v_grenade/v_mills/v_stick) — added 2026-07-07 to match ktp_file.ini.",
+                "_l / l-suffix pose variants NOT enforced — pruned 2026-05-13 (non-stock community files; MissingFiles noise on clean installs).",
             ],
             "excluded_buckets": [
                 "gfx/env/* (skybox — cosmetic, allowed)",
                 "models/{w_aflag,w_gflag,w_wflag}.mdl (flag — cosmetic, allowed)",
                 "overviews/* (top-down map BMPs — cosmetic, allowed)",
-                "sound/player/pl_snow*.wav (snow footsteps — removed 2026-05-02)",
             ],
         },
         "files": entries,
@@ -425,14 +422,24 @@ def main():
                     help="dod/ directory on the source server")
     ap.add_argument("--filelist",
                     default=str(Path(__file__).resolve().parent.parent.parent /
-                                "KTP DoD Server" / "serverfiles" / "dod" /
-                                "addons" / "ktpamx" / "configs" / "filelist.ini"),
-                    help="Local path to KTPFileChecker filelist.ini")
+                                "KTPFileChecker" / "ktp_file.ini"),
+                    help="Local path to KTPFileChecker ktp_file.ini (the list the plugin loads)")
     ap.add_argument("--out", default="game_files_manifest.json",
                     help="Output JSON path (default: ./game_files_manifest.json)")
-    ap.add_argument("--ssh-password", default="ktp",
-                    help="SSH password for source-user (default: ktp)")
+    ap.add_argument("--ssh-password", default=None,
+                    help="SSH password for source-user (default: $KTP_FLEET_SSH_PASSWORD "
+                         "or ~/.ktp_fleet_ssh_password)")
     args = ap.parse_args()
+
+    if not args.ssh_password:
+        args.ssh_password = os.environ.get("KTP_FLEET_SSH_PASSWORD")
+    if not args.ssh_password:
+        pw_file = Path.home() / ".ktp_fleet_ssh_password"
+        if pw_file.exists():
+            args.ssh_password = pw_file.read_text().strip()
+    if not args.ssh_password:
+        sys.exit("SSH password required: --ssh-password, $KTP_FLEET_SSH_PASSWORD, "
+                 "or ~/.ktp_fleet_ssh_password")
 
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())

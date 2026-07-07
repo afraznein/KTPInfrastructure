@@ -113,8 +113,22 @@ DISCORD_MENTION_USER_ID=""
 # ============================================================================
 # All values end up in /root/ktp-dataserver-credentials.txt after the run.
 # Leave empty to get fresh random 32-char passwords per deployment.
+# If you DO supply values (incl. SV_PASSWORD above): stick to alphanumerics —
+# they pass through shell heredocs into generated configs, where $ and
+# backticks would expand at generation time.
 
 MYSQL_ROOT_PASSWORD=""
 HLSTATSX_DB_PASSWORD=""
 HLTV_ADMIN_PASSWORD=""
 HLTV_PROXY_PASSWORD=""
+
+# HLTV control API key — shared between the dataserver API (:8087) and every
+# game instance's hltv_recorder.ini (the orchestrator plumbs it to both).
+# Empty = auto-generate. On a re-run, set it to the previous value from
+# /root/ktp-dataserver-credentials.txt so already-written inis stay valid
+# (the orchestrator rewrites the inis each run anyway, so mismatch self-heals).
+HLTV_API_KEY=""
+
+# dodserver account password (sudo-capable OS user). Empty = auto-generate —
+# never left at a well-known default. Recorded in the credentials file.
+DODSERVER_PASSWORD=""

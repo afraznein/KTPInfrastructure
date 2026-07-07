@@ -2,3 +2,20 @@
 # `$'\r': command not found` (bit the LAN dry-run + the WSL build env repeatedly).
 *.sh   text eol=lf
 *.bash text eol=lf
+# .sh.example templates get copied to hosts verbatim — same CRLF hazard
+# (ktp-scheduled-restart.sh.example sat CRLF in the repo until 2026-07-07).
+*.sh.example text eol=lf
+# .conf.example files are `source`d by bash after copying — a CRLF value makes
+# LAN_IP="" parse as the 1-char value \r and PASS the required-key check
+# (lan-deploy.conf.example sat CRLF in the working tree until 2026-07-07).
+*.conf.example text eol=lf
+# Everything below deploys verbatim to Linux hosts (SFTP copies bytes as-is):
+# a fresh Windows clone without these rules materializes CRLF, and a deploy
+# then ships \r into systemd unit parsing / python shebangs / ini values.
+*.py         text eol=lf
+*.py.example text eol=lf
+*.service    text eol=lf
+*.ini        text eol=lf
+*.ini.example text eol=lf
+*.j2         text eol=lf
+*.cron       text eol=lf

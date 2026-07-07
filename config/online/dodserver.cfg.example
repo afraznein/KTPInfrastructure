@@ -148,7 +148,8 @@ sv_rehlds_stringcmdrate_burst_punish -1
 //-----------------------------------------------
 log on
 sv_logbans 1
-sv_logecho 1
+sv_logecho 1                        // legacy/no-op on ReHLDS (not a real cvar); mp_logecho is the live one
+mp_logecho 0                        // no console echo of log events -> no qconsole game-thread sync write (L-log + UDP logaddress unaffected)
 sv_logfile 1
 sv_log_onefile 0
 dodstats_pause 0
