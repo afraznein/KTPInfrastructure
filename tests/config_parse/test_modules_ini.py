@@ -17,11 +17,10 @@ import pytest
 from .conftest import COMPLETE_PROFILES, CONFIG_ROOT
 from .parsers import parse_modules_ini
 
-# Modules that ship with the KTPAMXX build. Order: KTPAMXX core (fun, engine,
-# fakemeta, hamsandwich) + KTP-specific (dodx, reapi, amxxcurl) + supporting
-# (sqlite, sockets, regex, json, geoip, nvault).
+# Modules that exist in the KTPAMXX codebase (typo guard only — see
+# EXTENSION_MODE_MODULES for what a profile is actually ALLOWED to load).
 KNOWN_MODULES: set[str] = {
-    # KTPAMXX core
+    # Metamod-era AMXX core (NOT shipped in extension-mode artifacts)
     "fun",
     "engine",
     "fakemeta",
@@ -38,6 +37,14 @@ KNOWN_MODULES: set[str] = {
     "geoip",
     "nvault",
 }
+
+# The ONLY modules an extension-mode profile may load. KTP runs AMXX as a
+# ReHLDS extension (no Metamod); fun/engine/fakemeta/hamsandwich don't exist
+# in the extension-mode artifacts, so listing them breaks server startup —
+# config/online/modules.ini's own header says exactly this, yet the old
+# whitelist above would have green-lit that edit (and config/lan shipped it
+# for months, untested).
+EXTENSION_MODE_MODULES: set[str] = {"reapi", "dodx", "amxxcurl"}
 
 
 @pytest.fixture(params=COMPLETE_PROFILES)
@@ -76,3 +83,16 @@ def test_required_modules_present(modules_ini):
     names = set(parse_modules_ini(modules_ini))
     missing = {"dodx", "reapi", "amxxcurl"} - names
     assert not missing, f"{modules_ini.name} missing required modules: {sorted(missing)}"
+
+
+def test_only_extension_mode_modules(modules_ini):
+    """Every KTP profile runs extension mode — a Metamod-era module in ANY
+    profile's modules.ini tries to load a .so that isn't in the artifacts and
+    breaks server startup outright."""
+    names = set(parse_modules_ini(modules_ini))
+    forbidden = names - EXTENSION_MODE_MODULES
+    assert not forbidden, (
+        f"{modules_ini.name} loads non-extension-mode module(s): {sorted(forbidden)} — "
+        "extension-mode artifacts ship ONLY reapi/dodx/amxxcurl; anything else "
+        "fails to load and kills startup"
+    )

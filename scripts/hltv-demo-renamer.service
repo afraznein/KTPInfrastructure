@@ -10,6 +10,12 @@ Wants=network-online.target
 # Fixed 2026-05-02.
 StartLimitIntervalSec=300
 StartLimitBurst=5
+# Page on terminal failure: a dead renamer means every match demo gets swept
+# as an unrenamed auto-*.dem by the 6h cleanup cron — silent league-demo loss.
+# Fires when Restart= gives up (StartLimitBurst exhausted) or a non-restart
+# failure lands. Requires ktp-systemd-alert@.service on the host (deployed on
+# the data server since 2026-04; see scripts/ktp-systemd-alert.py).
+OnFailure=ktp-systemd-alert@%n.service
 
 [Service]
 Type=simple

@@ -390,9 +390,15 @@ def hlds(request, _discord_ini_setup, _ac_ini_setup, _hud_cvars_setup):
         try:
             external.wait_ready(timeout=5.0, poll_interval=0.5)
         except Exception as ex:
-            pytest.skip(
-                f"KTP_HLDS_HOST set but server at {external.host}:{external.port} "
-                f"didn't answer rcon: {ex}"
+            # FAIL, don't skip: the operator EXPLICITLY pointed the suite at a
+            # server (KTP_HLDS_HOST set). Skipping here turned a down/wrong
+            # server into a green run with zero tests executed — the same
+            # skip-as-pass channel as the sql/migrations CI incident.
+            pytest.fail(
+                f"KTP_HLDS_HOST is set but the server at {external.host}:{external.port} "
+                f"didn't answer rcon: {ex} — refusing to skip (a down target must not "
+                f"read as a green run); unset KTP_HLDS_HOST to use subprocess mode",
+                pytrace=False,
             )
         yield external
         return

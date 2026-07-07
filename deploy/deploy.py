@@ -19,6 +19,7 @@ Environment Variables:
 import argparse
 import json
 import os
+import re
 import sys
 import datetime
 import urllib.request
@@ -157,9 +158,10 @@ class KTPDeployer:
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         }
 
+        # Relay contract: auth via X-Relay-Auth header + camelCase channelId
+        # (the old body-secret/channel_id shape 401'd on every call).
         payload = {
-            "channel_id": channel_id,
-            "secret": relay_secret,
+            "channelId": channel_id,
             "embeds": [embed],
         }
 
@@ -167,7 +169,10 @@ class KTPDeployer:
             req = urllib.request.Request(
                 relay_url,
                 data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Relay-Auth": relay_secret,
+                },
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -296,14 +301,20 @@ class KTPDeployer:
                     # Backup existing file
                     self._backup_file_via_ssh(ssh, dest, backup_dir)
 
-                    # Upload file
+                    # Upload as <dest>.new — NEVER overwrite a live path.
+                    # Engine/module .so files are memory-mapped by running
+                    # servers (the fleet's cardinal rule), and the nightly
+                    # 03:00 restart's swap globs already consume all four
+                    # covered locations (serverfiles/*.new, dlls/*.new,
+                    # modules/*.new, plugins/*.new). Staging .amxx the same
+                    # way keeps one uniform, battle-tested activation path.
+                    staged = dest + ".new"
                     try:
-                        sftp.put(str(source), dest)
-                        print(f"    {server_dir}: {source.name} -> {path_config['dest']}")
-
-                        # Set permissions if specified
+                        sftp.put(str(source), staged)
                         if "chmod" in path_config:
-                            sftp.chmod(dest, int(path_config["chmod"], 8))
+                            sftp.chmod(staged, int(path_config["chmod"], 8))
+                        print(f"    {server_dir}: {source.name} -> {path_config['dest']}.new "
+                              f"(activates at the next 03:00 nightly restart)")
                     except Exception as e:
                         print(f"    Error uploading {source.name} to {server_dir}: {e}")
                         success = False
@@ -460,13 +471,37 @@ servername="{server_name}"
                         profile=profile_config,
                         cluster=cluster,
                         server_dir=server_dir,
+                        # Without this, hltv_recorder.ini.j2 always rendered its
+                        # <DATA_SERVER_IP> placeholder (even with the value
+                        # configured) and the guard below skipped it forever.
+                        data_server_ip=self.config.get("data_server_ip", ""),
                     )
 
                     # Remove .j2 extension for destination
                     dest_name = template_name[:-3]
                     dest_path = f"{config_dir}/{dest_name}"
 
-                    # Write rendered config
+                    # GUARD: these templates carry secret/endpoint fields that
+                    # deploy.py has no values for (they live per-server, not in
+                    # this repo). Writing a render with unfilled placeholders or
+                    # empty secret keys OVER a live config wipes production
+                    # credentials in one flag (--with-configs). Refuse instead:
+                    # skip any file that already exists on the target, and any
+                    # render still containing template placeholders.
+                    if "<" in rendered and ">" in rendered and re.search(r"<[A-Z_]+>", rendered):
+                        print(f"    {server_dir}: SKIPPED {dest_name} — render contains "
+                              f"unfilled <PLACEHOLDER> values")
+                        continue
+                    try:
+                        sftp.stat(dest_path)
+                        print(f"    {server_dir}: SKIPPED {dest_name} — exists on target "
+                              f"(would overwrite live credentials; edit in place or "
+                              f"delete it there first)")
+                        continue
+                    except FileNotFoundError:
+                        pass
+
+                    # Write rendered config (new file only)
                     with sftp.open(dest_path, "w") as f:
                         f.write(rendered)
 

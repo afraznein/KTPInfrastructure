@@ -17,8 +17,11 @@
 #
 # Threshold: anything matching auto*.dem at root older than 6 hours.
 # 6h covers a full DoD match plus renamer-recovery grace; renamer normally
-# renames within seconds of MATCH_WINDOW_CLOSE, and renamer outages page via
-# the systemd OnFailure= alert framework well before this window elapses.
+# renames within seconds of MATCH_WINDOW_CLOSE. Safety interlocks (2026-07-07):
+# the renamer unit carries OnFailure=ktp-systemd-alert@%n and sits in the
+# hourly health check's CRITICAL_SERVICES, and THIS script refuses to delete
+# while the renamer is not active — a dead renamer must never mean match
+# demos age past 6h and get silently purged.
 #
 # Pre-F+A this script ran daily with a 7-day threshold (deployed 2026-04-29);
 # F+A activation the same day flipped the accumulation curve and required the
@@ -33,6 +36,16 @@ DRY_RUN="${DRY_RUN:-0}"
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 [ -d "$DEMOS_DIR" ] || { echo "[$(ts)] ERROR: $DEMOS_DIR missing" >&2; exit 1; }
+
+# Interlock: never sweep while the renamer is down — unrenamed MATCH demos
+# would be indistinguishable from dead-time recordings and get purged. Skipping
+# is cheap (30-min cadence, ~1.6 GB/sweep of backlog); losing a league demo
+# isn't. The health check + OnFailure alert page the renamer outage itself.
+renamer_state=$(systemctl is-active hltv-demo-renamer.service 2>/dev/null || true)
+if [ "$renamer_state" != "active" ]; then
+    echo "[$(ts)] auto-cleanup: SKIPPED — hltv-demo-renamer is '$renamer_state' (deleting now could purge unrenamed match demos)" >&2
+    exit 0
+fi
 
 # Match files at root (no path separators) named auto*.dem.
 # Only sweep root level — `find -maxdepth 1` excludes the organized subfolders.

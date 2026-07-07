@@ -209,6 +209,18 @@ class TruncatedMatchingTests(unittest.TestCase):
         # "KTPHLTVMoni") — different at char 8, so reject.
         self.assertFalse(matches_truncated("KTPHLTVRecorder.amxx", "KTPHLTVMoni"))
 
+    def test_shared_long_prefix_does_not_cross_match(self):
+        # Regression (2026-07-07): the old 8-char comparison cap matched ANY
+        # pair sharing an 8-char prefix — KTPGrenadeLoadout vs KTPGrenadeDamage
+        # both normalise to `ktpgrena...`, so assert-plugins could pass off the
+        # wrong plugin's row. The shorter string must now prefix-match over its
+        # FULL length.
+        self.assertFalse(matches_truncated("KTPGrenadeLoadout.amxx", "KTPGrenadeD"))
+        self.assertFalse(matches_truncated("KTPGrenadeDamage.amxx", "KTPGrenadeL"))
+        # The correct pairings still match (11-char AMXX truncations).
+        self.assertTrue(matches_truncated("KTPGrenadeLoadout.amxx", "KTPGrenadeL"))
+        self.assertTrue(matches_truncated("KTPGrenadeDamage.amxx", "KTPGrenadeD"))
+
 
 if __name__ == "__main__":
     unittest.main()

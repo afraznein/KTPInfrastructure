@@ -11,9 +11,12 @@ INFRA_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = INFRA_ROOT / "config"
 
 # Profiles that ship complete real configs (not just .example).
-# Online profile holds production-critical files; LAN is a partial profile
-# tested separately if/when needed.
-COMPLETE_PROFILES = ("local", "online")
+# Online profile holds production-critical files. LAN was excluded until
+# 2026-07-07 — which is exactly how its modules.ini shipped Metamod-era
+# modules (boot-breaking in extension mode) and its plugins.ini omitted
+# admin.amxx/stats_logging for months without a red test. resolve_config's
+# .example fallback covers lan's dodserver.cfg.example.
+COMPLETE_PROFILES = ("local", "online", "lan")
 
 
 def resolve_config(profile: str, filename: str) -> Path:

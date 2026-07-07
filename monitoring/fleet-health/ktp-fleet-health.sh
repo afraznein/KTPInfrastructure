@@ -70,8 +70,14 @@ if [ -z "$LOCATION" ]; then
     esac
 fi
 
-# Count running instances
-RUNNING=$(pgrep -c hlds_linux 2>/dev/null || echo 0)
+# Count running instances. procps pgrep -c prints "0" AND exits 1 when nothing
+# matches, so `|| echo 0` INSIDE the substitution captured "0\n0" — the integer
+# compare below then errored (swallowed by the cron redirect) and took the
+# else-branch, resetting the debounce every minute: a TOTAL outage (0/5) never
+# alerted while partial outages worked. `|| true` outside the substitution
+# keeps pgrep's own "0" and absorbs the exit-1 for set -e.
+RUNNING=$(pgrep -c hlds_linux 2>/dev/null) || true
+[ -n "$RUNNING" ] || RUNNING=0
 
 # Load state
 CONSECUTIVE_BAD=0

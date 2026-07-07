@@ -84,6 +84,9 @@ echo "Creating filtered copy..."
 
 # Use rsync to copy with exclusions
 # We EXCLUDE binaries that come from our build (plugins, modules, dlls)
+# and per-instance secret-bearing configs — dodserver.cfg carries a live
+# rcon_password AND the documented tar-over-serverfiles deploy would clobber
+# a production instance's cfg (rotated rcon, sv_unlagsamples, mp_logecho).
 # We INCLUDE configs, data, scripting includes, maps, models, etc.
 rsync -a --progress \
     --exclude='addons/ktpamx/plugins/*.amxx' \
@@ -97,6 +100,8 @@ rsync -a --progress \
     --exclude='addons/ktpamx/configs/sql.cfg' \
     --exclude='addons/ktpamx/configs/*bak*' \
     --exclude='configs/servernamedefault.cfg' \
+    --exclude='dodserver.cfg' \
+    --exclude='dodserver.cfg.bak*' \
     --exclude='*.log' \
     --exclude='*.dem' \
     --exclude='banned.cfg' \

@@ -509,6 +509,10 @@ def post_embed(relay_url: str, auth_secret: str, channel_id: str,
             return resp.status, resp.read().decode("utf-8", errors="replace")[:500]
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", errors="replace")[:500]
+    except urllib.error.URLError as e:
+        # Relay fully down (refused/DNS/timeout) — the likely state when the
+        # NO DATA path matters; return a synthetic status instead of a traceback.
+        return 0, f"relay unreachable: {e.reason}"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -557,8 +561,26 @@ def main() -> int:
         start = target_day - timedelta(days=BASELINE_WINDOW_DAYS)
         aggregates = fetch_daily_aggregates(cnx, start, target_day)
         if not any(k[1] == target_day for k in aggregates):
-            logging.warning("no telemetry rows for %s — aggregator down? skipping", target_day)
-            return 0
+            # An empty day means the whole perf-alert tier is blind (usually a
+            # dead ktp-profile-aggregator). Exiting 0 silently made a dead
+            # aggregator invisible; post a YELLOW heads-up instead. The
+            # aggregator is also in ktp-data-server-health's CRITICAL_SERVICES
+            # (added 2026-07-07), so this is the belt to that suspenders.
+            logging.warning("no telemetry rows for %s — aggregator down?", target_day)
+            if relay_url and auth_secret and channel and not args.dry_run:
+                empty_embed = {
+                    "title": "<:ktp:1105490705188659272> KTP Perf Rollup — NO DATA",
+                    "description": (
+                        f"Zero telemetry rows for **{target_day}** — the perf-alert "
+                        "tier is blind. Check `ktp-profile-aggregator.service` on "
+                        "the data server."
+                    ),
+                    "color": KTP_YELLOW,
+                }
+                status, body = post_embed(relay_url, auth_secret, channel, empty_embed, "")
+                if not (200 <= status < 300):
+                    logging.error("no-data alert post failed http=%d body=%s", status, body)
+            return 1
 
         findings = compute_findings(target_day, aggregates, excluded)
         if not findings:

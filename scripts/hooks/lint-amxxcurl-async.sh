@@ -61,7 +61,9 @@ for f in "${files[@]}"; do
         exit 1
       }
     }
-    /curl_slist_free_all\(\s*g_[A-Za-z_0-9]+/ {
+    # NB: [[:space:]] not \s — mawk (Debian/Ubuntu default awk) has no \s, and
+    # under mawk this pattern could never match, silently disabling the check.
+    /curl_slist_free_all\([[:space:]]*g_[A-Za-z_0-9]+/ {
       if (fn !~ /plugin_end/) {
         printf("ERROR: %s:%d curl_slist_free_all on a g_* global outside plugin_end:\n  %s\n  -> enclosing fn: %s\n  -> rationale: CURLOPT_HTTPHEADER stores slist by reference; freeing while POSTs are in flight = UAF (see KTPAmxxCurl commit 7e1ce00).\n",
                file, NR, $0, fn) > "/dev/stderr"

@@ -55,7 +55,21 @@ GAME_HOSTS = [
     {"name": "CHI", "host": "172.238.176.101", "ports": [27015, 27016, 27017, 27018]},
 ]
 GAME_USER = "dodserver"
-GAME_PASS = "REDACTED"
+
+
+def _resolve_secret(env_var: str, dotfile: str, label: str) -> str:
+    """Env var, then ~ dotfile — never hardcoded (tracked file, public repo)."""
+    val = os.environ.get(env_var, "")
+    if not val:
+        p = os.path.expanduser(dotfile)
+        if os.path.exists(p):
+            val = open(p).read().strip()
+    if not val:
+        sys.exit(f"{label} not configured — set ${env_var} or write it to {dotfile}")
+    return val
+
+
+GAME_PASS = _resolve_secret("KTP_FLEET_SSH_PASSWORD", "~/.ktp_fleet_ssh_password", "fleet SSH password")
 FASTDL_HOST = "74.91.112.242"
 FASTDL_USER = "root"
 # Canonical FastDL layout for DoD: files served at <root>/dod/<path> because

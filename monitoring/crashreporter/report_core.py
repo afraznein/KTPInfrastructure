@@ -312,8 +312,23 @@ def post_to_discord(cfg: dict, embed: dict, ping_here: bool) -> bool:
 def process_core(cfg: dict, core: Path, pid_port_cache: dict[int, int],
                  deduper: HerePingDeduper, host_ip: str) -> None:
     sidecar_reported = core.with_suffix(core.suffix + ".reported")
+    prior_attempts = 0
     if sidecar_reported.exists():
-        return  # already handled
+        # Bounded retry for failed Discord delivery: the relay has no queue,
+        # so a single hiccup at crash time used to permanently lose the alert
+        # (sidecar written, core never revisited — only the .bt on disk knew).
+        # Re-attempt on the 5-min safety scan until posted or MAX exhausted;
+        # the gdb work is skipped by reusing nothing — re-running it is cheap
+        # (~200ms) relative to a lost crash alert, and cores are rare.
+        try:
+            prior = json.loads(sidecar_reported.read_text(encoding="utf-8"))
+        except Exception:
+            return  # unreadable sidecar — treat as handled (old behavior)
+        if prior.get("discord_posted", True):
+            return  # already delivered
+        prior_attempts = int(prior.get("post_attempts", 1))
+        if prior_attempts >= 5:
+            return  # gave up — relay was down across ~25 min of scans
 
     parsed = parse_core_filename(core)
     if parsed is None:
@@ -363,6 +378,11 @@ def process_core(cfg: dict, core: Path, pid_port_cache: dict[int, int],
     ping_here = deduper.should_ping(alias)
     posted = post_to_discord(cfg, embed, ping_here)
     state["discord_posted"] = posted
+    state["post_attempts"] = prior_attempts + 1
+    if not posted:
+        sys.stderr.write(
+            f"discord post FAILED for {core.name} (attempt {prior_attempts + 1}/5) — "
+            "will retry on the next safety scan\n")
 
     sidecar_reported.write_text(json.dumps(state, indent=2), encoding="utf-8")
 

@@ -106,11 +106,14 @@ runs:
           STATUS=$?
         fi
 
-        # amxxpc prints "Error:" / "warning:" lines for issues. Treat any error
-        # line as a failure regardless of exit code (defensive — older amxxpc
-        # builds occasionally exit 0 on parse errors).
-        ERRORS=$(grep -cE '^.*[Ee]rror:' "$LOG" || true)
-        WARNINGS=$(grep -cE '^.*[Ww]arning:' "$LOG" || true)
+        # amxxpc's real diagnostic format puts the number BETWEEN the word and
+        # the colon: "error 017: ..." / "warning 217: ..." — the old patterns
+        # ('[Ee]rror:' / '[Ww]arning:') matched NOTHING, which made
+        # fail-on-warning a silent no-op forever (errors were still caught by
+        # the exit-code + missing-output backstops). Verified against live
+        # amxxpc output 2026-07-07.
+        ERRORS=$(grep -cE '[Ee]rror( [0-9]+)?:' "$LOG" || true)
+        WARNINGS=$(grep -cE '[Ww]arning( [0-9]+)?:' "$LOG" || true)
 
         echo "errors=$ERRORS warnings=$WARNINGS exit=$STATUS"
 

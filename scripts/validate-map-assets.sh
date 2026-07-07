@@ -244,9 +244,14 @@ else
     echo "  (Pass --all to also list WARN-level missing sounds/textures/overviews.)"
 fi
 echo
-echo "Only FAIL contributes to exit code 1. RENAME-CHECK and CASE-DIFF are"
-echo "informational — operator decides whether to symlink, rename references,"
-echo "or source the canonical file."
+echo "FAIL and RENAME-CHECK both contribute to exit code 1: a RENAME-CHECK"
+echo "file is still ABSENT on disk (the engine Sys_Errors on it exactly like"
+echo "a FAIL — the ATL1 2026-05-11 crash was bakery_counter3.mdl missing with"
+echo "bakery_counter31.mdl present, which the old exit logic passed). The"
+echo "annotation just tells the operator a likely rename-source exists."
+echo "CASE-DIFF stays informational (Linux servers ship case-preserved files)."
 
-[ $MAPS_WITH_CRASH -gt 0 ] && exit 1
+if [ $MAPS_WITH_CRASH -gt 0 ] || [ $MAPS_WITH_RENAME -gt 0 ]; then
+    exit 1
+fi
 exit 0

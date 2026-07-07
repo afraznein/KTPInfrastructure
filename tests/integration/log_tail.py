@@ -32,10 +32,42 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple, Union
 
 
 def _logs_dir(serverfiles: Path) -> Path:
     return serverfiles / "dod" / "addons" / "ktpamx" / "logs"
+
+
+class LogPosition(NamedTuple):
+    """Rotation-aware log baseline: which L*.log was current + its size.
+
+    KTPAMXX 2.7.19+ rotates the log PER MAP CHANGE in extension mode (plus the
+    UTC-midnight roll), so a bare byte offset applied to whichever file is
+    newest at poll time breaks the moment a test spans a changelevel: the
+    offset either hides the new file's early bytes (flake) or scans from an
+    arbitrary byte (stale match = false pass on negative-path tests).
+    """
+    path: str | None  # basename of the current log at baseline; None = no log yet
+    size: int
+
+
+def _scan_plan(newest: Path, after_offset: "Union[int, LogPosition]") -> list[tuple[Path, int]]:
+    """Return (file, start_byte) pairs to scan for this poll."""
+    if isinstance(after_offset, LogPosition):
+        if after_offset.path is None or newest.name == after_offset.path:
+            return [(newest, after_offset.size if after_offset.path else 0)]
+        # Rotated since baseline: finish the baseline file's unread tail
+        # (events can land there right up to the rotation), then the new
+        # file from byte 0.
+        plan: list[tuple[Path, int]] = []
+        old = newest.parent / after_offset.path
+        if old.exists():
+            plan.append((old, after_offset.size))
+        plan.append((newest, 0))
+        return plan
+    # Legacy int offset — pre-2026-07-07 semantics (applied to the newest file).
+    return [(newest, int(after_offset))]
 
 
 def _latest_log_file(serverfiles: Path) -> Path | None:
@@ -54,7 +86,7 @@ def wait_for_log_event(
     *,
     timeout: float = 5.0,
     poll_interval: float = 0.1,
-    after_offset: int = 0,
+    after_offset: "Union[int, LogPosition]" = 0,
 ) -> str:
     """Poll the latest `addons/ktpamx/logs/L*.log` for `event=<event_name>`
     and return the matching line. Raises TimeoutError on timeout.
@@ -70,16 +102,22 @@ def wait_for_log_event(
 
     while time.monotonic() < deadline:
         log = _latest_log_file(serverfiles)
-        if log is not None and log.stat().st_size > after_offset:
-            with log.open("rb") as f:
-                f.seek(after_offset)
-                # Decode best-effort — log_ktp emits ASCII but DoD names can
-                # have weird chars in player-input fields. errors='replace'
-                # keeps us moving.
-                tail = f.read().decode("utf-8", errors="replace")
-            for line in tail.splitlines():
-                if target_substring in line:
-                    return line
+        if log is not None:
+            for path, start in _scan_plan(log, after_offset):
+                try:
+                    if path.stat().st_size <= start:
+                        continue
+                    with path.open("rb") as f:
+                        f.seek(start)
+                        # Decode best-effort — log_ktp emits ASCII but DoD
+                        # names can have weird chars in player-input fields.
+                        # errors='replace' keeps us moving.
+                        tail = f.read().decode("utf-8", errors="replace")
+                except OSError:
+                    continue
+                for line in tail.splitlines():
+                    if target_substring in line:
+                        return line
         time.sleep(poll_interval)
 
     raise TimeoutError(
@@ -88,12 +126,15 @@ def wait_for_log_event(
     )
 
 
-def current_log_size(serverfiles: Path) -> int:
-    """Return the current size in bytes of the log file. Use as
-    `after_offset` baseline before triggering an rcon, then re-pass to
-    `wait_for_log_event` to only scan new bytes."""
+def current_log_size(serverfiles: Path) -> LogPosition:
+    """Return the current log baseline (file identity + size). Capture BEFORE
+    triggering an rcon, then pass as `after_offset` so only newer bytes are
+    scanned — now rotation-aware (see LogPosition). Callers treat the return
+    as opaque; plain-int offsets are still accepted for the `0` fallback."""
     log = _latest_log_file(Path(serverfiles).resolve())
-    return log.stat().st_size if log is not None else 0
+    if log is None:
+        return LogPosition(None, 0)
+    return LogPosition(log.name, log.stat().st_size)
 
 
 def wait_for_log_substring(
@@ -102,7 +143,7 @@ def wait_for_log_substring(
     *,
     timeout: float = 5.0,
     poll_interval: float = 0.1,
-    after_offset: int = 0,
+    after_offset: "Union[int, LogPosition]" = 0,
 ) -> str:
     """Like `wait_for_log_event` but greps by literal substring instead of
     `event=NAME`. Use for HLStatsX-shape lines (`log_message` output) or
@@ -120,13 +161,19 @@ def wait_for_log_substring(
 
     while time.monotonic() < deadline:
         log = _latest_log_file(serverfiles)
-        if log is not None and log.stat().st_size > after_offset:
-            with log.open("rb") as f:
-                f.seek(after_offset)
-                tail = f.read().decode("utf-8", errors="replace")
-            for line in tail.splitlines():
-                if substring in line:
-                    return line
+        if log is not None:
+            for path, start in _scan_plan(log, after_offset):
+                try:
+                    if path.stat().st_size <= start:
+                        continue
+                    with path.open("rb") as f:
+                        f.seek(start)
+                        tail = f.read().decode("utf-8", errors="replace")
+                except OSError:
+                    continue
+                for line in tail.splitlines():
+                    if substring in line:
+                        return line
         time.sleep(poll_interval)
 
     raise TimeoutError(

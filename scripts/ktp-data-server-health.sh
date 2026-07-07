@@ -39,6 +39,12 @@ CRITICAL_SERVICES=(
     hltv-api.service
     ktp-ac-api.service
     ktp-file-distributor.service
+    # A dead renamer silently loses league demos to the 6h auto-cleanup sweep
+    # (unrenamed auto-*.dem get purged) — it MUST page promptly.
+    hltv-demo-renamer.service
+    # A dead aggregator silently suppresses the whole perf-alert tier
+    # (perf-rollup exits quietly on an empty day).
+    ktp-profile-aggregator.service
 )
 
 # Timers that must be enabled + scheduled
@@ -122,18 +128,30 @@ fi
 mapfile -t new_down < <(comm -23 "$TMP_CURR" "$TMP_PREV")
 mapfile -t recovered < <(comm -13 "$TMP_CURR" "$TMP_PREV")
 
-# ---- Save current state ----
-mkdir -p "$(dirname "$STATE_FILE")"
-if [ -s "$TMP_CURR" ]; then
-    down_json=$(jq -R . < "$TMP_CURR" | jq -s .)
-else
-    down_json='[]'
-fi
-jq -n --argjson d "$down_json" --arg ts "$(ts)" \
-    '{updated_at: $ts, down: $d}' > "$STATE_FILE"
+# ---- State save (called AFTER a successful alert, or on no-transition runs) ----
+# Persisting before the Discord POST permanently consumed the edge on a failed
+# delivery (the relay has no queue) — the transition became "known state" and
+# never re-alerted. Now a failed POST leaves the previous state intact so the
+# next hourly run re-detects the same transitions and retries the alert.
+# Accepted trade: a service that flaps down AND back up entirely between a
+# failed-POST run and the next run produces no alert for either edge (the
+# recovered state matches the stale prev). Sub-hour flap + relay outage
+# coinciding — rarer and less important than losing a persistent-down alert.
+save_state() {
+    mkdir -p "$(dirname "$STATE_FILE")"
+    local down_json
+    if [ -s "$TMP_CURR" ]; then
+        down_json=$(jq -R . < "$TMP_CURR" | jq -s .)
+    else
+        down_json='[]'
+    fi
+    jq -n --argjson d "$down_json" --arg ts "$(ts)" \
+        '{updated_at: $ts, down: $d}' > "$STATE_FILE"
+}
 
 # ---- Alert on transitions only ----
 if [ ${#new_down[@]} -eq 0 ] && [ ${#recovered[@]} -eq 0 ]; then
+    save_state
     echo "[$(ts)] no transitions (currently down: ${#down[@]})"
     exit 0
 fi
@@ -188,6 +206,8 @@ http=$(curl -sS -o /tmp/ktp-health-resp.txt -w "%{http_code}" \
     -d "$payload" 2>&1 || echo "000")
 if [ "$http" != "200" ] && [ "$http" != "204" ]; then
     echo "[$(ts)] WARN: relay returned HTTP $http: $(cat /tmp/ktp-health-resp.txt 2>/dev/null | head -c 200)" >&2
+    echo "[$(ts)] state NOT saved — transitions will re-alert on the next run" >&2
 else
+    save_state
     echo "[$(ts)] alert posted (HTTP $http)"
 fi

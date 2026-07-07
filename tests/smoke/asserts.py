@@ -102,9 +102,20 @@ def assert_plugins_running(
 
 
 def assert_no_failed_modules(handle: ServerHandle) -> list[ModuleRow]:
-    """Catch the 04-14 KTPAmxxCurl class: a module silently fails to load."""
+    """Catch the 04-14 KTPAmxxCurl class: a module silently fails to load.
+
+    Zero parsed rows is a FAILURE, not a pass: if the KTPAMXX core .so never
+    loaded, `amx modules` returns "Unknown command", parse yields nothing, and
+    the old gate printed "OK: no failed modules (0)" — the exact catastrophe
+    this assert exists to catch, reported as green.
+    """
     output = handle.rcon("amx modules")
     rows = parse_modules(output)
+    if not rows:
+        raise AssertionError(
+            "amx modules returned ZERO parseable rows — KTPAMXX core likely "
+            f"never loaded (raw output: {output[:200]!r})"
+        )
     failed = [r for r in rows if r.status.lower() not in ("running", "loaded")]
     if failed:
         details = ", ".join(f"{r.name}={r.status}" for r in failed)
@@ -113,9 +124,18 @@ def assert_no_failed_modules(handle: ServerHandle) -> list[ModuleRow]:
 
 
 def assert_no_failed_plugins(handle: ServerHandle) -> list[PluginRow]:
-    """Catch silent plugin load failures."""
+    """Catch silent plugin load failures.
+
+    Zero parsed rows fails for the same reason as assert_no_failed_modules —
+    an empty listing means the platform is down, not that nothing failed.
+    """
     output = handle.rcon("amx plugins")
     rows = parse_plugins(output)
+    if not rows:
+        raise AssertionError(
+            "amx plugins returned ZERO parseable rows — KTPAMXX core likely "
+            f"never loaded (raw output: {output[:200]!r})"
+        )
     failed = [r for r in rows if not r.is_running]
     if failed:
         details = ", ".join(f"{r.filename}={r.status}" for r in failed)

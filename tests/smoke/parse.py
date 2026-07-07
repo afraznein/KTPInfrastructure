@@ -231,7 +231,14 @@ def matches_truncated(expected: str, actual: str) -> bool:
         return False
     if e == a:
         return True
-    # AMXX never returns fewer than 8 visible chars for a non-empty name; any
-    # match shorter than that is suspicious and we reject it.
-    min_overlap = min(len(e), len(a), 8)
+    # Truncation match: the SHORTER string must be a prefix of the longer one
+    # over its FULL length (a truncation never has extra trailing chars). The
+    # old cap of 8 compared only the first 8 chars of two long names, so any
+    # 8-char-shared-prefix pair "matched" — KTPGrenadeLoadout vs KTPGrenadeD
+    # (both `ktpgrena...`) let assert-plugins pass off the wrong plugin's row.
+    # AMXX never emits fewer than 8 visible chars for a non-empty name, so a
+    # candidate truncation shorter than that is rejected.
+    min_overlap = min(len(e), len(a))
+    if min_overlap < 8:
+        return False
     return e[:min_overlap] == a[:min_overlap]

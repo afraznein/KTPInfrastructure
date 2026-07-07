@@ -305,9 +305,19 @@ class HostTailer:
                 logging.warning("[%s/%d] read failed: %s", self.region, port, e)
                 continue
 
-            text = chunk.decode("utf-8", errors="replace") if isinstance(chunk, bytes) else chunk
-            new_offset = offset + len(chunk)
-            state.log_offsets[key] = new_offset
+            # Advance the offset only past the last COMPLETE line. The async
+            # line-buffered writer can be mid-line at read time; consuming a
+            # torn MATCH_WINDOW line parses wall_time=0 (open instantly
+            # abandoned / close scans the 1970 epoch) and silently loses the
+            # window's rename. The remainder re-reads next poll. Byte math on
+            # the raw chunk — the persisted offset is a byte offset.
+            raw = chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+            last_nl = raw.rfind(b"\n")
+            if last_nl == -1:
+                continue  # no complete line yet — don't advance the offset
+            raw = raw[: last_nl + 1]
+            text = raw.decode("utf-8", errors="replace")
+            state.log_offsets[key] = offset + last_nl + 1
 
             # Only retain MATCH_WINDOW lines; everything else is noise.
             for line in text.splitlines():
@@ -353,7 +363,7 @@ class Renamer:
 
         # Two paths into this method:
         # (1) First-time rename — scan DEMOS_DIR by mtime against the window's
-        #     [open-90s, close+60s] range to pick candidates.
+        #     [open-90s, close+90s] range to pick candidates.
         # (2) Retry of a previously-deferred window — use the stashed basenames
         #     since their mtimes have crawled past the original window while
         #     HLTV continued writing.
@@ -415,6 +425,31 @@ class Renamer:
                         friendly, window.match_id, window.half, friendly, WINDOW_ABANDON_AGE_SEC,
                     )
                     return []
+
+        # A multi-candidate set can include the NEXT window's file: at half
+        # close (= next half's open) the successor's just-created auto-* is
+        # already growing inside our [open-pad, close+pad] scan range, and the
+        # deferral stash then locks it to this window — flushing renames h2's
+        # demo as ..._h1-..._part2.dem. By the time we reach here every
+        # candidate is settled (non-latest, successor exists, or forced), so
+        # the FINAL mtime tells ownership: last write well past OUR close =
+        # a later window's file. Keep a sole candidate regardless — the
+        # legitimate no-rotation single-file case extends past close by design.
+        if len(candidates) > 1:
+            settled = []
+            for c in candidates:
+                try:
+                    if c.stat().st_mtime <= window.close_unix + MTIME_WINDOW_PAD_AFTER_SEC:
+                        settled.append(c)
+                except OSError:
+                    continue  # vanished under us — drop
+            if settled and len(settled) < len(candidates):
+                dropped = [c.name for c in candidates if c not in settled]
+                logging.info(
+                    "Window %s/%s/%s: excluding %s (last write past close+%ds — belongs to a later window)",
+                    friendly, window.match_id, window.half, dropped, MTIME_WINDOW_PAD_AFTER_SEC,
+                )
+                candidates = settled
 
         candidates.sort(key=lambda p: p.stat().st_mtime)
 

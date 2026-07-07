@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 from collections import defaultdict
@@ -64,8 +65,25 @@ GAME_HOSTS = [
     {"name": "CHI", "host": "172.238.176.101", "ports": [27015, 27016, 27017, 27018]},
 ]
 GAME_USER = "dodserver"
-GAME_PASS = "REDACTED"
-RCON_PASS = "REDACTED_RCON"  # game-server rcon password — uniform fleet-wide per dodserver.cfg
+
+
+def _resolve_secret(env_var: str, dotfile: str, label: str) -> str:
+    """Env var, then ~ dotfile — never hardcoded. This file is TRACKED in a
+    public repo; the pre-2026-07-07 deployed copy carried real values inline
+    and was one careless `git add` from repeating the 2026-05-31 leak."""
+    val = os.environ.get(env_var, "")
+    if not val:
+        p = os.path.expanduser(dotfile)
+        if os.path.exists(p):
+            val = open(p).read().strip()
+    if not val:
+        sys.exit(f"{label} not configured — set ${env_var} or write it to {dotfile}")
+    return val
+
+
+GAME_PASS = _resolve_secret("KTP_FLEET_SSH_PASSWORD", "~/.ktp_fleet_ssh_password", "fleet SSH password")
+# Game-server rcon password — uniform fleet-wide per dodserver.cfg.
+RCON_PASS = _resolve_secret("KTP_RCON_PASSWORD", "~/.ktp_rcon_password", "rcon password")
 
 # What to walk under each instance's addons/ktpamx/. Glob patterns relative
 # to the dod/ root. Engine check (serverfiles/*.so) is opt-in via --include-engine.
