@@ -1,6 +1,6 @@
 # KTP Test Infrastructure Plan
 
-**Status:** Planning scoped 2026-04-24. **Tier 1 fully live 2026-04-28** — all 9 KTP plugin/module callers auto-trigger smoke on push, ~3-5 min runs via GHCR fast path. **Tier 3 Project 1 partially shipped 2026-04-25** via KTPAdminBot Phase 8.2 work. Tier 2 not started — now unblocked since T1 is live and the `amx_ktp_versions` rcon prerequisite shipped. Open T1 leaf: KTPAntiCheat xUnit scaffolding.
+**Status (refreshed 2026-07-07):** Tier 1 fully live 2026-04-28 (9 callers). **Tier 2 LIVE** — Docker-free runner on the data server, full integration suite (spine/match-types/discord/logs/AC/admin-recovery/DODX-forwards/practice-mode) green in CI since May–June; the five bot-gated DODX forward tests were un-skipped via dispatch primitives (`674add1`, 2026-07). Tier 3 partially shipped via KTPAdminBot Phase 8.2 + the perf-rollup/spike-digest telemetry stack. The estimates and "not started" framing in the body below are the April plan — read it as history, not status. Open T1 leaf: KTPAntiCheat xUnit scaffolding (Core/Desktop/Api suites now exist in-repo; the CI wiring question remains).
 **Scope:** Three-tier test infrastructure across the KTP stack — build-time smoke tests, pre-deploy integration tests, and continuous production baseline monitoring.
 
 ## Already shipped (overlaps with this plan)
@@ -40,7 +40,7 @@ Seven production incidents in recent memory would have been caught earlier by sy
 **Explicit non-goals:**
 - Testing the closed-source `dod_i386.so` game DLL — we don't own it.
 - 24-player synthetic load — requires synthetic-client tooling that doesn't exist yet.
-- Replacing Netdata / existing ad-hoc monitoring — test infra complements, doesn't replace.
+- Replacing existing monitoring — test infra complements, doesn't replace. *(Netdata itself was disabled fleet-wide 2026-07-02.)*
 
 ---
 
@@ -205,7 +205,7 @@ Strict flake rule: test failing twice in a row on unchanged main is quarantined 
 - **New Discord channels:** `#ktp-perf` (digest + regressions, info severity), `#ktp-crashes` (cores + new spike signatures, pager severity).
 
 ### Integration with workflow
-Passive. No workflow change. Complements Netdata (host metrics) vs. Tier 3 (engine-internal metrics).
+Passive. No workflow change. Host-metric complement to Tier 3's engine-internal metrics. *(Originally "complements Netdata"; Netdata was disabled fleet-wide 2026-07-02 — host metrics now come from the fleet-health/perf-rollup stack.)*
 
 ### Observability
 - Primary: Discord channel routing.

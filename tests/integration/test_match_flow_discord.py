@@ -7,7 +7,13 @@ events. The fixture machinery in `conftest.py` (`discord_relay` +
 FakeRelay before hlds boots; this file's tests drive the state machine
 via MatchDriver and assert against `discord_relay.received`.
 
-## Why these tests are skip-marked today
+## Header status (2026-07-07): tests RUN — only 9c remains skipped
+##
+## The Session-3 audit below concluded; the emission surface was pinned and
+## tests 9/9b/13-16b were un-skipped. The original blocker analysis is kept
+## for context:
+##
+## Why these tests were skip-marked originally
 
 KTPMatchHandler reads `discord.ini` ONCE at `plugin_init` and caches the
 parsed values into globals (`g_disableDiscord` etc., per

@@ -1,5 +1,13 @@
 # KTP Development History
 
+> ## ⚠️ STALE — timeline ends 2026-04-25; ~10 weeks of history missing
+> Everything since end-of-April (ReHLDS .925–.927, KTPAMXX 2.7.15–2.7.20,
+> KTPAmxxCurl 1.3.9–1.3.13, KTPMatchHandler 0.10.12x–0.10.142, HLTVRecorder
+> 1.7.0, the 2026-05-31 credential rotation, Netdata disabled fleet-wide,
+> the July assessment waves) is recorded in the root
+> `discord-embeds/CHANGES_SUMMARY_*.md` period files, not here. A rewrite/
+> append pass is tracked in the root TODO. Banner added 2026-07-07.
+
 > Development timeline for the KTP competitive Day of Defeat server infrastructure — covers the full stack (engine, scripting platform, modules, match-handling plugins, anti-cheat, admin bot, infrastructure).
 >
 > **Doc home note:** This file (and `technical_guide.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
@@ -299,7 +307,7 @@ January focused on production stability, fixing edge cases discovered during rea
 
 - **KTPFileDistributor v1.1.0**: Added multi-channel Discord support via `AdditionalChannelIds` configuration.
 
-- **Server Infrastructure**: Deployed Atlanta 2-5 server cluster (ports 27016-27019) with full LinuxGSM configuration, HLStatsX integration, and KTPFileDistributor setup. Configured HLTV instances 27021-27024 with systemd services and scheduled restart timers. Diagnosed and fixed UDP buffer exhaustion issue (47k+ RcvbufErrors) by increasing kernel buffer sizes from 208KB to 25MB. Documented server setup procedures for future deployments. **Deployed Dallas game server cluster** (74.91.114.178, ports 27015-27019) with identical configuration. **Added nightly scheduled restarts** at 3 AM ET for both Atlanta and Dallas game servers with Discord embed notifications (live-updating: shows "In Progress" then edits to "Complete"). Fixed LinuxGSM "old type tmux session" bug that caused spurious server restarts by patching `command_monitor.sh` on all instances.
+- **Server Infrastructure**: Deployed Atlanta 2-5 server cluster (ports 27016-27019) with full LinuxGSM configuration, HLStatsX integration, and KTPFileDistributor setup. Configured HLTV instances 27021-27024 with systemd services and scheduled restart timers. Diagnosed and fixed UDP buffer exhaustion issue (47k+ RcvbufErrors) by increasing kernel buffer sizes from 208KB to 25MB. Documented server setup procedures for future deployments. **Deployed Dallas game server cluster** (74.91.114.178 — historical; that VPS era is deprecated and its IPs re-leased by the provider; current Dallas is 74.91.126.55) with identical configuration. **Added nightly scheduled restarts** at 3 AM ET for both Atlanta and Dallas game servers with Discord embed notifications (live-updating: shows "In Progress" then edits to "Complete"). Fixed LinuxGSM "old type tmux session" bug that caused spurious server restarts by patching `command_monitor.sh` on all instances.
 
 ---
 
@@ -645,6 +653,14 @@ Systematic security/correctness review of all KTP plugins. Seven plugins scanned
 - Raised `sv_unlagsamples` cap from 16 to 64 (full `SV_UPDATE_BACKUP` frame buffer). At 1000Hz, the old 16-sample cap only covered 16ms of ping history — insufficient for meaningful smoothing
 - Scaled jitter detection window in `SV_CalcClientTime()` to match the averaging window
 
+> **⚠️ RETRACTED 2026-06-11:** the premise above was wrong — `cl->frames[]`
+> advances per CLIENT PACKET (~100/s), not per server frame, so high sample
+> counts meant ~200ms of smoothing and a 20-packet-wide jitter guard that
+> silently returned zero lag compensation after a single ping spike. The
+> fleet runs `sv_unlagsamples 1` (engine default) since 2026-06-11. Do NOT
+> re-raise it based on this entry — see root CLAUDE.md § Lag Compensation
+> Config + memory `perf-audit-2026-06-11-findings`.
+
 ### Mar 17: KTPHLTVRecorder v1.5.5
 
 - Recording verification with in-game chat feedback after `record` command
@@ -914,7 +930,7 @@ Touchpoints visible in this repo's history:
 - **KTPMatchHandler 0.10.115** ships the game-server-side integration handshake — match-start and match-end announcement to the AC backend, idempotent on re-fire, gated on `<configsdir>/ac.ini` so the integration is a silent no-op when absent. Internals of what AC does with those signals stay in the private repo.
 - **Discord Relay 1.0.1** gained `allowed_mentions` passthrough to support the verdict-embed flow.
 
-Subsequent rollout phases (HWID enforce-flip, `.ready` enforcement) are time- and adoption-gated; the gating logic and thresholds live in the private repo.
+Subsequent rollout phases are time- and adoption-gated; detail lives in the private repo (deliberately not documented here — public repo).
 
 ### Apr 25: KTPAdminBot Phase 8 — `/ops` Cog
 
@@ -956,11 +972,8 @@ Single Discord application token now serves multiple guilds with per-guild comma
 ### Apr 25: KTPAntiCheat README Rewrite
 
 README was last meaningfully updated for v0.3.1 — since then 8 integration phases shipped (Gaps 1-4, Phases 5/8.2/8.3/8.4) all in the API (now 0.3.10) and KTPAdminBot. README still told admins to curl 4 endpoints and didn't mention the bot. Net change: +135 / -33. Committed `a0e135e`.
-- Version banner separates Server API (0.3.10) from Desktop client (0.3.1)
-- New "Admin architecture" section with auth-boundaries diagram
-- New "KTPAdminBot — recommended interface" section with full `/ac` + `/ops` command table
-- New sections for Discord verdict alerts, HWID ban workflow, session review workflow, match-ID linkage
-- "Direct API access (scripting)" preserves curl examples as fallback path
+- Restructured for the bot-first admin workflow; per-section detail lives in
+  the private repo's README (deliberately not enumerated here — public repo).
 
 ### Apr 25: ktp_version_reporter Shared Include + 9-Plugin Onboarding
 
@@ -990,7 +1003,7 @@ All 9 .amxx files compile clean and are locally staged. Production deploy held t
 
 | Item | Detail |
 |---|---|
-| **Fleet Drift Audit** | Weekly cron on data server (`/etc/cron.d/ktp-fleet-audit`, Mon 05:00 ET) SSH-fans-out `fleet-drift-snapshot.sh` to all 5 game hosts and compares against declarative expected-state files in `KTPInfrastructure/provision/`. Five categories: sysctl, binary md5, GRUB cmdline, systemd timers, rc.local. Per-host `sample_port` field lets the audit sidestep canary-occupied ports. Discord alerts state-diff based (transitions only). SSH auth migrated to dedicated ed25519 key — shared `dodserver:ktp` password is out of audit config entirely. |
+| **Fleet Drift Audit** | Weekly cron on data server (`/etc/cron.d/ktp-fleet-audit`, Mon 05:00 ET) SSH-fans-out `fleet-drift-snapshot.sh` to all 5 game hosts and compares against declarative expected-state files in `KTPInfrastructure/provision/`. Five categories: sysctl, binary md5, GRUB cmdline, systemd timers, rc.local. Per-host `sample_port` field lets the audit sidestep canary-occupied ports. Discord alerts state-diff based (transitions only). SSH auth migrated to dedicated ed25519 key — the shared pre-rotation dodserver password is out of audit config entirely. |
 | **Data-Server Health Check** | Hourly cron (`/etc/cron.d/ktp-data-server-health`) checks `mysql`, `nginx`, `hlstatsx`, `hltv-api`, `ktp-ac-api`, `ktp-file-distributor`, `hltv-restart.timer`, plus HLTV instance count (expected 24). State transitions only. |
 | **HLTV Demo Retention** | `/usr/local/bin/ktp-demo-retention.sh`. Tiered: `ktp/` + `draft/` 180 days, `12man/` + `scrim/` 90 days. Daily delete cron 04:30 ET; weekly preview alert Sunday 09:00 ET listing upcoming deletions to both KTP + 1.3 Discord channels. |
 | **KTPAMXX CI Replaced** | Master CI had been red since 2026-04-16 — `support/checkout-deps.sh` cloned stock `alliedmodders/hlsdk` but `meta_api.cpp` references `pfnClientCvarChanged` which exists only in `afraznein/KTPHLSDK` fork. Replaced with KTP-native workflow on `ubuntu-22.04` (glibc 2.35 floor for backward-compat), single-compiler `gcc-9-multilib`, explicit KTPHLSDK + metamod-hl1 + ambuild checkouts. Windows MSVC dropped (no Windows build); clang-11 dropped (incompatible with `-m32 -flto` on 22.04). |

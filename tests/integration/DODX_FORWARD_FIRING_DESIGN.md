@@ -247,8 +247,10 @@ Four handlers landed in KTPWitness 1.4.0:
   `{id, score_delta, total_score, cp_index}`. cp_index is the CP that
   triggered the score, or -1 if not CP-related.
 
-All tests for Phase 3 forwards remain decorator-skipped because `addbot`
-alone doesn't reliably trigger any of them within test-suite timing:
+**(Historical — superseded by the header: as of KTPAMXX 2.7.19's dispatch
+primitives + commit `674add1`, these run via synthetic dispatch, no decorator
+skips remain.)** The original rationale, kept for context — `addbot` alone
+doesn't reliably trigger any of them within test-suite timing:
 
 - `client_damage` — bot AI may or may not engage in combat within 60s
 - `dod_grenade_explosion` — DoD bots rarely throw grenades

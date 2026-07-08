@@ -236,14 +236,20 @@ make build-curl
 make build-plugins
 ```
 
-Compiles all `.sma` files from:
+Compiles all `.sma` files from (source of truth: `build/plugins/Dockerfile`):
 - KTPMatchHandler
 - KTPHLTVRecorder
 - KTPCvarChecker
 - KTPFileChecker
 - KTPAdminAudit
-- KTPGrenades
+- KTPGrenades (Loadout + Damage)
 - KTPPracticeMode
+- KTPHudObserver
+- AMXX stock: admin, stats_logging
+
+> **Gap note (2026-07-07):** KTPScoreTracker is NOT built by this Docker
+> pipeline (per-instance opt-in plugin compiled via its own `compile.sh`);
+> add it to `build/plugins/Dockerfile` if it ever becomes fleet-wide.
 
 ## Troubleshooting
 

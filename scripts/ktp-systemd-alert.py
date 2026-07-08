@@ -7,7 +7,7 @@ embed to #ktp-updates so a service flap is visible immediately rather than
 waiting for the periodic ktp-data-server-health.sh sweep.
 
 Companion to ktp-data-server-health.sh:
-  - data-server-health: periodic (10 min cadence), state-transition tracking,
+  - data-server-health: periodic (hourly cadence), state-transition tracking,
     catches services that go down AND stay down across multiple checks.
   - this script: immediate (fires on the failure event itself), captures
     the full journalctl tail at the moment of failure for diagnostic info.

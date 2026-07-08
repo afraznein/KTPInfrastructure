@@ -3,7 +3,8 @@
 # Fires daily at 04:30 ET (after the 03:00 fleet restart + 04:00 demo
 # organizer + 04:15 demo retention sweeps complete). Computes per-host
 # trailing-7-day baselines from hlstatsx.ktp_telemetry_metrics and posts
-# Discord alerts on hosts deviating ≥2σ from baseline.
+# Discord alerts on hosts deviating ≥2.5σ from baseline (retuned from 2σ
+# in 1.5.17) with a magnitude floor — thresholds live in ktp-perf-rollup.py.
 #
 # Three-tier severity (per TODO.md Tier 3 Project 1 follow-up spec):
 #

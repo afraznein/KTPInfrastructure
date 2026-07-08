@@ -9,9 +9,9 @@ behaviour — the runner just needs docker installed (provided on ubuntu-latest)
 For self-hosted runners with the artifacts pre-built, this is a near-instant
 boot.
 
-Direct subprocess boot (no docker) is intentionally not implemented yet — we
-already have a working containerised path. If a future runner needs subprocess
-boot, add a sibling `boot_subprocess.py` that returns the same ServerHandle.
+Direct subprocess boot lives in the sibling `boot_subprocess.py` (built for
+the Docker-free Tier 2 runner on the data server) and returns the same
+ServerHandle contract. This module remains the containerised path.
 """
 
 from __future__ import annotations

@@ -49,7 +49,8 @@ with read access on every KTP repo is required.
    - Name: `KTP_CHECKOUT_TOKEN`
    - Value: the PAT
    - Repository access: "Selected repositories" → all KTP repos that ship
-     a smoke workflow (currently KTPAmxxCurl, KTPMatchHandler; add as we go)
+     a smoke workflow (9 caller repos as of 2026-04-28 — every KTP plugin
+     repo plus KTPAmxxCurl; add as we go)
 
 If you'd rather scope per-repo: copy the PAT into each KTP repo's
 "Repository secrets" instead, with the same name. Org-level is preferred —
@@ -68,8 +69,9 @@ Per the [TEST_INFRASTRUCTURE_PLAN.md](../TEST_INFRASTRUCTURE_PLAN.md) decision
 Tier 2 starts warn-only (because flaky-by-default initially) and flips to
 blocking after 2 weeks of green-on-main.
 
-**Do once per smoke-equipped KTP repo** (`KTPAmxxCurl`, `KTPMatchHandler`,
-plus future ones as we add them):
+**Do once per smoke-equipped KTP repo** (all 9 smoke callers as of
+2026-04-28; KTPScoreTracker/KTPFileChecker/KTPAntiCheat remain blocked —
+see the root TODO "Branch protection" entry):
 
 1. **Repo settings → Branches → Branch protection rules**
 2. Add rule for `main` (or `master`):

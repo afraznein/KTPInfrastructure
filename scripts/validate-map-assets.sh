@@ -23,9 +23,10 @@
 #   validate-map-assets.sh map1.bsp map2.bsp     # check specific bsps
 #   validate-map-assets.sh --quiet               # only print FAIL/WARN lines
 #
-# Auto-detect order for $SERVERFILES/dod:
+# Auto-detect order for $SERVERFILES/dod (three candidates):
 #   /home/dodserver/dod-27015/serverfiles/dod
 #   ./dod
+#   $(pwd) itself when it already ends in /dod
 #
 # Exit:
 #   0 — no CRASH-RISK assets missing

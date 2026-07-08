@@ -467,7 +467,7 @@ help:
 	@echo "  make deploy          - Deploy to all clusters"
 	@echo "  make deploy-atlanta  - Deploy to Atlanta cluster"
 	@echo "  make deploy-dallas   - Deploy to Dallas cluster"
-	@echo "  make deploy-denver   - Deploy to Denver (test) cluster"
+	@echo "  make deploy-denver   - Deploy to Denver cluster (PRODUCTION)"
 	@echo "  make deploy-plugins  - Deploy only plugins to all"
 	@echo "  make configure-names - Configure server names (all clusters)"
 	@echo ""

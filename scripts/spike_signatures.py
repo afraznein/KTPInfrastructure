@@ -17,9 +17,9 @@ import-safe + unit-tested in isolation. The future categorizer daemon will:
        (incrementing `count`, refreshing `last_seen` + `sample_*`)
     4. On a never-before-seen fingerprint, fire an immediate Discord alert
 
-Schema for the table lands alongside this file at
-`scripts/sql/ktp_spike_signatures.sql`. The aggregator-side wiring is a
-separate follow-up commit.
+The table schema is INLINED below (see the DDL constant) — deliberately
+not a separate .sql file. The aggregator-side wiring is a separate
+follow-up commit.
 
 ## Why only the umbrella `[KTP_SPIKE]` line, not `[KTP_SPIKE_<phase>]`?
 

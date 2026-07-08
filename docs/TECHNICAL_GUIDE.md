@@ -1,10 +1,24 @@
 # KTP Competitive Infrastructure - Technical Guide
 
+> ## ⚠️ STALE — snapshot of 2026-04-26; verify EVERY version and architecture
+> ## claim against the root `CLAUDE.md` + per-repo CHANGELOGs before citing
+> Everything since end-of-April is missing or wrong here, including: ReHLDS
+> .925→.927 (profiling telemetry, `sv_unlagsamples 1`, async log writer),
+> KTPAMXX 2.7.15→2.7.20 (extension-mode lifecycle fixes, score-persistence
+> natives, async CLog), KTPAmxxCurl 1.3.9→1.3.13 (shutdown-guard saga),
+> KTPMatchHandler 0.10.12x→0.10.142, **KTPHLTVRecorder 1.7.0** (the recording
+> section below describes the RETIRED 1.5.x record/stop model — 1.7.0 is
+> HLTV-cfg-driven always-on recording + `/state` health checks + a post-match
+> renamer service), the 2026-05-31 credential rotation, Netdata disabled
+> fleet-wide (2026-07-02), and the extension-mode lifecycle facts established
+> 2026-07-05. A full rewrite is tracked in the root TODO (triggered after the
+> current fix waves land). Banner added 2026-07-07.
+
 *A comprehensive ecosystem of custom engine modifications, extension modules, match management plugins, and supporting services designed for competitive 6v6 Day of Defeat gameplay.*
 
 **No Metamod Required** - Runs on Linux and Windows via ReHLDS Extension Mode
 
-**Last Updated:** 2026-04-26 (Layer 6 plugin sections rewritten end-to-end — KTPMatchHandler/Cvar/File/AdminAudit refreshed and KTPPracticeMode/GrenadeLoadout/GrenadeDamage/ScoreTracker added; modernization-status banner below tracks remaining gaps)
+**Last Updated:** 2026-04-26 (see the staleness banner above — the "refreshed with current versions" claims in the modernization-status list below were true THEN and are stale NOW)
 
 **Doc home note:** This file (and `DEVELOPMENT_HISTORY.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
 
@@ -2004,13 +2018,25 @@ WantedBy=multi-user.target
 
 #### KTPHLTVRecorder
 
+> **⚠️ SECTION SUPERSEDED — this describes the RETIRED 1.5.x record/stop
+> architecture. Fleet runs 1.7.0 (F+A, activated 2026-04-29):** recording is
+> ALWAYS-ON, driven by a `record auto_<friendly>` line in each HLTV instance's
+> cfg — the plugin never starts or stops recording. The plugin's remaining
+> jobs: (a) `GET /hltv/<port>/state` health check at match start (chat warning
+> if the paired HLTV is down or not recording), (b) the `.hltvrestart` admin
+> command via `POST /hltv/<port>/restart`, (c) emitting `MATCH_WINDOW_OPEN/
+> CLOSE` log markers that the data server's **hltv-demo-renamer service**
+> consumes to rename the auto-*.dem files to canonical match names. See
+> KTPHLTVRecorder's own README/CLAUDE.md for current detail. The subsections
+> below are kept as history until the tracked full rewrite of this guide.
+
 **Repository:** [github.com/afraznein/KTPHLTVRecorder](https://github.com/afraznein/KTPHLTVRecorder)
-**Version:** 1.5.7
+**Version:** 1.5.7 *(stale — fleet runs 1.7.0; see banner above)*
 **Platform:** AMX/Pawn Plugin
 **License:** GPL-3.0
 **Requires:** KTPMatchHandler v0.10.4+ (for forwards), Curl module (for HTTP API)
 
-**Key Features:**
+**Key Features (1.5.x-era, superseded):**
 - **Per-half demo files** (v1.3.0) - Each half records to `_h1`, `_h2`, `_ot1` suffixes
 - **Pre-match HLTV health check** (v1.4.0) - Verifies HLTV API responds before recording, auto-recovery on failure
 - **Recording verification** (v1.5.5) - In-game chat feedback confirming recording started successfully (HLTV API v2.1)

@@ -1,5 +1,9 @@
 # KTP Infrastructure Scripts
 
+> **Coverage note (2026-07-07):** this README documents only the most-used
+> scripts (~a third of `scripts/`). For anything not listed, the script's
+> own header comment is the documentation — every KTP script carries one.
+
 Operational scripts for KTP game servers and data server.
 
 **Note:** Scripts with `.example` extension are templates. Copy to the actual filename and fill in your credentials before deploying.
@@ -108,7 +112,7 @@ cp ktp-scheduled-restart.sh.example ktp-scheduled-restart.sh
 ```
 
 ### deploy-to-fleet.py
-Local-to-fleet artifact push as `.new` files; nightly `ktp-scheduled-restart.sh` (above) auto-swaps them in. Closes the local-build → fleet-SCP gap discovered 2026-05-20. No `.example` template needed — credentials are read from CLAUDE.md fleet table; passwords are the standard `dodserver:ktp` SSH login (same as every other paramiko script in this repo).
+Local-to-fleet artifact push as `.new` files; nightly `ktp-scheduled-restart.sh` (above) auto-swaps them in. Closes the local-build → fleet-SCP gap discovered 2026-05-20. No `.example` template needed — the SSH password is resolved from `$KTP_FLEET_SSH_PASSWORD` or `~/.ktp_fleet_ssh_password` (never hardcoded; the pre-2026-05-31 `ktp` value was leaked in this public repo and rotated — do not document credential values here).
 
 **Features:**
 - `-f <path>` repeatable for multi-artifact pushes
@@ -117,7 +121,7 @@ Local-to-fleet artifact push as `.new` files; nightly `ktp-scheduled-restart.sh`
 - `--hosts atlanta,dallas,…` or `--hosts all` filter
 - `--ports 27015,27016,…` or `--ports all` filter
 - `--dry-run` mode (no SCP, just prints intent)
-- `--parallel N` (default 5 = one host worker per server; ports within a host serialized through one SSH session)
+- `--parallel N` (default 5 = one host worker per server; each (host, port) currently opens its own SSH+SFTP session)
 - md5 verify post-upload; mismatch reported as failure
 - Per-instance failure isolation — one host down doesn't abort others
 - Summary table with OK/FAIL counts per artifact per host

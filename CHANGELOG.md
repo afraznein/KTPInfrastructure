@@ -2,6 +2,70 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.29] - 2026-07-07
+
+### Assessment fix waves — Buckets 1-6 of the 2026-07-07 full-surface review
+
+Five parallel ktp-code-review agents swept the whole repo (provision/deploy,
+fleet-ops scripts, data-server services + monitoring, Tier-2 harness + CI,
+docs + public-hygiene); ~100 findings triaged into six buckets, fixed, each
+batch re-reviewed pre-commit. Highlights (full detail in the commit messages
++ `CODE_ASSESSMENT_2026-07-06_WAVE2.md` § KTPInfrastructure in the root):
+
+- **`d6cba1c` (Buckets 1-3):** atomic restart-script deployer
+  (`deploy-restart-script.py`); discord.ini surfaces unquoted + full parser
+  key union (quoted values were parser-toxic); CI gate holes closed (tier2
+  filter covers `tests/smoke/`; harness unit tests wired into config-tests);
+  July-LAN blockers — HLTV_API_KEY plumbed end-to-end, LAN HLTV runtime
+  converged to the production systemd/FIFO/v2.2-API shape with always-on
+  `record auto_lanN` configs, lan-deploy preflights, config/lan profiles
+  rebuilt for extension mode, gen_pw pipefail-safety (silent exit-141 fix).
+- **`fd9dd14` (Bucket 4):** fleet-health total-outage blindness fixed
+  (execution-verified); renamer h2-mislabel + torn-line fixes; renamer-death
+  interlock trio (OnFailure= + CRITICAL_SERVICES + cleanup guard); failed
+  relay POSTs now retry instead of counting as delivered (health check,
+  crashreporter, perf-rollup); deploy.py quarantine lifted (.new staging,
+  config-overwrite guards, relay auth); backup prune gated on dump success
+  (with pipefail); harness integrity (zero-row asserts fail, truncation
+  matcher, fail-on-warning grep, extension-mode modules test, lan profile
+  added to config tests, rotation-aware log tail).
+- **`d65235e` (Bucket 5):** repo-vs-fleet drift refresh — expected-binaries
+  at the live .927/2.7.20/1.3.13 baseline; CPU maps corrected to the actual
+  fleet placement (2,5,4,3,7); THP never + tmpfiles.d + watchdog=0 + tc
+  qdisc in provisioning; restart-script pinning on fixed port-keyed maps;
+  `.example` lineages regenerated from canonical/deployed; deploy-to-fleet
+  per-host port lists (CHI 27019).
+- **Bucket 6 (this entry's commit):** staleness banners on TECHNICAL_GUIDE +
+  DEVELOPMENT_HISTORY (+ unlag retraction note, AC-mention trims, literal
+  pre-rotation password dropped); TECHNICAL_GUIDE's HLTVRecorder section
+  marked superseded by the 1.7.0 always-on architecture; renamer docs
+  corrected from the retired 7-day cleanup numbers to the real 30-min/6h
+  sweep; README extension-loader path fixed (`dod/addons/`, not `rehlds/`);
+  DEPLOYING.md no longer sends incident responders to the disabled Netdata;
+  Denver "(test)" labels retired; UBUNTU_OPTIMIZATION superseded banner;
+  BUILDING/CI_SETUP/test-doc/comment-drift sweep; this CHANGELOG backfill.
+
+## [1.5.28] - 2026-07-06 (backfill — recorded 2026-07-07)
+
+### June-July commits that predated this entry
+
+- `3334275` provision: `.gitattributes` (sh=lf) + sanitized
+  clone-ktp-stack.sh.example (the committed, secret-free template)
+- `03e7655` lan-web: admin publish-gating for polls + Sat/Sun
+  schedule/bracket (pre-event wipe workflow)
+- `97a0c56` scripts: canonical ktp-ac-retention (uploads 60d, weapon rows
+  30d batched deletes, token purge) — behavior-bearing: the retention cron
+  the data server runs
+- `5c4a264` provision: clone-ktp-stack fails loudly when no HLTV API key is
+  available (behavior-bearing: fresh boxes no longer silently ship an
+  unauthenticated recorder)
+- `fbc8782` scripts: drop stale ktp-fleet-health.sh duplicate; renormalize
+  sh eol to LF
+- `674add1` tier2: un-skip the five bot-gated DODX forward tests via the
+  KTPAMXX 2.7.19+ dispatch primitives (spawn/team/class/death/flush)
+- Plus the June lan-web wave + Ubuntu 26.04 provision support commits
+  between 1.5.27 and the above.
+
 ## [1.5.27] - 2026-06-06
 
 ### `provision` + `docs`: LAN box supports 6 servers, dynamic core pinning, custom-map deploy fix, TeamSpeak

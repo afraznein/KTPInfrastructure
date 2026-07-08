@@ -25,11 +25,18 @@ make deploy-plugins VERSION=20260127
 
 Servers are defined in `deploy/config.yaml`. Copy from `config.yaml.example` and fill in your IPs:
 
+> **2026-07-07:** deploy.py is the LEGACY tool. The actual production
+> deploy pattern is `scripts/deploy-to-fleet.py` -> stage artifacts as
+> `<dest>.new` -> the nightly 03:00 ET restart auto-swaps them (never
+> overwrite a live binary). deploy.py itself now also stages `.new`, but
+> prefer deploy-to-fleet for fleet work. Current fleet inventory lives in the
+> root `CLAUDE.md` (5 production hosts: Atlanta/Dallas/Denver/NYC baremetal +
+> Chicago VPS — **Denver is production, not a test cluster**, despite older
+> labels in this doc's examples).
+
 | Cluster | Ports | Description |
 |---------|-------|-------------|
-| `cluster1` | 27015-27019 | Production (5 servers) |
-| `cluster2` | 27015-27019 | Production (5 servers) |
-| `test` | 27015-27019 | Test cluster |
+| `atlanta`/`dallas`/... | 27015-27019 | Production (5 servers each; Chicago runs 4 active) |
 
 ## Deployment Commands
 
@@ -42,7 +49,7 @@ make deploy VERSION=20260127
 # Deploy to specific cluster
 make deploy-atlanta VERSION=20260127
 make deploy-dallas VERSION=20260127
-make deploy-denver VERSION=20260127  # Test cluster
+make deploy-denver VERSION=20260127  # Denver is PRODUCTION (old 'test' label retired)
 
 # Deploy only plugins
 make deploy-plugins VERSION=20260127
@@ -483,13 +490,14 @@ The lag is likely upstream/network-related:
 - Datacenter peering issues (not visible from inside the server)
 - Geographic distance (East Coast players to West Coast server)
 
-**4. Netdata investigation:**
+**4. Historical/telemetry investigation:**
 
-Check Netdata Cloud for historical anomalies:
-- CPU spikes
-- Network throughput drops
-- Unusual softirq activity
-
-Local Netdata: `http://<SERVER_IP>:19999`
+> Netdata was DISABLED fleet-wide 2026-07-02 (go.d.plugin was itself a jitter
+> source) — `:19999` and Netdata Cloud are dead ends mid-incident. Use:
+- `[KTP_PROFILE]`/`[KTP_SPIKE_IO]` engine telemetry in the instance console
+  logs (spike fingerprints roll up daily via `ktp-spike-digest`)
+- The perf-rollup Discord embeds (fps baseline deviations per instance)
+- `journalctl` on the data server for service-side anomalies
+- Ad-hoc: `uptime`, `/proc/net/snmp` UDP counters (column 5 = RcvbufErrors)
 
 **Key insight:** If ALL players experience lag simultaneously, it's likely upstream (datacenter/provider network). If only some players lag, it's routing/ISP-specific.

@@ -1,5 +1,14 @@
 # Ubuntu 22.04 vs 24.04 Game Server Optimization Research
 
+> ## HISTORICAL — superseded by the provision scripts (banner 2026-07-07)
+> This is the February-2026 research that INFORMED the tuning; it is not the
+> tuning. The "current status" tables and "fixes needed" sections describe
+> long-fixed state, and some recommendations were later revised (fleet runs
+> `vm.swappiness=1`, not the 10 suggested here; THP is `never` fleet-wide
+> since 2026-07-02; `kernel.watchdog=0` added 2026-07-02). Canonical current
+> state: `provision/provision-gameserver.sh` + `provision/expected-*.conf` +
+> root `CLAUDE.md`. Keep for the reasoning; do not apply values from here.
+
 **Date:** February 2026
 **Target:** KTP DoD Game Servers (GoldSrc/HLDS)
 

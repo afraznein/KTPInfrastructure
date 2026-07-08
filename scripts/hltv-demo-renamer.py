@@ -18,7 +18,8 @@ Service runs on the data server (74.91.112.242) as root.
 Pipeline order (cron):
   1. THIS SERVICE (continuous) — renames auto-*.dem → canonical
   2. ktp-organize-hltv-demos.sh @ 04:00 ET — sorts canonical → demos/<F>/<T>/
-  3. ktp-demo-cleanup-auto.sh   @ 04:45 ET — sweeps unmatched auto-*.dem >7d
+  3. ktp-demo-cleanup-auto.sh   every 30 min — sweeps unmatched auto-*.dem >6h
+     (skips while this service is not active — 2026-07-07 interlock)
   4. ktp-demo-retention.sh      @ 04:30 ET — per-tier age retention
 
 Config: /etc/ktp/hltv-demo-renamer.conf  (KEY=value, sourced as env)

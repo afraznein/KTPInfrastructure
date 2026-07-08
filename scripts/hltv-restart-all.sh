@@ -3,7 +3,10 @@
 # Restarts all HLTV instances and sends Discord notification
 #
 # Location: /usr/local/bin/hltv-restart-all.sh (on data server)
-# Cron:  0 3,11 * * * /usr/local/bin/hltv-restart-all.sh >> /var/log/hltv-restart.log 2>&1
+# Runs via the `hltv-restart.timer` SYSTEMD TIMER (03:00 + 11:00 ET), NOT
+# cron — soak-verify greps `journalctl -u hltv-restart`, so redeploying this
+# as a cron job (the pre-2026 pattern this header used to document) would
+# silently break that check. Log: /var/log/hltv-restart.log
 
 # ============================================================================
 # Configuration

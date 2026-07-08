@@ -2,7 +2,9 @@
 
 Pytest suite that boots `hlds_linux` with a test-mode KTPMatchHandler.amxx
 + KTPWitness.amxx and exercises the match-flow state machine via the
-`amx_ktp_test_*` RCON commands shipped in KTPMatchHandler 0.10.122.
+`amx_ktp_test_*` RCON commands shipped in KTPMatchHandler 0.10.122
+(current fleet build 0.10.142 — the spine test pins the exact expected
+version; the layout sketch below predates several later test files).
 
 Asserts on three observable surfaces:
 

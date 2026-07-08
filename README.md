@@ -1,6 +1,12 @@
 # KTP Infrastructure
 
-**Version 1.5.10** - Server infrastructure, deployment automation, and operational documentation for KTP Day of Defeat competitive servers.
+Server infrastructure, deployment automation, and operational documentation for KTP Day of Defeat competitive servers. *(Current version: see [CHANGELOG.md](CHANGELOG.md) — this header previously pinned a version string that drifted.)*
+
+> **Staleness note (2026-07-07):** the tables below (crons, repo layout,
+> server inventory) date from early 2026 and are missing everything since
+> (`tests/`, `lan-web/`, newer crons, Chicago running 4 active instances).
+> The root `CLAUDE.md` and per-directory READMEs are current; a refresh is
+> tracked with the TECHNICAL_GUIDE rewrite.
 
 ---
 
@@ -191,7 +197,7 @@ These files contain server IPs and credentials. Create your own copies:
 | Script | Deploy To | Description |
 |--------|-----------|-------------|
 | `ktp-scheduled-restart.sh` | `~/` on game servers | Nightly restart with Discord notification |
-| `ktp-log-rotation.sh` | `~/` on game servers | Prune logs older than 120 days |
+| `ktp-log-rotation.sh` | `~/` on game servers | Compress logs >120 days, delete >365 days |
 
 ### Data Server Scripts
 
@@ -235,7 +241,7 @@ serverfiles/
 ├── hlds_linux               # KTP-ReHLDS executable
 ├── engine_i486.so           # KTP-ReHLDS engine
 ├── libsteam_api.so          # KTP Steam API (76KB - NOT stock!)
-├── rehlds/extensions.ini    # Extension loader config
+├── dod/addons/extensions.ini # Extension loader config (NOT rehlds/ — the engine only reads it from the game dir)
 └── dod/addons/ktpamx/       # KTPAMXX installation
     ├── dlls/                # ktpamx_i386.so
     ├── modules/             # dodx, reapi, curl modules

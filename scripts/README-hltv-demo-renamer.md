@@ -14,7 +14,7 @@ ktp-organize-hltv-demos.sh @ 04:00 ET    moves to: demos/ATL1/ktp/ktp_1777498304
 public portal at http://74.91.112.242/demos/
         ↓
 ktp-demo-retention.sh @ 04:30 ET         deletes per-tier age (ktp/draft 180d, 12man/scrim 90d)
-ktp-demo-cleanup-auto.sh @ 04:45 ET      sweeps unmatched root-level auto-*.dem >7d
+ktp-demo-cleanup-auto.sh every 30 min    sweeps unmatched root-level auto-*.dem >6h (retuned 2026-05-03; refuses to run while the renamer service is down)
 ```
 
 ## How it works
@@ -95,7 +95,7 @@ If the future organizer adds `(_h[12]|_ot[1-9])?` support, drop the strip and OT
 
 ## Failure modes
 
-- **Game host SSH unreachable** — that host's logs aren't read this poll cycle. Resumes when SSH recovers. If down >4h, in-progress matches' windows get abandoned and demos remain at root for the cleanup script to sweep at >7d.
-- **Plugin doesn't emit MATCH_WINDOW_OPEN/CLOSE** — renamer no-ops; auto-*.dem files accumulate at root and get swept at >7d. Operator can manually `mv` to canonical names if they care about specific demos.
+- **Game host SSH unreachable** — that host's logs aren't read this poll cycle. Resumes when SSH recovers. If down >4h, in-progress matches' windows get abandoned and the demos remain at root — **the cleanup sweep deletes root auto-*.dem at >6h (every 30 min)**, so rescue anything you care about promptly; the cleanup's renamer-active interlock does NOT protect this case (the renamer is up, the game host isn't).
+- **Plugin doesn't emit MATCH_WINDOW_OPEN/CLOSE** — renamer no-ops; auto-*.dem files accumulate at root and are swept at >6h (30-min cadence). There is NO multi-day grace to manually `mv` demos — the pre-2026-05-03 7-day/daily numbers this section used to cite are long retired.
 - **Rename target already exists** — skipped with warning; no overwrite. Manual operator intervention required.
 - **Multi-segment with same hltv_ts** (HLTV rotation collision) — second file gets `_part2`. Vanishingly rare since HLTV's auto-suffix has minute resolution.
