@@ -210,10 +210,19 @@ def normalise_module_name(name: str) -> str:
 def normalise_plugin_name(name: str) -> str:
     """Match `KTPMatchHandler.amxx`, `KTPMatchHandler`, and the display name
     `KTP Match Handler` against the same key. Returns lowercase, no spaces,
-    no underscores, no .amxx extension."""
+    no underscores, no .amxx extension (whole or truncation-sliced)."""
     n = name.lower()
     if n.endswith(".amxx"):
         n = n[: -len(".amxx")]
+    else:
+        # AMXX's 11-char filename truncation can slice the extension mid-way
+        # (`ktp_file.am`). Without stripping the fragment, a short plugin name
+        # normalises under the 8-char overlap floor while its truncated row
+        # keeps the fragment — unmatchable from either direction.
+        for frag in (".amx", ".am", ".a", "."):
+            if n.endswith(frag):
+                n = n[: -len(frag)]
+                break
     return n.replace(" ", "").replace("_", "")
 
 

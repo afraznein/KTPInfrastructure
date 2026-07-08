@@ -221,6 +221,19 @@ class TruncatedMatchingTests(unittest.TestCase):
         self.assertTrue(matches_truncated("KTPGrenadeLoadout.amxx", "KTPGrenadeL"))
         self.assertTrue(matches_truncated("KTPGrenadeDamage.amxx", "KTPGrenadeD"))
 
+    def test_short_name_with_sliced_extension(self):
+        # Regression (2026-07-08, first caught by KTPFileChecker's smoke): the
+        # 11-char truncation slices .amxx mid-way (`ktp_file.am`), and the
+        # 2026-07-07 full-length-prefix fix rejected the pair — the expected
+        # side normalises to `ktpfile` (7 chars, under the 8-char overlap
+        # floor) while the actual kept the `.am` fragment. Partial extension
+        # fragments are now stripped in normalise_plugin_name.
+        self.assertTrue(matches_truncated("ktp_file", "ktp_file.am"))
+        self.assertTrue(matches_truncated("ktp_file.amxx", "ktp_file.am"))
+        self.assertTrue(matches_truncated("ktp_cvar", "ktp_cvar.am"))
+        # Distinct short names still refuse to cross-match.
+        self.assertFalse(matches_truncated("ktp_file", "ktp_cvar.am"))
+
 
 if __name__ == "__main__":
     unittest.main()
