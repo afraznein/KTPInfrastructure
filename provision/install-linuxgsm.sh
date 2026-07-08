@@ -244,7 +244,9 @@ for i in $(seq 1 $NUM_INSTANCES); do
     port=$((BASE_PORT + i - 1))
     if pgrep -f "hlds_linux.*-port $port" > /dev/null; then
         echo "  Port $port: RUNNING"
-        ((running++))
+        # NOT ((running++)) — under set -e the post-increment from 0 returns
+        # 1 and killed this script at the FIRST healthy server.
+        running=$((running + 1))
     else
         echo "  Port $port: NOT RUNNING"
     fi
@@ -292,6 +294,39 @@ log_info "Management scripts created"
 # 5. Set Up Cron Jobs
 # ============================================
 log_info "Setting up cron jobs..."
+
+# HARD RULE: patch command_monitor.sh's "old type tmux session" false-positive
+# BEFORE arming the monitor cron (documented in root CLAUDE.md — an unpatched
+# monitor kills healthy new-format tmux sessions = random mid-match restarts).
+# clone-ktp-stack.sh step 9 also applies this (belt-and-suspenders), but if
+# Phase 3 ever aborts between this script and clone, the cron below would
+# otherwise be live and unpatched. Same idempotent sed as clone step 9.
+log_info "Patching LinuxGSM command_monitor.sh (old-type-tmux false positive)..."
+for i in $(seq 1 $NUM_INSTANCES); do
+    port=$((BASE_PORT + i - 1))
+    name="dodserver"
+    [ $i -gt 1 ] && name="dodserver$i"
+    MONITOR_SCRIPT="$HOME/dod-$port/lgsm/modules/command_monitor.sh"
+    # LinuxGSM fetches modules LAZILY — on a fresh install command_monitor.sh
+    # doesn't exist until the first monitor invocation downloads it, which
+    # (before this fix) would have been the unpatched cron tick itself. Run
+    # monitor once to materialize the module (harmless pre-start: no
+    # -monitoring.lock means it treats the instance as intentionally stopped).
+    if [ ! -f "$MONITOR_SCRIPT" ]; then
+        "$HOME/dod-$port/$name" monitor > /dev/null 2>&1 || true
+    fi
+    if [ -f "$MONITOR_SCRIPT" ]; then
+        if grep -q "KTP-DISABLED" "$MONITOR_SCRIPT" 2>/dev/null; then
+            log_info "  Port $port: monitor patch already applied"
+        else
+            sed -i '203,212s/^/# KTP-DISABLED: /' "$MONITOR_SCRIPT"
+            log_info "  Port $port: monitor patch applied"
+        fi
+    else
+        log_warn "  Port $port: command_monitor.sh STILL not found after a monitor run —"
+        log_warn "  patch it manually before relying on the monitor cron (see root CLAUDE.md)"
+    fi
+done
 
 # Create crontab entries — generated per instance so the monitor list always
 # matches NUM_INSTANCES (was hardcoded to 5; broke the 6th server's monitor).

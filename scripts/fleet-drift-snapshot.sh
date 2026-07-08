@@ -45,6 +45,7 @@ for k in \
   kernel.sched_autogroup_enabled \
   kernel.numa_balancing \
   kernel.nmi_watchdog \
+  kernel.watchdog \
   kernel.core_pattern \
   vm.swappiness \
   vm.stat_interval \

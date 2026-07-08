@@ -8,6 +8,15 @@ Usage: python3 draft_day_monitor.py [--test]
 
 Configuration:
   Copy this file to draft_day_monitor.py and fill in your server credentials.
+
+PARTIALLY DEPRECATED (2026-07-07): the CPU/RAM sections query the local
+Netdata API (:19999), and Netdata has been DISABLED fleet-wide since
+2026-07-02 — those sections now silently return nothing while the monitor
+appears to work. The loadavg/ps/UDP-error sections are Netdata-free and
+still function. Also note (fixed 2026-07-07): the /proc/net/snmp UDP parse
+below reads parts[4] = RcvbufErrors; the pre-fix version read parts[5],
+which is SndbufErrors. Port the CPU/RAM sections to /proc/stat +
+/proc/meminfo before reviving this for an event.
 """
 
 import paramiko
@@ -96,7 +105,7 @@ def get_server_metrics(ssh):
     udp_line = stdout.read().decode().strip()
     if udp_line:
         parts = udp_line.split()
-        metrics['udp_rcvbuf_errors'] = int(parts[5]) if len(parts) > 5 else 0
+        metrics['udp_rcvbuf_errors'] = int(parts[4]) if len(parts) > 4 else 0  # parts[5] is SndbufErrors
 
     return metrics
 

@@ -219,6 +219,8 @@ net.core.wmem_default=26214400
 
 # KTP Game Server Performance Tuning
 kernel.nmi_watchdog = 0
+# No soft-lockup watchdog timers on isolated game cores (fleet-wide 2026-07-02)
+kernel.watchdog = 0
 net.ipv4.tcp_low_latency = 1
 net.core.busy_read = 100
 net.core.busy_poll = 100
@@ -471,8 +473,14 @@ done
 
 # Apply memory optimizations immediately
 log_info "Applying memory optimizations..."
-echo madvise > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
+# THP fully OFF — fleet standard since 2026-07-02 (khugepaged compaction
+# stalls; HLDS gets no THP benefit). Was `madvise` before that. Persisted via
+# tmpfiles.d below, NOT rc.local: rc-local.service runs AFTER
+# systemd-tmpfiles-setup, so an rc.local THP line would silently override the
+# tmpfiles value at every boot.
+echo never > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || true
 echo never > /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null || true
+echo 'w /sys/kernel/mm/transparent_hugepage/enabled - - - - never' > /etc/tmpfiles.d/ktp-thp.conf
 echo 0 > /proc/sys/vm/compaction_proactiveness 2>/dev/null || true
 echo 0 > /sys/kernel/mm/ksm/run 2>/dev/null || true
 echo 1000 > /sys/kernel/mm/lru_gen/min_ttl_ms 2>/dev/null || true
@@ -486,6 +494,7 @@ if [ -n "$IFACE" ] && command -v ethtool &>/dev/null; then
     ethtool -K $IFACE tso off 2>/dev/null || true
     ethtool -G $IFACE rx 4096 tx 4096 2>/dev/null || true
     ethtool -C $IFACE rx-usecs 1 2>/dev/null || true
+    tc qdisc replace dev "$IFACE" root pfifo_fast 2>/dev/null || true
 fi
 
 # Apply conntrack bypass immediately
@@ -529,8 +538,11 @@ done
 # Memory Optimizations
 # ============================================
 
-# Disable Transparent Hugepages (eliminates khugepaged stalls)
-echo madvise > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null
+# THP fully OFF — fleet standard 2026-07-02. /etc/tmpfiles.d/ktp-thp.conf is
+# the primary owner; this line writes the SAME value so the (later-running)
+# rc-local can never fight it. The pre-2026-07-07 version wrote `madvise`
+# here, silently overriding tmpfiles' `never` at every boot.
+echo never > /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null
 echo never > /sys/kernel/mm/transparent_hugepage/defrag 2>/dev/null
 
 # Disable proactive memory compaction (reduces random micro-stalls)
@@ -558,6 +570,12 @@ if [ -n "$IFACE" ] && command -v ethtool &>/dev/null; then
 
     # Lower interrupt coalescing for lower latency
     ethtool -C $IFACE rx-usecs 1 2>/dev/null
+
+    # pfifo_fast qdisc — avoids fq_codel's per-packet overhead on the game
+    # NIC (fleet standard; expected-rc-local.conf audits for this line, and
+    # the pre-2026-07-07 version of this script never generated it — every
+    # freshly provisioned host failed that audit pattern forever)
+    tc qdisc replace dev "$IFACE" root pfifo_fast 2>/dev/null
 fi
 
 # Conntrack bypass for game server ports (eliminates per-packet lookup overhead)
@@ -833,13 +851,20 @@ log_info "Creating CPU pinning + SCHED_FIFO auto-apply service..."
 # Build the port->CPU pinning map from the CPU layout detected earlier
 # (NUM_CPUS, FIRST_GAME_CPU, AVAIL_GAME_CPUS).
 if [ "$NUM_CPUS" -le 4 ]; then
-    # Tiny VPS (e.g. Chicago 4 vCPU): CPUs 1-3 for games, wrap if more servers.
-    DEDICATED=(1 2 3)
-    CPU_COMMENT="# vCPU layout: 0=sys"
+    # Tiny VPS (e.g. Chicago 4 vCPU): matches scripts/deploy-chrt-service.sh
+    # --chicago (27015-17 on 1-3; 27018/27019 share cpu0 with housekeeping).
+    DEDICATED=(1 2 3 0 0)
+    CPU_COMMENT="# vCPU layout: 0=sys+overflow"
 elif [ "$NUM_CPUS" -eq 8 ] && [ "$NUM_SERVERS" -le 5 ]; then
-    # Proven cloud-fleet 4c/8t Haswell map — kept identical to avoid drift.
-    DEDICATED=(2 3 5 6 7)
-    CPU_COMMENT="# CPU layout: 0,1,4=sys"
+    # The ACTUAL cloud-fleet 4c/8t map: ports 27015-19 -> CPUs 2,5,4,3,7
+    # (sibling pairs (0,4)(1,5)(2,6)(3,7); cpu0/1 housekeeping). The
+    # pre-2026-07-07 value here was 2,3,5,6,7 while CLAIMING to match the
+    # fleet — a reprovisioned host would have put 27018 on cpu6, the HT
+    # sibling of 27015's cpu2, destroying the "27015 is the only clean
+    # exclusive core" match-hosting policy. Keep in sync with the root
+    # CLAUDE.md placement table + scripts/deploy-chrt-service.sh.
+    DEDICATED=(2 5 4 3 7)
+    CPU_COMMENT="# CPU layout: 0,1=sys (NIC IRQs); sibling pairs (0,4)(1,5)(2,6)(3,7)"
 else
     # General / LAN box: one game server per CPU from FIRST_GAME_CPU up.
     DEDICATED=()

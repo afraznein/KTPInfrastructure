@@ -71,15 +71,25 @@ def _fleet_ssh_password():
 
 # All five active fleet hosts.  Per CLAUDE.md root creds, but we use the
 # dodserver user since all deploy paths land under ~dodserver/.
+# Per-host port lists (mirrors ktp-verify-deploy.py): Chicago 27019 is
+# DISABLED — staging a .new there was a landmine: the restart script skips
+# .ktp-disabled instances so the file never swapped, verify-deploy never
+# checked it, and a months-stale binary would silently activate if 27019
+# were ever re-enabled.
 SERVERS = {
-    'atlanta': {'host': '74.91.121.9',   'user': 'dodserver', 'description': 'Atlanta Baremetal'},
-    'dallas':  {'host': '74.91.126.55',  'user': 'dodserver', 'description': 'Dallas Baremetal'},
-    'denver':  {'host': '66.163.114.109','user': 'dodserver', 'description': 'Denver Baremetal'},
-    'newyork': {'host': '74.91.123.64',  'user': 'dodserver', 'description': 'New York Baremetal'},
-    'chicago': {'host': '172.238.176.101','user': 'dodserver', 'description': 'Chicago VPS'},
+    'atlanta': {'host': '74.91.121.9',   'user': 'dodserver', 'description': 'Atlanta Baremetal',
+                'ports': [27015, 27016, 27017, 27018, 27019]},
+    'dallas':  {'host': '74.91.126.55',  'user': 'dodserver', 'description': 'Dallas Baremetal',
+                'ports': [27015, 27016, 27017, 27018, 27019]},
+    'denver':  {'host': '66.163.114.109','user': 'dodserver', 'description': 'Denver Baremetal',
+                'ports': [27015, 27016, 27017, 27018, 27019]},
+    'newyork': {'host': '74.91.123.64',  'user': 'dodserver', 'description': 'New York Baremetal',
+                'ports': [27015, 27016, 27017, 27018, 27019]},
+    'chicago': {'host': '172.238.176.101','user': 'dodserver', 'description': 'Chicago VPS (27019 disabled)',
+                'ports': [27015, 27016, 27017, 27018]},
 }
 
-PORTS = [27015, 27016, 27017, 27018, 27019]   # 5 instances per host = 25 total
+PORTS = [27015, 27016, 27017, 27018, 27019]   # default; per-host 'ports' wins
 
 # Auto-routing rules. Pattern is matched on the basename's tail; first match wins.
 ROUTING = [
@@ -282,9 +292,21 @@ def main():
         print(f"  {a.local_path}")
         print(f"    -> dod-*/{a.remote_dir}/{a.basename}.new  ({a.size} bytes, md5 {a.md5})")
 
-    target_instances = [(hk, p) for hk in host_keys for p in ports]
+    # Intersect the requested ports with each host's active list — CHI 27019
+    # is disabled and must never receive a staged .new (see SERVERS comment).
+    target_instances = [
+        (hk, p) for hk in host_keys for p in ports
+        if p in SERVERS[hk].get('ports', PORTS)
+    ]
+    skipped = [(hk, p) for hk in host_keys for p in ports
+               if p not in SERVERS[hk].get('ports', PORTS)]
+    for hk, p in skipped:
+        print(f"NOTE: skipping {hk}:{p} — disabled instance (per-host port list)")
+    if not target_instances:
+        print("FATAL: nothing to do — every requested (host, port) pair is disabled",
+              file=sys.stderr)
+        sys.exit(1)
     print(f"\nTarget instances ({len(target_instances)}): "
-          f"{len(host_keys)} host(s) x {len(ports)} port(s) = "
           f"{', '.join(f'{hk}:{p}' for hk, p in target_instances[:6])}"
           + (f', ... ({len(target_instances)-6} more)' if len(target_instances) > 6 else ''))
     print(f"Mode: {'DRY-RUN' if args.dry_run else 'LIVE'}")
@@ -297,8 +319,9 @@ def main():
     # the same SSH session. Hosts run in parallel.
     def host_worker(host_key: str) -> list[Outcome]:
         host_info = SERVERS[host_key]
+        host_ports = [p for hk, p in target_instances if hk == host_key]
         host_outcomes: list[Outcome] = []
-        for port in ports:
+        for port in host_ports:
             host_outcomes.extend(deploy_to_instance(host_key, host_info, port, artifacts, args.dry_run))
         return host_outcomes
 
@@ -311,8 +334,9 @@ def main():
                 outcomes.extend(result)
                 ok = sum(1 for o in result if o.status in ('ok', 'dry_run'))
                 fail = len(result) - ok
+                n_ports = sum(1 for h, _ in target_instances if h == hk)
                 print(f"  [{hk}] {ok} OK, {fail} FAIL  ({len(result)} total: "
-                      f"{len(ports)} ports x {len(artifacts)} artifacts)")
+                      f"{n_ports} ports x {len(artifacts)} artifacts)")
             except Exception as e:
                 print(f"  [{hk}] worker crashed: {e}")
 

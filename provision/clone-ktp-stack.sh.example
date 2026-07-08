@@ -386,6 +386,16 @@ fi
 # ============================================
 # 4. Deploy KTP Artifacts to All Instances
 # ============================================
+# NEVER overwrite a memory-mapped .so under a running server. Fresh provisioning
+# has no hlds up; a re-run on a live host must stop the servers first (or stage
+# .new files for the nightly swap via scripts/deploy-to-fleet.py instead).
+if pgrep -f hlds_linux >/dev/null 2>&1; then
+    log_error "hlds_linux is RUNNING on this host — refusing to overwrite live binaries."
+    log_error "Stop all instances first (~/restart-all-servers.sh stops+starts; use"
+    log_error "'./dodserver stop' per instance), or stage updates as .new files instead."
+    exit 1
+fi
+
 for i in $(seq 1 $NUM_INSTANCES); do
     PORT=$((BASE_PORT + i - 1))
     INSTANCE_DIR="$HOME/dod-$PORT"
