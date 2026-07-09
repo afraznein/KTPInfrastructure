@@ -28,6 +28,10 @@
 #   - On every PR to main — required status check per branch protection on
 #     `main` (flipped from warn-only after 2 weeks green-on-main, original
 #     design decision 2026-04-24, applied 2026-05-18).
+#   - Nightly via schedule (09:00 UTC) — keeps the live plugin stack exercised
+#     between PRs; paired with scripts/ktp-tier2-heartbeat.sh (data-server cron)
+#     which alerts on a missing/stale/failed last-run marker so a dead runner is
+#     not silently green.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
@@ -48,6 +52,15 @@ on:
         required: false
         type: string
         default: '1.0'
+  schedule:
+    # Nightly at 09:00 UTC (≈04-05 ET) — after the 03:00 ET fleet restart +
+    # perf rollups. Tier 2 otherwise only fires on PRs that touch
+    # tests/integration/, so it can go weeks without exercising the live
+    # plugin stack on the runner; the nightly keeps it warm and, with the
+    # heartbeat below, makes a dead runner / broken schedule VISIBLE instead
+    # of looking identical to "all green". Scheduled runs always run pytest
+    # (the change-detection step only self-skips on pull_request events).
+    - cron: '0 9 * * *'
   pull_request:
     branches: [main]
 
@@ -155,6 +168,7 @@ jobs:
           echo "All required artifacts present."
 
       - name: Run Tier 2 integration suite
+        id: pytest
         if: steps.changes.outputs.run == '1'
         run: |
           # --reruns 2: retry transient failures up to 2 times before
@@ -241,3 +255,19 @@ jobs:
           name: tier2-failure-artifacts-${{ github.run_id }}
           path: ci-artifacts/
           retention-days: 14
+
+      - name: Record Tier 2 last-run marker (heartbeat input)
+        if: always() && steps.changes.outputs.run == '1'
+        # scripts/ktp-tier2-heartbeat.sh (data-server cron) reads this marker
+        # and alerts to Discord if Tier 2 hasn't run within its window or the
+        # last run failed — so a dead self-hosted runner / broken schedule is
+        # VISIBLE instead of looking identical to "all green". Written to a
+        # runner-writable path next to the serverfiles tree; the cron (root)
+        # reads it. Gated on run == '1' so a self-skipped docs-only PR doesn't
+        # stamp an empty-outcome marker over the last real run.
+        run: |
+          MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
+          printf '{"ts": %s, "outcome": "%s", "run_id": "%s", "event": "%s"}\n' \
+            "$(date +%s)" "${{ steps.pytest.outcome }}" "${{ github.run_id }}" "${{ github.event_name }}" \
+            > "$MARKER"
+          echo "Wrote $MARKER ($(cat "$MARKER"))"
