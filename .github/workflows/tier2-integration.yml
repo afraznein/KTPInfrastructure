@@ -70,9 +70,13 @@ jobs:
       # repo-scoped Actions variables — the expression silently falls through
       # to the default on every fork PR. We own the runner; path is canonical.
       KTP_HLDS_SERVERFILES: /opt/ktp-tier2-runner/serverfiles
-      # Timeout multiplier — manual runs can dial this up if the runner is
-      # busy. Default 1.0 = same as local dev.
-      KTP_TEST_TIMEOUT_MULTIPLIER: ${{ inputs.timeout_multiplier || '1.0' }}
+      # Timeout multiplier. The self-hosted runner shares the data server
+      # with 25 HLTV writers + MySQL, so async curl round-trips (Discord
+      # embed POSTs, HUD ingest) can exceed the 1.0/5s window — that raced
+      # the match-type routing tests (one of 12man/draft/ktp_ot/draft_ot
+      # flaked per run). 2.0 = the _timing.py "busy CI runner" value; a
+      # manual workflow_dispatch can still override.
+      KTP_TEST_TIMEOUT_MULTIPLIER: ${{ inputs.timeout_multiplier || '2.0' }}
       # Tier 2 post-run reporting (1.5.22) — pytest_sessionfinish hook in
       # tests/integration/conftest.py writes a session-summary JSON here
       # IFF this env var is set; the post-pytest step reads it and POSTs
