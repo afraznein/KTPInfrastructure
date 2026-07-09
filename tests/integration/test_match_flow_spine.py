@@ -42,7 +42,7 @@ from .match_flow import MatchDriver, MatchType
 # (memory `feedback_commit_hygiene.md`). 0.10.142 = the fleet-deployed
 # version (LIVE 2026-07-07); restage the runner's test-mode build to match
 # before the next Tier 2 run — test_1 fails loudly on mismatch by design.
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.142"
+EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.143"
 
 
 def _serverfiles() -> Path | None:
