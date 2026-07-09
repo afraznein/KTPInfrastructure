@@ -3,7 +3,7 @@
 Pytest suite that boots `hlds_linux` with a test-mode KTPMatchHandler.amxx
 + KTPWitness.amxx and exercises the match-flow state machine via the
 `amx_ktp_test_*` RCON commands shipped in KTPMatchHandler 0.10.122
-(current fleet build 0.10.142 — the spine test pins the exact expected
+(current fleet build 0.10.143 — the spine test pins the exact expected
 version; the layout sketch below predates several later test files).
 
 Asserts on three observable surfaces:
@@ -182,7 +182,7 @@ runs on a dev box without the hlds environment.
 
 | # | Name | Asserts |
 |---|------|---------|
-| 1 | `test_1_plugin_load_and_version_pin` | `amx_ktp_versions` lists KTPMatchHandler at the version pinned in `EXPECTED_KTPMATCHHANDLER_VERSION` (currently 0.10.122). Catches the "source bumped, deployed binary stale" class. |
+| 1 | `test_1_plugin_load_and_version_pin` | `amx_ktp_versions` lists KTPMatchHandler at the version pinned in `EXPECTED_KTPMATCHHANDLER_VERSION` (currently 0.10.143). Catches the "source bumped, deployed binary stale" class. |
 | 3 | `test_3_setup_match_enters_prestart` | `amx_ktp_test_setup_match 0` returns a `<systime>-TEST` match_id; state shows COMPETITIVE matchType + non-live + non-pending; synthetic captains in place; TEST_SETUP log line written. |
 | 4 | `test_4_advance_pending_enters_pending` | `amx_ktp_test_advance_pending` flips `matchPending` 0 → 1; PENDING_BEGIN log line emitted (production-shape event downstream consumers gate on). |
 | 6 | `test_6_advance_live_fires_match_start_forward` | `amx_ktp_test_advance_live 1` flips `matchLive` 0 → 1, sets `currentHalf=1`, fires `ktp_match_start` forward (witness.jsonl row with matching matchId/matchType/half). **The load-bearing test of the spine** — proves cross-plugin forward dispatch works end-to-end. |

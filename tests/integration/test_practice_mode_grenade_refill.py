@@ -43,7 +43,7 @@ import pytest
 from ._timing import WITNESS_TIMEOUT, scaled
 from .log_tail import current_log_size, wait_for_log_substring
 
-EXPECTED_KTPPRACTICEMODE_VERSION = "1.4.4"
+EXPECTED_KTPPRACTICEMODE_VERSION = "1.4.6"
 
 # Grenade ids from KTPPracticeMode.sma / dodx weapon table
 DODW_HANDGRENADE = 13
