@@ -68,9 +68,13 @@ from .fake_ingest import FakeIngest
 from .match_flow import MatchDriver, MatchType
 
 
-# Pinned version — bump when KTPHudObserver/KTPHudObserver.sma's
-# `register_plugin` version field bumps.
-EXPECTED_KTPHUDOBSERVER_VERSION = "2.0.0"
+# Expected version: the HUD refresh step in tier2-integration.yml compiles the
+# plugin from current source each run and exports its VERSION here, so the suite
+# asserts loaded==built with no hardcoded pin to maintain. The literal is only a
+# fallback for local/external-server runs where the refresh step didn't set it.
+EXPECTED_KTPHUDOBSERVER_VERSION = os.environ.get(
+    "KTP_EXPECTED_HUDOBSERVER_VERSION", "2.0.0"
+)
 
 
 # Plugin emits POSTs via amxxcurl async; round-trip is typically
