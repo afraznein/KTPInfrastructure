@@ -2,6 +2,30 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.32] - 2026-07-10
+
+### rcon harness: GoldSrc SPLITPACKET reassembly + ktp_ot xfail
+
+Found by the 2.7.21 pre-activation Tier-2 gate run (dispatched against the
+re-synced runner stack — engine .928 + KTPAMXX 2.7.21 + ReAPI .365 +
+amxxcurl 1.3.13; the runner had drifted to .926 + a never-shipped dev dodx
++ amxxcurl 1.3.11 since the 06-28 modernization sync).
+
+- `tests/smoke/rcon.py` — the client had no SPLITPACKET (`-2` header)
+  reassembly, so any rcon response whose single flush crossed the ~1400-byte
+  routeable limit raised "response missing 0xFFFFFFFF prefix". First live
+  trigger: a `changelevel` response on the 2.7.21 stack (size-marginal;
+  the .928 async log-open line + longer boot output pushed it over).
+  New `_SplitReassembler`: sequence-keyed, out-of-order tolerant,
+  interleave-safe, loud on truncation/counter anomalies. 9 unit tests
+  (`tests/unit/test_rcon_split.py`), golden case = the captured packet.
+  Standing rule unchanged: ALL rcon tooling reuses this client — the fix
+  covers every consumer.
+- `test_ktp_ot_routes_to_competitive_channel` xfail'd (strict=False) with
+  the same signature/reason as its 12man/draft siblings — the pre-existing
+  match-type-start-embed timing race; test_draft_ot passing on the same
+  runs shows OT-type embeds post fine on 2.7.21.
+
 ## [1.5.31] - 2026-07-10
 
 ### Spike digest rewrite on real daily counts + perf-rollup retune for the 1000fps fleet

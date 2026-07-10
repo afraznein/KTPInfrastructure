@@ -11,6 +11,17 @@ Multi-packet responses: server sends one A2A_PRINT packet per redirect flush;
 large outputs (e.g. `amx plugins`) span multiple packets. The client drains
 until a short inactivity gap, then concatenates.
 
+Split packets: when a single flush exceeds the routeable-packet limit
+(~1400 bytes), NET_SendPacket fragments it with the GoldSrc SPLITPACKET
+header instead of a plain A2A_PRINT:
+
+  int32 -2 (\xfe\xff\xff\xff) | int32 sequence id | byte (num << 4 | total)
+
+Fragments concatenate (in packet-number order) into one ordinary
+\xff\xff\xff\xffl<output> packet. First seen live 2026-07-10: a
+`changelevel` response crossed the boundary on the 2.7.21 stack and the
+then-reassembly-less client raised "response missing 0xFFFFFFFF prefix".
+
 Stdlib only. Designed to run anywhere Python runs — WSL, hosted Linux runners,
 self-hosted runner, dev laptop.
 """
@@ -22,6 +33,8 @@ import time
 from dataclasses import dataclass
 
 PREFIX = b"\xff\xff\xff\xff"
+SPLIT_PREFIX = b"\xfe\xff\xff\xff"
+_SPLIT_HEADER_LEN = 9  # marker(4) + sequence id(4) + packet-number byte(1)
 A2A_PRINT = ord("l")
 
 
@@ -90,12 +103,23 @@ class RconClient:
 
     def _drain_response(self, sock: socket.socket) -> str:
         chunks: list[str] = []
-        # First packet: required, blocks for `timeout`.
-        try:
-            data, _ = sock.recvfrom(4096)
-        except socket.timeout as exc:
-            raise RconError("no rcon response within timeout") from exc
-        chunks.append(_unwrap_print_packet(data))
+        reasm = _SplitReassembler()
+
+        # First logical packet: required. A split fragment doesn't complete a
+        # logical packet by itself, so keep receiving (each recv re-armed with
+        # the full `timeout`) until reassembly yields one.
+        while not chunks:
+            try:
+                data, _ = sock.recvfrom(4096)
+            except socket.timeout as exc:
+                if reasm.pending:
+                    raise RconError(
+                        f"split rcon response never completed: {reasm.describe()}"
+                    ) from exc
+                raise RconError("no rcon response within timeout") from exc
+            text = reasm.ingest(data)
+            if text is not None:
+                chunks.append(text)
 
         # Subsequent packets: short drain window. Stop when no packet arrives
         # within drain_timeout — server has nothing left to send.
@@ -105,9 +129,64 @@ class RconClient:
                 data, _ = sock.recvfrom(4096)
             except socket.timeout:
                 break
-            chunks.append(_unwrap_print_packet(data))
+            text = reasm.ingest(data)
+            if text is not None:
+                chunks.append(text)
 
+        if reasm.pending:
+            raise RconError(
+                f"split rcon response incomplete at drain end: {reasm.describe()}"
+            )
         return "".join(chunks)
+
+
+class _SplitReassembler:
+    """Reassembles GoldSrc SPLITPACKET fragments into logical packets.
+
+    ingest() returns the unwrapped text when a datagram completes a logical
+    packet (immediately, for ordinary unsplit packets), else None. Fragments
+    may arrive out of order; sets are keyed by sequence id so interleaved
+    split responses can't cross-contaminate.
+    """
+
+    def __init__(self) -> None:
+        self._sets: dict[int, dict[int, bytes]] = {}
+        self._totals: dict[int, int] = {}
+
+    @property
+    def pending(self) -> bool:
+        return bool(self._sets)
+
+    def describe(self) -> str:
+        return ", ".join(
+            f"seq={seq}: {len(parts)}/{self._totals[seq]} fragments"
+            for seq, parts in self._sets.items()
+        )
+
+    def ingest(self, data: bytes) -> str | None:
+        if not data.startswith(SPLIT_PREFIX):
+            return _unwrap_print_packet(data)
+        if len(data) <= _SPLIT_HEADER_LEN:
+            raise RconError(f"split packet too short: {data!r}")
+        seq = int.from_bytes(data[4:8], "little")
+        num, total = data[8] >> 4, data[8] & 0x0F
+        if total == 0 or num >= total:
+            raise RconError(
+                f"split packet bad counters (num={num} total={total}): {data[:16]!r}"
+            )
+        known_total = self._totals.setdefault(seq, total)
+        if known_total != total:
+            raise RconError(
+                f"split packet total mismatch for seq={seq}: {known_total} vs {total}"
+            )
+        self._sets.setdefault(seq, {})[num] = data[_SPLIT_HEADER_LEN:]
+        parts = self._sets[seq]
+        if len(parts) < total:
+            return None
+        whole = b"".join(parts[n] for n in sorted(parts))
+        del self._sets[seq]
+        del self._totals[seq]
+        return _unwrap_print_packet(whole)
 
 
 def _unwrap_print_packet(packet: bytes) -> str:
