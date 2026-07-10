@@ -9,11 +9,15 @@ and alerts on hosts deviating ≥2σ from their own baseline.
 Three-tier severity model per `TODO.md` Tier 3 Project 1 follow-up spec:
 
   WARN      yellow embed, no role-ping
-              per-host fps_p50 < (host_baseline_mean - 2σ)
-              OR per-host daily spike_total > (host_baseline_mean + 2.5σ)
-              (spike threshold widened from 2σ to 2.5σ on 2026-05-05 to
-              suppress Poisson-tail false-positives observed on first
-              dry-run fire; see CHANGELOG 1.5.17)
+              per-host fps_p50 < (host_baseline_mean - 2σ), gated by a
+              ≥5fps / ≥0.5% magnitude floor (retuned 1.5.31 — the fleet
+              runs saturated at ~999.5 fps, sub-5fps daily-median drift is
+              player-imperceptible)
+              OR per-host daily ≥10ms spike count > (host_baseline_mean + 2.5σ)
+              (source switched to ktp_spike_daily material frames in 1.5.31 —
+              the old per-phase spike_total was magnitude-blind, dominated by
+              imperceptible 0-10ms frames; 2.5σ retained from the 2026-05-05
+              Poisson-tail tune, see CHANGELOG 1.5.17)
 
   CRITICAL  red embed, no role-ping
               ≥3 hosts WARN on the same day
@@ -53,10 +57,11 @@ Optional:
   MYSQL_DB                 default hlstatsx
   PERF_EXCLUDED_HOSTS      comma-separated host:port (default: none)
   KTP_ADMIN_ROLE_ID        Discord role ID for @KTP Admin pings (default 1002394466700767332)
-  FLEET_CRITICAL_FPS       Threshold for fleet-median CRITICAL (default 963)
+  FLEET_CRITICAL_FPS       Threshold for fleet-median CRITICAL (default 995)
 
 Cross-references:
-  - hlstatsx.ktp_telemetry_metrics  source data, populated every 5 min
+  - hlstatsx.ktp_telemetry_metrics  fps source data, populated every 5 min
+  - hlstatsx.ktp_spike_daily        ≥10ms spike counts (aggregator, 1.5.31)
   - hlstatsx.ktp_telemetry_baselines forensic cache (this script writes)
   - /opt/ktp-profile-aggregator/aggregator.py  upstream collector
   - TEST_INFRASTRUCTURE_PLAN.md § Tier 3 Project 1
@@ -96,24 +101,28 @@ DEFAULT_CONFIG = Path("/etc/ktp/discord-relay.conf")
 FPS_SIGMA_THRESHOLD = 2.0
 SPIKE_SIGMA_THRESHOLD = 2.5
 
-# FPS-side absolute-drop floor (filed 2026-05-06, shipped 1.5.21).
-# 2σ alone fires for any drop ≥ 2σ regardless of magnitude — on tight-σ hosts
-# (DAL1 σ=0.3 fps, DAL4 σ=0.2 fps in the 2026-05-06 second-fire data) that
-# meant sub-1-fps drops triggered WARN even though the actual delta is
-# player-imperceptible (<0.05% throughput). Adding an absolute-drop floor
-# gates the 2σ trigger to drops of meaningful magnitude only — either
-# ≥1 fps absolute OR ≥0.1% relative, whichever is more lenient (lenient
-# floor preserves sensitivity on lower-fps hosts where 1 fps is still 0.1%+).
-#
-# Validation against 2026-05-06 fire data:
-#   NY3 drop = 979.5 - 973.2 = 6.3 fps (0.64%)  → BOTH conditions pass → fire
-#   DAL1 drop = 980.7 - 980.2 = 0.5 fps (0.05%) → BOTH fail → suppressed
-#   DAL4 drop = 979.1 - 978.7 = 0.4 fps (0.04%) → BOTH fail → suppressed
-FPS_MIN_DROP_FPS = 1.0
-FPS_MIN_DROP_PCT = 0.001  # 0.1%
+# FPS-side absolute-drop floor (1.5.21; retuned 1.5.31 for the 1000fps fleet).
+# 2σ alone fires for any drop ≥ 2σ regardless of magnitude — with the fleet
+# saturated at ~999.5 fps and per-host σ of 0.3-0.7 (post async-log-writer,
+# 2026-07 data), the old ≥1fps floor made WARN fire on 0.5-2 fps daily-median
+# drift: 12 host-WARNs in the first 9 days of July, several days reaching the
+# ≥3-host CRITICAL rule, all player-imperceptible. At the cap, daily-median
+# fps is a saturated metric — a drop only matters when it's large. Floor
+# raised to ≥5 fps absolute OR ≥0.5% relative (lenient OR keeps lower-fps
+# hosts responsive if one ever rejoins the fleet).
+FPS_MIN_DROP_FPS = 5.0
+FPS_MIN_DROP_PCT = 0.005  # 0.5%
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
-DEFAULT_FLEET_CRITICAL_FPS = 963.0  # = 976.5 - 2*6.83 per fleet baseline 2026-05-03
+# Fleet-median CRITICAL is the boiled-frog backstop: the trailing baseline
+# self-adjusts to slow sags, this absolute floor doesn't. Re-derived 1.5.31:
+# worst fleet-median day on the post-.927 stack is 999.08 (2026-07-07, heavy
+# deploy day; day-to-day σ ≈ 0.3), and map changes never reach the daily
+# median (idle self-cycles are already in the 999.5 steady state). 995 has
+# >4 fps of margin below any observed day yet would have caught the May-era
+# 975-979 regression state. Prior value 963 = 976.5 - 2*6.83 (2026-05-03
+# baseline, pre async-log-writer) — allowed a ~36 fps silent fleet sag.
+DEFAULT_FLEET_CRITICAL_FPS = 995.0
 DEFAULT_EXCLUDED = ""  # NY:27019 canary exclusion retired 2026-05-13 (reverted to fleet config)
 DEFAULT_ADMIN_ROLE = "1002394466700767332"  # @KTP Admin
 
@@ -124,6 +133,9 @@ KTP_RED = 15548997
 # Schema for the per-day baseline cache. Idempotent on (server_endpoint, day):
 # rerunning for the same day overwrites the row (script is intentionally
 # replayable so an operator can fix a config issue and rerun).
+# spike_total_* semantics changed 1.5.31: rows before 2026-07-10 hold
+# all-phase per-phase-line counts (~200/day); rows after hold ≥10ms
+# umbrella-frame counts (~0-20/day). Don't compare across the boundary.
 DDL_BASELINES = """
 CREATE TABLE IF NOT EXISTS ktp_telemetry_baselines (
     server_endpoint VARCHAR(48) NOT NULL,
@@ -220,15 +232,20 @@ def ensure_baseline_schema(cnx: pymysql.connections.Connection) -> None:
 def fetch_daily_aggregates(
     cnx: pymysql.connections.Connection, start: date, end: date,
 ) -> dict[tuple[str, date], dict[str, float]]:
-    """Return {(server_endpoint, day): {fps_p50_mean, spike_total}} over the
-    inclusive [start, end] day range. Day key is `DATE(window_end)` per row.
-    Empty windows (no rows for a host on a day) → key absent."""
+    """Return {(server_endpoint, day): {fps_p50_mean}} over the inclusive
+    [start, end] day range. Day key is `DATE(window_end)` per row.
+    Empty windows (no rows for a host on a day) → key absent.
+
+    Spike counts intentionally NOT sourced here anymore (1.5.31): the
+    per-phase spike_* columns are magnitude-blind — dominated by 0-10ms
+    frames that are imperceptible at 1000fps, while a handful of 100ms
+    stalls hide inside their σ. Material spikes come from ktp_spike_daily
+    via fetch_material_spikes below."""
     sql = """
     SELECT
         server_endpoint,
         DATE(window_end) AS day,
-        AVG(fps_p50) AS fps_p50_mean,
-        SUM(spike_phys + spike_read + spike_steam + spike_send) AS spike_total
+        AVG(fps_p50) AS fps_p50_mean
     FROM ktp_telemetry_metrics
     WHERE DATE(window_end) BETWEEN %s AND %s
     GROUP BY server_endpoint, DATE(window_end)
@@ -240,9 +257,41 @@ def fetch_daily_aggregates(
             key = (row["server_endpoint"], row["day"])
             out[key] = {
                 "fps_p50_mean": float(row["fps_p50_mean"]),
-                "spike_total": int(row["spike_total"] or 0),
             }
     return out
+
+
+# Buckets below this are imperceptible at 1000fps; matches the digest's
+# noise-floor tier (spike_signatures._BUCKETS labels).
+SPIKE_NOISE_BUCKETS = ("0-5ms", "5-10ms")
+
+
+def fetch_material_spikes(
+    cnx: pymysql.connections.Connection, start: date, end: date,
+) -> tuple[dict[tuple[str, date], int], set[date]]:
+    """Per-(endpoint, day) counts of ≥10ms [KTP_SPIKE] umbrella frames from
+    ktp_spike_daily, plus the set of days that have ANY fleet data.
+
+    The day-set drives zero-filling: an endpoint absent on an observed day
+    genuinely had zero material spikes, but days before the table existed
+    (or with the aggregator down) must be EXCLUDED from baselines, not
+    zero-filled — a [0,0,0,0] baseline has σ=0 and would WARN on the first
+    real occurrence."""
+    counts: dict[tuple[str, date], int] = {}
+    days: set[date] = set()
+    sql = """
+    SELECT day, server_endpoint,
+           SUM(CASE WHEN magnitude_bucket NOT IN %s THEN count ELSE 0 END) AS material
+    FROM ktp_spike_daily
+    WHERE day BETWEEN %s AND %s
+    GROUP BY day, server_endpoint
+    """
+    with cnx.cursor() as cur:
+        cur.execute(sql, (SPIKE_NOISE_BUCKETS, start.isoformat(), end.isoformat()))
+        for row in cur.fetchall():
+            days.add(row["day"])
+            counts[(row["server_endpoint"], row["day"])] = int(row["material"] or 0)
+    return counts, days
 
 
 def upsert_baseline_row(cnx: pymysql.connections.Connection, row: dict) -> None:
@@ -286,7 +335,7 @@ class HostFinding:
     fps_p50_mean: Optional[float]
     fps_p50_stddev: Optional[float]
     fps_p50_baseline: Optional[float]   # mean - 2σ; threshold for WARN
-    spike_total_today: int
+    spike_total_today: int                 # ≥10ms umbrella frames (1.5.31; was all-phase count)
     spike_total_mean: Optional[float]
     spike_total_stddev: Optional[float]
     spike_total_baseline: Optional[float]  # mean + 2.5σ (Poisson-tail tolerance)
@@ -301,11 +350,18 @@ class HostFinding:
 def compute_findings(
     target_day: date,
     aggregates: dict[tuple[str, date], dict[str, float]],
+    material_spikes: dict[tuple[str, date], int],
+    spike_days: set[date],
     excluded: set[str],
 ) -> list[HostFinding]:
     """Build per-host findings for `target_day` using the prior 7-day window
     (target_day - 7 .. target_day - 1) as the baseline. Excluded hosts get
-    a row but never trigger WARN (data still recorded for forensics)."""
+    a row but never trigger WARN (data still recorded for forensics).
+
+    Spike counts are ≥10ms umbrella frames from ktp_spike_daily (1.5.31);
+    zero-filled per endpoint but only across days the table actually
+    observed, so the ≥4-day warmup gate below stays honest while the new
+    table accumulates history."""
     baseline_window = [
         target_day - timedelta(days=i) for i in range(1, BASELINE_WINDOW_DAYS + 1)
     ]
@@ -320,10 +376,14 @@ def compute_findings(
             if (endpoint, d) in aggregates
         ]
         baseline_spikes = [
-            aggregates[(endpoint, d)]["spike_total"]
+            material_spikes.get((endpoint, d), 0)
             for d in baseline_window
-            if (endpoint, d) in aggregates
+            if d in spike_days
         ]
+        spikes_today = (
+            material_spikes.get((endpoint, target_day), 0)
+            if target_day in spike_days else 0
+        )
 
         f = HostFinding(
             server_endpoint=endpoint,
@@ -331,7 +391,7 @@ def compute_findings(
             fps_p50_mean=None,
             fps_p50_stddev=None,
             fps_p50_baseline=None,
-            spike_total_today=int(today["spike_total"]),
+            spike_total_today=spikes_today,
             spike_total_mean=None,
             spike_total_stddev=None,
             spike_total_baseline=None,
@@ -348,11 +408,11 @@ def compute_findings(
             f.fps_p50_mean = statistics.mean(baseline_fps)
             f.fps_p50_stddev = statistics.stdev(baseline_fps)
             f.fps_p50_baseline = f.fps_p50_mean - FPS_SIGMA_THRESHOLD * f.fps_p50_stddev
-            # Two-condition gate (1.5.21): 2σ test must pass AND drop must be
-            # meaningfully large (≥1 fps absolute OR ≥0.1% relative). Either
-            # magnitude condition satisfies the floor — lenient OR keeps low-
-            # fps hosts (Chicago at 967 fps) responsive while suppressing
-            # tight-σ noise on near-1000-fps hosts (DAL1/DAL4 sub-1-fps drift).
+            # Two-condition gate (1.5.21, floors retuned 1.5.31): 2σ test must
+            # pass AND the drop must be meaningfully large (≥5 fps absolute OR
+            # ≥0.5% relative). Either magnitude condition satisfies the floor —
+            # the lenient OR keeps any future lower-fps host responsive while
+            # suppressing tight-σ drift on the saturated ~999.5 fps fleet.
             sigma_breach = f.fps_p50_today < f.fps_p50_baseline
             drop_fps = f.fps_p50_mean - f.fps_p50_today
             drop_pct = drop_fps / f.fps_p50_mean if f.fps_p50_mean > 0 else 0.0
@@ -447,14 +507,17 @@ def build_embed(
                 )
             if f.warn_spikes:
                 tags.append(
-                    f"spikes {f.spike_total_today} > {f.spike_total_baseline:.0f} "
+                    f"≥10ms spikes {f.spike_total_today} > {f.spike_total_baseline:.0f} "
                     f"(μ {f.spike_total_mean:.0f} σ {f.spike_total_stddev:.0f})"
                 )
             lines.append(f"**{label}** ({f.server_endpoint}) — " + "; ".join(tags))
         joined = "\n".join(lines)
         if len(joined) > 1020:
-            # Trim to the last whole line that fits, leaving room for the marker.
-            cap = 1016
+            # Trim to the last whole line that fits, leaving room for the
+            # marker: 1010 + len("\n…(truncated)")=13 → 1023, under the 1024
+            # field cap (the old cap of 1016 overflowed to 1029 and 400'd
+            # the whole embed on ≥14-host WARN days).
+            cap = 1010
             cut = joined.rfind("\n", 0, cap)
             joined = (joined[:cut] if cut > 0 else joined[:cap]) + "\n…(truncated)"
         fields.append({"name": f"Hosts in WARN ({len(warn_hosts)})",
@@ -471,8 +534,9 @@ def build_embed(
 
     fields.append({
         "name": "Source",
-        "value": ("`ktp_telemetry_metrics` daily aggregates · trailing-7-day baseline · "
-                  "fps 2σ + ≥1 fps floor / spike 2.5σ thresholds."),
+        "value": ("`ktp_telemetry_metrics` fps daily aggregates + `ktp_spike_daily` "
+                  "≥10ms spike counts · trailing-7-day baseline · "
+                  "fps 2σ + ≥5 fps floor / spike 2.5σ thresholds."),
         "inline": False,
     })
 
@@ -585,7 +649,15 @@ def main() -> int:
                     logging.error("no-data alert post failed http=%d body=%s", status, body)
             return 1
 
-        findings = compute_findings(target_day, aggregates, excluded)
+        material_spikes, spike_days = fetch_material_spikes(cnx, start, target_day)
+        if target_day not in spike_days:
+            # Non-fatal: fps evaluation proceeds; spike WARN just stays silent
+            # for the day (aggregator not writing ktp_spike_daily yet, or a
+            # genuinely zero-spike day — implausible but harmless).
+            logging.warning("no ktp_spike_daily rows for %s — spike WARN inactive", target_day)
+
+        findings = compute_findings(target_day, aggregates, material_spikes,
+                                    spike_days, excluded)
         if not findings:
             logging.warning("no findings produced — skipping")
             return 0

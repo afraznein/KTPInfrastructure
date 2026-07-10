@@ -7,19 +7,44 @@ hook fires inline on never-seen fingerprints (high-signal, immediate);
 this digest fires daily to roll up steady-state activity that the hook
 deliberately doesn't touch (already-known fingerprints).
 
+## Data model (1.5.31 rewrite)
+
+Reads REAL per-day counts from `ktp_spike_daily` (populated by the
+aggregator per cycle, keyed day + fingerprint + server_endpoint). The v1
+digest read the cumulative `ktp_spike_signatures.count` and filtered on
+`last_seen` inside the target day — which mislabeled all-time counts as
+daily AND systematically hid the busiest fingerprints (their last_seen
+had already advanced past the target day by digest time).
+
+A spike = one server frame that blew past the engine's spike threshold
+(~3ms; frame budget at 1000fps is 1ms). The fingerprint names the
+dominant cost inside the slow frame and the frame's total duration:
+READ = inbound net, PHYS = game sim, STEAM = Steam API, SEND = outbound
+net, POST/MISC1 = end-of-frame/other.
+
 ## What the embed shows
 
-  - **Top fingerprints by daily count** — top 5 most-frequent fingerprints
-    in the last 24h. Operators see at-a-glance which spike categories
-    are dominating yesterday's noise.
-  - **New fingerprints first seen yesterday** — fingerprints whose
-    first_seen timestamp lands inside yesterday's window. Cross-checks
-    the alert hook (any fingerprint listed here SHOULD have already
-    fired an alert in #ktp-crashes; if not, posted_alert was suppressed
-    or a relay glitch lost the alert).
-  - **Daily totals by phase** — read/phys/steam/send/post/misc1
-    occurrence counts across all fingerprints. Operators see the phase
-    distribution shifting over time (e.g., a STEAM regression bump).
+  - **Spikes ≥10ms** — yesterday's count per fingerprint vs its
+    trailing-7-day average, with the worst-hit instance. This is the
+    player-relevant tier; sub-10ms frames are imperceptible.
+  - **New fingerprints first seen yesterday** — cross-checks the
+    aggregator alert hook (each SHOULD already have alerted in
+    #ktp-crashes; ⚠️ marks any that didn't).
+  - **Noise floor (<10ms)** — one-line total so volume drift is visible
+    without burying the signal.
+  - **Gone quiet** — historically-active fingerprints (≥500 lifetime)
+    that stopped firing in the last 10 days: deploy-validation signal
+    (e.g. the PHYS:* stall classes dying with the 2.7.19/2.7.20 async-log
+    deploy on 2026-07-06).
+
+## Severity
+
+  - RED    — a ≥25ms fingerprint fired ≥20 times yesterday AND above its
+             trailing mean + 2.5σ (warmup fallback while <4 days of daily
+             history: ≥50 occurrences).
+  - YELLOW — new fingerprints; or a 10-25ms fingerprint breaching the
+             same rule; or any ≥100ms fingerprint with ≥5 occurrences.
+  - GREEN  — steady state.
 
 ## CLI
 
@@ -43,8 +68,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import re
+import statistics
 import sys
 import urllib.error
 import urllib.request
@@ -63,8 +90,26 @@ KTP_YELLOW = 16763904
 KTP_RED = 15548997
 KTP_EMOJI = "<:ktp:1105490705188659272>"
 
-TOP_FINGERPRINTS_LIMIT = 5
 NEW_FINGERPRINTS_LIMIT = 10
+MATERIAL_LINES_LIMIT = 12       # embed-field sanity cap; fleet has ~30 fingerprints total
+
+# Magnitude tiers (bucket labels from spike_signatures._BUCKETS). Sub-10ms
+# frames are imperceptible at 1000fps — reported as one noise-floor line.
+NOISE_BUCKETS = {"0-5ms", "5-10ms"}
+SEVERE_BUCKETS = {"100-250ms", "250-500ms", "500ms-1s", "1s+"}   # ≥100ms
+RED_ELIGIBLE_BUCKETS = SEVERE_BUCKETS | {"25-50ms", "50-100ms"}  # ≥25ms
+# Canonical bucket order for severity sorting (worst first).
+BUCKET_ORDER = ["1s+", "500ms-1s", "250-500ms", "100-250ms", "50-100ms",
+                "25-50ms", "10-25ms", "5-10ms", "0-5ms"]
+
+BASELINE_WINDOW_DAYS = 7
+MIN_BASELINE_DAYS = 4           # same warmup discipline as ktp-perf-rollup
+BREACH_SIGMA = 2.5              # Poisson-tail tolerance, matches rollup spikes
+BREACH_FLOOR = 20               # occurrences/day below which no breach fires
+WARMUP_RED_FLOOR = 50           # absolute red floor while daily history <4 days
+SEVERE_YELLOW_FLOOR = 5         # ≥100ms fingerprints at this count are never green
+GONE_QUIET_LIFETIME_MIN = 500   # only historically-significant classes
+GONE_QUIET_WINDOW_DAYS = 10     # show for ~a week after a class dies, then drop
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -120,29 +165,44 @@ def open_mysql(password: str) -> pymysql.connections.Connection:
     )
 
 
-def fetch_top_fingerprints(cnx, day: date, limit: int) -> list[dict]:
-    """Top fingerprints by occurrence count over the target day window.
-
-    `count` in ktp_spike_signatures is an all-time tally — to get a
-    DAILY count we'd need a separate per-day rollup. For the v1 digest,
-    we approximate with "fingerprints whose last_seen falls in the
-    target day, ordered by total count" — biases toward chronically-
-    active patterns rather than one-off spikes. Good enough for daily
-    "what's noisy lately" — not a precision metric.
-    """
-    start = datetime.combine(day, datetime.min.time())
-    end = start + timedelta(days=1)
+def fetch_day_rows(cnx, day: date) -> list[dict]:
+    """Per-(fingerprint, endpoint) occurrence counts for the target day.
+    ktp_spike_daily's `day` column is a DATE stamped from log-line ET
+    timestamps by the aggregator — no window math needed."""
     with cnx.cursor() as cur:
         cur.execute(
-            """SELECT fingerprint, phase, magnitude_bucket, count,
-                      sample_endpoint, first_seen, last_seen
-               FROM ktp_spike_signatures
-               WHERE last_seen >= %s AND last_seen < %s
-               ORDER BY count DESC
-               LIMIT %s""",
-            (start, end, limit),
+            """SELECT fingerprint, phase, magnitude_bucket, server_endpoint,
+                      SUM(count) AS n
+               FROM ktp_spike_daily
+               WHERE day = %s
+               GROUP BY fingerprint, phase, magnitude_bucket, server_endpoint""",
+            (day,),
         )
         return list(cur.fetchall())
+
+
+def fetch_history(cnx, day: date) -> tuple[dict[tuple[str, date], int], set[date]]:
+    """Trailing-window per-(fingerprint, day) fleet totals + the set of days
+    that have ANY data. The day-set matters: a fingerprint absent on an
+    observed day counts as 0, but days before the table existed must not be
+    zero-filled (σ=0 baselines would fire on the first real occurrence)."""
+    start = day - timedelta(days=BASELINE_WINDOW_DAYS)
+    end = day - timedelta(days=1)
+    counts: dict[tuple[str, date], int] = {}
+    days: set[date] = set()
+    with cnx.cursor() as cur:
+        cur.execute(
+            """SELECT day, fingerprint, SUM(count) AS n
+               FROM ktp_spike_daily
+               WHERE day BETWEEN %s AND %s
+               GROUP BY day, fingerprint""",
+            (start, end),
+        )
+        for row in cur.fetchall():
+            d = row["day"]
+            days.add(d)
+            counts[(row["fingerprint"], d)] = int(row["n"])
+    return counts, days
 
 
 def fetch_new_fingerprints(cnx, day: date, limit: int) -> list[dict]:
@@ -164,70 +224,150 @@ def fetch_new_fingerprints(cnx, day: date, limit: int) -> list[dict]:
         return list(cur.fetchall())
 
 
-def fetch_phase_totals(cnx, day: date) -> dict[str, int]:
-    """Sum of `count` per phase for fingerprints active during the day.
-    Same window basis as fetch_top_fingerprints."""
-    start = datetime.combine(day, datetime.min.time())
-    end = start + timedelta(days=1)
+def fetch_gone_quiet(cnx, day: date) -> list[dict]:
+    """Historically-active fingerprints that stopped firing recently —
+    last_seen before the target day but within the lookback window.
+    Anything that fired ON the target day is excluded by the < bound."""
+    start = datetime.combine(day - timedelta(days=GONE_QUIET_WINDOW_DAYS),
+                             datetime.min.time())
+    end = datetime.combine(day, datetime.min.time())
     with cnx.cursor() as cur:
         cur.execute(
-            """SELECT phase, SUM(count) AS total
+            """SELECT fingerprint, count, last_seen
                FROM ktp_spike_signatures
-               WHERE last_seen >= %s AND last_seen < %s
-               GROUP BY phase
-               ORDER BY total DESC""",
-            (start, end),
+               WHERE count >= %s AND last_seen >= %s AND last_seen < %s
+               ORDER BY count DESC""",
+            (GONE_QUIET_LIFETIME_MIN, start, end),
         )
-        return {row["phase"]: int(row["total"]) for row in cur.fetchall()}
+        return list(cur.fetchall())
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Analysis
+# ──────────────────────────────────────────────────────────────────────────
+
+def bucket_rank(bucket: str) -> int:
+    """Lower = more severe. Unknown buckets sort mid-pack rather than last
+    so a future engine-side bucket addition stays visible."""
+    try:
+        return BUCKET_ORDER.index(bucket)
+    except ValueError:
+        return len(SEVERE_BUCKETS)
+
+
+def summarize_day(day_rows: list[dict]) -> list[dict]:
+    """Collapse per-endpoint rows into one summary per fingerprint:
+    {fingerprint, phase, bucket, total, worst_endpoint, worst_n}."""
+    by_fp: dict[str, dict] = {}
+    for row in day_rows:
+        fp = row["fingerprint"]
+        n = int(row["n"])
+        s = by_fp.get(fp)
+        if s is None:
+            by_fp[fp] = {
+                "fingerprint": fp,
+                "phase": row["phase"],
+                "bucket": row["magnitude_bucket"],
+                "total": n,
+                "worst_endpoint": row["server_endpoint"],
+                "worst_n": n,
+            }
+        else:
+            s["total"] += n
+            if n > s["worst_n"]:
+                s["worst_endpoint"], s["worst_n"] = row["server_endpoint"], n
+    return sorted(by_fp.values(),
+                  key=lambda s: (bucket_rank(s["bucket"]), -s["total"]))
+
+
+def norm_for(fp: str, history: dict[tuple[str, date], int],
+             history_days: set[date]) -> tuple[Optional[float], Optional[float]]:
+    """(mean, stddev) of the fingerprint's daily fleet total across observed
+    history days (absent = 0). None-pair while history is in warmup."""
+    if len(history_days) < MIN_BASELINE_DAYS:
+        return None, None
+    series = [history.get((fp, d), 0) for d in sorted(history_days)]
+    return statistics.mean(series), statistics.stdev(series)
+
+
+def breaches(total: int, mean: Optional[float], sd: Optional[float]) -> bool:
+    """Did yesterday's count materially exceed the trailing norm?"""
+    if total < BREACH_FLOOR:
+        return False
+    if mean is None:
+        return total >= WARMUP_RED_FLOOR
+    # Counts are Poisson-ish: a constant history (sd=0) must not make a
+    # +1 excursion breach. Floor σ at sqrt(mean).
+    sd_eff = max(sd, math.sqrt(mean))
+    return total > mean + BREACH_SIGMA * sd_eff
 
 
 # ──────────────────────────────────────────────────────────────────────────
 # Embed construction
 # ──────────────────────────────────────────────────────────────────────────
 
-def build_embed(day: date, top: list[dict], new: list[dict],
-                phase_totals: dict[str, int]) -> Optional[dict]:
+def _cap_field(body: str) -> str:
+    """Discord field-value cap is 1024. 1010 + len('\\n…(truncated)')=13 → 1023."""
+    if len(body) > 1020:
+        cut = body.rfind("\n", 0, 1010)
+        body = (body[:cut] if cut > 0 else body[:1010]) + "\n…(truncated)"
+    return body
+
+
+def build_embed(day: date, summaries: list[dict],
+                history: dict[tuple[str, date], int], history_days: set[date],
+                new: list[dict], gone_quiet: list[dict]) -> Optional[dict]:
     """Daily digest embed. Returns None if there's nothing to report
-    (empty fleet day — daemon down, or genuinely zero spikes)."""
-    if not top and not new and not phase_totals:
+    (empty fleet day — daemon down, or daily table not yet populated)."""
+    if not summaries and not new and not gone_quiet:
         return None
 
-    # Color: yellow if any new fingerprints today (heads-up), green if
-    # only steady-state activity, red if a known fingerprint count
-    # exploded (heuristic: any fingerprint count > 1000 in one day —
-    # adjust threshold once we have a feel for steady-state magnitudes).
+    material = [s for s in summaries if s["bucket"] not in NOISE_BUCKETS]
+    noise = [s for s in summaries if s["bucket"] in NOISE_BUCKETS]
+    total_all = sum(s["total"] for s in summaries)
+    total_material = sum(s["total"] for s in material)
+    total_severe = sum(s["total"] for s in material if s["bucket"] in SEVERE_BUCKETS)
+    warming_up = len(history_days) < MIN_BASELINE_DAYS
+
+    # Severity: evaluate every material fingerprint against its trailing norm.
     color = KTP_GREEN
-    if new:
-        color = KTP_YELLOW
-    # Red threshold count > 1000 is provisional — set without production
-    # calibration during 1.5.23 deploy. Steady-state daily magnitudes only
-    # become observable after ~1-2 weeks of fleet data accumulates. Log a
-    # warning the first time it fires so the operator sees a calibration
-    # opportunity rather than a quiet alert. The choice between "tune
-    # threshold" vs "accept the alert" depends on whether the trigger
-    # fingerprint is a real regression vs steady-state noise floor.
-    high_count_rows = [row for row in top if row["count"] > 1000]
-    if high_count_rows:
+    red_hits, yellow_hits = [], []
+    for s in material:
+        mean, sd = norm_for(s["fingerprint"], history, history_days)
+        s["mean7"] = mean
+        if breaches(s["total"], mean, sd):
+            (red_hits if s["bucket"] in RED_ELIGIBLE_BUCKETS else yellow_hits).append(s)
+        elif s["bucket"] in SEVERE_BUCKETS and s["total"] >= SEVERE_YELLOW_FLOOR:
+            yellow_hits.append(s)
+    if red_hits:
         color = KTP_RED
-        logging.warning(
-            "RED-tier triggered by uncalibrated count>1000 threshold: %s. "
-            "Operator: review whether this is steady-state noise or a real "
-            "regression and tune the constant in build_embed if needed.",
-            [(r["fingerprint"], r["count"]) for r in high_count_rows],
-        )
+        logging.warning("RED: %s", [(s["fingerprint"], s["total"]) for s in red_hits])
+    elif yellow_hits or new:
+        color = KTP_YELLOW
 
     fields = []
 
-    if top:
+    if material:
         lines = []
-        for row in top:
+        for s in material[:MATERIAL_LINES_LIMIT]:
+            avg = (f"7d avg {s['mean7']:.0f}/day" if s.get("mean7") is not None
+                   else "no baseline yet")
+            marker = " 🔴" if s in red_hits else (" 🟡" if s in yellow_hits else "")
             lines.append(
-                f"`{row['fingerprint']:25s}` count **{row['count']:>5d}** "
-                f"(sample: {row['sample_endpoint']})"
+                f"`{s['fingerprint']:16s}` **{s['total']}** yesterday · {avg} · "
+                f"worst: `{s['worst_endpoint']}` ({s['worst_n']}){marker}"
             )
+        if len(material) > MATERIAL_LINES_LIMIT:
+            lines.append(f"… +{len(material) - MATERIAL_LINES_LIMIT} more")
         fields.append({
-            "name": f"Top {len(top)} fingerprints (by all-time count, last_seen yesterday)",
-            "value": "\n".join(lines),
+            "name": f"Spikes ≥10ms — {total_material} yesterday ({total_severe} were ≥100ms)",
+            "value": _cap_field("\n".join(lines)),
+            "inline": False,
+        })
+    else:
+        fields.append({
+            "name": "Spikes ≥10ms",
+            "value": "none — every slow frame yesterday stayed under 10ms 🎉",
             "inline": False,
         })
 
@@ -236,49 +376,63 @@ def build_embed(day: date, top: list[dict], new: list[dict],
         for row in new:
             posted_marker = "" if row["posted_alert"] else "  ⚠️ alert NOT posted"
             lines.append(
-                f"`{row['fingerprint']:25s}` count **{row['count']:>5d}** "
+                f"`{row['fingerprint']:16s}` ×{row['count']} since first seen "
                 f"on {row['sample_endpoint']}{posted_marker}"
             )
-        body = "\n".join(lines)
-        if len(body) > 1020:
-            body = body[:1016] + "\n…(truncated)"
         fields.append({
             "name": f"New fingerprints first seen yesterday ({len(new)})",
-            "value": body,
+            "value": _cap_field("\n".join(lines)),
             "inline": False,
         })
 
-    if phase_totals:
-        order = ["READ", "PHYS", "STEAM", "SEND", "POST", "MISC1"]
-        # Show in canonical order so operators always read the same layout
-        rows = []
-        for phase in order:
-            if phase in phase_totals:
-                rows.append(f"`{phase:6s}`  {phase_totals[phase]:>6d}")
-        # Any phases not in the canonical order (defensive — engine could add
-        # a new phase someday) get appended at the end
-        for phase, n in phase_totals.items():
-            if phase not in order:
-                rows.append(f"`{phase:6s}`  {n:>6d}")
+    if noise:
+        noise_total = sum(s["total"] for s in noise)
+        noise_avg = None
+        if not warming_up:
+            noise_fps = {s["fingerprint"] for s in noise} | {
+                fp for (fp, _d) in history if fp.split(":", 1)[-1] in NOISE_BUCKETS
+            }
+            per_day = [
+                sum(history.get((fp, d), 0) for fp in noise_fps)
+                for d in sorted(history_days)
+            ]
+            noise_avg = statistics.mean(per_day) if per_day else None
+        avg_txt = f" · 7d avg {noise_avg:.0f}/day" if noise_avg is not None else ""
         fields.append({
-            "name": "Daily totals by phase",
-            "value": "\n".join(rows),
+            "name": "Noise floor (<10ms frames — imperceptible at 1000fps)",
+            "value": f"{noise_total} occurrences{avg_txt} · "
+                     + " · ".join(f"`{s['fingerprint']}` {s['total']}" for s in noise[:6]),
             "inline": False,
         })
+
+    if gone_quiet:
+        lines = [
+            f"`{row['fingerprint']:16s}` last {row['last_seen']:%Y-%m-%d %H:%M} · "
+            f"{row['count']:,} lifetime"
+            for row in gone_quiet[:6]
+        ]
+        fields.append({
+            "name": "Gone quiet (historically active, stopped firing)",
+            "value": _cap_field("\n".join(lines)),
+            "inline": False,
+        })
+
+    footer = ("ktp-spike-digest · counts from ktp_spike_daily · "
+              f"{datetime.now(timezone.utc):%Y-%m-%dT%H:%M:%SZ}")
+    if warming_up:
+        footer += f" · baselines warming up ({len(history_days)}/{MIN_BASELINE_DAYS} days)"
 
     return {
         "title": f"{KTP_EMOJI}  KTP Spike Digest — {day.isoformat()}",
         "description": (
-            f"Daily summary of `[KTP_SPIKE]` umbrella-line signatures. "
-            f"`{len(top)}` top fingerprints, `{len(new)}` new fingerprints, "
-            f"`{sum(phase_totals.values())}` total spike occurrences across "
-            f"`{len(phase_totals)}` phases."
+            f"**{total_all}** slow frames fleet-wide yesterday: **{total_material}** ≥10ms, "
+            f"**{total_severe}** ≥100ms. A spike = one frame over the ~3ms engine threshold "
+            f"(budget 1ms at 1000fps); fingerprint = dominant cost + frame duration "
+            f"(READ inbound net · PHYS game sim · STEAM Steam API · SEND outbound net)."
         ),
         "color": color,
         "fields": fields,
-        "footer": {
-            "text": f"ktp-spike-digest · {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-        },
+        "footer": {"text": footer},
     }
 
 
@@ -298,6 +452,10 @@ def post_embed(relay_url: str, auth_secret: str, channel_id: str, embed: dict) -
             return resp.status, resp.read().decode("utf-8", errors="replace")[:500]
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", errors="replace")[:500]
+    except urllib.error.URLError as e:
+        # Relay fully down (refused/DNS/timeout) — synthetic status instead
+        # of a traceback, same pattern as ktp-perf-rollup.
+        return 0, f"relay unreachable: {e.reason}"
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -334,20 +492,24 @@ def main() -> int:
 
     cnx = open_mysql(mysql_password)
     try:
-        top = fetch_top_fingerprints(cnx, target_day, TOP_FINGERPRINTS_LIMIT)
+        day_rows = fetch_day_rows(cnx, target_day)
+        history, history_days = fetch_history(cnx, target_day)
         new = fetch_new_fingerprints(cnx, target_day, NEW_FINGERPRINTS_LIMIT)
-        phase_totals = fetch_phase_totals(cnx, target_day)
+        gone_quiet = fetch_gone_quiet(cnx, target_day)
+        summaries = summarize_day(day_rows)
         logging.info(
-            "target_day=%s top=%d new=%d phases=%s total_count=%d",
-            target_day, len(top), len(new), list(phase_totals.keys()),
-            sum(phase_totals.values()),
+            "target_day=%s fingerprints=%d total=%d new=%d gone_quiet=%d history_days=%d",
+            target_day, len(summaries), sum(s["total"] for s in summaries),
+            len(new), len(gone_quiet), len(history_days),
         )
     finally:
         cnx.close()
 
-    embed = build_embed(target_day, top, new, phase_totals)
+    embed = build_embed(target_day, summaries, history, history_days, new, gone_quiet)
     if embed is None:
-        logging.info("no signature activity for %s — skipping post", target_day)
+        logging.info("no signature activity for %s — skipping post "
+                     "(daily table empty for the day: aggregator down, or "
+                     "pre-ktp_spike_daily deploy)", target_day)
         return 0
 
     print(json.dumps(embed))

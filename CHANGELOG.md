@@ -2,6 +2,55 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.31] - 2026-07-10
+
+### Spike digest rewrite on real daily counts + perf-rollup retune for the 1000fps fleet
+
+Operator-triggered after the 07-10 digest ("READ:10-25ms count 201") proved
+unreadable and the July rollup history showed CRITICAL embeds firing on ~1 fps
+daily-median drift. Companion change in KTPProfileAggregator: new
+`ktp_spike_daily` table (per-day, per-fingerprint, per-endpoint occurrence
+counts, log-line ET day attribution) — the cumulative
+`ktp_spike_signatures.count` cannot answer "how many yesterday".
+
+**`scripts/ktp-spike-digest.py` — full rewrite.** The v1 digest had three
+structural flaws: it labeled all-time counts as daily; its
+last_seen-in-window filter systematically hid the busiest fingerprints
+(their last_seen had advanced past the target day by digest time, so only
+rare stragglers appeared); and the red heuristic compared the all-time
+counter to a "per-day" 1000 threshold. Now reads real daily counts from
+ktp_spike_daily: yesterday per fingerprint vs trailing-7-day norm
+(zero-filled only across observed days; ≥4-day warmup like the rollup),
+magnitude tiers (≥10ms material with worst-hit instance, sub-10ms as a
+one-line noise floor), new-fingerprint section retained, new "gone quiet"
+section (lifetime ≥500, stopped firing within 10 days — would have
+surfaced the PHYS:* stall classes dying at the 07-06 async-log activation).
+Severity: RED = ≥25ms fingerprint ≥20/day above mean+2.5σ (warmup floor
+50); YELLOW = new fingerprints, 10-25ms breach, or any ≥100ms fingerprint
+≥5/day; GREEN otherwise. Plain-English framing in the embed description.
+
+**`scripts/ktp-perf-rollup.py` — thresholds retuned** (fleet re-baselined at
+~999.5 fps saturated since the .927/.928 + 2.7.19/2.7.20 async-log deploys;
+per-host σ now 0.3-0.7):
+- FPS WARN floor 1→5 fps (0.1%→0.5%): July fired 12 host-WARNs in 9 days on
+  0.5-1.9 fps drift, several days escalating to ≥3-host CRITICAL — all
+  player-imperceptible. Median fps is saturated; only large drops matter.
+- Fleet CRITICAL 963→995: old value derived from the May 976.5-fps baseline,
+  allowed a ~36 fps silent fleet-wide sag before the one alert that pings.
+  Data: worst post-fix fleet-median day = 999.08 (07-07 heavy-deploy day,
+  day-to-day σ ≈ 0.3); map changes never reach the daily median (idle
+  self-cycles are already inside the 999.5 steady state); the May-era
+  975-979 regression state lands safely below 995.
+- Spike WARN source switched from magnitude-blind per-phase sums (dominated
+  by imperceptible 0-10ms frames) to ≥10ms umbrella counts from
+  ktp_spike_daily, observed-days zero-fill (no σ=0 traps), ≥4-day warmup —
+  spike WARN is silent during table warmup, fps WARN unaffected.
+  ktp_telemetry_baselines.spike_total_* semantics change at the 2026-07-10
+  boundary (documented at the DDL).
+
+Deploy note: `ktp_spike_daily` created manually + per-table GRANT to
+`ktp_telemetry` (SELECT, INSERT, UPDATE) — grants are per-table on this DB.
+
 ## [1.5.30] - 2026-07-10
 
 ### ktp-perf-rollup: retire the stale NY5 default exclusion

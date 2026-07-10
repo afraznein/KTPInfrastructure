@@ -2,12 +2,15 @@
 #
 # Fires daily at 05:00 ET (after the 04:30 ET ktp-perf-rollup, so today's
 # digest reads yesterday's complete fleet data — both rollups operate on
-# the same trailing-day window). Reads hlstatsx.ktp_spike_signatures and
-# posts a Discord embed summarizing:
+# the same trailing-day window). Reads real per-day counts from
+# hlstatsx.ktp_spike_daily (plus ktp_spike_signatures for new/gone-quiet
+# fingerprints) and posts a Discord embed summarizing:
 #
-#   - Top fingerprints by all-time count, last_seen yesterday
+#   - Spikes ≥10ms: yesterday's count per fingerprint vs its trailing-7-day
+#     average, with the worst-hit instance
 #   - New fingerprints first_seen yesterday (cross-checks the alert hook)
-#   - Daily phase distribution (READ/PHYS/STEAM/SEND/POST/MISC1)
+#   - Noise floor: one-line sub-10ms total
+#   - Gone quiet: historically-active fingerprints that stopped firing
 #
 # Default channel: 1497957091107668070 (#ktp-crashes — same as
 # PERF_ALERT_CHANNEL + SPIKE_ALERT_CHANNEL). Override via
@@ -15,11 +18,12 @@
 #
 # Implementation:
 #   /usr/local/bin/ktp-spike-digest    — Python script (this repo: scripts/ktp-spike-digest.py)
+#   hlstatsx.ktp_spike_daily           — populated by KTPProfileAggregator daemon (1.5.31)
 #   hlstatsx.ktp_spike_signatures      — populated by KTPProfileAggregator daemon
 #
-# Operator note: the underlying ktp_telemetry MySQL user already has
-# SELECT on ktp_spike_signatures (granted in 1.5.20 — see
-# README.md § "Required MySQL grants"). No new grants needed.
+# Operator note: ktp_telemetry needs SELECT on ktp_spike_daily in addition
+# to the 1.5.20-era ktp_spike_signatures grant — grants are PER-TABLE on
+# this DB (see KTPProfileAggregator README.md § "Required MySQL grants").
 
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
