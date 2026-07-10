@@ -2,6 +2,28 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.33] - 2026-07-10
+
+### Tier-2 heartbeat: runner stack-drift tripwire
+
+"Module stack MUST track the fleet" was checklist-only and drifted silently
+06-28→07-10 (runner on a .926 engine, a never-shipped dev dodx, amxxcurl
+1.3.11 — green runs certifying an environment that existed nowhere). New
+`scripts/ktp-tier2-stack-drift.py` md5-compares the runner's 7 stack binaries
+(engine, hlds_linux, libsteam, ktpamx, dodx, reapi, amxxcurl) against a fleet
+reference instance (Atlanta dod-27015; override via KTP_DRIFT_REF_*), invoked
+from `ktp-tier2-heartbeat.sh` as a new `drift` state — transition-alerted like
+stale/failed, so a deliberate pre-activation lead alerts once and
+self-recovers when the fleet catches up. Checker exit 2 (transient SSH/env
+failure) logs without flapping the state; dead/failed runner outranks drift.
+Deploy: both scripts to /usr/local/bin on the data server (done 2026-07-10);
+cron unchanged (rides the existing 6h heartbeat).
+
+Policy note (operator decision 2026-07-10): the runner is synced
+DELIBERATELY, never automatically — drift detection is loud, sync stays a
+deploy-flow step ("after a module/engine wave verifies on fleet, re-sync the
+tier-2 runner stack").
+
 ## [1.5.32] - 2026-07-10
 
 ### rcon harness: GoldSrc SPLITPACKET reassembly + ktp_ot xfail

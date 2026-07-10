@@ -9,12 +9,17 @@
 # NOT share fate with the watched, so this runs as a plain data-server cron, not
 # on the GH runner.
 #
+# Also watches for runner stack drift vs the fleet (ktp-tier2-stack-drift.py):
+# a stale module stack makes green runs certify an environment that exists
+# nowhere — caught drifted 06-28→07-10 (.926 engine, never-shipped dev dodx).
+#
 # Mirrors scripts/ktp-data-server-health.sh: state-file so we alert on
 # transitions only (no chat spam while persistently down), relay creds from
 # /etc/ktp/discord-relay.conf.
 #
 # Install (on the data server):
 #   sudo cp scripts/ktp-tier2-heartbeat.sh /usr/local/bin/
+#   sudo cp scripts/ktp-tier2-stack-drift.py /usr/local/bin/
 #   sudo cp scripts/ktp-tier2-heartbeat.cron /etc/cron.d/ktp-tier2-heartbeat
 set -euo pipefail
 
@@ -56,6 +61,25 @@ else
     fi
 fi
 
+# ── Stack-drift check (only when otherwise healthy — dead/failed outranks) ───
+# The runner's module stack must track the fleet (tier2-runner-architecture);
+# this makes drift loud instead of checklist-enforced. Deliberate leads (runner
+# ahead of fleet as a pre-activation gate) alert once and self-recover after
+# the fleet activates. Checker exit 2 = couldn't check (transient SSH etc.) —
+# log only, never flap the state.
+DRIFT_CHECKER="${KTP_TIER2_DRIFT_CHECKER:-/usr/local/bin/ktp-tier2-stack-drift.py}"
+AGG_ENV="${KTP_AGGREGATOR_ENV:-/opt/ktp-profile-aggregator/.env}"
+AGG_PY="${KTP_AGGREGATOR_PY:-/opt/ktp-profile-aggregator/venv/bin/python}"
+if [ "$state" = "ok" ] && [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
+    drift_out="$(set -a; . "$AGG_ENV" 2>/dev/null; set +a; "$AGG_PY" "$DRIFT_CHECKER" 2>&1)" && drift_rc=0 || drift_rc=$?
+    if [ "$drift_rc" -eq 1 ]; then
+        state="drift"
+        detail="$drift_out — re-sync the runner stack from the fleet (or dismiss if the runner is deliberately leading a staged wave)."
+    elif [ "$drift_rc" -ge 2 ]; then
+        echo "tier2-heartbeat: drift check inconclusive (rc=$drift_rc): $drift_out"
+    fi
+fi
+
 prev="$(cat "$STATE" 2>/dev/null || echo "")"
 echo "$state" > "$STATE" 2>/dev/null || true
 
@@ -66,8 +90,9 @@ fi
 
 # ── Build + post the transition embed ────────────────────────────────────────
 case "$state" in
-    ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite is running again."; color=5763719 ;;
+    ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite healthy (running + stack in sync)."; color=5763719 ;;
     failed) title="❌ KTP Tier 2 — last run failed"; desc="$detail"; color=15548997 ;;
+    drift)  title="⚠️ KTP Tier 2 — runner stack drifted from fleet"; desc="$detail"; color=16763904 ;;
     *)      title="⚠️ KTP Tier 2 — not running"; desc="$detail"; color=16763904 ;;
 esac
 footer="ktp-tier2-heartbeat @ $(TZ=America/New_York date '+%Y-%m-%d %H:%M %Z')"
