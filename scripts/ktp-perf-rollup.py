@@ -28,10 +28,11 @@ Daily aggregates, NOT per-window — per-window 2σ would fire on every nightly
 03:00 ET restart artifact (server fresh = warm-up jitter). Daily smoothing
 absorbs 1-2 anomalous 5-min windows in 288/day.
 
-Excluded from WARN evaluation: NY:27019 (perpetual pingboost-4 canary, σ=0.12;
-would fire on any drop below ~999.7 fps; not a player-serving instance).
-Configurable via PERF_EXCLUDED_HOSTS in /etc/ktp/discord-relay.conf
-(comma-separated list of host:port endpoints).
+No hosts excluded from WARN evaluation by default. (NY:27019 was excluded
+while it ran as the pingboost-4 canary; retired 2026-05-13 when it reverted
+to fleet config, default cleared 2026-07-10.) Configurable via
+PERF_EXCLUDED_HOSTS in /etc/ktp/discord-relay.conf (comma-separated
+host:port endpoints).
 
 48-hour suppression on first deploy: --dry-run flag computes alerts but
 does not POST to Discord — use to eyeball output before unleashing.
@@ -50,7 +51,7 @@ Optional:
   MYSQL_USER               default ktp_telemetry (matches aggregator)
   MYSQL_HOST               default localhost
   MYSQL_DB                 default hlstatsx
-  PERF_EXCLUDED_HOSTS      comma-separated host:port (default 74.91.123.64:27019)
+  PERF_EXCLUDED_HOSTS      comma-separated host:port (default: none)
   KTP_ADMIN_ROLE_ID        Discord role ID for @KTP Admin pings (default 1002394466700767332)
   FLEET_CRITICAL_FPS       Threshold for fleet-median CRITICAL (default 963)
 
@@ -113,7 +114,7 @@ FPS_MIN_DROP_PCT = 0.001  # 0.1%
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
 DEFAULT_FLEET_CRITICAL_FPS = 963.0  # = 976.5 - 2*6.83 per fleet baseline 2026-05-03
-DEFAULT_EXCLUDED = "74.91.123.64:27019"  # NY:27019 perpetual pingboost-4 canary
+DEFAULT_EXCLUDED = ""  # NY:27019 canary exclusion retired 2026-05-13 (reverted to fleet config)
 DEFAULT_ADMIN_ROLE = "1002394466700767332"  # @KTP Admin
 
 KTP_GREEN = 5763719
@@ -178,6 +179,9 @@ def load_config(config_path: Path) -> dict[str, str]:
 
 
 def resolve(env_key: str, file_cfg: dict[str, str], default: Optional[str] = None) -> Optional[str]:
+    # `or`-chaining means a KEY="" in the config falls through to the default —
+    # an explicitly-empty value cannot override a non-empty default (bit us on
+    # PERF_EXCLUDED_HOSTS 2026-05-13→07-10; keep defaults empty where "" is valid).
     return os.environ.get(env_key) or file_cfg.get(env_key) or default
 
 
@@ -468,8 +472,7 @@ def build_embed(
     fields.append({
         "name": "Source",
         "value": ("`ktp_telemetry_metrics` daily aggregates · trailing-7-day baseline · "
-                  "fps 2σ + ≥1 fps floor / spike 2.5σ thresholds. NY5 (74.91.123.64:27019) "
-                  "excluded from WARN — perpetual pingboost-4 canary."),
+                  "fps 2σ + ≥1 fps floor / spike 2.5σ thresholds."),
         "inline": False,
     })
 

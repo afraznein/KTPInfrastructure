@@ -2,6 +2,25 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.30] - 2026-07-10
+
+### ktp-perf-rollup: retire the stale NY5 default exclusion
+
+NY5 (74.91.123.64:27019) was still excluded from WARN evaluation and the
+fleet median despite the operator clearing `PERF_EXCLUDED_HOSTS=""` in
+`/etc/ktp/discord-relay.conf` on 2026-05-13 (when NY5 retired from
+pingboost-4 canary duty back to fleet config). Root cause: `resolve()`
+`or`-chains env → config → default, so an explicitly-empty config value is
+falsy and silently falls back to the baked-in default — which still carried
+the canary-era `74.91.123.64:27019`.
+
+- `DEFAULT_EXCLUDED` now empty; NY5 participates in WARN evaluation and the
+  fleet median like every other instance.
+- Docstring/usage text updated; static embed "Source" footer no longer
+  claims the NY5 exclusion.
+- Tripwire comment on `resolve()` documenting the empty-value-cannot-override
+  footgun (keep defaults empty wherever `""` is a valid config value).
+
 ## [1.5.29] - 2026-07-07
 
 ### Assessment fix waves — Buckets 1-6 of the 2026-07-07 full-surface review
