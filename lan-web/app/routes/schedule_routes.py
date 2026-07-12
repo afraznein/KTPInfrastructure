@@ -69,6 +69,19 @@ def generate(request: Request):
     return RedirectResponse(url=request.url_for("schedule"), status_code=303)
 
 
+@router.post("/admin/schedule/set-draw", name="schedule_set_draw")
+async def set_draw(request: Request):
+    """Pick which 10-team group draw is active. Only records the preference —
+    'Generate schedule' still has to run to materialize it into matches."""
+    auth.require_admin(request)
+    f = await request.form()
+    draw = (f.get("draw") or "").strip()
+    if draw not in sched.DRAW_CHOICES:
+        raise HTTPException(400, "Unknown draw.")
+    seeding.set_setting("active_draw", draw)
+    return RedirectResponse(url=request.url_for("seeds"), status_code=303)
+
+
 @router.post("/admin/schedule/station", name="schedule_set_station")
 async def set_station(request: Request):
     auth.require_admin(request)

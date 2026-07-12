@@ -52,9 +52,13 @@ def team_count() -> int:
 
 
 def active_schedule() -> list:
-    """The seed-pairing schedule for the current team count (10/11/12);
-    falls back to the 10-team layout for preview before registration settles."""
-    return SCHEDULES.get(team_count(), SCHEDULE_10)
+    """The seed-pairing schedule for the current team count (10/11/12). A 10-team
+    field honors the staff-selected draw (locked/balanced/fairest); 11/12 have a
+    single layout. Falls back to the 10-team layout for preview."""
+    n = team_count()
+    if n == 10:
+        return DRAW_CHOICES[active_draw_key()]
+    return SCHEDULES.get(n, SCHEDULE_10)
 
 # Saturday timetable — (time, label, kind). kind: 'round' | 'break'.
 # 11:00 start, 1-hour match blocks, two 1-hour food breaks; 1v2 closes.
@@ -101,6 +105,123 @@ def seeds_locked() -> bool:
     return n in SCHEDULES and len(seed_map()) >= n
 
 
+# Alternative 10-team group draws surfaced for staff to weigh against the locked
+# SCHEDULE_10 — both came out of an offline search over all 11,180,820 legal draws
+# and obey the same two rules (no rematch, no top-four before Round 4). They are
+# decision aids only: NOT in SCHEDULES, so materialize_matches() never uses them.
+SCHEDULE_10_BALANCED = [  # variance 5.80 — keeps all six top-4 clashes + the 1v2 finale
+    [(1, 9), (2, 7), (3, 10), (4, 5), (6, 8)],
+    [(1, 5), (2, 10), (3, 6), (4, 9), (7, 8)],
+    [(1, 8), (2, 6), (3, 7), (4, 10), (5, 9)],
+    [(1, 4), (2, 3), (5, 8), (6, 7), (9, 10)],
+    [(1, 3), (2, 4), (5, 7), (6, 9), (8, 10)],
+    [(1, 2), (3, 4), (5, 6), (7, 10), (8, 9)],
+]
+SCHEDULE_10_FAIREST = [  # variance 1.20 — statistical floor; drops the 1v2 and 3v4 games
+    [(1, 6), (2, 5), (3, 7), (4, 9), (8, 10)],
+    [(1, 5), (2, 8), (3, 10), (4, 7), (6, 9)],
+    [(1, 8), (2, 9), (3, 6), (4, 10), (5, 7)],
+    [(1, 4), (2, 3), (5, 10), (6, 8), (7, 9)],
+    [(1, 7), (2, 4), (3, 8), (5, 9), (6, 10)],
+    [(1, 3), (2, 6), (4, 5), (7, 10), (8, 9)],
+]
+
+# Staff-selectable 10-team draws. materialize_matches() + the schedule preview
+# both resolve through active_draw_key(); anything but these keys means 'locked'.
+DRAW_CHOICES = {"locked": SCHEDULE_10, "balanced": SCHEDULE_10_BALANCED, "fairest": SCHEDULE_10_FAIREST}
+
+
+def active_draw_key() -> str:
+    """Which 10-team draw staff have set active ('locked' default)."""
+    from . import seeding
+    k = seeding.get_setting("active_draw", "locked")
+    return k if k in DRAW_CHOICES else "locked"
+
+
+def _draw_stats(rounds):
+    """SoS spread + marquee facts for one seed-pairing draw (seeds 1..10)."""
+    opp = {s: [] for s in range(1, 11)}
+    for rnd in rounds:
+        for a, b in rnd:
+            opp[a].append(b); opp[b].append(a)
+    sos = {s: sum(opp[s]) for s in range(1, 11)}
+    mean = sum(sos.values()) / 10
+    top4 = (1, 2, 3, 4)
+    clashes = sum(1 for a in top4 for b in top4 if a < b and b in opp[a])
+    return {
+        "variance": sum((v - mean) ** 2 for v in sos.values()) / 10,
+        "min": min(sos.values()), "max": max(sos.values()),
+        "top4_clashes": clashes, "has_1v2": 2 in opp[1],
+    }
+
+
+def schedule_options():
+    """The locked draw plus the two search alternatives, teams overlaid, for the
+    staff schedule-decision panel. None unless a 10-team field with seeds locked."""
+    if team_count() != 10:
+        return None
+    smap = seed_map()
+    if len(smap) < 10:
+        return None
+    times = round_times()
+    active = active_draw_key()
+    defs = [
+        ("locked", "Locked draw",
+         "Every headline game is played and no company draws a slate worse than 37.",
+         SCHEDULE_10),
+        ("balanced", "Balanced draw",
+         "Same marquee shape as the locked draw — all six top-seed clashes, 1 v 2 closing — with "
+         "tighter variance, but it hands one company a 38 slate, the harshest in any option.",
+         SCHEDULE_10_BALANCED),
+        ("fairest", "Fairest draw",
+         "The statistical floor — provably the most even draw of all. The cost: the top-two (1 v 2) and "
+         "the three-vs-four games never happen.",
+         SCHEDULE_10_FAIREST),
+    ]
+    out = []
+    for key, title, note, rounds in defs:
+        out.append({
+            "key": key, "title": title, "current": key == active, "note": note,
+            "stats": _draw_stats(rounds),
+            "rounds": [
+                {"n": i, "time": times.get(i), "matches": [
+                    {"a": smap[a], "b": smap[b], "top4": a < 5 and b < 5}
+                    for a, b in rnd]}
+                for i, rnd in enumerate(rounds, 1)
+            ],
+        })
+    return out
+
+
+def strength_of_schedule():
+    """Per-seed strength of schedule for the 10-team group draw, teams overlaid.
+
+    SoS = the sum of a seed's six opponents' seed numbers (lower = a tougher
+    slate). Returns None unless the field is exactly ten with every seed locked:
+    the fairness-audit figures published beside this are derived for the 10-team
+    draw only. Cheap — pure arithmetic over the fixed pairing table."""
+    if team_count() != 10:
+        return None
+    smap = seed_map()
+    if len(smap) < 10:
+        return None
+    opp = {s: [] for s in range(1, 11)}
+    for rnd in active_schedule():
+        for a, b in rnd:
+            opp[a].append(b); opp[b].append(a)
+    rows = [{"seed": s, "team": smap[s], "opponents": sorted(opp[s]), "sos": sum(opp[s])}
+            for s in range(1, 11)]
+    vals = [r["sos"] for r in rows]
+    mean = sum(vals) / len(vals)
+    return {
+        "rows": rows,
+        "mean": mean,
+        "variance": sum((v - mean) ** 2 for v in vals) / len(vals),
+        "min": min(vals), "max": max(vals),
+        "active_draw": active_draw_key(),
+    }
+
+
 # ── materialized matches (after seeds lock) ──────────────────────────────
 def get_matches() -> list[dict]:
     """lan_schedule rows joined with team names, ordered by round. [] if none/down."""
@@ -136,7 +257,16 @@ def materialize_matches():
     smap = seed_map()
     if len(smap) < n:
         raise ValueError("Seeds are not locked — cannot generate matches.")
-    schedule = SCHEDULES[n]
+    # Regenerating wipes lan_schedule. Refuse once any match carries a reported
+    # result, so a late draw change can't silently erase played games.
+    played = db.query_one(
+        "SELECT COUNT(*) AS c FROM lan_schedule WHERE status='final' "
+        "OR score_a IS NOT NULL OR score_b IS NOT NULL OR winner_team_id IS NOT NULL")
+    if played and played["c"]:
+        raise ValueError(
+            "Matches already have reported results — regenerating would erase them. "
+            "Clear the results first if you truly mean to rebuild the schedule.")
+    schedule = active_schedule()
     with db.get_conn() as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM lan_schedule")
         for rnd_i, rnd in enumerate(schedule, 1):

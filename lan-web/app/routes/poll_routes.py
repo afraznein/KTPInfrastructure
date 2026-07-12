@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
 from .. import auth, common, db, seeding
+from .. import schedule as sched
 from ..templating import templates
 
 router = APIRouter()
@@ -72,6 +73,15 @@ def seeds_page(request: Request):
         show_results=show_results,
         published=published,
         is_admin=auth.is_admin(request),
+        # Strength-of-schedule fairness audit — revealed on the same gate as the
+        # seeds themselves (it names who each team draws). None until seeds lock.
+        sos=sched.strength_of_schedule() if show_results else None,
+        # Saturday draw options — a staff-only decision panel (never public),
+        # comparing the locked draw against the two search alternatives.
+        sched_options=sched.schedule_options() if auth.is_admin(request) else None,
+        # Whether Saturday matches are already materialized — drives the
+        # "re-generate to apply" note when staff change the active draw.
+        matches_generated=sched.matches_exist() if auth.is_admin(request) else False,
     )
     return templates.TemplateResponse(request, "seeds.html", ctx)
 

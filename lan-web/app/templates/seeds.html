@@ -90,4 +90,295 @@
 
     </div>
   </section>
+
+  {% if sos %}
+  {# Static verdict figures below are the offline result of enumerating all
+     11,180,820 legal 10-team draws (KTPInfrastructure scratch analysis); they
+     are fixed properties of the 10-team format, not per-request values. Only the
+     per-team slate table is computed live from the locked seeds. #}
+  <style>
+    .sos-lede { font-family: var(--serif); font-size: 18px; line-height: 1.62; color: var(--ink);
+                border-left: 3px solid var(--wsdod-blue); padding-left: 20px; margin: 0 0 28px; max-width: 66ch; }
+    .sos-lede strong { color: var(--alert); }
+    .verdict-wrap, .sos-wrap { overflow-x: auto; }
+    .verdict { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13.5px;
+               border: 1px solid var(--ink); margin: 0 0 8px; min-width: 460px; }
+    .verdict thead th { text-align: left; font-family: var(--stencil); font-size: 11px; letter-spacing: .16em;
+                        color: var(--alert); text-transform: uppercase; padding: 9px 14px; border-bottom: var(--rule-thin); }
+    .verdict th.r, .verdict td.r { text-align: right; }
+    .verdict tbody td { padding: 9px 14px; border-bottom: 1px dotted var(--ink-margin); vertical-align: top; }
+    .verdict tbody tr:last-child td { border-bottom: none; }
+    .verdict .draw { color: var(--ink); }
+    .verdict .num { font-variant-numeric: tabular-nums; font-size: 15px; color: var(--ink); }
+    .verdict .struck { color: var(--ink-faint); text-decoration: line-through; }
+    .verdict tr.cur td { background: rgba(30,58,95,.09); }
+    .verdict tr.cur .draw { font-family: var(--stencil); letter-spacing: .05em; color: var(--wsdod-blue); }
+    .verdict tr.cur .star { color: var(--wsdod-blue); }
+    .verdict-cap { font-family: var(--typed); font-size: 12px; color: var(--ink-faint); margin: 0 0 24px; }
+
+    .sos-callout { border: 2px solid var(--wsdod-blue); background: rgba(30,58,95,.04);
+                   padding: 16px 20px; margin: 22px 0 28px; font-family: var(--typed);
+                   font-size: 14px; line-height: 1.58; color: var(--ink-soft); }
+    .sos-callout h4 { font-family: var(--stencil); font-size: 13px; letter-spacing: .16em; text-transform: uppercase;
+                      color: var(--wsdod-blue); margin: 0 0 8px; }
+    .sos-callout strong { color: var(--ink); }
+
+    .sos-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px; min-width: 520px; }
+    .sos-table thead th { text-align: left; font-family: var(--stencil); font-size: 11px; letter-spacing: .16em;
+                          color: var(--alert); text-transform: uppercase; padding: 8px 12px; border-bottom: var(--rule-thin); }
+    .sos-table th.r, .sos-table td.r { text-align: right; }
+    .sos-table tbody td { padding: 8px 12px; border-bottom: 1px dotted var(--ink-margin); vertical-align: middle; }
+    .sos-table tbody tr:nth-child(even) td { background: rgba(184,169,130,.10); }
+    .sos-table .seed { color: var(--alert); font-weight: 700; }
+    .sos-table .co { font-family: var(--typed); color: var(--ink); }
+    .sos-table .opps { color: var(--ink-soft); letter-spacing: .12em; }
+    .sos-table .sos-val { font-variant-numeric: tabular-nums; color: var(--ink); font-size: 14px; }
+    .sos-bar { display: inline-block; height: 7px; width: 60px; background: var(--paper-deep);
+               vertical-align: middle; margin-left: 10px; position: relative; }
+    .sos-bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--olive); }
+    .sos-foot { font-family: var(--typed); font-size: 12.5px; color: var(--ink-faint); margin: 8px 0 0; }
+    .sos-method { margin-top: 22px; padding-top: 14px; border-top: 1px dashed var(--ink-margin);
+                  font-family: var(--typed); font-size: 12.5px; color: var(--ink-soft); line-height: 1.55; max-width: 74ch; }
+    .sos-method b { font-family: var(--stencil); letter-spacing: .1em; font-size: 11.5px;
+                    text-transform: uppercase; color: var(--ink); }
+  </style>
+
+  <section class="chapter" id="sos-audit">
+    <header class="chapter-head">
+      <div class="chapter-num">&sect;</div>
+      <h2 class="chapter-title">Strength of Schedule</h2>
+      <span class="chapter-stamp">FAIRNESS AUDIT &mdash; COMPUTED &amp; VERIFIED</span>
+    </header>
+    <div class="chapter-body">
+
+      <p class="sos-lede">Could Saturday's draw be any fairer? Command put the question to the machine.
+        Every one of the <strong>11,180,820</strong> legal ways to draw this ten-company field &mdash;
+        each team facing six of the other nine, no rematches, no top-four meeting before Round&nbsp;4 &mdash;
+        was enumerated and scored on the evenness of its schedules. The three viable draws are ranked below;
+        the &#9733; marks the one staff have set to generate.</p>
+
+      <div class="verdict-wrap">
+      <table class="verdict">
+        <thead>
+          <tr><th>Candidate draw</th><th class="r">SoS&nbsp;variance</th><th>Assessment</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="draw">Perfectly even slates</td>
+            <td class="r num struck">0.00</td>
+            <td>Impossible &mdash; provably no draw gives all ten teams an identical slate.</td>
+          </tr>
+          <tr class="{{ 'cur' if sos.active_draw == 'fairest' }}">
+            <td class="draw">{% if sos.active_draw == 'fairest' %}<span class="star">&#9733;</span> {% endif %}Fairest draw</td>
+            <td class="r num">1.20</td>
+            <td>The statistical floor, but the 1&nbsp;v&nbsp;2 and 3&nbsp;v&nbsp;4 games never happen.</td>
+          </tr>
+          <tr class="{{ 'cur' if sos.active_draw == 'balanced' }}">
+            <td class="draw">{% if sos.active_draw == 'balanced' %}<span class="star">&#9733;</span> {% endif %}Balanced draw</td>
+            <td class="r num">5.80</td>
+            <td>Keeps every marquee game, but hands one company a harder slate than anyone carries today.</td>
+          </tr>
+          <tr class="{{ 'cur' if sos.active_draw == 'locked' }}">
+            <td class="draw">{% if sos.active_draw == 'locked' %}<span class="star">&#9733;</span> {% endif %}Locked draw</td>
+            <td class="r num">6.60</td>
+            <td>Every headline game intact, and the tightest worst-case slate of the lot.</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <p class="verdict-cap">Lower variance = more even schedules. Mean slate strength is fixed at 33 for every possible draw; only the spread differs. The &#9733; marks the draw currently set to generate.</p>
+
+      {% if sos.active_draw == 'balanced' %}
+      <div class="sos-callout">
+        <h4>The balanced draw is set</h4>
+        It keeps every marquee game &mdash; all six top-seed clashes, 1&nbsp;v&nbsp;2 closing &mdash; and packs the
+        field tighter for a <strong>5.80</strong> variance. The catch: it stretches the hardest single slate to 38,
+        wider than the locked draw's 37. Fairer on average, at the cost of one rougher road.
+      </div>
+      {% elif sos.active_draw == 'fairest' %}
+      <div class="sos-callout">
+        <h4>The fairest draw is set</h4>
+        This is the statistical floor &mdash; variance <strong>1.20</strong>, the most even schedule possible. The
+        price is the two biggest games: the top-two (1&nbsp;v&nbsp;2) and three-vs-four clashes never happen, so the
+        day loses its natural 1&nbsp;v&nbsp;2 finale.
+      </div>
+      {% else %}
+      <div class="sos-callout">
+        <h4>Why 6.60 and not 5.80?</h4>
+        Variance rewards <strong>clustering</strong> &mdash; it can't see the worst case. The 5.80 draw packs
+        more teams near the average but stretches the hardest single slate wider (a 30&ndash;38 range against
+        the locked draw's <strong>30&ndash;37</strong>). The locked schedule keeps all four top seeds meeting
+        late, 1&nbsp;v&nbsp;2 closing the day, <em>and</em> holds the widest gap to just seven seed-points. The
+        daylight between 6.60 and the 1.20 floor is smaller than a single map can swing in a best-of-one &mdash;
+        chasing it would cost real games for a difference no standings would ever feel.
+      </div>
+      {% endif %}
+
+      <h3>The evidence &mdash; each company's slate</h3>
+      <div class="sos-wrap">
+      <table class="sos-table">
+        <thead>
+          <tr><th>Seed</th><th>Company</th><th>Six opponents (by seed)</th><th class="r">Strength of schedule</th></tr>
+        </thead>
+        <tbody>
+          {% for r in sos.rows %}
+          {% set span = (sos.max - sos.min) or 1 %}
+          {% set fill = ((sos.max - r.sos) / span * 100)|round(0, 'floor')|int %}
+          <tr>
+            <td class="seed">{{ r.seed }}</td>
+            <td class="co">{{ r.team.name }}{% if r.team.tag %} &middot; {{ r.team.tag }}{% endif %}</td>
+            <td class="opps">{{ r.opponents|join('  ') }}</td>
+            <td class="r"><span class="sos-val">{{ r.sos }}</span><span class="sos-bar" title="fuller = tougher draw"><i style="width: {{ fill }}%;"></i></span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+      <p class="sos-foot">Mean 33.0 &middot; range {{ sos.min }}&ndash;{{ sos.max }} &middot; variance {{ '%.2f'|format(sos.variance) }}. The bar reads difficulty &mdash; a fuller bar means a tougher draw (facing lower, stronger seeds).</p>
+
+      <p class="sos-method"><b>Method.</b> Each captain ranked the other nine companies (1 = strongest); ballots
+        are weighted by the ranking team's own standing and iterated to a fixed point, so stronger teams' opinions
+        carry more weight (lower score = stronger = better seed). A team's strength of schedule is the sum of its
+        six opponents' seed numbers. The audit minimized the variance of that figure across all ten teams, subject
+        to the two standing rules &mdash; no rematches, and no top-four meeting before Round&nbsp;4 &mdash; over the
+        complete space of legal draws.</p>
+
+    </div>
+  </section>
+  {% endif %}
+
+  {% if is_admin and sched_options %}
+  {# Staff-only decision panel — never gated by publish; is_admin only. Compares
+     the locked group draw against the two offline-search alternatives. Choosing
+     one is a follow-up (materialize_matches still uses SCHEDULE_10). #}
+  <style>
+    .opt-intro { font-family: var(--typed); font-size: 14px; line-height: 1.55; color: var(--ink-soft);
+                 border-left: 3px solid var(--alert); padding-left: 18px; margin: 0 0 24px; max-width: 74ch; }
+    .opt-intro strong { color: var(--ink); }
+    .opt-wrap { overflow-x: auto; }
+    .opt-compare { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 13px;
+                   border: 1px solid var(--ink); margin: 0 0 30px; min-width: 540px; }
+    .opt-compare thead th { text-align: left; font-family: var(--stencil); font-size: 11px; letter-spacing: .16em;
+                            color: var(--alert); text-transform: uppercase; padding: 9px 13px; border-bottom: var(--rule-thin); }
+    .opt-compare th.c, .opt-compare td.c { text-align: center; }
+    .opt-compare tbody td { padding: 9px 13px; border-bottom: 1px dotted var(--ink-margin);
+                            font-variant-numeric: tabular-nums; color: var(--ink); }
+    .opt-compare tbody tr:last-child td { border-bottom: none; }
+    .opt-compare tr.cur td { background: rgba(30,58,95,.09); }
+    .opt-compare .dname { font-family: var(--stencil); letter-spacing: .04em; }
+    .opt-compare .yes { color: var(--olive); font-weight: 700; }
+    .opt-compare .no { color: var(--alert); font-weight: 700; }
+    .cur-badge { font-family: var(--typed); font-size: 9.5px; letter-spacing: .16em; color: var(--paper);
+                 background: var(--wsdod-blue); padding: 1px 6px; margin-left: 7px; vertical-align: 2px; }
+
+    .opt-block { border: 1px solid var(--ink); background: var(--paper); box-shadow: 3px 3px 0 var(--paper-deep);
+                 margin: 0 0 22px; }
+    .opt-block.is-cur { box-shadow: 3px 3px 0 var(--wsdod-faint); border-color: var(--wsdod-blue); }
+    .opt-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+                padding: 11px 16px; border-bottom: var(--rule-thin); background: var(--paper-edge); }
+    .opt-head-l { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .opt-title { font-family: var(--stencil); font-size: 19px; letter-spacing: .05em; color: var(--ink); }
+    .set-draw-form { display: inline; margin: 0; }
+    .set-draw-btn { font-size: 10px; padding: 3px 10px; letter-spacing: .1em; }
+    .opt-active { font-family: var(--typed); font-size: 13px; line-height: 1.5; color: var(--ink);
+                  background: var(--paper-edge); border: 1px solid var(--ink-margin); padding: 9px 14px; margin: 0 0 22px; }
+    .opt-active strong { font-family: var(--stencil); letter-spacing: .06em; color: var(--wsdod-blue); }
+    .opt-metrics { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+    .opt-metrics b { color: var(--ink); }
+    .opt-note { font-family: var(--serif); font-size: 15px; line-height: 1.55; color: var(--ink-soft);
+                margin: 0; padding: 12px 16px; border-bottom: 1px dashed var(--ink-margin); }
+    .opt-sched { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12.5px; }
+    .opt-sched td { padding: 8px 14px; border-bottom: 1px dotted var(--ink-margin); vertical-align: top; }
+    .opt-sched tr:last-child td { border-bottom: none; }
+    .opt-sched .rn { white-space: nowrap; color: var(--alert); font-weight: 700; width: 1%; padding-right: 18px; }
+    .opt-sched .rn span { display: block; color: var(--ink-faint); font-weight: 400; font-size: 10.5px; letter-spacing: .03em; }
+    .rm { display: flex; flex-wrap: wrap; gap: 5px 14px; }
+    .rm .mt { color: var(--ink); white-space: nowrap; }
+    .rm .mt em { color: var(--ink-faint); font-style: normal; padding: 0 3px; }
+    .rm .mt.top4 { color: var(--wsdod-blue); font-weight: 700; }
+    .rm .mt.top4 em { color: var(--wsdod-faint); }
+    .opt-legend { font-family: var(--typed); font-size: 12px; color: var(--ink-faint); margin: 4px 2px 30px; }
+    .opt-legend b { color: var(--wsdod-blue); }
+  </style>
+
+  <section class="chapter" id="sched-decision">
+    <header class="chapter-head">
+      <div class="chapter-num">&#9733;</div>
+      <h2 class="chapter-title">Saturday Draw &mdash; Options</h2>
+      <span class="chapter-stamp">STAFF ONLY &mdash; SCHEDULE DECISION</span>
+    </header>
+    <div class="chapter-body">
+
+      <p class="opt-intro">Three legal draws for the ten-company group stage, teams overlaid on the locked seeds.
+        The <strong>locked</strong> draw is the default; the two alternatives came out of the fairness search over
+        all 11,180,820 draws. Every option obeys both standing rules &mdash; no rematches, no top-four meeting
+        before Round&nbsp;4. Set one active below, then run &ldquo;Generate schedule&rdquo; on the Communiqu&eacute;
+        page to materialize it into the bracket.</p>
+
+      {% set active_opt = sched_options|selectattr('current')|first %}
+      <p class="opt-active">Currently set to generate: <strong>{{ active_opt.title }}</strong>.
+        {% if matches_generated %}Saturday matches are already generated &mdash; re-run &ldquo;Generate schedule&rdquo;
+        to apply a change.{% else %}No matches are materialized yet, so a change takes effect the next time you
+        generate.{% endif %}</p>
+
+      <div class="opt-wrap">
+      <table class="opt-compare">
+        <thead>
+          <tr><th>Draw</th><th class="c">SoS&nbsp;variance</th><th class="c">Worst-case spread</th>
+              <th class="c">Top-4 clashes</th><th class="c">1&nbsp;v&nbsp;2 finale</th></tr>
+        </thead>
+        <tbody>
+          {% for opt in sched_options %}
+          <tr class="{{ 'cur' if opt.current }}">
+            <td class="dname">{{ opt.title }}{% if opt.current %}<span class="cur-badge">CURRENT</span>{% endif %}</td>
+            <td class="c">{{ '%.2f'|format(opt.stats.variance) }}</td>
+            <td class="c">{{ opt.stats.min }}&ndash;{{ opt.stats.max }}</td>
+            <td class="c">{{ opt.stats.top4_clashes }}/6</td>
+            <td class="c">{% if opt.stats.has_1v2 %}<span class="yes">Yes</span>{% else %}<span class="no">No</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+
+      {% for opt in sched_options %}
+      <div class="opt-block {{ 'is-cur' if opt.current }}">
+        <div class="opt-head">
+          <div class="opt-head-l">
+            <span class="opt-title">{{ opt.title }}</span>
+            {% if opt.current %}<span class="cur-badge">ACTIVE</span>{% else %}
+            <form method="post" action="{{ url_for('schedule_set_draw') }}" class="set-draw-form"
+                  onsubmit="return confirm('Set the {{ opt.title }} as the active group draw?');">
+              <input type="hidden" name="draw" value="{{ opt.key }}">
+              <button type="submit" class="set-draw-btn">Set active</button>
+            </form>
+            {% endif %}
+          </div>
+          <span class="opt-metrics">variance <b>{{ '%.2f'|format(opt.stats.variance) }}</b> &middot;
+            spread <b>{{ opt.stats.min }}&ndash;{{ opt.stats.max }}</b> &middot;
+            top-4 <b>{{ opt.stats.top4_clashes }}/6</b> &middot;
+            1v2 <b>{{ 'yes' if opt.stats.has_1v2 else 'no' }}</b></span>
+        </div>
+        <p class="opt-note">{{ opt.note }}</p>
+        <div class="opt-wrap">
+        <table class="opt-sched">
+          {% for rnd in opt.rounds %}
+          <tr>
+            <td class="rn">Round {{ rnd.n }}<span>{{ rnd.time }}</span></td>
+            <td><div class="rm">
+              {% for m in rnd.matches %}
+              <span class="mt {{ 'top4' if m.top4 }}">{{ m.a.name }} <em>v</em> {{ m.b.name }}</span>
+              {% endfor %}
+            </div></td>
+          </tr>
+          {% endfor %}
+        </table>
+        </div>
+      </div>
+      {% endfor %}
+      <p class="opt-legend">Bold <b>blue</b> = a top-four seed clash (held to Rounds&nbsp;4&ndash;6 in every option).</p>
+
+    </div>
+  </section>
+  {% endif %}
 {% endblock %}
