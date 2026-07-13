@@ -50,6 +50,11 @@ services:
     volumes:
       - ./config/local:/config:ro
       - ./local/plugins:/plugins:ro
+      # Prod-mirrored match-time map configs (configs/ktp_<map>.cfg -> ktpbasic.cfg).
+      # Without these, KTPMatchHandler's exec_map_config misses, mp_clan_match is
+      # never armed, and the engine silently ignores mp_clan_restartround at
+      # go-live (no countdown, no round restart, no half-timer rebase).
+      - ./config/local/dod-configs:/opt/hlds/dod/configs:ro
     ports:
       - "27016:27015/udp"
       - "27016:27015/tcp"
@@ -79,6 +84,7 @@ services:
     volumes:
       - ./config/local:/config:ro
       - ./local/plugins:/plugins:ro
+      - ./config/local/dod-configs:/opt/hlds/dod/configs:ro
     ports:
       - "27017:27015/udp"
       - "27017:27015/tcp"
