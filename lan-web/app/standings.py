@@ -1,7 +1,7 @@
 """Group-stage standings with the tiebreak ladder.
 
 Order: wins -> head-to-head (within the tied group) -> Buchholz (sum of
-opponents' wins) -> round/flag differential -> seed. Pure function over team
+opponents' wins) -> score differential -> seed. Pure function over team
 rows + final match rows; unit-tested."""
 from __future__ import annotations
 
