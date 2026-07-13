@@ -151,68 +151,32 @@
     </header>
     <div class="chapter-body">
 
+      {# Publishes the ACTIVE draw only. The alternative draws and their scores are a
+         staff decision and stay staff-side (see the is_admin Options panel) — never
+         name them here, and never state this draw's merits by comparison with them. #}
       <p class="sos-lede">Could Saturday's draw be any fairer? Command put the question to the machine.
         Every one of the <strong>11,180,820</strong> legal ways to draw this ten-company field &mdash;
         each team facing six of the other nine, no rematches, no top-four meeting before Round&nbsp;4 &mdash;
-        was enumerated and scored on the evenness of its schedules. The three viable draws are ranked below;
-        the &#9733; marks the one staff have set to generate.</p>
+        was enumerated and scored on the evenness of its schedules. A perfectly even field is provably
+        out of reach: no draw in that space gives all ten companies an identical slate. The draw that
+        was selected, and how it scores, is set out below.</p>
 
-      <div class="verdict-wrap">
-      <table class="verdict">
-        <thead>
-          <tr><th>Candidate draw</th><th class="r">SoS&nbsp;variance</th><th>Assessment</th></tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="draw">Perfectly even slates</td>
-            <td class="r num struck">0.00</td>
-            <td>Impossible &mdash; provably no draw gives all ten teams an identical slate.</td>
-          </tr>
-          <tr class="{{ 'cur' if sos.active_draw == 'fairest' }}">
-            <td class="draw">{% if sos.active_draw == 'fairest' %}<span class="star">&#9733;</span> {% endif %}Fairest draw</td>
-            <td class="r num">1.20</td>
-            <td>The statistical floor, but the 1&nbsp;v&nbsp;2 and 3&nbsp;v&nbsp;4 games never happen.</td>
-          </tr>
-          <tr class="{{ 'cur' if sos.active_draw == 'balanced' }}">
-            <td class="draw">{% if sos.active_draw == 'balanced' %}<span class="star">&#9733;</span> {% endif %}Balanced draw</td>
-            <td class="r num">5.80</td>
-            <td>Keeps every marquee game, but hands one company a harder slate than anyone carries today.</td>
-          </tr>
-          <tr class="{{ 'cur' if sos.active_draw == 'locked' }}">
-            <td class="draw">{% if sos.active_draw == 'locked' %}<span class="star">&#9733;</span> {% endif %}Locked draw</td>
-            <td class="r num">6.60</td>
-            <td>Every headline game intact, and the tightest worst-case slate of the lot.</td>
-          </tr>
-        </tbody>
-      </table>
-      </div>
-      <p class="verdict-cap">Lower variance = more even schedules. Mean slate strength is fixed at 33 for every possible draw; only the spread differs. The &#9733; marks the draw currently set to generate.</p>
-
-      {% if sos.active_draw == 'balanced' %}
       <div class="sos-callout">
-        <h4>The balanced draw is set</h4>
-        It keeps every marquee game &mdash; all six top-seed clashes, 1&nbsp;v&nbsp;2 closing &mdash; and packs the
-        field tighter for a <strong>5.80</strong> variance. The catch: it stretches the hardest single slate to 38,
-        wider than the locked draw's 37. Fairer on average, at the cost of one rougher road.
+        <h4>The draw, measured</h4>
+        Mean slate strength is fixed at <strong>33</strong> for every possible draw &mdash; only the spread moves.
+        On this one every company lands between <strong>{{ sos.min }}</strong> and <strong>{{ sos.max }}</strong>:
+        a gap of {{ sos.max - sos.min }} seed-points across the whole field, on a scale that runs from
+        {{ sos.dom_min }} to {{ sos.dom_max }}. Nobody runs a gauntlet and nobody coasts.
+        {% if sos.top4_clashes == 6 and sos.has_1v2 %}
+        Every headline game survives it, too &mdash; all six meetings between the top four seeds are on the card,
+        with 1&nbsp;v&nbsp;2 closing the day.
+        {% elif sos.has_1v2 %}
+        The 1&nbsp;v&nbsp;2 meeting is on the card to close the day.
+        {% else %}
+        The trade is at the top of the board: the very biggest games don't fall out of this draw, and the day
+        has no 1&nbsp;v&nbsp;2 finale.
+        {% endif %}
       </div>
-      {% elif sos.active_draw == 'fairest' %}
-      <div class="sos-callout">
-        <h4>The fairest draw is set</h4>
-        This is the statistical floor &mdash; variance <strong>1.20</strong>, the most even schedule possible. The
-        price is the two biggest games: the top-two (1&nbsp;v&nbsp;2) and three-vs-four clashes never happen, so the
-        day loses its natural 1&nbsp;v&nbsp;2 finale.
-      </div>
-      {% else %}
-      <div class="sos-callout">
-        <h4>Why 6.60 and not 5.80?</h4>
-        Variance rewards <strong>clustering</strong> &mdash; it can't see the worst case. The 5.80 draw packs
-        more teams near the average but stretches the hardest single slate wider (a 30&ndash;38 range against
-        the locked draw's <strong>30&ndash;37</strong>). The locked schedule keeps all four top seeds meeting
-        late, 1&nbsp;v&nbsp;2 closing the day, <em>and</em> holds the widest gap to just seven seed-points. The
-        daylight between 6.60 and the 1.20 floor is smaller than a single map can swing in a best-of-one &mdash;
-        chasing it would cost real games for a difference no standings would ever feel.
-      </div>
-      {% endif %}
 
       <h3>The evidence &mdash; each company's slate</h3>
       <div class="sos-wrap">
@@ -222,8 +186,13 @@
         </thead>
         <tbody>
           {% for r in sos.rows %}
-          {% set span = (sos.max - sos.min) or 1 %}
-          {% set fill = ((sos.max - r.sos) / span * 100)|round(0, 'floor')|int %}
+          {# Scaled against the TRUE domain (hardest..easiest slate a seed could draw),
+             not the observed min/max. Min-max normalising would peg the toughest slate
+             at 100% and the easiest at 0% no matter how tight the real band is — which
+             renders ten near-identical slates as a full-width chasm, and would look
+             just as drastic for a perfectly even draw. #}
+          {% set span = (sos.dom_max - sos.dom_min) or 1 %}
+          {% set fill = ((sos.dom_max - r.sos) / span * 100)|round(0, 'floor')|int %}
           <tr>
             <td class="seed">{{ r.seed }}</td>
             <td class="co">{{ r.team.name }}{% if r.team.tag %} &middot; {{ r.team.tag }}{% endif %}</td>
@@ -234,14 +203,19 @@
         </tbody>
       </table>
       </div>
-      <p class="sos-foot">Mean 33.0 &middot; range {{ sos.min }}&ndash;{{ sos.max }} &middot; variance {{ '%.2f'|format(sos.variance) }}. The bar reads difficulty &mdash; a fuller bar means a tougher draw (facing lower, stronger seeds).</p>
+      <p class="sos-foot">Mean 33.0 &middot; range {{ sos.min }}&ndash;{{ sos.max }} on a {{ sos.dom_min }}&ndash;{{ sos.dom_max }} scale.
+        The bar reads difficulty &mdash; a fuller bar means a tougher draw (facing lower, stronger seeds) &mdash; and is
+        drawn against the full range of slates a company <em>could</em> have been dealt, so the bars sit close together
+        because the slates genuinely are close together.</p>
 
       <p class="sos-method"><b>Method.</b> Each captain ranked the other nine companies (1 = strongest); ballots
         are weighted by the ranking team's own standing and iterated to a fixed point, so stronger teams' opinions
         carry more weight (lower score = stronger = better seed). A team's strength of schedule is the sum of its
-        six opponents' seed numbers. The audit minimized the variance of that figure across all ten teams, subject
-        to the two standing rules &mdash; no rematches, and no top-four meeting before Round&nbsp;4 &mdash; over the
-        complete space of legal draws.</p>
+        six opponents' seed numbers. The audit scored that figure's spread across all ten teams for every legal draw
+        &mdash; subject to the two standing rules, no rematches and no top-four meeting before Round&nbsp;4 &mdash;
+        and the draw was picked to hold that spread tight while keeping the games worth showing up for. Chasing the
+        last of the spread means giving up marquee games, and the difference it would make is smaller than a single
+        map can swing in a best-of-one.</p>
 
     </div>
   </section>

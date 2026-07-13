@@ -193,6 +193,24 @@ def schedule_options():
     return out
 
 
+def _sos_domain():
+    """The true SoS scale: hardest possible slate (the six lowest other seeds) to
+    easiest (the six highest). Comes out 21..45, centred on the fixed mean of 33.
+
+    The bar chart anchors to THIS, not to the observed min/max. Min-max normalising
+    pins the toughest slate at 100% and the easiest at 0% however tight the real
+    band is — so a 30..37 spread (i.e. ten near-identical slates) renders as a
+    full-width chasm, and would do so even for a perfectly even draw. Anchoring to
+    the real scale lets the bars show what's actually true: everyone lands near 33.
+    """
+    lo, hi = [], []
+    for s in range(1, 11):
+        others = [x for x in range(1, 11) if x != s]
+        lo.append(sum(sorted(others)[:6]))
+        hi.append(sum(sorted(others)[-6:]))
+    return min(lo), max(hi)
+
+
 def strength_of_schedule():
     """Per-seed strength of schedule for the 10-team group draw, teams overlaid.
 
@@ -213,11 +231,20 @@ def strength_of_schedule():
             for s in range(1, 11)]
     vals = [r["sos"] for r in rows]
     mean = sum(vals) / len(vals)
+    dom_min, dom_max = _sos_domain()
+    stats = _draw_stats(active_schedule())
     return {
         "rows": rows,
         "mean": mean,
         "variance": sum((v - mean) ** 2 for v in vals) / len(vals),
         "min": min(vals), "max": max(vals),
+        # True scale for the bars — see _sos_domain.
+        "dom_min": dom_min, "dom_max": dom_max,
+        # Marquee facts about the ACTIVE draw, so the published assessment can be
+        # stated from this draw's own numbers instead of by comparison with the
+        # alternatives (which are staff-only and must never be published).
+        "top4_clashes": stats["top4_clashes"],
+        "has_1v2": stats["has_1v2"],
         "active_draw": active_draw_key(),
     }
 
