@@ -13,7 +13,12 @@ Three-tier severity model per `TODO.md` Tier 3 Project 1 follow-up spec:
               ≥5fps / ≥0.5% magnitude floor (retuned 1.5.31 — the fleet
               runs saturated at ~999.5 fps, sub-5fps daily-median drift is
               player-imperceptible)
-              OR per-host daily ≥10ms spike count > (host_baseline_mean + 2.5σ)
+              OR per-host daily ≥10ms spike count > (host_baseline_mean + 2.5σ),
+              gated by a ≥10-count magnitude floor (SPIKE_MIN_COUNT) — post
+              async-log-writer most hosts baseline at σ=0, where the σ test
+              alone turns a single ≥10ms frame into an alert. A host with
+              ≥3 SEVERE (≥100ms) frames bypasses the floor: those are
+              match-visible freezes and stay loud at low counts.
               (source switched to ktp_spike_daily material frames in 1.5.31 —
               the old per-phase spike_total was magnitude-blind, dominated by
               imperceptible 0-10ms frames; 2.5σ retained from the 2026-05-05
@@ -112,6 +117,26 @@ SPIKE_SIGMA_THRESHOLD = 2.5
 # hosts responsive if one ever rejoins the fleet).
 FPS_MIN_DROP_FPS = 5.0
 FPS_MIN_DROP_PCT = 0.005  # 0.5%
+# Spike WARN needs the same magnitude floor the fps WARN got, for a sharper
+# reason: the async log writer (2.7.19 + .927) annihilated the PHYS stall
+# class, so per-host material spikes now sit at 0 nearly every day. 15 of 24
+# hosts currently carry a [0,0,0,0] baseline -> σ=0 -> mean+2.5σ collapses to
+# 0.0, and `today > 0` makes a SINGLE ≥10ms frame a Discord alert. The σ=0
+# hazard was anticipated for zero-filled missing days; it arrives identically
+# from genuinely-flat real data, which is the regime the fleet is now in.
+# 10 clears the worst recent whole-fleet day (13 on 2026-07-12, spread across
+# hosts; no single host exceeded 3), so a host must produce a real cluster —
+# not drift from 0 to 1 — before it warns.
+SPIKE_MIN_COUNT = 10
+# ...but the flat count is magnitude-blind, and a bare ≥10 floor would silence
+# the frames operators most want to hear about: a handful of ≥100ms freezes is
+# match-visible (one lands mid-firefight) yet never reaches 10/day. Severe
+# frames therefore bypass the floor. 3 mirrors the digest's own concession that
+# low-count severe frames matter (its SEVERE_YELLOW_FLOOR=5 is fleet-wide across
+# every host; 3 is the per-host analog). The σ-breach still applies, so a host
+# whose baseline already carries severe noise won't re-fire on flat behavior.
+SPIKE_SEVERE_BUCKETS = ("100-250ms", "250-500ms", "500ms-1s", "1s+")
+SPIKE_SEVERE_MIN_COUNT = 3
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
 # Fleet-median CRITICAL is the boiled-frog backstop: the trailing baseline
@@ -136,6 +161,9 @@ KTP_RED = 15548997
 # spike_total_* semantics changed 1.5.31: rows before 2026-07-10 hold
 # all-phase per-phase-line counts (~200/day); rows after hold ≥10ms
 # umbrella-frame counts (~0-20/day). Don't compare across the boundary.
+# Forensics note: a row can legitimately show spike_total_today >
+# spike_total_baseline with NO warn — SPIKE_MIN_COUNT suppressed it. The
+# persisted columns are the σ math only; they don't encode the count floor.
 DDL_BASELINES = """
 CREATE TABLE IF NOT EXISTS ktp_telemetry_baselines (
     server_endpoint VARCHAR(48) NOT NULL,
@@ -268,30 +296,42 @@ SPIKE_NOISE_BUCKETS = ("0-5ms", "5-10ms")
 
 def fetch_material_spikes(
     cnx: pymysql.connections.Connection, start: date, end: date,
-) -> tuple[dict[tuple[str, date], int], set[date]]:
+) -> tuple[dict[tuple[str, date], int], dict[tuple[str, date], int], set[date]]:
     """Per-(endpoint, day) counts of ≥10ms [KTP_SPIKE] umbrella frames from
-    ktp_spike_daily, plus the set of days that have ANY fleet data.
+    ktp_spike_daily, the same keyed by SEVERE (≥100ms) frames only, plus the
+    set of days that have ANY fleet data.
 
     The day-set drives zero-filling: an endpoint absent on an observed day
     genuinely had zero material spikes, but days before the table existed
     (or with the aggregator down) must be EXCLUDED from baselines, not
     zero-filled — a [0,0,0,0] baseline has σ=0 and would WARN on the first
-    real occurrence."""
+    real occurrence.
+
+    The severe counts are gate-only (they bypass SPIKE_MIN_COUNT); they are
+    not persisted and do not affect the baseline series."""
     counts: dict[tuple[str, date], int] = {}
+    severe: dict[tuple[str, date], int] = {}
     days: set[date] = set()
     sql = """
     SELECT day, server_endpoint,
-           SUM(CASE WHEN magnitude_bucket NOT IN %s THEN count ELSE 0 END) AS material
+           SUM(CASE WHEN magnitude_bucket NOT IN %s THEN count ELSE 0 END) AS material,
+           SUM(CASE WHEN magnitude_bucket IN %s THEN count ELSE 0 END) AS severe
     FROM ktp_spike_daily
     WHERE day BETWEEN %s AND %s
     GROUP BY day, server_endpoint
     """
     with cnx.cursor() as cur:
-        cur.execute(sql, (SPIKE_NOISE_BUCKETS, start.isoformat(), end.isoformat()))
+        cur.execute(
+            sql,
+            (SPIKE_NOISE_BUCKETS, SPIKE_SEVERE_BUCKETS,
+             start.isoformat(), end.isoformat()),
+        )
         for row in cur.fetchall():
             days.add(row["day"])
-            counts[(row["server_endpoint"], row["day"])] = int(row["material"] or 0)
-    return counts, days
+            key = (row["server_endpoint"], row["day"])
+            counts[key] = int(row["material"] or 0)
+            severe[key] = int(row["severe"] or 0)
+    return counts, severe, days
 
 
 def upsert_baseline_row(cnx: pymysql.connections.Connection, row: dict) -> None:
@@ -351,6 +391,7 @@ def compute_findings(
     target_day: date,
     aggregates: dict[tuple[str, date], dict[str, float]],
     material_spikes: dict[tuple[str, date], int],
+    severe_spikes: dict[tuple[str, date], int],
     spike_days: set[date],
     excluded: set[str],
 ) -> list[HostFinding]:
@@ -382,6 +423,10 @@ def compute_findings(
         ]
         spikes_today = (
             material_spikes.get((endpoint, target_day), 0)
+            if target_day in spike_days else 0
+        )
+        severe_today = (
+            severe_spikes.get((endpoint, target_day), 0)
             if target_day in spike_days else 0
         )
 
@@ -427,7 +472,18 @@ def compute_findings(
             f.spike_total_baseline = (
                 f.spike_total_mean + SPIKE_SIGMA_THRESHOLD * f.spike_total_stddev
             )
-            if endpoint not in excluded and f.spike_total_today > f.spike_total_baseline:
+            # Two-condition gate, mirroring the fps WARN: the σ-breach must pass
+            # AND the day must be materially spiky. Without the floor a σ=0
+            # baseline (the common case now — see SPIKE_MIN_COUNT) turns one
+            # ≥10ms frame into an alert. Severe (≥100ms) frames bypass the count
+            # floor: a few match-visible freezes never reach 10/day, and going
+            # quiet on those is the one failure this gate must not cause.
+            sigma_breach = f.spike_total_today > f.spike_total_baseline
+            magnitude_meaningful = f.spike_total_today >= SPIKE_MIN_COUNT
+            severe_override = severe_today >= SPIKE_SEVERE_MIN_COUNT
+            if endpoint not in excluded and sigma_breach and (
+                magnitude_meaningful or severe_override
+            ):
                 f.warn_spikes = True
         findings.append(f)
     return findings
@@ -536,7 +592,8 @@ def build_embed(
         "name": "Source",
         "value": ("`ktp_telemetry_metrics` fps daily aggregates + `ktp_spike_daily` "
                   "≥10ms spike counts · trailing-7-day baseline · "
-                  "fps 2σ + ≥5 fps floor / spike 2.5σ thresholds."),
+                  "fps 2σ + ≥5 fps floor / spike 2.5σ + ≥10 floor "
+                  "(≥3 severe ≥100ms frames bypass the floor)."),
         "inline": False,
     })
 
@@ -649,7 +706,8 @@ def main() -> int:
                     logging.error("no-data alert post failed http=%d body=%s", status, body)
             return 1
 
-        material_spikes, spike_days = fetch_material_spikes(cnx, start, target_day)
+        material_spikes, severe_spikes, spike_days = fetch_material_spikes(
+            cnx, start, target_day)
         if target_day not in spike_days:
             # Non-fatal: fps evaluation proceeds; spike WARN just stays silent
             # for the day (aggregator not writing ktp_spike_daily yet, or a
@@ -657,7 +715,7 @@ def main() -> int:
             logging.warning("no ktp_spike_daily rows for %s — spike WARN inactive", target_day)
 
         findings = compute_findings(target_day, aggregates, material_spikes,
-                                    spike_days, excluded)
+                                    severe_spikes, spike_days, excluded)
         if not findings:
             logging.warning("no findings produced — skipping")
             return 0
