@@ -19,6 +19,10 @@ Three-tier severity model per `TODO.md` Tier 3 Project 1 follow-up spec:
               alone turns a single ≥10ms frame into an alert. A host with
               ≥3 SEVERE (≥100ms) frames bypasses the floor: those are
               match-visible freezes and stay loud at low counts.
+              OR per-host daily count ≥ SPIKE_ABS_CEILING (50) regardless of
+              baseline — the boiled-frog backstop, since a trailing baseline
+              chases a slow creep and never σ-breaches (spike analog of
+              DEFAULT_FLEET_CRITICAL_FPS; also live during warmup)
               (source switched to ktp_spike_daily material frames in 1.5.31 —
               the old per-phase spike_total was magnitude-blind, dominated by
               imperceptible 0-10ms frames; 2.5σ retained from the 2026-05-05
@@ -137,6 +141,19 @@ SPIKE_MIN_COUNT = 10
 # whose baseline already carries severe noise won't re-fire on flat behavior.
 SPIKE_SEVERE_BUCKETS = ("100-250ms", "250-500ms", "500ms-1s", "1s+")
 SPIKE_SEVERE_MIN_COUNT = 3
+# Absolute ceiling — the spike analog of DEFAULT_FLEET_CRITICAL_FPS, and for the
+# identical reason: a trailing baseline SELF-ADJUSTS to slow degradation. A host
+# creeping 0 -> 8 -> 12 -> 20/day never σ-breaches, because the mean chases it up;
+# SPIKE_MIN_COUNT is a floor, not a ceiling, so it doesn't help either. A sustained
+# regression under the σ test is therefore silent forever — the same boiled-frog
+# hole that let a ~36 fps fleet sag go unnoticed before the fps floor existed.
+# Evaluated OUTSIDE the ≥4-baseline gate on purpose: an absolute threshold needs
+# no history, so it also covers the warmup window, where the σ test is blind.
+# 50 is >16x the worst observed post-async-writer host-day (3, on 2026-07-12) yet
+# far under the 2026-07-03 jbd2 incident rate (72-187 stalls/instance). Anchoring
+# it at the incident rate (~100) would leave the 20-100 band silent — and that band
+# IS the boiled-frog case this exists to catch, so the ceiling has to sit below it.
+SPIKE_ABS_CEILING = 50
 BASELINE_WINDOW_DAYS = 7
 CRITICAL_HOST_COUNT = 3
 # Fleet-median CRITICAL is the boiled-frog backstop: the trailing baseline
@@ -161,9 +178,15 @@ KTP_RED = 15548997
 # spike_total_* semantics changed 1.5.31: rows before 2026-07-10 hold
 # all-phase per-phase-line counts (~200/day); rows after hold ≥10ms
 # umbrella-frame counts (~0-20/day). Don't compare across the boundary.
-# Forensics note: a row can legitimately show spike_total_today >
-# spike_total_baseline with NO warn — SPIKE_MIN_COUNT suppressed it. The
-# persisted columns are the σ math only; they don't encode the count floor.
+# Forensics note: the persisted columns are the σ math ONLY — they encode
+# neither the count floor nor the ceiling, so a row cannot tell you which gate
+# fired. Three legitimate-looking oddities: today > baseline with NO warn
+# (SPIKE_MIN_COUNT suppressed it); warn with today <= baseline (SPIKE_ABS_CEILING
+# fired on a baseline that crept up to meet it); and warn with NULL baseline
+# (ceiling fired during warmup). The embed line states which path fired.
+# A future semantics change to `material` (another 1.5.31-style boundary) would
+# trip SPIKE_ABS_CEILING fleet-wide overnight — that RED is the pipeline error
+# announcing itself, but know it's the cause before you go hunting a regression.
 DDL_BASELINES = """
 CREATE TABLE IF NOT EXISTS ktp_telemetry_baselines (
     server_endpoint VARCHAR(48) NOT NULL,
@@ -485,6 +508,11 @@ def compute_findings(
                 magnitude_meaningful or severe_override
             ):
                 f.warn_spikes = True
+        # Absolute ceiling — deliberately outside the baseline gate above: it
+        # needs no history, so it also covers warmup, when the σ test is blind.
+        # This is the only path that survives a baseline chasing a slow creep.
+        if endpoint not in excluded and f.spike_total_today >= SPIKE_ABS_CEILING:
+            f.warn_spikes = True
         findings.append(f)
     return findings
 
@@ -562,10 +590,27 @@ def build_embed(
                     f"(μ {f.fps_p50_mean:.1f} σ {f.fps_p50_stddev:.1f})"
                 )
             if f.warn_spikes:
-                tags.append(
-                    f"≥10ms spikes {f.spike_total_today} > {f.spike_total_baseline:.0f} "
-                    f"(μ {f.spike_total_mean:.0f} σ {f.spike_total_stddev:.0f})"
-                )
+                # Three ways in, and the line must say which — SPIKE_ABS_CEILING
+                # can fire with the baseline stats still None (warmup), which
+                # would TypeError on format, or with a baseline the count never
+                # breached (the crept baseline), which would print a false ">".
+                if (f.spike_total_baseline is not None
+                        and f.spike_total_today > f.spike_total_baseline):
+                    tags.append(
+                        f"≥10ms spikes {f.spike_total_today} > {f.spike_total_baseline:.0f} "
+                        f"(μ {f.spike_total_mean:.0f} σ {f.spike_total_stddev:.0f})"
+                    )
+                elif f.spike_total_baseline is None:
+                    tags.append(
+                        f"≥10ms spikes {f.spike_total_today} ≥ abs ceiling "
+                        f"{SPIKE_ABS_CEILING} (warmup — no baseline)"
+                    )
+                else:
+                    tags.append(
+                        f"≥10ms spikes {f.spike_total_today} ≥ abs ceiling "
+                        f"{SPIKE_ABS_CEILING} (σ thr {f.spike_total_baseline:.0f} "
+                        f"not breached — baseline crept)"
+                    )
             lines.append(f"**{label}** ({f.server_endpoint}) — " + "; ".join(tags))
         joined = "\n".join(lines)
         if len(joined) > 1020:
@@ -593,7 +638,8 @@ def build_embed(
         "value": ("`ktp_telemetry_metrics` fps daily aggregates + `ktp_spike_daily` "
                   "≥10ms spike counts · trailing-7-day baseline · "
                   "fps 2σ + ≥5 fps floor / spike 2.5σ + ≥10 floor "
-                  "(≥3 severe ≥100ms frames bypass the floor)."),
+                  "(≥3 severe ≥100ms frames bypass the floor; ≥50/day "
+                  "warns regardless of baseline)."),
         "inline": False,
     })
 
