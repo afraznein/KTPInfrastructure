@@ -81,13 +81,13 @@ tracerspeed 6250
 //               Netcode & Rates
 //-----------------------------------------------
 sv_unlag 1
-sv_maxunlag 0.1
+sv_maxunlag 0.5  // 500ms max rewind window
 sv_minupdaterate 100
 sv_maxupdaterate 120
 sv_mincmdrate 100
 sv_maxcmdrate 500
 sv_minrate 100000
-sv_maxrate 1000000
+sv_maxrate 100000  // Locked equal to sv_minrate — identical client bandwidth budgets; do not raise without a fleet decision
 fakelag 0
 fakeloss 0
 
