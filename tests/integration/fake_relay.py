@@ -75,7 +75,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass, field
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 
 
@@ -125,6 +125,19 @@ class _RelayHandler(BaseHTTPRequestHandler):
     (in-place embed updates); everything else 404.
     Reaches into `self.server.relay` (set by FakeRelay.start) for state."""
 
+    def setup(self) -> None:
+        # socketserver builds ONE handler instance per TCP connection (handle()
+        # then loops over requests when keep-alive is on), so this fires once
+        # per accepted connection — which is exactly what makes
+        # `relay.connections` a real count of TCP connections rather than of
+        # requests. The curl connection-reuse test depends on that distinction:
+        # without it, a test asserting "keep-alive worked" would pass even if
+        # libcurl opened a fresh connection every time.
+        super().setup()
+        relay = getattr(self.server, "relay", None)
+        if relay is not None:
+            relay.record_connection(self.client_address)
+
     def log_message(self, format: str, *args: Any) -> None:
         # Quiet by default — pytest -v already captures stderr/stdout per test.
         # Tests that want to debug can flip self.server.relay.verbose = True.
@@ -133,16 +146,17 @@ class _RelayHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         relay: FakeRelay = self.server.relay  # type: ignore[attr-defined]
+        relay.record_request(self.command, self.path)
 
-        # Three known routes: Discord /reply, /edit, and AC /api/match/end.
-        # Anything else 404s.
-        is_ac_match_end = (self.path == "/api/match/end")
-        is_discord = self.path in ("/reply", "/edit")
-        if not (is_ac_match_end or is_discord):
-            self._respond(404, {"error": f"unknown path: {self.path}"})
-            return
-
-        # Read body up to Content-Length. Refuse unbounded reads.
+        # Read body up to Content-Length BEFORE routing. Under keep-alive this
+        # is load-bearing, not just tidy: responding without draining the body
+        # leaves the unread JSON in the connection's stream, and when libcurl
+        # legitimately reuses that connection, BaseHTTPRequestHandler parses
+        # the leftover body as the next request line -> 501 "Unsupported
+        # method" -> send_error adds `Connection: close` -> the keep-alive
+        # connection dies. That exact sequence (404'd /api/match/announce,
+        # then 501 on the reused socket) made the reuse test report "no
+        # reuse" against a build that was reusing correctly (2026-07-13).
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -151,6 +165,14 @@ class _RelayHandler(BaseHTTPRequestHandler):
             self._respond(400, {"error": "missing or oversized Content-Length"})
             return
         raw = self.rfile.read(length)
+
+        # Three known routes: Discord /reply, /edit, and AC /api/match/end.
+        # Anything else 404s (body already drained above).
+        is_ac_match_end = (self.path == "/api/match/end")
+        is_discord = self.path in ("/reply", "/edit")
+        if not (is_ac_match_end or is_discord):
+            self._respond(404, {"error": f"unknown path: {self.path}"})
+            return
 
         # Auth check — different routes use different headers + secrets.
         # Discord routes use X-Relay-Auth + relay.expected_secret;
@@ -221,6 +243,19 @@ class _RelayHandler(BaseHTTPRequestHandler):
                 "id": post.message_id,
             })
 
+    def do_GET(self) -> None:
+        # ktp_discord_prewarm fires GET /health at plugin load. Without a
+        # do_GET, BaseHTTPRequestHandler answers 501 + `Connection: close`,
+        # which both kills the prewarmed keep-alive connection and skews the
+        # connection-vs-request arithmetic (the accepted connection is
+        # counted, the 501'd request is not).
+        relay: FakeRelay = self.server.relay  # type: ignore[attr-defined]
+        relay.record_request(self.command, self.path)
+        if self.path == "/health":
+            self._respond(200, {"ok": True})
+        else:
+            self._respond(404, {"error": f"unknown path: {self.path}"})
+
     def _respond(self, status: int, body: dict[str, Any]) -> None:
         # Compact JSON (no whitespace between key/value) — KTPMatchHandler's
         # response parser at `ktp_matchhandler_discord.inc:630` looks for the
@@ -232,9 +267,24 @@ class _RelayHandler(BaseHTTPRequestHandler):
         payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        # Content-Length is what lets BaseHTTPRequestHandler hold the connection
+        # open under HTTP/1.1 — without it the handler must close to delimit the
+        # body, and keep-alive silently degrades to connection-per-request.
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+
+class _KeepAliveRelayHandler(_RelayHandler):
+    """Same routing, but speaks HTTP/1.1 so connections persist.
+
+    This is the FAITHFUL shape: the production Cloud Run relay is HTTP/1.1 with
+    keep-alive, so libcurl caches the connection and reuses it for the next POST
+    (the connection cache lives in the MULTI handle, so it is shared across easy
+    handles — a second embed on a fresh easy still reuses the first's socket).
+    The HTTP/1.0 default meant tier-2 never once exercised that path.
+    """
+    protocol_version = "HTTP/1.1"
 
 
 class FakeRelay:
@@ -247,17 +297,70 @@ class FakeRelay:
         expected_secret: str = "test-secret",
         expected_ac_secret: str = "test-ac-secret",
         verbose: bool = False,
+        keep_alive: bool = True,
     ) -> None:
         self.expected_secret = expected_secret
         self.expected_ac_secret = expected_ac_secret
         self.verbose = verbose
+        # keep_alive=True (default) mirrors the production Cloud Run relay:
+        # HTTP/1.1, persistent connections, so libcurl caches and reuses the
+        # socket across POSTs. That reuse is the amxxcurl code path with all the
+        # crash history (see KTPAmxxCurl 1.3.11/1.3.14), and it was completely
+        # unexercised while this mock defaulted to HTTP/1.0. Threading is
+        # MANDATORY when this is on: a persistent connection on a single-threaded
+        # HTTPServer holds the accept loop, so the next connection would hang.
+        # Set False only to reproduce the legacy connection-per-request shape.
+        self.keep_alive = keep_alive
         self.received: list[CapturedPost] = []  # POST /reply (creates)
         self.received_edits: list[CapturedPost] = []  # POST /edit (in-place updates)
         self.received_ac_match_end: list[CapturedAcPost] = []  # POST /api/match/end
         self.auth_failures: list[CapturedPost] = []
         self.ac_auth_failures: list[CapturedAcPost] = []
+        # One entry per accepted TCP connection (NOT per request) — see
+        # _RelayHandler.setup. Appended from handler threads, hence the lock.
+        self.connections: list[tuple[str, int]] = []
+        # One entry per HTTP request the server PARSED, regardless of route or
+        # status — (method, path). This is the server-truth denominator for
+        # reuse arithmetic. `request_count` only counts captured routes, so a
+        # 404'd AC POST or a /health GET consumes a TCP connection while being
+        # invisible to it — comparing connection_count against request_count
+        # mis-reported "no reuse" on a build that was reusing (2026-07-13).
+        self.raw_requests: list[tuple[str, str]] = []
+        self._conn_lock = threading.Lock()
         self._server: HTTPServer | None = None
         self._thread: threading.Thread | None = None
+
+    def record_connection(self, client_address: tuple[str, int]) -> None:
+        with self._conn_lock:
+            self.connections.append(client_address)
+
+    def record_request(self, method: str, path: str) -> None:
+        with self._conn_lock:
+            self.raw_requests.append((method, path))
+
+    @property
+    def raw_request_count(self) -> int:
+        """HTTP requests parsed by the server since start/reset — every
+        method/path/status, not just the captured routes."""
+        with self._conn_lock:
+            return len(self.raw_requests)
+
+    @property
+    def connection_count(self) -> int:
+        """TCP connections accepted since start/reset."""
+        with self._conn_lock:
+            return len(self.connections)
+
+    @property
+    def request_count(self) -> int:
+        """Requests served across every route (including rejected auth)."""
+        return (
+            len(self.received)
+            + len(self.received_edits)
+            + len(self.received_ac_match_end)
+            + len(self.auth_failures)
+            + len(self.ac_auth_failures)
+        )
 
     @property
     def url(self) -> str:
@@ -282,7 +385,14 @@ class FakeRelay:
             raise RuntimeError("relay already started")
         # Port 0 lets the kernel pick a free ephemeral. Bind 127.0.0.1 only —
         # we never want this listener exposed beyond loopback.
-        server = HTTPServer(("127.0.0.1", 0), _RelayHandler)
+        if self.keep_alive:
+            server: HTTPServer = ThreadingHTTPServer(("127.0.0.1", 0), _KeepAliveRelayHandler)
+            # Persistent connections keep their handler thread alive until the
+            # peer closes; daemon threads mean a test that dies mid-transfer
+            # can't wedge the interpreter on shutdown.
+            server.daemon_threads = True  # type: ignore[attr-defined]
+        else:
+            server = HTTPServer(("127.0.0.1", 0), _RelayHandler)
         server.relay = self  # type: ignore[attr-defined]
         thread = threading.Thread(
             target=server.serve_forever,
@@ -312,8 +422,37 @@ class FakeRelay:
         self.received_ac_match_end.clear()
         self.auth_failures.clear()
         self.ac_auth_failures.clear()
+        with self._conn_lock:
+            self.connections.clear()
+            self.raw_requests.clear()
 
     # Convenience assertions — keep tests one-line where possible.
+
+    def assert_connection_reused(self) -> None:
+        """Assert libcurl actually reused a cached connection.
+
+        Guards the connection-reuse test against passing vacuously: if the
+        module opened a fresh TCP connection per POST, the reuse code path was
+        never entered and any "no EBADF" assertion proves nothing.
+        """
+        # Compare against raw_request_count (server-parsed requests), NOT
+        # request_count (captured routes only): a 404'd or unauthenticated
+        # request still consumes/reuses a TCP connection, and ignoring it
+        # once flipped this assertion's verdict (2026-07-13).
+        reqs, conns = self.raw_request_count, self.connection_count
+        if reqs < 2:
+            raise AssertionError(
+                f"need >=2 requests to demonstrate reuse, saw {reqs}"
+            )
+        if conns >= reqs:
+            raise AssertionError(
+                f"no connection reuse: {reqs} requests arrived on {conns} "
+                f"connections (expected fewer connections than requests). "
+                f"requests seen: {self.raw_requests}. "
+                f"Either keep_alive is off on this FakeRelay, or libcurl "
+                f"declined to reuse — the reuse path was NOT exercised, so a "
+                f"passing reuse test would be meaningless."
+            )
 
     def assert_post_count(self, n: int) -> None:
         if len(self.received) != n:
