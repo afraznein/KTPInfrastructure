@@ -179,6 +179,10 @@ def deploy_to_instance(host_key: str, host_info: dict, port: int, artifacts: lis
             results.append(Outcome(host_key, port, a.basename, 'ssh_fail', str(e)[:80]))
         return results
 
+    # Everything below records an Outcome per artifact, come what may. An escaping
+    # exception here used to discard `results` wholesale — including artifacts that
+    # had already uploaded fine — and the instance then vanished from the summary
+    # entirely rather than being reported as failed.
     try:
         sftp = ssh.open_sftp()
         for a in artifacts:
@@ -204,37 +208,74 @@ def deploy_to_instance(host_key: str, host_info: dict, port: int, artifacts: lis
                                        f"local={a.md5[:12]} remote={remote_md5[:12]}",
                                        elapsed_ms=elapsed_ms))
         sftp.close()
+    except Exception as e:
+        # open_sftp() itself, exec_command, or anything else in the block. Record
+        # the artifacts that never got a verdict so this instance is reported as
+        # FAILED rather than silently absent.
+        recorded = {o.artifact for o in results}
+        for a in artifacts:
+            if a.basename not in recorded:
+                results.append(Outcome(host_key, port, a.basename, 'deploy_error', str(e)[:80]))
     finally:
         ssh.close()
 
     return results
 
 
-def print_summary(outcomes: list[Outcome], artifacts: list[Artifact], dry_run: bool):
+FAIL_STATUSES = ('md5_mismatch', 'ssh_fail', 'sftp_fail', 'deploy_error', 'worker_crash')
+
+
+def print_summary(outcomes: list[Outcome], artifacts: list[Artifact], dry_run: bool,
+                  expected_instances: list | None = None) -> list[tuple]:
+    """Print the summary and return the list of (host, port, artifact) we set out to
+    deploy but have no Outcome for. Non-empty => the run must not report success."""
     print()
     print("=" * 78)
     print(f"DEPLOY SUMMARY  ({'DRY-RUN' if dry_run else 'LIVE'})")
     print("=" * 78)
 
-    # Per-artifact totals
+    # Coverage: every instance x artifact we intended must have a verdict. Without
+    # this, a lost Outcome shrinks the denominator instead of failing the run — the
+    # summary happily printed "19/19 OK" while a whole host got nothing.
+    missing: list[tuple] = []
+    if expected_instances is not None:
+        have = {(o.host_key, o.port, o.artifact) for o in outcomes}
+        for hk, port in expected_instances:
+            for a in artifacts:
+                if (hk, port, a.basename) not in have:
+                    missing.append((hk, port, a.basename))
+
+    # Per-artifact totals, denominated by what was INTENDED, not by what reported.
     for a in artifacts:
         relevant = [o for o in outcomes if o.artifact == a.basename]
         oks = sum(1 for o in relevant if o.status in ('ok', 'dry_run'))
-        fails = sum(1 for o in relevant if o.status in ('md5_mismatch', 'ssh_fail', 'sftp_fail'))
-        total = len(relevant)
+        fails = sum(1 for o in relevant if o.status in FAIL_STATUSES)
+        total = len(expected_instances) if expected_instances is not None else len(relevant)
+        miss = sum(1 for m in missing if m[2] == a.basename)
+        suffix = f", {miss} NO-REPORT" if miss else ""
         print(f"  {a.basename}  ({a.remote_dir}/<name>.new)")
-        print(f"    {oks}/{total} OK, {fails} FAIL  [md5 {a.md5}, {a.size} bytes]")
+        print(f"    {oks}/{total} OK, {fails} FAIL{suffix}  [md5 {a.md5}, {a.size} bytes]")
 
     # Failures detail
-    failures = [o for o in outcomes if o.status in ('md5_mismatch', 'ssh_fail', 'sftp_fail')]
+    failures = [o for o in outcomes if o.status in FAIL_STATUSES]
     if failures:
         print()
         print(f"FAILURES ({len(failures)}):")
         for o in failures:
             print(f"  {o.host_key}:{o.port}  {o.artifact}  {o.status}  {o.detail}")
-    else:
+
+    if missing:
+        print()
+        print(f"*** NO REPORT ({len(missing)}) — these were never accounted for: ***")
+        for hk, port, name in missing:
+            print(f"  {hk}:{port}  {name}  no outcome recorded")
+        print("  Treat as NOT deployed. Re-run; do not assume they landed.")
+
+    if not failures and not missing:
         print()
         print("All instances OK." if not dry_run else "All instances would receive artifacts (dry-run).")
+
+    return missing
 
     # Next steps hint
     if not dry_run:
@@ -322,7 +363,15 @@ def main():
         host_ports = [p for hk, p in target_instances if hk == host_key]
         host_outcomes: list[Outcome] = []
         for port in host_ports:
-            host_outcomes.extend(deploy_to_instance(host_key, host_info, port, artifacts, args.dry_run))
+            # Per-port isolation: one port blowing up must not discard the
+            # outcomes of the ports that already deployed on this host.
+            try:
+                host_outcomes.extend(
+                    deploy_to_instance(host_key, host_info, port, artifacts, args.dry_run))
+            except Exception as e:
+                for a in artifacts:
+                    host_outcomes.append(
+                        Outcome(host_key, port, a.basename, 'deploy_error', str(e)[:80]))
         return host_outcomes
 
     with ThreadPoolExecutor(max_workers=args.parallel) as pool:
@@ -338,14 +387,27 @@ def main():
                 print(f"  [{hk}] {ok} OK, {fail} FAIL  ({len(result)} total: "
                       f"{n_ports} ports x {len(artifacts)} artifacts)")
             except Exception as e:
+                # A crashed worker used to print this line and append NOTHING, so
+                # the host dropped out of `outcomes` and the run still exited 0
+                # reporting "All instances OK". Synthesize its outcomes as failures.
                 print(f"  [{hk}] worker crashed: {e}")
+                for _hk, port in target_instances:
+                    if _hk != hk:
+                        continue
+                    for a in artifacts:
+                        outcomes.append(Outcome(hk, port, a.basename, 'worker_crash', str(e)[:80]))
 
     print(f"\nTotal elapsed: {time.time()-t0:.1f}s")
-    print_summary(outcomes, artifacts, args.dry_run)
+    missing = print_summary(outcomes, artifacts, args.dry_run,
+                            expected_instances=target_instances)
 
-    # Exit nonzero on any failure
-    fails = sum(1 for o in outcomes if o.status in ('md5_mismatch', 'ssh_fail', 'sftp_fail'))
-    sys.exit(0 if fails == 0 else 1)
+    # Exit nonzero on any failure. `missing` is the backstop: it compares what we
+    # reported against the instance x artifact matrix we set out to deploy, so any
+    # future path that loses an Outcome fails the run instead of reading as success.
+    fails = sum(1 for o in outcomes
+                if o.status in ('md5_mismatch', 'ssh_fail', 'sftp_fail',
+                                'deploy_error', 'worker_crash'))
+    sys.exit(0 if (fails == 0 and not missing) else 1)
 
 
 if __name__ == '__main__':
