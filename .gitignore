@@ -79,3 +79,6 @@ monitoring/ktp-server-monitor.py
 # from the published-CSV registration sheet each cron tick). Source
 # (builder.py, template index.html, team_overrides.json) IS tracked.
 wsdod-lan-2026/index.rendered.html
+
+# machine-local Claude permissions
+.claude/settings.local.json

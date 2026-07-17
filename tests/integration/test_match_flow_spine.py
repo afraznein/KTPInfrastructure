@@ -39,10 +39,10 @@ from .match_flow import MatchDriver, MatchType
 # Pinned version: KTPMatchHandler 0.10.122 added the test-mode build flag;
 # 0.10.123 routed test rcons through the production deferred-fwd path. When
 # the source PLUGIN_VERSION bumps, this test pin updates in lockstep
-# (memory `feedback_commit_hygiene.md`). 0.10.145 = the fleet-deployed
-# version (LIVE 2026-07-15); restage the runner's test-mode build to match
-# before the next Tier 2 run — test_1 fails loudly on mismatch by design.
-EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.145"
+# (memory `feedback_commit_hygiene.md`). 0.10.146 = the fleet build staged
+# 2026-07-16 for the 07-17 nightly; restage the runner's test-mode build to
+# match before the next Tier 2 run — test_1 fails loudly on mismatch by design.
+EXPECTED_KTPMATCHHANDLER_VERSION = "0.10.146"
 
 
 def _serverfiles() -> Path | None:
