@@ -50,8 +50,9 @@
       <div class="units-grid">
         {% for rnd in rounds %}
         <article class="unit-card">
-          <div class="unit-tag-strip">
+          <div class="unit-tag-strip" style="flex-wrap:wrap;gap:6px 12px;align-items:baseline;">
             <h3 class="unit-name">Round {{ loop.index }}</h3>
+            {% if round_times.get(loop.index) %}<span style="font-family:var(--mono);font-size:12px;color:var(--wsdod-blue);">{{ round_times[loop.index] }}</span>{% endif %}
           </div>
           <ol class="unit-roster">
             {% for m in rnd %}
@@ -97,6 +98,7 @@
       <article class="unit-card" style="margin-bottom:14px;">
         <div class="unit-tag-strip" style="flex-wrap:wrap;gap:8px 14px;align-items:center;">
           <h3 class="unit-name">Round {{ rnum }}</h3>
+          {% if round_times.get(rnum) %}<span style="font-family:var(--mono);font-size:12.5px;color:var(--wsdod-blue);">{{ round_times[rnum] }}</span>{% endif %}
           {% if rmap %}<span style="font-family:var(--mono);font-size:12.5px;color:var(--olive);">Map: {{ rmap }}</span>{% endif %}
           {% if is_admin %}
           <form method="post" action="{{ url_for('schedule_set_round_map') }}" style="display:flex;gap:4px;align-items:center;">
@@ -188,21 +190,22 @@
       <p style="font-size:13px;color:var(--ink-faint);">Seeds 1–6 bye straight to Sunday's Quarterfinals; seeds
          7–10 open in the play-in. Final standing for everyone is played out in the consolation bracket.</p>
 
-      <h3 style="margin-top:30px;">Example Saturday timetable
+      <h3 style="margin-top:30px;">Saturday timetable
         <a href="{{ url_for('schedule_ics') }}" style="font-size:12px;font-family:var(--typed);color:var(--wsdod-blue);margin-left:10px;">&#43; calendar (.ics)</a></h3>
       <p class="pending-note" style="border-style:solid;border-color:var(--alert);font-size:13px;margin:6px 0 12px;">
         <strong style="font-family:var(--stencil);letter-spacing:.12em;color:var(--alert);">SUBJECT TO CHANGE</strong>
-        — times below are an <strong>example</strong> only. The Saturday schedule is not finalised and will shift before the event.</p>
+        — this is the tentative schedule for Saturday and times may shift. We'll alert players over Discord and here on the site, so
+        please keep notifications on if you leave the LAN center.</p>
       <table class="ops-timetable">
         <tbody>
         {% for time, label, kind in timetable %}
-          <tr><td style="width:11rem;">{{ time }}</td>
-            <td style="color:{{ 'var(--alert)' if kind == 'break' else 'var(--ink)' }};">{{ label }}{% if kind == 'break' %} <span style="color:var(--ink-faint);">(1 hr)</span>{% endif %}</td></tr>
+          <tr><td style="width:12.5rem;">{{ time }}</td>
+            <td style="color:{{ 'var(--wsdod-blue)' if kind == 'setup' else 'var(--alert)' if kind == 'break' else 'var(--ink)' }};">{{ label }}</td></tr>
         {% endfor %}
-          <tr><td style="width:11rem;">~19:00</td><td style="color:var(--ink-faint);">Final standings → Sunday seeds</td></tr>
+          <tr><td style="width:12.5rem;">After 8:30 PM</td><td style="color:var(--ink-faint);">Final standings → Sunday seeds</td></tr>
         </tbody>
       </table>
-      <p style="font-size:13px;color:var(--ink-faint);">Each block is a full hour for server setup. All five matches of a round run concurrently.</p>
+      <p style="font-size:13px;color:var(--ink-faint);">Each round is a one-hour block; all five matches of a round run concurrently. Food breaks are 90 minutes.</p>
     </div>
   </section>
 {% endblock %}

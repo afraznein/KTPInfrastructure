@@ -59,8 +59,8 @@
           <div class="pending-note">No ballots yet — standings appear once captains submit.</div>
         {% endif %}
 
-        {% if submitted %}
-          <h3 style="margin-top:28px;">Ballot grid</h3>
+        {% if is_admin and submitted %}
+          <h3 style="margin-top:28px;">Ballot grid <span style="font-family:var(--stencil);font-size:11px;letter-spacing:.14em;color:var(--wsdod-blue);">· STAFF ONLY — NEVER PUBLISHED</span></h3>
           <div style="overflow-x:auto;">
           <table style="font-size:13px;">
             <thead>

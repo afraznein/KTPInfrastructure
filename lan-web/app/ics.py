@@ -59,7 +59,7 @@ def _sat_round_times() -> dict[int, tuple[str, str]]:
     for slot, _label, kind in sched.SATURDAY_TIMETABLE:
         if kind == "round":
             n += 1
-            a, b = [p.strip() for p in slot.replace("–", "-").split("-")]
+            a, b = [_to24(p) for p in slot.replace("–", "-").split("-")]
             out[n] = (a, b)
     return out
 

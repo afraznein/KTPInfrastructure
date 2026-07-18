@@ -60,17 +60,22 @@ def active_schedule() -> list:
         return DRAW_CHOICES[active_draw_key()]
     return SCHEDULES.get(n, SCHEDULE_10)
 
-# Saturday timetable — (time, label, kind). kind: 'round' | 'break'.
-# 11:00 start, 1-hour match blocks, two 1-hour food breaks; 1v2 closes.
+# Saturday timetable — (time, label, kind). kind: 'setup' | 'round' | 'break'.
+# SINGLE SOURCE OF TRUTH for Saturday times: round_times() (below), the schedule
+# page, the generated-matches view, the team pages, and the .ics feed ALL pull
+# from here — edit the times ONLY here and every surface updates at once.
+# ⚠ Keep 'round' rows in "H:MM AM/PM – H:MM AM/PM" form: ics.py parses those via
+# strptime("%I:%M %p"). 'setup'/'break' rows are display-only (any text is fine).
 SATURDAY_TIMETABLE = [
-    ("11:00 – 12:00", "Round 1", "round"),
-    ("12:00 – 13:00", "Round 2", "round"),
-    ("13:00 – 14:00", "Food break #1", "break"),
-    ("14:00 – 15:00", "Round 3", "round"),
-    ("15:00 – 16:00", "Round 4", "round"),
-    ("16:00 – 17:00", "Food break #2", "break"),
-    ("17:00 – 18:00", "Round 5", "round"),
-    ("18:00 – 19:00", "Round 6", "round"),
+    ("11:00 AM – 11:30 AM", "Player Check In / Setup", "setup"),
+    ("11:30 AM – 12:30 PM", "Round 1", "round"),
+    ("12:30 PM – 1:30 PM",  "Round 2", "round"),
+    ("1:30 PM – 3:00 PM",   "Food Break 1", "break"),
+    ("3:00 PM – 4:00 PM",   "Round 3", "round"),
+    ("4:00 PM – 5:00 PM",   "Round 4", "round"),
+    ("5:00 PM – 6:30 PM",   "Food Break 2", "break"),
+    ("6:30 PM – 7:30 PM",   "Round 5", "round"),
+    ("7:30 PM – 8:30 PM",   "Round 6", "round"),
 ]
 
 

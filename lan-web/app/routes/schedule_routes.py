@@ -20,6 +20,7 @@ def schedule_page(request: Request):
         matches=matches,
         rounds=sched.rounds_with_teams(),          # seed-slot template fallback
         timetable=sched.SATURDAY_TIMETABLE,
+        round_times=sched.round_times(),
         comp_maps=sched.COMP_MAPS,
         n_teams=n, bye_seeds=16 - n if 10 <= n <= 12 else 6,
         seeds_locked=sched.seeds_locked(),
