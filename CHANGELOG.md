@@ -2,6 +2,26 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [1.5.34] - 2026-07-18
+
+### HLTV restart: verify actual state before reporting green (FS-02)
+
+`hltv-restart-all.sh` treated a zero exit from `systemctl restart hltv@$port`
+as proof the instance came up, and posted a green "All N HLTV instances
+restarted successfully" embed on that basis. But `systemctl restart` returns
+success once the unit's main process *starts* — it does not confirm it stays
+up. An instance that crash-loops immediately after restart (bad `hltv.cfg`,
+port conflict, corrupt cache) was still counted a success, so the 03:00/11:00
+ET notification went out green while recording for that port was silently
+dead, and the independent hourly `ktp-data-server-health.sh` was the only
+backstop (~an hour of silent non-recording). The restart loop now records the
+ports whose restart command succeeded, waits briefly, then `systemctl
+is-active --quiet` checks each one; a restarted-but-not-active port counts as
+a failure and lands in `FAILED_PORTS`, so the embed color reflects real state.
+
+**Deploy is gated:** the live copy at `/usr/local/bin/hltv-restart-all.sh` on
+the data server must be updated separately; this is the canonical source only.
+
 ## [1.5.33] - 2026-07-10
 
 ### Tier-2 heartbeat: runner stack-drift tripwire

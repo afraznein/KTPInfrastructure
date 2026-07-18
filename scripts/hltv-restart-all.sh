@@ -36,14 +36,34 @@ SUCCESS=0
 FAILED=0
 FAILED_PORTS=""
 
+RESTARTED_PORTS=""
 for port in $(seq 27020 27043); do  # 27044 (chi5) disabled 2026-04-10
     if systemctl restart hltv@$port 2>/dev/null; then
-        ((SUCCESS++))
+        RESTARTED_PORTS="$RESTARTED_PORTS $port"
     else
         ((FAILED++))
         FAILED_PORTS="$FAILED_PORTS $port"
+        echo "$LOG_PREFIX hltv@$port restart command failed"
     fi
 done
+
+# systemctl restart returns success once the main process starts — it does NOT
+# confirm the process stays up. Give a crash-looper (bad hltv.cfg, port conflict,
+# corrupt cache) a moment to fail, then verify actual state, so a dead instance
+# isn't counted green. The hourly health cron is otherwise the only backstop,
+# leaving up to ~an hour of silent non-recording on that port.
+if [ -n "$RESTARTED_PORTS" ]; then
+    sleep 5
+    for port in $RESTARTED_PORTS; do
+        if systemctl is-active --quiet hltv@$port; then
+            ((SUCCESS++))
+        else
+            ((FAILED++))
+            FAILED_PORTS="$FAILED_PORTS $port"
+            echo "$LOG_PREFIX hltv@$port restarted but is not active (crash-loop?)"
+        fi
+    done
+fi
 
 echo "$LOG_PREFIX $SUCCESS succeeded, $FAILED failed"
 [ -n "$FAILED_PORTS" ] && echo "$LOG_PREFIX Failed ports:$FAILED_PORTS"
