@@ -61,7 +61,7 @@ DEFAULT_REPORT_CHANNEL = "1498813261263405097"  # scheduled-report channel
 KTP_GREEN = 5763719
 KTP_RED = 15548997
 KTP_YELLOW = 16763904
-KTP_EMOJI = "<:ktp:1105490705188659272>"
+KTP_EMOJI = "<:KTP:1002382703020212245>"
 
 
 # ──────────────────────────────────────────────────────────────────────────

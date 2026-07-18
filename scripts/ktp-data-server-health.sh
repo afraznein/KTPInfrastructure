@@ -193,7 +193,7 @@ color=$KTP_GREEN
 
 payload=$(jq -n \
     --arg ch "$ALERT_CHANNEL" \
-    --arg title '<:ktp:1105490705188659272> KTP Data Server Health' \
+    --arg title '<:KTP:1002382703020212245> KTP Data Server Health' \
     --arg desc "$desc" \
     --arg footer "ktp-data-server-health @ $(TZ=America/New_York date '+%Y-%m-%d %H:%M %Z')" \
     --argjson color "$color" \

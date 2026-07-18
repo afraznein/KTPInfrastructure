@@ -739,7 +739,7 @@ def main() -> int:
             logging.warning("no telemetry rows for %s — aggregator down?", target_day)
             if relay_url and auth_secret and channel and not args.dry_run:
                 empty_embed = {
-                    "title": "<:ktp:1105490705188659272> KTP Perf Rollup — NO DATA",
+                    "title": "<:KTP:1002382703020212245> KTP Perf Rollup — NO DATA",
                     "description": (
                         f"Zero telemetry rows for **{target_day}** — the perf-alert "
                         "tier is blind. Check `ktp-profile-aggregator.service` on "

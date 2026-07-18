@@ -755,7 +755,7 @@ def main():
             color = 16711680 if new_keys else 65280
             post_discord(
                 relay_url, auth_secret, channel_id,
-                title='<:ktp:1105490705188659272> KTP Fleet Drift Δ',
+                title='<:KTP:1002382703020212245> KTP Fleet Drift Δ',
                 description='\n'.join(lines),
                 color=color,
             )
