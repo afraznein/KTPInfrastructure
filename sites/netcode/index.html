@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KTP Netcode Guide: Rate Settings</title>
+<link rel="icon" type="image/png" href="/ktp-logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* KTP brand tokens (dark) — matched to the profiles site */
+    --bg:        #001e62;
+    --panel:     #0a2f77;
+    --inset:     #001a54;
+    --border:    #214895;
+    --text:      #f3fbff;
+    --dim:       #adc8e0;
+    --red:       #f52735;
+    --blue:      #0072d5;
+    --blue-soft: #4ea3e6;
+    --radius: 14px;
+    --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    background:
+      radial-gradient(120% 80% at 50% -10%, #0a2f77 0%, rgba(10,47,119,0) 55%),
+      var(--bg);
+    background-attachment: fixed;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  ::selection { background: var(--red); color: #fff; }
+
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 22px; }
+
+  /* ---- top bar (matches profiles) ---- */
+  nav {
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,26,84,0.72);
+    backdrop-filter: blur(8px);
+    position: sticky; top: 0; z-index: 50;
+  }
+  nav .row { display: flex; align-items: center; gap: 22px; height: 58px; }
+  .brand { font-weight: 800; letter-spacing: 1px; font-size: 1.05rem; color: var(--text); }
+  .brand .k { color: var(--red); }
+  nav .spacer { flex: 1; }
+  nav .navlink { color: var(--dim); font-size: 0.82rem; letter-spacing: 0.6px; }
+  nav .navlink:hover { color: var(--text); }
+  nav .navlink.here { color: var(--text); }
+
+  /* ---- hero ---- */
+  header.hero { padding: 54px 0 22px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 2.4px; text-transform: uppercase;
+    color: var(--dim); display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: ""; width: 26px; height: 2px; background: var(--blue); display: inline-block; }
+  header.hero h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 800; letter-spacing: -1px; line-height: 1.04; margin: 16px 0 12px; }
+  header.hero h1 .ktp { color: var(--red); }
+  header.hero .sub { color: var(--dim); max-width: 74ch; font-size: 0.92rem; }
+  header.hero .sub b { color: var(--text); }
+
+  h2 {
+    font-size: 1.35rem; margin: 44px 0 14px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); letter-spacing: -0.3px; font-weight: 800;
+  }
+  h3 { font-size: 1.05rem; margin: 22px 0 8px; }
+  p { margin: 10px 0; color: var(--text); }
+  p.dim, li.dim { color: var(--dim); }
+  b { color: var(--text); }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { color: var(--blue-soft); }
+  code {
+    font-family: var(--mono);
+    background: rgba(0,114,213,0.16); border: 1px solid var(--border);
+    border-radius: 4px; padding: 1px 5px; font-size: 0.9em; color: var(--blue-soft);
+  }
+  /* Copy/paste block */
+  .cfgblock {
+    position: relative; background: var(--inset); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 16px; margin: 16px 0;
+    font-family: var(--mono); font-size: 0.85rem; overflow-x: auto; line-height: 1.7;
+  }
+  .cfgblock .line { white-space: pre; }
+  .cfgblock .cmd { color: var(--blue-soft); }
+  .cfgblock .cmt { color: var(--dim); }
+  .copybtn {
+    position: absolute; top: 10px; right: 10px;
+    background: var(--panel); color: var(--dim); border: 1px solid var(--border);
+    border-radius: 999px; padding: 7px 15px; font-size: 0.76rem; cursor: pointer;
+    font-family: var(--mono); letter-spacing: 0.4px;
+  }
+  .copybtn:hover { border-color: var(--blue); color: var(--text); }
+  .copybtn.ok { border-color: var(--blue); color: var(--blue-soft); }
+  /* Cvar cards (profiles panel styling + red hover rail) */
+  .card {
+    position: relative; overflow: hidden;
+    background: linear-gradient(180deg, var(--panel) 0%, #082a6b 100%);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px; margin: 16px 0;
+    transition: border-color .16s ease, box-shadow .16s ease;
+  }
+  .card::before {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--red); transform: scaleY(0); transform-origin: top;
+    transition: transform .18s ease;
+  }
+  .card:hover { border-color: #2f5cb0; box-shadow: 0 12px 30px rgba(0,0,0,0.30); }
+  .card:hover::before { transform: scaleY(1); }
+  .card h3 { margin: 0 0 8px; font-family: var(--mono); color: var(--blue-soft); font-size: 1.02rem; letter-spacing: 0.2px; }
+  .card .meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+  .pill {
+    font-size: 0.72rem; padding: 3px 12px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--dim); font-family: var(--mono); letter-spacing: 0.3px;
+  }
+  .pill.rec { border-color: var(--blue); color: var(--blue-soft); }
+  .card p { font-size: 0.9rem; margin: 6px 0; }
+  /* Tables */
+  .tablewrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  th, td { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); padding: 9px 13px; text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  th:last-child, td:last-child { border-right: none; }
+  th { background: var(--inset); color: var(--text); font-weight: 700; letter-spacing: 0.4px; }
+  td { background: rgba(0,26,84,0.35); }
+  td code { border: none; background: none; padding: 0; }
+  /* Diagram */
+  .diagram {
+    background: var(--inset); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; margin: 14px 0; overflow-x: auto;
+    font-family: var(--mono); font-size: 0.8rem;
+    color: var(--dim); white-space: pre; line-height: 1.5;
+  }
+  .diagram b { color: var(--blue-soft); font-weight: normal; }
+  /* Troubleshooting */
+  details {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 18px; margin: 10px 0;
+  }
+  summary { cursor: pointer; font-weight: 700; font-size: 0.92rem; color: var(--text); }
+  details[open] summary { margin-bottom: 6px; }
+  details p, details li { font-size: 0.88rem; }
+  details ul { margin: 8px 0 4px 22px; }
+  .note {
+    border-left: 3px solid var(--red); background: var(--inset);
+    padding: 14px 16px; border-radius: 0 var(--radius) var(--radius) 0; margin: 18px 0; font-size: 0.9rem;
+  }
+  .note b { color: var(--text); }
+  footer {
+    margin-top: 50px; padding: 26px 0 70px; border-top: 1px solid var(--border);
+    color: var(--dim); font-size: 0.82rem;
+  }
+  footer a { color: var(--blue); }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; scroll-behavior: auto; }
+    .card:hover::before { transform: scaleY(0); }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap row">
+    <span class="brand"><span class="k">KTP</span> NETCODE</span>
+    <span class="spacer"></span>
+    <a class="navlink here" href="#">Netcode guide</a>
+    <a class="navlink" href="https://profiles.ktpdod.com/">Profiles</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Keep the Practice · Rate settings</div>
+  <h1><span class="ktp">KTP</span> Netcode Guide</h1>
+  <div class="sub">Recommended rate settings for all KTP servers: Atlanta &middot; Dallas &middot; Denver &middot; New York &middot; Chicago<br>
+  Released July 9, 2026 &middot; by <b>Nein_</b> &middot; verified against the live fleet config &amp; KTPCvarChecker 7.29</div>
+</header>
+
+<div class="note">
+  <b>Read this first.</b> These are <b>recommendations, not gospel</b> — your mileage may vary with your connection, hardware, and monitor. For every setting this page gives you the engine default, the server-allowed range, my recommendation and the reasoning, plus my own personal config and configs from other players that work for them. Treat the recommended block as the baseline and the allowed ranges as your room to experiment.
+  <br><br>
+  Some context on why the numbers changed: the servers this community played on for close to twenty years were 500-tick Windows boxes. The current fleet is <b>1500-systic Linux servers targeting a constant 1000 fps</b>, running on a custom engine stack (KTP-ReHLDS) that has been in production since <b>November 2025</b> — the entire life of the current server fleet. Different platform, different tick behavior, different optimal client settings.
+  <br><br>
+  I keep this page updated <b>in good faith</b>: whenever a server-side change affects anything relevant to hit registration, the recommendations here get re-verified against the live fleet config. I'm doing my best to get accurate information to you as fast as I can — if something here doesn't match what you see in-game, tell me.
+</div>
+
+<h2>Recommended settings</h2>
+<p>Paste this into your <code>userconfig.cfg</code> or run it in console. The server auto-corrects the locked values; the rest are the best choices inside the allowed ranges.</p>
+
+<div class="cfgblock" id="cfg">
+<div class="line"><span class="cmd">rate 100000</span><span class="cmt">          // locked by the server; anything else is auto-corrected</span></div>
+<div class="line"><span class="cmd">cl_updaterate 102</span><span class="cmt">    // the true client maximum (the game caps at 102 internally)</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 101</span><span class="cmt">       // a hair above fps_max (engine renders fps_max+1); higher cap? round up: 240 → 250</span></div>
+<div class="line"><span class="cmd">ex_interp 0.01</span><span class="cmt">       // one update interval of buffer, shows enemies closest to true position</span></div>
+<div class="line"><span class="cmd">fps_max 100</span><span class="cmt">          // full physics fidelity; use your monitor refresh (144/240) if higher</span></div>
+<div class="line"><span class="cmd">cl_lc 1</span><span class="cmt">              // lag compensation for your shots; 0 means leading by your full ping</span></div>
+<div class="line"><span class="cmd">cl_lw 1</span><span class="cmt">              // client weapon prediction; 0 also disables lag compensation</span></div>
+<div class="line"><span class="cmd">cl_fixtimerate 7.5</span><span class="cmt">   // clock-sync speed (default); only change if weapons skip — try fps_max/10 (see card)</span></div>
+<div class="line"><span class="cmd">cl_smoothtime 0.01</span><span class="cmt">   // near-instant prediction-error correction; 0.1 = high-ping comfort option</span></div>
+<button class="copybtn" id="copybtn" onclick="copyCfg()">Copy</button>
+</div>
+
+<p class="dim">If you run a frame cap above 100, raise <code>cl_cmdrate</code> to match it (<code>fps_max 240</code> pairs with <code>cl_cmdrate 250</code>).</p>
+
+<div class="note"><b>Heads up:</b> <code>cl_filterstuffcmd</code> must be <code>0</code> so the server can correct your cvars. Locked values like <code>rate</code> are enforced by KTPCvarChecker; fighting them in your config just causes correction churn.</div>
+
+<h2>What each setting does</h2>
+
+<div class="card">
+  <h3>rate</h3>
+  <div class="meta"><span class="pill">default 30000</span><span class="pill">locked at 100000</span><span class="pill rec">set 100000</span></div>
+  <p>Maximum bytes/sec the server may send you. KTP locks this to exactly <b>100000 for every player</b> (<code>sv_minrate = sv_maxrate = 100000</code>). Peak match traffic at our update rates is ~96 KB/s, so 100 KB/s never chokes, and identical bandwidth budgets remove rate variance as a hit-registration variable. The engine itself supports up to 1 MB/s (KTP-ReHLDS raised the 2004-era cap), kept as headroom for HLTV and future updaterate increases.</p>
+</div>
+
+<div class="card">
+  <h3>cl_updaterate</h3>
+  <div class="meta"><span class="pill">default 20</span><span class="pill">allowed 100-120</span><span class="pill rec">set 102</span></div>
+  <p>How many entity updates per second you request from the server. The game's client DLL <b>hard-caps processing at 102</b> and no workaround exists, so 103-120 passes the check but does nothing. At 102 you receive a fresh snapshot every ~9.8&nbsp;ms, the physical maximum your client can use.</p>
+</div>
+
+<div class="card">
+  <h3>cl_cmdrate</h3>
+  <div class="meta"><span class="pill">default 30</span><span class="pill">allowed 100-1000</span><span class="pill rec">set 101 (or a bit above your fps_max)</span></div>
+  <p>How many command packets (your movement, aim, and button presses) you send per second. <b>This is a ceiling, not a scheduler:</b> the client sends at most one packet per rendered frame, so your real send rate is always <i>min(your fps, cl_cmdrate)</i>. Below your frame rate it throttles input; above it, the excess does nothing. The floor of 100 keeps input latency at &le;10&nbsp;ms per packet; engine research indicates the Steam client caps effective cmdrate near ~100 anyway, so 101 covers most players.</p>
+  <p><b>Why "a bit above" and not exactly equal?</b> The frame limiter's off-by-one (see the fps_max card) means a cap of 240 actually renders ~241&nbsp;fps — so <code>cl_cmdrate 240</code> would sit one below your true frame rate, the single worst value, quietly throttling about one packet a second. Since overshoot is free, round up with margin: <code>fps_max 100 &rarr; 101</code>, <code>fps_max 240 &rarr; 250</code>. Nothing is magic about the exact number — 242, 250, or 300 behave identically at a 240 cap; anything comfortably above your real frame rate is correct.</p>
+</div>
+
+<div class="card">
+  <h3>ex_interp</h3>
+  <div class="meta"><span class="pill">default 0.1</span><span class="pill">allowed 0.01-0.05</span><span class="pill rec">set 0.01</span></div>
+  <p>How far in the past (seconds) your client renders other players, so it always has two snapshots to interpolate between. At updaterate 102 a snapshot arrives every ~9.8&nbsp;ms, and <b>0.01 is the smallest buffer that covers a full interval</b>: you see enemies as close to their true position as possible, and lag compensation rewinds the minimum amount. The stock default of 0.1 shows you players 100&nbsp;ms in the past, ten times more than needed here. The 0.05 cap blocks exploitative high-interp values.</p>
+  <h3 style="color:var(--text); font-family:inherit; margin-top:14px;">When is raising it justified?</h3>
+  <p><b>Only for loss or jitter on your own connection</b>; check <code>net_graph 1</code>. Each +0.01 buys one more update interval of cushion at the cost of seeing everything ~10&nbsp;ms later. That costs you reaction time, not hit registration: the server rewinds by ping&nbsp;+&nbsp;interp, so you still hit what you see.</p>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Your connection</th><th>ex_interp</th></tr>
+    <tr><td>Clean (0% loss, stable ping)</td><td><b>0.01</b></td></tr>
+    <tr><td>Loss ~1%+ or enemies stutter at 0.01</td><td><b>0.02</b> (rides through a single lost packet invisibly)</td></tr>
+    <tr><td>Chronically jittery route (e.g. SA/EU long-haul)</td><td><b>0.02-0.03</b> (covers uneven packet arrival)</td></tr>
+    <tr><td>Above 0.03</td><td>No legitimate case. The 0.05 cap is a ceiling, not a target.</td></tr>
+  </table>
+  </div>
+  <p><b>Ping alone, yours or your opponents', is not a reason.</b> Latency delays the update stream uniformly (a stable 160&nbsp;ms connection still gets a snapshot every ~9.8&nbsp;ms) and lag compensation accounts for it. High-ping players often do need 0.02, but that's because long routes tend to be jittery, not because of the ping number. Raising interp also does nothing against high-ping <i>opponents</i>: their staleness is baked in server-side before your packet is ever sent, the buffer applies to every entity equally, and a choppy opponent's warpy movement just plays back the same, only later. The "shot me behind cover" effect is the <i>shooter's</i> rewind window (their ping plus their interp, capped server-side), and no setting of yours changes it.</p>
+</div>
+
+<div class="card">
+  <h3>fps_max</h3>
+  <div class="meta"><span class="pill">default 72</span><span class="pill">allowed 60-750</span><span class="pill rec">set 100 (or monitor refresh)</span></div>
+  <p>Client frame cap. GoldSrc's internal physics processing tops out around ~100&nbsp;fps; frames above that buy rendering smoothness on high-refresh monitors, not physics fidelity, and the server's 1000&nbsp;Hz lag compensation is authoritative regardless. <b>100</b> is full competitive fidelity. On a 144/240&nbsp;Hz display, match your refresh and raise <code>cl_cmdrate</code> with it.</p>
+  <p><b>Why not 99.5?</b> The old convention comes from an off-by-one in GoldSrc's frame limiter: it gates frames at 1/(fps_max&nbsp;+&nbsp;1), so asking for 100 actually runs about 101. Back when leagues required staying at or under 100&nbsp;fps, players set 99.5 so the overshoot landed on a true 100. Neither reason survives on KTP servers: the allowed range goes to 750, and nothing in the game cares whether your client renders 100 or 101 when the server simulates at 1000&nbsp;Hz and its lag compensation decides what hits. A plain <code>100</code> is fine.</p>
+  <p><b>One exception — automatic-weapon stutter:</b> separately from the 99.5 history, round fps caps are reported to interact badly with automatic-weapon fire timing on some setups. If your autos stutter, try a non-round cap (<code>143.5</code> instead of <code>144</code>) together with the <code>cl_fixtimerate</code> guidance below.</p>
+</div>
+
+<div class="card">
+  <h3>cl_lc &amp; cl_lw</h3>
+  <div class="meta"><span class="pill">defaults 1</span><span class="pill">not enforced</span><span class="pill rec">keep both 1</span></div>
+  <p><code>cl_lc 1</code> enables server-side lag compensation: when you fire, the server rewinds opponents to where they were <i>on your screen</i>. With <code>0</code> you must lead targets by your full ping. <code>cl_lw 1</code> enables client-side weapon prediction (instant fire feedback); setting it to <code>0</code> also disables lag compensation. Both became optional in 2026 after an engine audit confirmed that <code>0</code> only handicaps you. There is almost never a reason to change them.</p>
+</div>
+
+<div class="card">
+  <h3>cl_fixtimerate</h3>
+  <div class="meta"><span class="pill">default 7.5</span><span class="pill">not enforced</span><span class="pill rec">keep 7.5 — if weapons skip, try fps_max&nbsp;/&nbsp;10</span></div>
+  <p>How aggressively your client corrects its local clock toward the server's timestamp, in ms of correction per frame. This has no competitive impact: clock sync happens either way. A mismatched client/server clock is, however, a known cause of <b>weapon fire stutter</b> in GoldSrc — shots firing, skipping, then firing again, most noticeable on automatics like the BAR — and the correction jumps themselves can make the viewmodel animation skip. This cvar used to be locked to 7.5 by the cvar checker; it's now unlocked so players can tune it.</p>
+  <p><b>If (and only if) you get weapon skipping:</b> try scaling it to your frame cap — <code>cl_fixtimerate</code> = <code>fps_max / 10</code>:</p>
+  <div class="cfgblock"><div class="line"><span class="cmd">fps_max 100</span><span class="cmt">   &rarr; cl_fixtimerate 10</span></div>
+<div class="line"><span class="cmd">fps_max 143.5</span><span class="cmt"> &rarr; cl_fixtimerate 14.4</span></div>
+<div class="line"><span class="cmd">fps_max 200</span><span class="cmt">   &rarr; cl_fixtimerate 20</span></div></div>
+  <p>Some players instead report smoother viewmodels <i>lowering</i> it toward <code>0</code> (gentler corrections). Honest status: this one is player-report territory, not settled engine science — treat it as an experiment, keep whichever value is smooth for you, and tell Nein_ what worked so this section improves. If you have no skipping, leave it at 7.5.</p>
+</div>
+
+<div class="card">
+  <h3>cl_smoothtime</h3>
+  <div class="meta"><span class="pill">default 0.1</span><span class="pill">not enforced</span><span class="pill rec">set 0.01</span></div>
+  <p>When the server disagrees with where your client predicted <i>you</i> are (teammate bumps, knockback, edge landings), this is how long in seconds the correction is visually blended. During that window your rendered position lags the server-authoritative one, which creates a small aim discrepancy. <b>0.01 blends the correction over about one update interval</b>: near-instant accuracy without a single-frame snap. It's the same smallest-honest-buffer logic as <code>ex_interp</code>, and the old league convention. High-ping players (100&nbsp;ms+) can keep the <code>0.1</code> default for comfort, since their corrections are larger and more frequent.</p>
+</div>
+
+<h2>How it fits together</h2>
+<div class="diagram">        <b>cl_cmdrate</b>                              <b>cl_updaterate</b>
+      (you &rarr; server)                          (server &rarr; you)
+
+  &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;    UDP packets      &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+  &#9474;  CLIENT    &#9474; &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9658;  &#9474;  SERVER    &#9474;
+  &#9474;            &#9474;                    &#9474; (1000 Hz)  &#9474;
+  &#9474;  your PC   &#9474; &#9668;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;  &#9474;            &#9474;
+  &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;    UDP packets      &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+
+  you send: movement, aim,          server sends: where everyone is,
+  buttons, weapon actions           hits, scores, game events</div>
+
+<p>When your shot arrives, the server computes your effective latency (<b>ping + ex_interp</b>), rewinds every opponent to where they were on your screen at that moment (up to 500&nbsp;ms), and runs the shot against those positions. If your crosshair was on the target on <i>your</i> screen, it hits. That's why the settings above aim for the smallest honest buffers: less rewind, fewer "how did that hit me" moments on both ends.</p>
+
+<p class="dim"><b>June 2026 change:</b> lag compensation now uses your single most recent latency sample (<code>sv_unlagsamples 1</code>) instead of averaging a window of samples. The old averaging smeared stale ping history into the rewind, and one ping spike inside the window could silently zero out compensation for that shot. One fresh sample tracks your actual current ping.</p>
+
+<h2>KTP server settings (for reference)</h2>
+<p class="dim">You don't set these. They're the fleet-wide server config your client talks to.</p>
+<div class="tablewrap">
+<table>
+  <tr><th>Setting</th><th>Value</th><th>Purpose</th></tr>
+  <tr><td><code>sys_ticrate</code></td><td>1500</td><td>Requested tick ceiling; achieves ~1000 real fps of physics</td></tr>
+  <tr><td><code>sv_maxupdaterate</code> / <code>sv_minupdaterate</code></td><td>120 / 100</td><td>Entity update band offered to clients</td></tr>
+  <tr><td><code>sv_maxcmdrate</code> / <code>sv_mincmdrate</code></td><td>500 / 100</td><td>Command packet band accepted from clients</td></tr>
+  <tr><td><code>sv_maxrate</code> / <code>sv_minrate</code></td><td>100000 / 100000</td><td>Bandwidth locked: identical budget for every player</td></tr>
+  <tr><td><code>sv_unlag</code> / <code>sv_maxunlag</code></td><td>1 / 0.5</td><td>Lag compensation on, max 500 ms rewind</td></tr>
+  <tr><td><code>sv_unlagsamples</code></td><td>1</td><td>Latest latency sample used: tracks your real current ping</td></tr>
+</table>
+</div>
+
+<h2>Player configs</h2>
+<p class="dim">What specific KTP players actually run. The recommended block above is the baseline; these show the personal variations experienced players make inside the allowed ranges — mostly frame caps matched to monitors, with <code>cl_cmdrate</code> raised alongside.</p>
+
+<div class="card">
+  <h3>Nein_</h3>
+  <div class="meta"><span class="pill">KTP admin</span><span class="pill">240 Hz monitor</span></div>
+<div class="cfgblock">
+<div class="line"><span class="cmd">rate 100000</span></div>
+<div class="line"><span class="cmd">cl_updaterate 100</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 250</span></div>
+<div class="line"><span class="cmd">ex_interp 0.01</span></div>
+<div class="line"><span class="cmd">fps_max 287.5</span><span class="cmt">   // high cap for render smoothness; cmdrate 250 rides along</span></div>
+<div class="line"><span class="cmd">cl_lc 1</span></div>
+<div class="line"><span class="cmd">cl_lw 1</span></div>
+<div class="line"><span class="cmd">cl_fixtimerate 7.5</span><span class="cmt">   // engine default (not set in config)</span></div>
+<div class="line"><span class="cmd">cl_smoothtime 0.01</span></div>
+</div>
+</div>
+
+<div class="card">
+  <h3>Sean</h3>
+  <div class="meta"><span class="pill">Seanality</span></div>
+<div class="cfgblock">
+<div class="line"><span class="cmd">rate 100000</span></div>
+<div class="line"><span class="cmd">cl_updaterate 102</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 105</span></div>
+<div class="line"><span class="cmd">ex_interp 0.02</span><span class="cmt">   // one extra interval of cushion (see the interp ladder above)</span></div>
+<div class="line"><span class="cmd">fps_max 400</span></div>
+<div class="line"><span class="cmd">cl_lc 1</span></div>
+<div class="line"><span class="cmd">cl_lw 1</span></div>
+<div class="line"><span class="cmd">cl_fixtimerate 10</span></div>
+<div class="line"><span class="cmd">cl_smoothtime 0.02</span></div>
+</div>
+</div>
+
+<div class="card">
+  <h3>jrod</h3>
+<div class="cfgblock">
+<div class="line"><span class="cmd">rate 100000</span></div>
+<div class="line"><span class="cmd">cl_updaterate 101</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 725</span><span class="cmt">   // matched to the frame cap, per the guidance above</span></div>
+<div class="line"><span class="cmd">ex_interp 0.01</span></div>
+<div class="line"><span class="cmd">fps_max 719</span></div>
+<div class="line"><span class="cmd">cl_lc 1</span></div>
+<div class="line"><span class="cmd">cl_lw 1</span></div>
+<div class="line"><span class="cmd">cl_fixtimerate 7.5</span><span class="cmt">   // engine default (not set in config)</span></div>
+<div class="line"><span class="cmd">cl_smoothtime 0.1</span><span class="cmt">   // engine default — the comfort option</span></div>
+</div>
+</div>
+
+<div class="card">
+  <h3>Your config here?</h3>
+  <p class="dim">Want your settings featured (and sanity-checked)? DM <b>Nein_</b> on Discord.</p>
+</div>
+
+<h2>Troubleshooting</h2>
+
+<details>
+  <summary>Players are teleporting / stuttering</summary>
+  <ul>
+    <li>Check <code>rate</code> is 100000 and <code>cl_updaterate</code> is 102.</li>
+    <li>Check <code>net_graph 1</code> for choke; red spikes mean updates are being skipped.</li>
+    <li>Check <code>ex_interp</code> is 0.01; higher values show everyone further in the past.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>My shots don't register</summary>
+  <ul>
+    <li>Verify <code>cl_lc 1</code> and <code>cl_lw 1</code>; without them you're leading shots by your full ping.</li>
+    <li>Check <code>ex_interp 0.01</code>; above that you're aiming at older positions than you need to.</li>
+    <li>Check your ping; lag compensation works to 500 ms but degrades above ~150 ms.</li>
+    <li>Make sure <code>cl_cmdrate</code> &ge; 100, since low cmdrate delays the server seeing your click.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>net_graph shows choke</summary>
+  <ul>
+    <li>Confirm <code>rate 100000</code>. At KTP's update rates, 100 KB/s doesn't choke from bandwidth.</li>
+    <li>If choke persists, it's a network issue between you and the server, not a setting.</li>
+  </ul>
+</details>
+
+<details>
+  <summary>net_graph shows loss</summary>
+  <ul>
+    <li>This is packet loss on your network path; no cvar can fix it.</li>
+    <li>Check your local network first (WiFi is the usual culprit; wire in if you can). Loss further out on the route usually clears on its own.</li>
+    <li>Until it's fixed, <code>ex_interp 0.02</code> hides single lost packets (see the ex_interp ladder above).</li>
+  </ul>
+</details>
+
+<details>
+  <summary>My weapon animations skip / stutter (shots fire, skip, fire again — worst on automatics like the BAR)</summary>
+  <ul>
+    <li>First try <code>cl_fixtimerate</code> = your <code>fps_max / 10</code> (fps_max 100 &rarr; 10, 143.5 &rarr; 14.4, 200 &rarr; 20). See the cl_fixtimerate card above.</li>
+    <li>Also try a <b>non-round</b> <code>fps_max</code> (e.g. <code>143.5</code> instead of <code>144</code>) — round caps are reported to interact badly with automatic-weapon timing.</li>
+    <li>If neither helps, try the opposite direction: lower <code>cl_fixtimerate</code> toward 0 (gentler clock corrections).</li>
+    <li>None of this has competitive impact, so tune freely — and report what worked to Nein_ so the recommendation firms up.</li>
+  </ul>
+</details>
+
+<footer>
+  KTP servers automatically check and enforce required cvars (KTPCvarChecker). League documentation:
+  <a href="https://github.com/afraznein/KTP_Documentation/blob/main/KTP%20Cvar%20List.md">KTP Cvar List</a> &middot;
+  <a href="https://github.com/afraznein/KTP_Documentation/blob/main/KTP%20Ruleset.md">KTP Ruleset</a><br>
+  Written by Nein_ &middot; Released July 9, 2026<br>
+  Questions? Ask a KTP admin on Discord. &middot; <span style="color:var(--red)">Keep the Practice</span>
+</footer>
+
+</div>
+<script>
+function copyCfg() {
+  const cmds = Array.from(document.querySelectorAll('#cfg .cmd')).map(e => e.textContent.trim()).join('\n');
+  navigator.clipboard.writeText(cmds).then(() => {
+    const b = document.getElementById('copybtn');
+    b.textContent = 'Copied!'; b.classList.add('ok');
+    setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('ok'); }, 1600);
+  });
+}
+</script>
+</body>
+</html>

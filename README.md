@@ -4,7 +4,7 @@ Server infrastructure, deployment automation, and operational documentation for 
 
 > **Staleness note (2026-07-07):** the tables below (crons, repo layout,
 > server inventory) date from early 2026 and are missing everything since
-> (`tests/`, `lan-web/`, newer crons, Chicago running 4 active instances).
+> (`tests/`, `sites/` [web properties: `lan-web`, `wsdod-lan-2026`, `netcode`], newer crons, Chicago running 4 active instances).
 > The root `CLAUDE.md` and per-directory READMEs are current; a refresh is
 > tracked with the TECHNICAL_GUIDE rewrite.
 
