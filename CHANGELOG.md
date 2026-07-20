@@ -2,6 +2,55 @@
 
 All notable changes to KTP Infrastructure will be documented in this file.
 
+## [Unreleased]
+
+### Scrub placeholders were functioning as real secrets
+
+The credential history-scrub replaced secrets with `REDACTED*` literals, and in
+four places those literals had become working default values rather than obvious
+errors. Each now fails loudly instead of deploying.
+
+- `lan-deploy.sh` defaulted `SV_PASSWORD` to the literal `REDACTED`, so a run
+  without an explicit value deployed `REDACTED` as the LAN join password — and
+  the plan summary printed `Join password: REDACTED`, which reads like sanitized
+  output rather than the actual credential. It cannot be auto-generated (players
+  type it), so it is now required, and unset/`REDACTED*`/`CHANGEME` are refused.
+  `lan-deploy.conf.example` documents the requirement.
+- `provision-gameserver.sh` carried a guard whose comment claimed it refused
+  placeholder HLTV secrets, but it only checked `HLTV_API_KEY`. The config
+  generator was invoked with **no arguments**, so its `ADMIN_PASS`/`PROXY_PASS`
+  defaults — `REDACTED_HLTV_ADMIN`/`REDACTED_HLTV_PROXY` — were what actually
+  landed in live HLTV configs. `HLTV_ADMIN_PASS`/`HLTV_PROXY_PASS` are now
+  required and passed through; the generator refuses to run without both.
+- `setup-denver-dataserver.sh` defaulted `MYSQL_PASS` to `REDACTED_DB`. The
+  existence probe swallows auth failures (`2>/dev/null || echo "0"`), so a bad
+  password reported "no servers found" and the script inserted duplicate rows.
+  Now required from the environment. Also dropped the unused `DENVER_PASSWORD`.
+
+### Docs described files a fresh clone doesn't have
+
+The same scrub that removed credential-bearing scripts from the tree left the
+README describing them as shipped. On a maintainer's box every path resolves, so
+the gap only appears to someone cloning fresh.
+
+- Quick Start step 3 ran `provision/clone-ktp-stack.sh`, which is gitignored —
+  the documented three-step provisioning sequence dead-ended. Now starts from the
+  tracked `.example` and copies it, matching the convention the config flow
+  already uses.
+- The Scripts tables listed `ktp-scheduled-restart.sh`, `hltv-api.py`,
+  `ktp-backup.sh` and `ktp-organize-hltv-demos.sh` as deployable artifacts
+  alongside two that really are shipped, with nothing distinguishing them. Added
+  a "Ships as" column marking which are `.example`-only.
+- The structure tree had the same problem; entries now carry the `.example`
+  suffix where that's what exists.
+
+### Extension-loader path corrected in two docs
+
+`DEVELOPMENT_HISTORY.md` and `TECHNICAL_GUIDE.md` both said KTPAMXX loads via
+`rehlds/extensions.ini`. The engine reads `<gamedir>/addons/extensions.ini`
+(`sys_dll.cpp:1067`); no `rehlds/` path exists. Part of a stack-wide correction
+of this error across five files.
+
 ## [1.5.34] - 2026-07-18
 
 ### HLTV restart: verify actual state before reporting green (FS-02)

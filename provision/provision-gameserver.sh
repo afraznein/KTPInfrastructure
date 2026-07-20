@@ -1030,6 +1030,14 @@ if [ "$WITH_HLTV" = true ]; then
         log_error "(the embedded API would otherwise ship a placeholder key on 0.0.0.0:8087)."
         exit 1
     fi
+    # The config generator below is invoked with no arguments, so its ADMIN_PASS
+    # and PROXY_PASS defaults are what actually land in the HLTV configs. Guard
+    # them too — the API key alone was never the whole placeholder surface.
+    if [ -z "${HLTV_ADMIN_PASS:-}" ] || [ -z "${HLTV_PROXY_PASS:-}" ]; then
+        log_error "--with-hltv requires HLTV_ADMIN_PASS and HLTV_PROXY_PASS set in the environment"
+        log_error "(otherwise the generated HLTV configs ship REDACTED_HLTV_* as real passwords)."
+        exit 1
+    fi
     log_info "Setting up co-located HLTV proxies..."
 
     # Install Python dependencies for HLTV API
@@ -1050,8 +1058,14 @@ if [ "$WITH_HLTV" = true ]; then
 HLTV_DIR="$HLTV_DIR"
 NUM_INSTANCES=$NUM_SERVERS
 BASE_PORT=$HLTV_BASE_PORT
-ADMIN_PASS=\${1:-"REDACTED_HLTV_ADMIN"}
-PROXY_PASS=\${2:-"REDACTED_HLTV_PROXY"}
+ADMIN_PASS=\${1:-}
+PROXY_PASS=\${2:-}
+if [ -z "\$ADMIN_PASS" ] || [ -z "\$PROXY_PASS" ]; then
+    echo "usage: \$0 <admin_pass> <proxy_pass>" >&2
+    echo "Both are required — this script used to default to REDACTED_HLTV_*," >&2
+    echo "which shipped placeholders into live HLTV configs." >&2
+    exit 1
+fi
 
 for i in \$(seq 1 \$NUM_INSTANCES); do
     PORT=\$((BASE_PORT + i - 1))
@@ -1090,8 +1104,9 @@ HLTVCFGSCRIPT
     chmod +x "$HLTV_HOME/hltv/generate-hltv-configs.sh"
     chown "$DODSERVER_USER:$DODSERVER_USER" "$HLTV_HOME/hltv/generate-hltv-configs.sh"
 
-    # Generate default configs
-    su - "$DODSERVER_USER" -c "$HLTV_HOME/hltv/generate-hltv-configs.sh"
+    # Generate default configs — pass the real secrets; the script's own
+    # defaults are a hard error, not a fallback.
+    su - "$DODSERVER_USER" -c "$HLTV_HOME/hltv/generate-hltv-configs.sh '$HLTV_ADMIN_PASS' '$HLTV_PROXY_PASS'"
 
     # Create HLTV control script (screen-based)
     cat > "$HLTV_HOME/hltv/hltv-ctl.sh" << 'HLTVCTLSCRIPT'

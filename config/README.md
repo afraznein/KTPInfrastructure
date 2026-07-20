@@ -46,7 +46,7 @@ Configuration for `docker-compose.local.yml` (local game server containers):
 python deploy/deploy.py --cluster atlanta --version 20260127 --with-configs
 
 # Deploy with LAN profile
-python deploy/deploy.py --cluster lan-event --version 20260127 --profile lan --with-configs
+python deploy/deploy.py --cluster <lan-box> --version 20260127 --profile lan --with-configs
 ```
 
 ### Manual Deployment

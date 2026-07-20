@@ -66,8 +66,10 @@ TIMEZONE="America/New_York"
 # Server display name prefix (each instance gets "<prefix> N" appended).
 SERVER_NAME_PREFIX="KTP LAN"
 
-# sv_password — server join password.
-SV_PASSWORD="REDACTED"
+# sv_password — server join password. REQUIRED: lan-deploy.sh refuses to run
+# while this is unset or left at a REDACTED* placeholder. Players type this, so
+# pick something short and sayable.
+SV_PASSWORD="CHANGEME"
 
 # Number of DoD game server instances and starting port. The current LAN plan
 # uses 6 (one server per concurrent match, 12 teams). The host needs at least

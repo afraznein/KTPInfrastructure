@@ -70,7 +70,7 @@ make deploy-atlanta VERSION=20260127
 make deploy-plugins VERSION=20260127
 
 # Deploy with LAN profile
-python deploy/deploy.py --cluster lan-event --profile lan --version 20260127
+python deploy/deploy.py --cluster <lan-box> --profile lan --version 20260127
 ```
 
 ### Provision New Server
@@ -84,6 +84,10 @@ su - dodserver
 ./provision/install-linuxgsm.sh <SERVER_IP>
 
 # 3. Deploy KTP stack
+#    The runnable script is gitignored (it carries credentials), so a fresh
+#    clone starts from the tracked example:
+cp provision/clone-ktp-stack.sh.example provision/clone-ktp-stack.sh
+# Edit it to fill in credentials, then:
 ./provision/clone-ktp-stack.sh /path/to/artifacts/20260127
 ```
 
@@ -132,7 +136,7 @@ KTPInfrastructure/
 │   ├── provision-gameserver.sh  # Ubuntu 22.04 game server setup
 │   ├── provision-lan-dataserver.sh  # LAN data server (HLTV, stats, FastDL)
 │   ├── install-linuxgsm.sh      # LinuxGSM + DoD bootstrap
-│   └── clone-ktp-stack.sh       # Deploy KTP on LinuxGSM
+│   └── clone-ktp-stack.sh.example  # Deploy KTP on LinuxGSM (copy → .sh, add creds)
 │
 ├── config/                      # Mode-specific configs (*.example files committed)
 │   ├── online/                  # Production: Discord, HLStatsX
@@ -141,10 +145,13 @@ KTPInfrastructure/
 │   └── lan/                     # LAN: Local data server, no external services
 │
 ├── scripts/                     # Operational scripts
-│   ├── hltv-api.py              # HLTV HTTP API
-│   ├── hltv-restart-all.sh      # Scheduled HLTV restart
-│   ├── ktp-scheduled-restart.sh # Scheduled game server restart
-│   ├── ktp-backup.sh            # MySQL/config backup
+│   │                            # Credential-bearing ones ship as *.example only
+│   │                            # — copy to the real name and fill in secrets.
+│   ├── hltv-api.py.example      # HLTV HTTP API
+│   ├── hltv-restart-all.sh      # Scheduled HLTV restart (shipped as-is)
+│   ├── ktp-scheduled-restart.sh.example # Scheduled game server restart
+│   ├── ktp-backup.sh.example    # MySQL/config backup
+│   ├── ktp-log-rotation.sh      # Log rotation (shipped as-is)
 │   └── ...
 │
 ├── monitoring/                  # Per-host monitoring daemons
@@ -157,10 +164,13 @@ KTPInfrastructure/
 │       ├── ktpamx/              # dlls/, modules/
 │       └── plugins/             # *.amxx files
 │
-└── docs/
-    ├── BUILDING.md              # Build system documentation
-    ├── DEPLOYING.md             # Deployment guide
-    ├── LAN_SETUP.md             # LAN event setup
+├── docs/
+│   ├── BUILDING.md              # Build system documentation
+│   ├── DEPLOYING.md             # Deployment guide
+│   ├── LAN_SETUP.md             # LAN event setup
+│   └── ...                      # See Documentation below
+│
+└── (repo root, gitignored — hold IPs/credentials, not shipped)
     ├── infrastructure.md        # Complete infrastructure reference
     ├── ktp_gameserver_setup.md  # Game server setup guide
     └── ktp_dataserver_setup.md  # Data server setup guide
@@ -192,21 +202,25 @@ These files contain server IPs and credentials. Create your own copies:
 
 ## Scripts
 
+Scripts marked **(example)** carry credentials and are gitignored — the repo ships
+only `<name>.example`. Copy it to the real filename and fill in secrets before
+deploying. The rest ship ready to run.
+
 ### Game Server Scripts
 
-| Script | Deploy To | Description |
-|--------|-----------|-------------|
-| `ktp-scheduled-restart.sh` | `~/` on game servers | Nightly restart with Discord notification |
-| `ktp-log-rotation.sh` | `~/` on game servers | Compress logs >120 days, delete >365 days |
+| Script | Ships as | Deploy To | Description |
+|--------|----------|-----------|-------------|
+| `ktp-scheduled-restart.sh` | **(example)** | `~/` on game servers | Nightly restart with Discord notification |
+| `ktp-log-rotation.sh` | as-is | `~/` on game servers | Compress logs >120 days, delete >365 days |
 
 ### Data Server Scripts
 
-| Script | Deploy To | Description |
-|--------|-----------|-------------|
-| `hltv-api.py` | `/home/hltvserver/` | HTTP API for HLTV control |
-| `hltv-restart-all.sh` | `/usr/local/bin/` | Scheduled HLTV restart |
-| `ktp-backup.sh` | `/opt/` | MySQL + config backup |
-| `ktp-organize-hltv-demos.sh` | `/usr/local/bin/` | Organize demos by match |
+| Script | Ships as | Deploy To | Description |
+|--------|----------|-----------|-------------|
+| `hltv-api.py` | **(example)** | `/home/hltvserver/` | HTTP API for HLTV control |
+| `hltv-restart-all.sh` | as-is | `/usr/local/bin/` | Scheduled HLTV restart |
+| `ktp-backup.sh` | **(example)** | `/opt/` | MySQL + config backup |
+| `ktp-organize-hltv-demos.sh` | **(example)** | `/usr/local/bin/` | Organize demos by match |
 
 ---
 

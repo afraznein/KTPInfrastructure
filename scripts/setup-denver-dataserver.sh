@@ -14,7 +14,6 @@ set -e
 
 DENVER_IP="66.163.114.109"
 DENVER_USER="dodserver"
-DENVER_PASSWORD="REDACTED"
 HLTV_BASE_PORT=27030  # Denver HLTV ports: 27030-27034
 
 # Colors
@@ -176,7 +175,14 @@ fi
 log_info "Adding Denver servers to HLStatsX database..."
 
 MYSQL_USER="hlstatsx"
-MYSQL_PASS="REDACTED_DB"
+# Must come from the environment. It defaulted to "REDACTED_DB", and the
+# existence probe below swallows auth failures (2>/dev/null || echo "0") — so a
+# bad password reported "no servers found" and the script inserted duplicates.
+MYSQL_PASS="${MYSQL_PASS:-}"
+if [ -z "$MYSQL_PASS" ]; then
+    log_error "MYSQL_PASS must be set in the environment (hlstatsx DB password)."
+    exit 1
+fi
 MYSQL_DB="hlstatsx"
 
 # Check if servers already exist

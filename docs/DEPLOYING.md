@@ -72,7 +72,7 @@ python deploy/deploy.py --cluster atlanta --component plugins --version 20260127
 python deploy/deploy.py --cluster atlanta --version 20260127 --with-configs
 
 # LAN profile
-python deploy/deploy.py --cluster lan-event --profile lan --version 20260127
+python deploy/deploy.py --cluster <lan-box> --profile lan --version 20260127
 
 # Dry run (show what would be deployed)
 python deploy/deploy.py --cluster atlanta --version 20260127 --dry-run
@@ -163,7 +163,7 @@ Standalone mode for LAN events:
 - HLTV API disabled
 
 ```bash
-python deploy/deploy.py --cluster lan-event --profile lan --with-configs
+python deploy/deploy.py --cluster <lan-box> --profile lan --with-configs
 ```
 
 ## Deployment Workflow

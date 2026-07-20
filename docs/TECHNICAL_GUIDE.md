@@ -190,7 +190,7 @@ KTP-ReHLDS adds an **extension loading system** that runs parallel to the game D
 
 **1. Engine Startup (`Sys_InitGame`)**
 ```cpp
-// KTP-ReHLDS loads extensions from rehlds/extensions.ini
+// KTP-ReHLDS loads extensions from <gamedir>/addons/extensions.ini
 void LoadExtensions() {
     // Parse extensions.ini
     // For each extension DLL:

@@ -70,7 +70,7 @@ Foundational architectural decisions with the analysis that drove them. These ar
 
 ### ADR-001: Eliminate Metamod (Extension Mode)
 
-**Decision:** KTPAMXX loads as a ReHLDS extension via `rehlds/extensions.ini` instead of as a Metamod plugin. Metamod is not present in any KTP deployment.
+**Decision:** KTPAMXX loads as a ReHLDS extension via `<gamedir>/addons/extensions.ini` (`dod/addons/extensions.ini`) instead of as a Metamod plugin. Metamod is not present in any KTP deployment.
 
 **Date:** Foundational (Oct/Nov 2025 — predates the rest of the stack).
 

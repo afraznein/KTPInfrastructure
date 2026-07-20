@@ -99,7 +99,7 @@ fi
 gen_pw() { head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 32; }
 TIMEZONE="${TIMEZONE:-America/New_York}"
 SERVER_NAME_PREFIX="${SERVER_NAME_PREFIX:-KTP LAN}"
-SV_PASSWORD="${SV_PASSWORD:-REDACTED}"
+SV_PASSWORD="${SV_PASSWORD:-}"
 # Secrets: never leave these at a well-known value. Resolution order:
 # conf/env > previous run's credentials file > fresh generation. Sourcing the
 # previous run's values keeps re-runs convergent — regenerating on a re-run
@@ -120,6 +120,21 @@ if [ -f "$CREDS_FILE" ]; then
 fi
 HLTV_API_KEY="${HLTV_API_KEY:-$(gen_pw)}"
 DODSERVER_PASSWORD="${DODSERVER_PASSWORD:-$(gen_pw)}"
+# SV_PASSWORD can't be generated — players have to type it — so it must be set
+# explicitly. It previously defaulted to the literal "REDACTED" left behind by
+# the history scrub, which deployed as a working join password and printed as
+# "Join password: REDACTED" in the summary, reading like sanitized output.
+case "${SV_PASSWORD}" in
+    "" )
+        echo "ERROR: SV_PASSWORD is not set." >&2
+        echo "Set it in lan-deploy.conf or the environment — it is the join password" >&2
+        echo "players type, so it cannot be auto-generated." >&2
+        exit 1 ;;
+    REDACTED|REDACTED_*|CHANGEME|changeme )
+        echo "ERROR: SV_PASSWORD is still the placeholder '${SV_PASSWORD}'." >&2
+        echo "Set a real value in lan-deploy.conf or the environment." >&2
+        exit 1 ;;
+esac
 NUM_INSTANCES="${NUM_INSTANCES:-5}"
 BASE_PORT="${BASE_PORT:-27015}"
 # HLTV starts right after the last game port so it never collides with the game
