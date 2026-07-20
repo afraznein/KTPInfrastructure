@@ -7,7 +7,7 @@
 
 KTPAdminBot Phase 8.2 + 8.3 (2026-04-25) shipped infrastructure that overlaps with parts of this plan:
 
-- **`[KTP_PROFILE]` aggregation daemon** (Tier 3 Project 1) — exists at `/opt/ktp-profile-aggregator/` on the data server. Paramiko-tails 25 game-server logs on a **5-min cycle** (the plan called for 60s but 5 min is sufficient for v1), parses `[KTP_PROFILE]` + `[KTP_SPIKE_*]`, persists to MySQL. Watermark-driven (clean restart re-sync). **Real schema names:** `ktp_telemetry_metrics` + `ktp_telemetry_watermarks` (the plan's planned names — `profile_samples`, `profile_rollups_daily`, `spikes`, `spike_signatures`, `crashes`, `ingest_watermarks` — were aspirational and supersede the actual table names below).
+- **`[KTP_PROFILE]` aggregation daemon** (Tier 3 Project 1) — exists at `/opt/ktp-profile-aggregator/` on the data server. Paramiko-tails the fleet game-server logs (24 instances) on a **5-min cycle** (the plan called for 60s but 5 min is sufficient for v1), parses `[KTP_PROFILE]` + `[KTP_SPIKE_*]`, persists to MySQL. Watermark-driven (clean restart re-sync). **Real schema names:** `ktp_telemetry_metrics` + `ktp_telemetry_watermarks` (the plan's planned names — `profile_samples`, `profile_rollups_daily`, `spikes`, `spike_signatures`, `crashes`, `ingest_watermarks` — were aspirational and supersede the actual table names below).
 - **Ad-hoc query commands** — `/ops fps`, `/ops spikes`, `/ops pull-spikes` (AdminBot 8.2). Reads the aggregator's data on demand. Does **not** include auto-rollup + 2σ-deviation alerting; that piece of Tier 3 still needs to ship.
 - **Adjacent: `/ops versions`** (AdminBot 8.3) — md5sums engine + KTPAMXX binary + KTPMatchHandler.amxx fleet-wide via async SSH fan-out. **Not the same** as the Tier 2 prerequisite `amx_ktp_versions` rcon — `/ops versions` covers 3 specific files, `amx_ktp_versions` would be a per-plugin reporter that every plugin registers. The latter is still an open dependency for Tier 2.
 
@@ -260,7 +260,7 @@ AntiCheat verdict alerts stay in their existing channel — different audience.
 - Tier 1 test history: GitHub Actions 90d. Sufficient.
 - Tier 2 test history: Allure report on GH Pages, 30d. Sufficient.
 - Tier 3 raw profile samples: **7 days** (sampled every 10th line for storage sanity).
-- Tier 3 daily rollups: indefinite (~5 KB/server/day = ~45 MB/year for 25 servers).
+- Tier 3 daily rollups: indefinite (~5 KB/server/day = ~45 MB/year for the fleet).
 - Tier 3 raw cores: 30 days (large, rotate aggressively); extracted backtraces forever (tiny).
 
 **Year-1 data server storage footprint:** ~20 GB. Negligible.

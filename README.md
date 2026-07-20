@@ -2,17 +2,11 @@
 
 Server infrastructure, deployment automation, and operational documentation for KTP Day of Defeat competitive servers. *(Current version: see [CHANGELOG.md](CHANGELOG.md) — this header previously pinned a version string that drifted.)*
 
-> **Staleness note (2026-07-07):** the tables below (crons, repo layout,
-> server inventory) date from early 2026 and are missing everything since
-> (`tests/`, `sites/` [web properties: `lan-web`, `wsdod-lan-2026`, `netcode`], newer crons, Chicago running 4 active instances).
-> The root `CLAUDE.md` and per-directory READMEs are current; a refresh is
-> tracked with the TECHNICAL_GUIDE rewrite.
-
 ---
 
 ## Overview
 
-KTP runs a multi-server infrastructure for competitive Day of Defeat matches:
+KTP runs a multi-server infrastructure for competitive Day of Defeat matches — 24 game instances across five hosts plus a shared data server:
 
 | Server | Type | Ports | Location |
 |--------|------|-------|----------|
@@ -20,8 +14,10 @@ KTP runs a multi-server infrastructure for competitive Day of Defeat matches:
 | Dallas | Baremetal, 5 game servers | 27015-27019 | Dallas, TX |
 | Denver | Baremetal, 5 game servers | 27015-27019 | Denver, CO |
 | New York | Baremetal, 5 game servers | 27015-27019 | New York, NY |
-| Chicago | KVM VPS, 5 game servers | 27015-27019 | Chicago, IL |
-| Data Server | HLTV, MySQL, HLStatsX, FastDL | 27020-27044 | Atlanta, GA |
+| Chicago | KVM VPS, 4 game servers | 27015-27018 | Chicago, IL |
+| Data Server | 24 HLTV proxies, MySQL, HLStatsX, FastDL | 27020-27043 | Atlanta, GA |
+
+Chicago runs four instances by design — its 4 dedicated vCPUs measured best with a 1:1 instance-to-core layout, and the fifth instance was removed in July 2026.
 
 Configure your server IPs in `deploy/config.yaml` (see Initial Setup).
 
@@ -154,9 +150,21 @@ KTPInfrastructure/
 │   ├── ktp-log-rotation.sh      # Log rotation (shipped as-is)
 │   └── ...
 │
-├── monitoring/                  # Per-host monitoring daemons
+├── monitoring/                  # Monitoring daemons + alerting
 │   ├── ktp-server-monitor.py    # RCON stats poll + Discord alerting (data-server cron)
-│   └── crashreporter/           # gdb-wrapped core-dump → #ktp-crashes embed (per game host)
+│   ├── crashreporter/           # gdb-wrapped core-dump → #ktp-crashes embed (per game host)
+│   ├── fleet-health/            # Per-host process-count heartbeat alerter
+│   └── fps_baselines/           # Fleet FPS snapshots for A/B comparisons
+│
+├── tests/                       # Test infrastructure
+│   ├── smoke/                   # Tier-1 smoke tests (CI)
+│   └── integration/             # Tier-2 integration suite (self-hosted runner
+│                                #   boots a real hlds_linux with the fleet stack)
+│
+├── sites/                       # Web properties
+│   ├── netcode/                 # Public netcode/config guide
+│   ├── lan-web/                 # LAN event web app
+│   └── wsdod-lan-2026/          # WSDoD LAN 2026 site
 │
 ├── artifacts/                   # Build output (gitignored)
 │   └── {version}/
@@ -168,6 +176,7 @@ KTPInfrastructure/
 │   ├── BUILDING.md              # Build system documentation
 │   ├── DEPLOYING.md             # Deployment guide
 │   ├── LAN_SETUP.md             # LAN event setup
+│   ├── netcode/                 # Netcode research + player config guides
 │   └── ...                      # See Documentation below
 │
 └── (repo root, gitignored — hold IPs/credentials, not shipped)
@@ -188,6 +197,13 @@ KTPInfrastructure/
 | [DEPLOYING.md](docs/DEPLOYING.md) | Deployment to production/test clusters |
 | [provision/LAN-DEPLOY.md](provision/LAN-DEPLOY.md) | **LAN install** — automated all-in-one orchestrator (`lan-deploy.sh`) |
 | [LAN_SETUP.md](docs/LAN_SETUP.md) | LAN operations — architecture, day-of runbook, TeamSpeak/HLTV/stats |
+
+### Stack Reference
+| Document | Description |
+|----------|-------------|
+| [TECHNICAL_GUIDE.md](docs/TECHNICAL_GUIDE.md) | Full-stack architecture and component reference |
+| [DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md) | Month-by-month development timeline + ADRs |
+| [docs/netcode/](docs/netcode/) | Netcode research and player config guidance |
 
 ### Infrastructure Reference (Private - gitignored)
 These files contain server IPs and credentials. Create your own copies:
@@ -226,23 +242,29 @@ deploying. The rest ship ready to run.
 
 ## Scheduled Tasks
 
-All times are **EST (America/New_York)**.
+All times are **ET (America/New_York)**.
 
-### Game Servers (Atlanta & Dallas)
+### Game Servers (all five hosts)
 
 | Schedule | Script | Description |
 |----------|--------|-------------|
 | Every minute | LinuxGSM monitor | Auto-restart crashed servers |
-| Daily 3:00 AM | `ktp-scheduled-restart.sh` | Nightly restart + Discord |
+| Every minute | `ktp-fleet-health.sh` | Process-count heartbeat → Discord on degrade/recover |
+| Daily 3:00 AM | `ktp-scheduled-restart.sh` | Nightly restart + staged `.new` binary swap + Discord |
 | Sunday 4:00 AM | `ktp-log-rotation.sh` | Prune logs > 120 days |
 
 ### Data Server
 
 | Schedule | Script | Description |
 |----------|--------|-------------|
-| Daily 3:00 AM & 11:00 AM | `hltv-restart-all.sh` | HLTV restart + Discord |
+| Daily 3:00 AM & 11:00 AM | `hltv-restart-all.sh` | HLTV restart + per-instance post-restart verify + Discord |
 | Sunday 3:00 AM | `ktp-backup.sh` | MySQL + config backup |
-| Daily 4:00 AM | `ktp-organize-hltv-demos.sh` | Organize HLTV demos |
+| Every 30 min | HLTV demo cleanup | Sweep raw `auto_*.dem` churn (always-on recording) |
+| Continuous | `hltv-demo-renamer` | Rename auto-recorded demos to canonical match names |
+| Every 5 min | Telemetry aggregation | Engine profiler/spike lines → MySQL |
+| Daily | `ktp-perf-rollup` | FPS + spike digests vs baselines → Discord |
+| Every 6 h | Tier-2 heartbeat + stack-drift check | Test-runner liveness + fleet-parity tripwire |
+| Mon 5:00 AM | Fleet drift audit | Live state vs declarative expected-state files |
 
 ---
 

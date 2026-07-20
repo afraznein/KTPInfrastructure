@@ -4,6 +4,34 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation stack refresh (2026-07-20)
+
+The two big reference docs had been carrying staleness banners since 2026-07-07;
+both are now current and the banners are gone.
+
+- **`docs/TECHNICAL_GUIDE.md`** — full refresh against the deployed fleet:
+  all version callouts (engine 3.22.0.929, KTPAMXX 2.7.24, ReAPI 5.29.0.365-ktp,
+  AmxxCurl 1.3.15-ktp, plugins, services); new Layer 1 sections for the async
+  log writer, `KTP_ExtensionShutdown`, the every-attempt RCON audit, the
+  `SV_ClientUserInfoChanged` re-enable, and lag-compensation config; a Layer 2
+  extension-mode lifecycle section; DODX score-persistence natives; the
+  KTPHLTVRecorder section rewritten for the 1.7.x always-on architecture
+  (the retired 1.5.x record/stop text is gone); a Fleet Monitoring & Operations
+  section (Netdata retirement, in-house monitoring set, nightly `.new` swap
+  discipline); a KTPHudObserver section crediting Jimmy Lockhart's external
+  DoD-hud-observer project (screenshot vendored to `docs/images/`, MIT);
+  the installation guide gained the `extensions.ini` step with the correct
+  path; remaining real host IPs in prose replaced with placeholders.
+- **`docs/DEVELOPMENT_HISTORY.md`** — May, June, and July 2026 sections
+  appended (HLTV rebuild + 1000fps + shutdown races; hitreg audit + LAN prep;
+  the root-cause month), monthly scope table and totals updated.
+- **`README.md`** — staleness note removed; fleet inventory corrected to 24
+  instances (Chicago runs four); repo layout updated with `tests/`, `sites/`,
+  and the monitoring additions; scheduled-task tables brought current.
+- Point fixes: CHI5 rows in `monitoring/crashreporter/README.md` and
+  `scripts/README-hltv-demo-renamer.md`; fleet counts in
+  `TEST_INFRASTRUCTURE_PLAN.md`.
+
 ### Scrub placeholders were functioning as real secrets
 
 The credential history-scrub replaced secrets with `REDACTED*` literals, and in

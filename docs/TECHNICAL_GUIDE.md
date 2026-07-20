@@ -1,34 +1,18 @@
 # KTP Competitive Infrastructure - Technical Guide
 
-> ## ⚠️ STALE — snapshot of 2026-04-26; verify EVERY version and architecture
-> ## claim against the root `CLAUDE.md` + per-repo CHANGELOGs before citing
-> Everything since end-of-April is missing or wrong here, including: ReHLDS
-> .925→.927 (profiling telemetry, `sv_unlagsamples 1`, async log writer),
-> KTPAMXX 2.7.15→2.7.20 (extension-mode lifecycle fixes, score-persistence
-> natives, async CLog), KTPAmxxCurl 1.3.9→1.3.13 (shutdown-guard saga),
-> KTPMatchHandler 0.10.12x→0.10.142, **KTPHLTVRecorder 1.7.0** (the recording
-> section below describes the RETIRED 1.5.x record/stop model — 1.7.0 is
-> HLTV-cfg-driven always-on recording + `/state` health checks + a post-match
-> renamer service), the 2026-05-31 credential rotation, Netdata disabled
-> fleet-wide (2026-07-02), and the extension-mode lifecycle facts established
-> 2026-07-05. A full rewrite is tracked in the root TODO (triggered after the
-> current fix waves land). Banner added 2026-07-07.
-
 *A comprehensive ecosystem of custom engine modifications, extension modules, match management plugins, and supporting services designed for competitive 6v6 Day of Defeat gameplay.*
 
 **No Metamod Required** - Runs on Linux and Windows via ReHLDS Extension Mode
 
-**Last Updated:** 2026-04-26 (see the staleness banner above — the "refreshed with current versions" claims in the modernization-status list below were true THEN and are stale NOW)
+**Last Updated:** 2026-07-20 (full refresh — versions, extension-mode lifecycle, HLTV 1.7.x architecture, monitoring stack)
 
 **Doc home note:** This file (and `DEVELOPMENT_HISTORY.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
 
-**Modernization status (2026-04-25 → 2026-04-26):**
-- ✅ Architecture diagram (top of doc) refreshed with current versions
-- ✅ Three new April 2026 components added: KTPAntiCheat, KTPAdminBot, KTPProfileAggregator (all private repos; high-level orientation only — methodology lives in their respective in-repo docs)
-- ✅ GitHub Repositories section refreshed
-- ✅ Wall Penetration Discovery moved to DEVELOPMENT_HISTORY as ADR-001
-- ✅ Per-section `**Version:**` callouts refreshed across Layer 1-6 + supporting infrastructure (engine 920, KTPAMXX 2.7.13, ReAPI 5.29.0.364-ktp, AmxxCurl 1.3.8-ktp, plus all plugin + service versions)
-- ✅ **Layer 6 plugin sections rewritten** (2026-04-26): KTPMatchHandler, KTPCvarChecker, KTPFileChecker, KTPAdminAudit refreshed end-to-end with current behavior; new sections added for KTPPracticeMode, KTPGrenadeLoadout, KTPGrenadeDamage, KTPScoreTracker. Consistent format: terse top-line with collapsible technical detail.
+**Refresh status (2026-07-20):**
+- ✅ All version callouts refreshed against the deployed fleet (engine 3.22.0.929, KTPAMXX 2.7.24, ReAPI 5.29.0.365-ktp, AmxxCurl 1.3.15-ktp, plus all plugin + service versions)
+- ✅ Layer 1/2 sections extended with the May-July 2026 work: async log writers, extension-mode lifecycle fixes, the `KTP_ExtensionShutdown` shutdown callback, profiling telemetry evolution
+- ✅ KTPHLTVRecorder section rewritten for the 1.7.x cfg-driven always-on recording architecture (the 1.5.x record/stop model is retired)
+- ✅ Monitoring section rewritten — Netdata retired fleet-wide 2026-07-02 in favor of in-house scripts (fleet-health heartbeat, perf rollup, crash reporter, telemetry aggregation)
 - ⏳ Inline "(introduced in vX.Y)" markers in section prose are intentionally left as-is — those are historical attribution, not current-version claims.
 - ⏳ Possible split into per-layer docs (ENGINE.md / SCRIPTING.md / MODULES.md / PLUGINS.md / SERVICES.md / ADMIN.md). Multi-session restructure; deferred.
 
@@ -43,90 +27,95 @@ The KTP stack eliminates Metamod dependency through a custom extension loading a
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 6: Application Plugins (AMX Plugins)                                 │
-│  KTPMatchHandler v0.10.116 - Match workflow, pause, OT, Discord, HLStatsX   │
-│  KTPHLTVRecorder v1.5.7   - Auto HLTV recording via HTTP API + health checks│
-│  KTPCvarChecker v7.23     - Real-time cvar enforcement + Discord grouping   │
-│  KTPFileChecker v2.7      - File consistency validation + Discord grouping  │
-│  KTPAdminAudit v2.7.13    - Menu-based kick/ban/changemap + audit           │
-│  KTPPracticeMode v1.4.2   - Practice mode with .grenade, noclip, HUD        │
-│  KTPGrenadeLoadout v1.0.8 - Custom grenade loadouts per class via INI       │
+│  KTPMatchHandler v0.10.146 - Match workflow, pause, OT, score persistence,  │
+│                              Discord, HLStatsX                              │
+│  KTPHLTVRecorder v1.7.2   - HLTV health checks + demo-rename markers        │
+│                             (recording itself is always-on, HLTV-cfg-driven)│
+│  KTPCvarChecker v7.30     - Real-time cvar enforcement + Discord grouping   │
+│  KTPFileChecker v2.7      - File consistency validation (audit-only)        │
+│  KTPAdminAudit v2.7.17    - Menu-based kick/ban/changemap + timed bans      │
+│  KTPPracticeMode v1.4.6   - Practice mode with .grenade, noclip, HUD        │
+│  KTPGrenadeLoadout v1.0.9 - Custom grenade loadouts per class via INI       │
 │  KTPGrenadeDamage v1.0.5  - Grenade damage reduction by configurable %      │
-│  KTPScoreTracker v1.1.1   - Verbose capture scoring + per-cap Discord events│
+│  KTPScoreTracker v1.1.3   - Verbose capture scoring + per-cap Discord events│
+│  KTPHudObserver v2.0.0    - Spectator HUD companion (community-contributed) │
 │  stats_logging.sma        - DODX weaponstats (compiled from KTPAMXX source) │
 │  admin.amxx               - AMXX admin-flag base (compiled from KTPAMXX src)│
-│  All plugins (Apr 2026): adopt ktp_version_reporter — `amx_ktp_versions`    │
+│  All plugins: ktp_version_reporter — `rcon amx_ktp_versions` lists them all │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ Uses AMXX Forwards & Natives
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 5: Game Stats Modules (AMXX Modules)                                 │
-│  DODX Module (in KTPAMXX 2.7.13) - DoD stats, weapons, shot tracking        │
+│  DODX Module (in KTPAMXX 2.7.24) - DoD stats, weapons, shot tracking        │
 │  Stats: dodx_flush_all_stats, dodx_reset_all_stats, dodx_set_match_id       │
 │  Stats: dodx_set_stats_paused (round-freeze filtering for HLStatsX accuracy)│
+│  Score persistence: dodx_get_observed_deaths, dodx_set_user_deaths,         │
+│                     dodx_broadcast_scoreboard (mid-match DC/rejoin restore) │
 │  Player: dodx_give_grenade, dodx_set_user_noclip, dodx_set_user_class/team  │
-│  Player: dodx_get/set_user_origin, dodx_get/set_user_angles, dodx_send_ammox│
-│  Forward: dod_stats_flush(id), dod_damage_pre(att,vic,dmg,wpn,hit,TA)       │
-│  v2.7.13: FNullEnt-fix for SV_ActivateServer hook (forwards-stall fix)      │
+│  Forwards: dod_stats_flush, dod_damage_pre, dod_client_weapon_fire          │
+│  Clock: dodx_get_round_time() — engine-authoritative half clock             │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ Uses AMXX Module API
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 4: HTTP/Networking Modules (AMXX Modules)                            │
-│  KTP AMXX Curl v1.3.8-ktp - Non-blocking HTTP/FTP via libcurl               │
+│  KTP AMXX Curl v1.3.15-ktp - Non-blocking HTTP via libcurl + asio           │
 │  Uses MF_RegModuleFrameFunc() for async processing                          │
-│  Apr 2026: CMake migration (replaced Premake5), 5 bug fixes                 │
+│  2026: socket-lifecycle fix (keep-alive connection reuse), extension-mode   │
+│        shutdown teardown, crash-safety guards at every C boundary           │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ Uses AMXX Module API
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 3: Engine Bridge Modules (AMXX Modules)                              │
-│  KTP-ReAPI v5.29.0.364-ktp - Exposes ReHLDS/ReGameDLL hooks to plugins      │
+│  KTP-ReAPI v5.29.0.365-ktp - Exposes ReHLDS/ReGameDLL hooks to plugins      │
 │  Extension Mode: No Metamod, uses KTPAMXX GetEngineFuncs()                  │
 │  Custom Hooks: RH_SV_UpdatePausedHUD (pause HUD), RH_SV_Rcon (RCON audit)   │
-│  Apr 2026: -march=ivybridge -flto -fno-math-errno compiler optimizations    │
+│  .365: Natives_Checks sentinel + checkable RegisterHookChain returns        │
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ Uses ReHLDS Hookchains
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 2: Scripting Platform (ReHLDS Extension)                             │
-│  KTPAMXX v2.7.13 - AMX Mod X fork with extension mode + HLStatsX integration│
+│  KTPAMXX v2.7.24 - AMX Mod X fork with extension mode + HLStatsX integration│
 │  Loads as ReHLDS extension, no Metamod required                             │
-│  Provides: client_cvar_changed forward, MF_RegModuleFrameFunc()             │
-│  Natives: ktp_drop_client, DODX score broadcasting, ktp_discord.inc v1.3.4  │
-│  Natives: dod_damage_pre forward, grenade natives, player manipulation      │
-│  Apr 2026 milestones:                                                       │
-│  - 2.7.7-2.7.9: -O3 + -march=ivybridge + -flto + bitmask optimizations      │
-│  - 2.7.12: emergency UAF fix in CSPForward::execute (mincore page check)    │
-│  - 2.7.13: FNullEnt-fix preventing silent DODX forward stalls               │
-│  - JIT activated fleet-wide (debug flag stripped 2026-04-23)                │
+│  Provides: client_cvar_changed + client_infochanged forwards,               │
+│            MF_RegModuleFrameFunc(), ktp_drop_client, ktp_discord.inc        │
+│  2026 milestones:                                                           │
+│  - JIT active fleet-wide (2026-04); async CLog writer (2.7.19)              │
+│  - Extension-mode lifecycle fixes: per-map CLog::MapChange, hostname cvar   │
+│    init, disconnect cleanup, changelevel-failure recovery (2.7.19-2.7.24)   │
+│  - Refcounted SP forwards + CTask re-entry guard (2.7.22)                   │
+│  - KTP_ExtensionShutdown export — orderly module detach at shutdown (2.7.22)│
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ ReHLDS Extension API
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Layer 1: Game Engine (KTP-ReHLDS v3.22.0.920)                              │
+│  Layer 1: Game Engine (KTP-ReHLDS v3.22.0.929)                              │
 │  Custom ReHLDS fork with extension loader + KTP features                    │
-│  Provides: SV_UpdatePausedHUD hook, SV_Rcon hook, pfnClientCvarChanged      │
-│  Features: ktp_silent_pause cvar, SV_BroadcastPauseState(), frame profiler  │
+│  Provides: SV_UpdatePausedHUD hook, SV_Rcon hook, pfnClientCvarChanged,     │
+│            SV_ClientUserInfoChanged (re-enabled .929, ktp_userinfo_hook)    │
+│  Features: ktp_silent_pause cvar, frame profiler, async log writer          │
 │  Blocked: kick, banid, removeid, addip, removeip (use .kick/.ban instead)   │
-│  Profiler: 6-phase frame timing, physics sub-phases, per-client send timing │
-│  Extension hooks: SV_ClientCommand, SV_InactivateClients, AlertMessage,     │
-│                   PF_TraceLine, PF_SetClientKeyValue, SV_PlayerRunPreThink  │
-│  Apr 2026 milestones:                                                       │
-│  - 917: [KTP_SPIKE_PHYS] sub-phase instrumentation                          │
-│  - 918: Steam 5s-timer offload + Con_DebugLog persistent fd +               │
-│         ProcessConsoleInput rate-limit + new -pingboost 4 (never-sleep)     │
-│  - 919: frame-eff hoists + Linux NET_ThreadMain + Stage C experimental      │
-│  - 920: HPAK defensive hardening (3 SEGV-on-OOM sites)                      │
-│  - 921/922/923 held on main (HPAK secondary, sv_phys hoists, HLTV alert)    │
+│  Profiler: 6-phase frame timing, physics sub-phases, I/O sink timing,       │
+│            spike alerts ([KTP_SPIKE], [KTP_SPIKE_PHYS], [KTP_SPIKE_IO])     │
+│  2026 milestones:                                                           │
+│  - .925/.926: hitreg-audit instrumentation (entity + I/O sink attribution)  │
+│  - .927: async log-file writer (ktp_log_async) — game thread never blocks   │
+│          on the log disk again                                              │
+│  - .928: KTP_ExtensionShutdown callback, ktp_extension_loaded sentinel,     │
+│          RH_SV_Rcon fires on every attempt (incl. failures)                 │
+│  - .929: SV_ClientUserInfoChanged hookchain re-enabled (ktp_userinfo_hook)  │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                          Supporting Infrastructure:
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Cloud Services:                                                            │
-│  - Discord Relay v1.0.1     - HTTP proxy for Discord webhooks (Cloud Run)   │
+│  - Discord Relay v1.1.1     - HTTP proxy for Discord API (Cloud Run)        │
 │                                                                             │
-│  Data Server (74.91.112.242):                                               │
+│  Data Server (<DATA_SERVER_IP>):                                            │
 │  - KTPHLStatsX v0.3.3       - HLStatsX daemon with per-half stats + batching│
-│  - KTPFileDistributor v1.1.2 - .NET 8 file sync daemon (SFTP distribution)  │
-│  - HLTV Scheduled Restarts  - systemd timer (replaces KTPHLTVKicker)        │
+│  - KTPFileDistributor v1.1.3 - .NET 8 file sync daemon (SFTP distribution)  │
+│  - HLTV proxies (24)        - always-on recording + post-match demo renamer │
 │  - Fleet Drift Audit        - Weekly cron, 5-category state-diff alerts     │
 │  - Fleet-Health Heartbeat   - 1-min cron on each game host                  │
-│  - Admin/AC tier (private)  - See "Admin Infrastructure" section below      │
+│  - Admin tier               - See "Admin Infrastructure" section below      │
 │                                                                             │
 │  SDK Layer:                                                                 │
 │  - KTP HLSDK v1.0.0         - pfnClientCvarChanged callback headers         │
@@ -283,8 +272,10 @@ rehlds/
 ### Layer 1: KTP-ReHLDS (Engine)
 
 **Repository:** [github.com/afraznein/KTPReHLDS](https://github.com/afraznein/KTPReHLDS)
-**Version:** 3.22.0.920
+**Version:** 3.22.0.929
 **License:** MIT
+
+> **Version identity note:** the console banner is generated from the git commit count (`appversion.h`) and drifts from the CHANGELOG version by design. Deployments are verified by binary checksum, not by banner.
 
 <details>
 <summary><b>Core Engine Features</b></summary>
@@ -369,12 +360,19 @@ Each `SV_Frame_Internal()` call is broken into six phases:
 - Per-client send timing — identifies the worst (slowest) client each frame
 - Profiler overhead optimization — eliminated 10,000+ cache-dirtying writes/sec on production by gating globals behind profiling flag, consolidated cvar dereferences into single `g_ktp_profiling_enabled` global
 
+**Later evolution (v3.22.0.917 → .929):**
+- `[KTP_SPIKE_PHYS]` (v917) — fires *on* a physics spike frame with per-frame sub-phase times (`startframe`, `entloop`, pause-path phases), instead of relying on a periodic sample that's stale by spike time
+- `[KTP_SPIKE_IO]` (v926) — attributes I/O time on spike frames per sink: the UDP logaddress send (`logaddr=`) vs the log-file disk write (`file=`). This split is what proved the log *disk write* was the blocking sink behind the fleet's 50-165ms frame stalls (see the async log writer below)
+- `[KTP_PROFILE] io:` interval line — worst-case per-sink I/O timing per interval, plus async-writer health fields (`fileq_worst=`, `logq_drops=`, `ctl_drops=`, `writer_alive=`)
+- `phys_detail` → `phys_detail_peak` (v929) — the periodic physics detail line now reports interval *peaks* rather than the last frame's instantaneous values, so it's useful for spike attribution
+- Per-frame `getrusage` snapshot gated on `ktp_profile_spike_threshold > 0` (v929) — removes the one real syscall from the profiling hot path when spike alerts are off
+
 **Summary log output (every N seconds):**
 ```
 [KTP_PROFILE] frames=9823 fps=982.3 edicts_max=156
 [KTP_PROFILE] avg: read=0.120ms phys=0.450ms misc1=0.005ms send=0.080ms post=0.003ms steam=0.010ms full=0.680ms
 [KTP_PROFILE] peak: read=0.450ms phys=1.200ms misc1=0.020ms send=0.300ms post=0.010ms steam=0.050ms full=2.100ms
-[KTP_PROFILE] phys_detail: startframe=0.350ms entloop=0.100ms
+[KTP_PROFILE] phys_detail_peak: startframe=0.350ms entloop=0.100ms
 [KTP_PROFILE] send_detail: worst_client=5(PlayerName) time=0.280ms clients_sent=12
 ```
 
@@ -383,13 +381,54 @@ Each `SV_Frame_Internal()` call is broken into six phases:
 [KTP_SPIKE] full=12.340ms read=0.150ms phys=0.500ms misc1=0.010ms send=0.100ms post=0.005ms steam=11.500ms gap=0.075ms
 ```
 
+#### Async Log-File Writer (v3.22.0.927+)
+
+The 2026 hit-registration audit traced the fleet's worst remaining frame-stall class (50-167ms freezes, including during prime-time matches) to `Log_Printf`'s synchronous log-file append: ext4 journal commits on consumer SSDs could block the game thread for over 100ms per write. The UDP logaddress sink measured harmless everywhere; the disk write was the problem.
+
+v927 moves the log file onto a dedicated writer thread:
+
+| Aspect | Behavior |
+|--------|----------|
+| `ktp_log_async` cvar | Default `1`. `0` restores the exact synchronous legacy path. Latches per log session at `Log_Open` |
+| Game thread | Enqueues formatted lines into a fixed 2048-slot ring (microseconds; never blocks) |
+| Writer thread | Owns the log `FILE*` via plain stdio, line-buffered for crash durability |
+| Full queue | Drops the line and counts it (`logq_drops=`) — never blocks the frame |
+| Open/close | Queued as control ops so ordering across map-change rotations is preserved; v928 adds a bounded wait so a dropped OPEN can't silently lose a whole map's log file (`ctl_drops=` counter, expected 0 forever) |
+| Health | `writer_alive=` heartbeat on the `io:` profile line |
+
+Log file content and line ordering are identical in both modes. KTPAMXX gained the same treatment for its own log paths in 2.7.19 (`amxx_log_async`), which together with v927 eliminated the 100ms+ game-thread stall class outright — fleet spike telemetry shows the class *ceased* the night the pair activated, not shrank.
+
+#### Extension Shutdown Callback (v3.22.0.928+)
+
+In extension mode, nothing used to call module detach at full server shutdown: `Meta_Detach` is Metamod-only, and the engine's `ReleaseEntityDlls()` only calls the single `pfnGameShutdown` slot before dlclosing everything. Modules dlopened inside KTPAMXX (dodx, reapi, amxxcurl) got no teardown until exit-time static destructors ran — after KTPAMXX's `MF_*` function surface was already unmapped. That ordering was the root cause of a recurring shutdown segfault class (see DEVELOPMENT_HISTORY, July 2026).
+
+v928 closes the gap structurally:
+- `ReleaseEntityDlls()` dlsym's each extension DLL for an optional `KTP_ExtensionShutdown` export and calls it *before* the dlclose loop, while every library is still mapped. An absent export is a silent no-op, so the change is fully forward-compatible.
+- KTPAMXX 2.7.22+ exports it and runs the full module-detach cascade — so `OnAmxxDetach` now genuinely runs at every shutdown, fleet-wide.
+
+v928 also adds the **`ktp_extension_loaded` sentinel cvar** — a count of extension DLLs successfully loaded from `extensions.ini`. A missing or misplaced `extensions.ini` previously degraded the server to vanilla HLDS (no wall-penetration fix, no cvar enforcement, no match handler) with only a single console line to show for it; deploy and restart scripts now assert `ktp_extension_loaded >= 1` over rcon after every start.
+
+#### RCON Audit Completeness (v3.22.0.928+)
+
+The `RH_SV_Rcon` hookchain originally fired only on successful rcon commands. v928 makes it fire on **every** attempt with the real validity flag, so failed attempts (bad password, banned, no privilege) reach KTPAdminAudit and Discord too. The audited string never includes the password, failure audits are rate-limited, and failure audits fire before the packet redirect window so a handler's console output can't leak into the reply sent to an unauthenticated prober.
+
+#### SV_ClientUserInfoChanged Re-enable (v3.22.0.929)
+
+The `SV_ClientUserInfoChanged` hookchain call site had been disabled since December 2025 — it was added already commented out, so in extension mode the game DLL was called directly and KTPAMXX's `client_infochanged` forward never fired. Practical effect: `get_user_name()` returned the connect-time name for the life of a session, which was the root cause of every "stale name after a rename" report (kick menus, ready/confirm text, Discord embeds).
+
+v929 re-enables the hookchain behind `ktp_userinfo_hook` (default `1`), implemented as an if/else so each name change dispatches to the game DLL exactly once on either branch. The cvar is read per userinfo update — `ktp_userinfo_hook 0` is a live rollback with no map change or binary swap.
+
+#### Lag Compensation Configuration
+
+The fleet runs `sv_unlagsamples 1` (the engine default) since 2026-06-11. Higher values look attractive on paper but rest on a wrong premise: the client frame buffer advances per *client packet* (~100/s), not per server frame, so 20 samples meant ~200ms of latency smoothing and a jitter-guard window in which a single ping spike silently disabled lag compensation for subsequent shots. Engine telemetry added in v925 validated the change (`guard_zero=0` fleet-wide) before the instrumentation was retired in v926.
+
 #### Extension Mode Hookchains (v3.16.0-3.22.0)
 
 | Hook                       | Purpose                              | Used By              |
 |----------------------------|--------------------------------------|----------------------|
 | `SV_ClientCommand`         | Chat commands, menus                 | `register_clcmd`     |
 | `SV_InactivateClients`     | Map change cleanup                   | `plugin_end`         |
-| `SV_ClientUserInfoChanged` | Client info changes                  | `client_infochanged` |
+| `SV_ClientUserInfoChanged` | Client info changes (re-enabled v929, `ktp_userinfo_hook`) | `client_infochanged` |
 | `PF_RegUserMsg_I`          | Message ID capture                   | HUD drawing          |
 | `PF_changelevel_I`         | Level change                         | `server_changelevel` |
 | `AlertMessage`             | Engine log messages                  | `register_logevent`  |
@@ -530,9 +569,11 @@ void SV_ParseCvarValue(client_t *cl, sizebuf_t *msg) {
 ### Layer 2: KTPAMXX (Scripting Platform)
 
 **Repository:** [github.com/afraznein/KTPAMXX](https://github.com/afraznein/KTPAMXX)
-**Version:** 2.7.13
+**Version:** 2.7.24
 **License:** GPL v3
 **Base:** AMX Mod X 1.10.0.5468-dev
+
+> **Version identity note:** the console banner stamps `<version>.<build-number>`, and the build number includes a per-minute build timestamp — any rebuild changes it. Deployments are verified by binary checksum, not by banner.
 
 <details>
 <summary><b>Extension Mode Architecture</b></summary>
@@ -565,6 +606,27 @@ void AMXX_RehldsExtensionInit(); // Extension mode (no Metamod)
 | `SV_ClientCommand`                     | Chat commands, menus         |
 | `SV_InactivateClients`                 | Map change plugin_end        |
 | `AlertMessage`                         | Log events (logevent)        |
+
+</details>
+
+<details>
+<summary><b>Extension-Mode Lifecycle: What Metamod Used to Do For Free</b></summary>
+
+A recurring bug class through 2026 came from one structural fact: large parts of stock AMX Mod X's init and teardown only exist on the Metamod path. `C_Spawn`, `C_ServerDeactivate_Post`, `Meta_Detach`, and the DLL-table wrappers never run in extension mode, so any state they own is never reset and any forward they fire never arrives — unless the extension-mode path re-implements it. Most of the 2.7.16-2.7.24 release arc is exactly that re-implementation, each item found the hard way:
+
+| Fact | Consequence | Fix |
+|------|-------------|-----|
+| Globals persist across map changes (no plugin reload) | Any "once per map" state must be reset explicitly; several counters silently accumulated forever | Per-case resets (2.7.16-2.7.24): `CLog::MapChange()` per map (2.7.19), DODX per-map/per-slot state resets (2.7.20/2.7.24), changelevel-failure latch recovery (2.7.24) |
+| `C_Spawn` never runs | The `hostname` cvar pointer was never cached — NULL for the whole process; one out-of-range `get_user_name()` call away from a game-thread crash (hit in production 2026-07-10) | 2.7.22 caches it in the extension-mode init block + NULL guards at all deref sites |
+| `Meta_Detach` never runs | No module ever got detach at shutdown; module static destructors ran *after* KTPAMXX's `MF_*` surface was unmapped — a recurring shutdown segfault class | 2.7.22 exports `KTP_ExtensionShutdown`; ReHLDS .928 calls it before the dlclose loop; the detach cascade now runs on every shutdown |
+| Client disconnect wrappers never run | DODX disconnect cleanup was skipped — slot reuse inherited the previous occupant's state | 2.7.24 wires cleanup through the extension-mode disconnect hook |
+| `client_infochanged` ordering | The forward fired after the name cache was already refreshed, defeating the stock old-name/new-name comparison idiom | 2.7.24 fires the forward before the name assignment (paired with the ReHLDS .929 hookchain re-enable) |
+
+The shared lesson: in extension mode, every lifecycle assumption inherited from upstream AMX Mod X has to be re-verified, because the code that honored it may simply never execute.
+
+**Async CLog writer (2.7.19).** `log_amx` / `LogError` used to fopen/fprintf/fclose per line on the game thread — the same disk-stall class the engine fixed in ReHLDS .927, and the actual mechanism behind the fleet's 100ms+ frame-stall telemetry (log writes blocking on ext4 journal commits). 2.7.19 moves AMXX log writes onto an async writer, gated by the `amxx_log_async` localinfo key (default on).
+
+**Forward/task correctness (2.7.20/2.7.22).** Two long-lived platform bugs fell in this arc. `CTask` double-decremented its active-task counter when a repeating task removed itself, eventually stalling *all* `set_task` timers (the cause of intermittently missing ready/confirm HUD updates). And the SP-forward dedup handed out shared handles with no reference counting — a dying holder freed the slot, the free list recycled the id, and surviving timers executed the wrong callback. 2.7.22 makes SP forwards refcounted and adds a CTask re-entry guard.
 
 </details>
 
@@ -893,9 +955,11 @@ addons/ktpamx/
 ### Layer 3: KTP-ReAPI (Engine Bridge Module)
 
 **Repository:** [github.com/afraznein/KTPReAPI](https://github.com/afraznein/KTPReAPI)
-**Version:** 5.29.0.364-ktp
+**Version:** 5.29.0.365-ktp
 **License:** GPL v3
 **Base:** ReAPI 5.26+
+
+**v5.29.0.365 (2026-07):** every native now runs behind a real parameter-bounds sentinel (`Natives_Checks`), and `RegisterHookChain` returns a checkable result with plugin attribution instead of failing silently — a plugin can now detect that a hook didn't register rather than discovering it by absence of callbacks.
 
 <details>
 <summary><b>Extension Mode Operation</b></summary>
@@ -1005,10 +1069,12 @@ public OnPausedHUDUpdate() {
 
 ### Layer 4: KTP AMXX Curl (HTTP Module)
 
-**Repository:** [github.com/afraznein/KTPAMXXCurl](https://github.com/afraznein/KTPAMXXCurl)
-**Version:** 1.3.8-ktp
+**Repository:** [github.com/afraznein/KTPAmxxCurl](https://github.com/afraznein/KTPAmxxCurl)
+**Version:** 1.3.15-ktp
 **License:** MIT
 **Base:** AmxxCurl by Polarhigh
+
+Every HTTP call on a KTP server (Discord embeds, HLTV control, backend integrations) goes through this module, so its failure modes reach everything. Most of its 2026 history is hardening:
 
 **Key safety features (v1.3.x):**
 - **`curl_get_response_body` native** (v1.3.0) - Retrieve HTTP response body from completed requests
@@ -1016,6 +1082,12 @@ public OnPausedHUDUpdate() {
 - **In-flight callback safety** (v1.3.4) - `IsAmxValid()` checks before calling into Pawn, deferred cleanup for in-flight handles
 - **POSTFIELDS copy safety** (v1.3.5) - Auto-upgrades `CURLOPT_POSTFIELDS` to `CURLOPT_COPYPOSTFIELDS` for async requests
 - **Detach cleanup** (v1.3.6) - `curl_global_cleanup` leak fix, wall-clock timeout for `OnAmxxDetach`, `CurlReset` re-binding fix
+
+**The shutdown-teardown arc (v1.3.9-1.3.13, May-July 2026).** A recurring shutdown segfault traced to static destructors running after KTPAMXX's function surface was unmapped — because extension-mode shutdown never called module detach at all (`Meta_Detach` is Metamod-only). 1.3.9/1.3.10 added an atomic detached flag so late destructors take a safe path; 1.3.12 armed it via `atexit` so it works even when detach never runs; 1.3.13 made that handler do the real teardown (detach in-flight handles from the multi while libcurl and asio are still alive). The structural fix — ReHLDS .928's `KTP_ExtensionShutdown` callback plus the KTPAMXX 2.7.22 export — means detach now genuinely runs at shutdown; the module-side guards stay as defense in depth.
+
+**Socket lifecycle fix (v1.3.14, 2026-07).** The module was closing sockets libcurl still owned on `CURL_POLL_REMOVE`, which destroyed libcurl's keep-alive connection cache — every HTTP call re-dialed a fresh TCP connection, and under the right timing produced the crash class 1.3.11 had to defuse at the callback boundary. `CURL_POLL_REMOVE` means "stop polling this fd", not "this fd is dead"; real fd death is signaled only via `CURLOPT_CLOSESOCKETFUNCTION`. Curl-owned sockets now stay open in the map with their pending waits cancelled, and the close callback is the single place an fd is ever closed. Connection reuse works for the first time, guarded by an integration test that fails on the old build.
+
+**Crash-safety hardening (v1.3.15, 2026-07).** Wrapped the outermost game-thread boundary (`AsioPoller::Poll`) in exception guards — the engine is built without exception support, so anything escaping an asio handler previously terminated the server. Also: unsupported callback options now log and return an error instead of throwing across the native boundary, `curl_global_cleanup` ordering fixed relative to multi-handle teardown, and a failed `curl_multi_add_handle` no longer leaves a permanent zombie handle.
 
 <details>
 <summary><b>Non-Blocking HTTP Without Metamod</b></summary>
@@ -1047,8 +1119,8 @@ void CurlFrameCallback() {
 ### Layer 5: DODX Stats Module
 
 **Included in:** KTPAMXX
-**Version:** 2.7.13
-**Purpose:** Day of Defeat weapon stats, shot tracking, HLStatsX integration
+**Version:** 2.7.24
+**Purpose:** Day of Defeat weapon stats, shot tracking, HLStatsX integration, score persistence
 
 <details>
 <summary><b>DODX Extension Mode: The Complete Rewrite</b></summary>
@@ -1217,15 +1289,52 @@ forward dod_stats_flush(id);
 
 </details>
 
+<details>
+<summary><b>Score Persistence Support (2.7.17+) & Later Additions</b></summary>
+
+#### Mid-Match Disconnect/Rejoin Score Persistence
+
+KTPMatchHandler can save a player's frags and deaths when they disconnect mid-match and restore them exactly on rejoin. DODX provides the module half:
+
+```pawn
+// Independent death count observed via the DeathMsg broadcast hook —
+// used as a cross-check against the engine's own scoreboard value
+// before a save is trusted
+native dodx_get_observed_deaths(id);
+
+// Write a player's death count into engine private data (zeroes both
+// counters atomically when used as a go-live baseline)
+native dodx_set_user_deaths(id, deaths);
+
+// Push the current scoreboard state to all clients after a restore
+native dodx_broadcast_scoreboard();
+```
+
+The design point worth understanding: the observed-deaths counter and the engine's scoreboard deaths are **two independent mechanisms**, and the validation gate compares them before persisting anything. A save that fails validation is refused — a wrong score is never restored. Getting this subsystem production-ready took a three-month arc (see DEVELOPMENT_HISTORY, May-July 2026): the counter never reset in extension mode (its reset lived in a Metamod-only code path), the death dedup was one-directional, and the gate initially demanded exact equality between counters that legitimately differ by one. All fixed across KTPAMXX 2.7.20-2.7.22 and KTPMatchHandler 0.10.142-0.10.144; declared live in production 2026-07-13 after a validation sweep with zero rejections and exact save/restore round-trips.
+
+#### Other 2026 Additions
+
+```pawn
+// Per-shot forward (2.7.18) — fires on every shot with engine gametime
+forward dod_client_weapon_fire(id, weapon, Float:gametime);
+
+// Engine-authoritative half-clock remaining (2.7.23)
+native Float:dodx_get_round_time();
+```
+
+The observed-deaths counter is also structurally exactly-once per life since 2.7.22, and recoverable native failures log and return 0 instead of aborting the calling plugin function.
+
+</details>
+
 ---
 
 ### Layer 6: Application Plugins
 
 #### KTPMatchHandler
 
-**Repository:** [github.com/afraznein/KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) — **Version:** 0.10.116 — **License:** MIT
+**Repository:** [github.com/afraznein/KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) — **Version:** 0.10.146 — **License:** MIT
 
-The competitive match orchestrator. Handles workflow (start → confirm → ready → live → half → end), the tech-only pause system, OT, score persistence across map changes, and Discord embeds. Talks to DODX for stats, KTPAntiCheat API for session linkage (Phase 1, v0.10.115+), and the Discord Relay for embeds.
+The competitive match orchestrator. Handles workflow (start → confirm → ready → live → half → end), the tech-only pause system, OT, score persistence (both across map changes and across mid-match disconnect/rejoin), and Discord embeds. Talks to DODX for stats, the KTPAntiCheat backend for match session linkage (v0.10.115+), and the Discord Relay for embeds.
 
 <details>
 <summary><b>Match workflow & types</b></summary>
@@ -1293,7 +1402,11 @@ Match start, ready-up, halftime, and the say-hook are all deferred or fast-pathe
 **Round-state filtering (0.10.101):** three-layer defense against phantom kills during round-freeze — `dodx_set_stats_paused()` halts C++ accumulation, `KTP_ROUND_FREEZE`/`KTP_ROUND_LIVE` log events guard HLStatsX, and event-driven setup replaces fixed delays with a 5s safety timeout.
 
 **Notable historical fixes (newest first):**
-- 0.10.115 — KTPAntiCheat Phase 1 (match_id linkage) — silent no-op when `ac.ini` absent
+- 0.10.146 — All ~10 match-teardown exits (`.cancel` branches, `.forcereset`, abandonment, changelevel paths) now route through one idempotent teardown notifier, so every exit closes every sink (Discord, HLStatsX `KTP_MATCH_END`, backend match row). Also: only the initiating team can `.cancel` a live OT, and OT ends now emit `KTP_MATCH_END`
+- 0.10.144 — Score-persistence validation gate tuned: tolerates the benign one-death divergence between the two independent death counters while still refusing anything that looks like a struct shift. Score persistence declared live in production 2026-07-13
+- 0.10.142 — Two long-standing criticals: explicit-OT state was re-initialized on every all-ready (clobbering round/scores mid-OT), and a never-reset changelevel debounce latch disabled the primary match-end path for the process lifetime
+- 0.10.141/0.10.143 — Score-persistence plugin half: slot bookkeeping, go-live death baselines, team-pick resync, one-shot restore rows
+- 0.10.115 — Anti-cheat match linkage (match start/end announce) — silent no-op when `ac.ini` absent
 - 0.10.111 — Pause chat relay restoration after KTPAMXX 2.7.3 dedup
 - 0.10.103 — Timelimit during ready-up triggered blocked changelevel storm (NY1 incident: 5.4 GB logs at 2000 lines/sec)
 - 0.10.82 — `pfnChangeLevel` debounce: 26M+ calls reduced to 1 per intermission
@@ -1305,9 +1418,9 @@ Match start, ready-up, halftime, and the say-hook are all deferred or fast-pathe
 
 #### KTPCvarChecker
 
-**Repository:** [github.com/afraznein/KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker) — **Version:** 7.23 — **License:** GPL v2 — **Plugin file:** `ktp_cvar.amxx`
+**Repository:** [github.com/afraznein/KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker) — **Version:** 7.30 — **License:** GPL v2 — **Plugin file:** `ktp_cvar.amxx`
 
-Real-time client cvar enforcement. Pure auto-correction + logging — no kicks or bans. Built on KTPAMXX's `client_cvar_changed` forward (which surfaces ReHLDS's `pfnClientCvarChanged` callback to plugins). Flags violations to Discord in 5s batches per player.
+Real-time client cvar enforcement. Pure auto-correction + logging — no kicks or bans. Built on KTPAMXX's `client_cvar_changed` forward (which surfaces ReHLDS's `pfnClientCvarChanged` callback to plugins). Flags violations to Discord in batches per player. Since 7.29 it also tracks clients that stop answering cvar queries entirely (a silent client can't be validated), alerting admins without taking action against the player.
 
 <details>
 <summary><b>Detection pipeline</b></summary>
@@ -1353,6 +1466,9 @@ Steady-state cost: ~5 queries/sec/player (~160 q/s for 32 players), ~0.4% CPU, ~
 **`cl_filterstuffcmd 1` detection:** clients with the filter on silently drop enforcement commands. After 3 failed attempts for the same cvar, the player is warned. Useful diagnostic — clean clients self-heal silently within 2s.
 
 **Notable historical fixes:**
+- 7.30 — `cl_mousegrab` removed from enforcement (monitored set 38 → 37). It's a client-only SDL pointer-grab setting with no gameplay surface, and enforcing it penalized windowed/multi-monitor players for no competitive benefit
+- 7.29 — Silent-client tripwire: a client that hasn't answered any cvar query for well past the engine's own timeout gets flagged to admins (alert-only, with a join grace period)
+- 7.27 — Visual cvars promoted to a faster detection tier and the connect-scan window tightened; Discord batching keyed by SteamID
 - 7.22 — `lightgamma` floor adjusted from `1.81` to `1.809` (IEEE 754: `1.81` stores as `1.80999994`, engine reports `1.809`); `cl_smoothtime` enforcement removed (cosmetic, no competitive advantage)
 - 7.20 — Discord task leak (no task ID) caused doubled notifications on player-slot interleave
 - 7.19 — Deferred enforcement queue (per-cvar bitmask) replaces single-slot defer that lost concurrent violations
@@ -1365,7 +1481,7 @@ Steady-state cost: ~5 queries/sec/player (~160 q/s for 32 players), ~0.4% CPU, ~
 
 **Repository:** [github.com/afraznein/KTPFileChecker](https://github.com/afraznein/KTPFileChecker) — **Version:** 2.7 — **License:** Custom — **Plugin file:** `ktp_file.amxx`
 
-File consistency validation — catches modified player models, amplified sounds, and weapon model exploits at client connect. Sends per-player Discord embeds (not per-file) to avoid spam.
+File consistency validation — catches modified player models, amplified sounds, and weapon model exploits at client connect. Sends per-player Discord embeds (not per-file) to avoid spam. **Audit-only by policy** (formalized 2026-07): the plugin never kicks — it records and reports, and enforcement decisions stay with human admins.
 
 <details>
 <summary><b>Validation behavior</b></summary>
@@ -1391,9 +1507,11 @@ File consistency validation — catches modified player models, amplified sounds
 
 #### KTPAdminAudit
 
-**Repository:** [github.com/afraznein/KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit) — **Version:** 2.7.13 — **License:** MIT
+**Repository:** [github.com/afraznein/KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit) — **Version:** 2.7.17 — **License:** MIT
 
 Menu-based kick / ban / changemap / restart / quit. All actions Discord-audited. Ties together a few ReHLDS hooks: `RH_SV_Rcon` (RCON command audit), `RH_ExecuteServerStringCmd` (catches LinuxGSM and console-source commands), and `RH_Host_Changelevel_f` (changemap interception).
+
+Since 2.7.17, timed bans persist across restarts (`configs/ktp_timed_bans.ini`, re-applied at boot with remaining time rounded up), `.unban <steamid>` removes one, and the plugin consumes ReHLDS .928's failed-RCON audit events — failed attempts are batched per source into a single Discord summary rather than one embed per attempt.
 
 <details>
 <summary><b>Commands & permissions</b></summary>
@@ -1401,7 +1519,8 @@ Menu-based kick / ban / changemap / restart / quit. All actions Discord-audited.
 | Command | Flag | Notes |
 |---------|------|-------|
 | `.kick` | `c` ADMIN_KICK | Menu-based player select; immune players (`a`) hidden from target list |
-| `.ban` | `d` ADMIN_BAN | Duration menu: 1h / 1d / 1w / permanent |
+| `.ban` | `d` ADMIN_BAN | Duration menu: 1h / 1d / 1w / permanent; SteamID argument strictly shape-validated |
+| `.unban` | `d` ADMIN_BAN | Remove a timed ban by SteamID (2.7.17) |
 | `.changemap` | none | Available to all players; **blocked during active matches** (uses `ktp_is_match_active()`); 5s countdown |
 | `.restart` / `.quit` | `l` ADMIN_RCON | Server control (RCON `quit`/`exit` blocked at engine level — must use `.quit` in-game since 2.7.1) |
 
@@ -1414,6 +1533,8 @@ HLTV proxies appear in the kick menu (since 2.3) so admins can drop a misbehavin
 <details>
 <summary><b>Notable historical fixes</b></summary>
 
+- 2.7.15 — Immunity re-checked at ban execution time (not just menu time); audit lines added on all cancel paths
+- 2.7.14 — Removed a synchronous `server_exec()` from the `.changemap` countdown that corrupted the destination map's task scheduler, silently killing every `set_task` on the new map (contributed fix)
 - 2.7.12 — Changelevel hook was returning `HC_SUPERCEDE` for ANY pending changelevel during the countdown lock, including KTPMatchHandler's match-end map change. Now allows changelevel if the requested map matches `g_pendingChangeMap`. Also: ban duration menu read target name without re-checking `is_user_connected`, so a disconnect mid-menu showed whoever now occupied the slot.
 - 2.7.11 — Slot-recycling TOCTOU on kick/ban: between menu pick and action execution a slot could host a different player. Now stores SteamID at selection time and re-validates before action. `STEAM_ID_PENDING`/LAN/BOT bans now warn + fall back to kick instead of silently failing.
 - 2.7.7 — Intermittent (~10%) changemap countdown failure: `set_task()` from inside the changelevel hookchain handler intermittently failed to register. Fixed by calling `start_changelevel_countdown()` directly without hook routing.
@@ -1426,9 +1547,9 @@ HLTV proxies appear in the kick menu (since 2.3) so admins can drop a misbehavin
 
 #### KTPPracticeMode
 
-**Repository:** [github.com/afraznein/KTPPracticeMode](https://github.com/afraznein/KTPPracticeMode) — **Version:** 1.4.2 — **License:** GPL v2
+**Repository:** [github.com/afraznein/KTPPracticeMode](https://github.com/afraznein/KTPPracticeMode) — **Version:** 1.4.6 — **License:** GPL v2
 
-Practice mode for warm-up and aim drills. Infinite grenades, spawn-grenade for grenade-less classes, noclip, extended timelimit, and HUD indicator. Auto-exits when the server empties or a match starts (detected via `ktp_is_match_active()` at pre-start phase).
+Practice mode for warm-up and aim drills. Infinite grenades, spawn-grenade for grenade-less classes, noclip, extended timelimit, and HUD indicator. Auto-exits when the server empties or a match starts (detected via `ktp_is_match_active()` at pre-start phase). Since 1.4.6 the KTPMatchHandler dependency is genuinely optional (native calls are filtered when it's absent).
 
 <details>
 <summary><b>Commands & behavior</b></summary>
@@ -1447,7 +1568,13 @@ Auto-exit triggers: server empties (5s polling, excludes bots + HLTV), or a matc
 <details>
 <summary><b>Grenade refill mechanics & notable fixes (newest first)</b></summary>
 
-**v1.4.1 (2026-04-20)** added permanent diagnostic logging to both refill paths — entry state (id/wpnid/practice/connected/alive) and per-native return values — to narrow the still-open ATL2 regression where auto-refill silently stops working after some map changes. Awaiting next organic reproduction.
+**v1.4.6 (2026-07)** — native filter so KTPMatchHandler is truly optional, noclip flag sweep on exit, alive-gated sweep-all, deferred task stop.
+
+**v1.4.5 (2026-07)** — `.grenade` class-range rule for British grenades, `mp_timelimit` restored symmetrically on map-change exit, hostname boot-race fix.
+
+**v1.4.3 (2026-07-03)** removed an ungated `dod_grenade_explosion` debug log that fired on every grenade explosion in every live match (its comment claimed it was practice-only). Each line did a synchronous file write on the game thread — found sitting on stall frames during the July frame-spike investigation. The refill-result log now fires only on an actual refill failure.
+
+**v1.4.1 (2026-04-20)** added diagnostic logging to both refill paths — entry state (id/wpnid/practice/connected/alive) and per-native return values — to narrow a regression where auto-refill silently stopped working after some map changes.
 
 **v1.4.0 (2026-04-04)** fixed `.grenade` and the `dod_grenade_explosion` auto-refill. Worth understanding because the same DODX pattern applies to KTPGrenadeLoadout: **DoD removes the weapon entity when the last grenade is thrown.** Setting pdata ammo alone creates "invisible" grenades the player can't select. The correct sequence is:
 
@@ -1467,7 +1594,7 @@ Both `.grenade` and the auto-refill handler use this. The fix also depended on K
 
 #### KTPGrenadeLoadout
 
-**Repository:** [github.com/afraznein/KTPGrenades](https://github.com/afraznein/KTPGrenades) — **Version:** 1.0.8 — **License:** GPL v2
+**Repository:** [github.com/afraznein/KTPGrenades](https://github.com/afraznein/KTPGrenades) — **Version:** 1.0.9 — **License:** GPL v2
 
 Per-class grenade count configuration via `<configsdir>/grenade_loadout.ini`. Applied 0.2s after spawn (delay lets the game's default loadout apply first, otherwise it gets overwritten back). Supports classes that don't normally spawn with grenades (sniper, MG, bazooka).
 
@@ -1491,7 +1618,7 @@ Cvars: `ktp_grenade_loadout` (1=on), `ktp_grenade_loadout_debug` (verbose per-sp
 
 **Grenade refill pattern (1.0.3):** uses the same `dodx_give_grenade` → `dodx_set_grenade_ammo` → `dodx_send_ammox` sequence as KTPPracticeMode (see above) — without `dodx_give_grenade` first, classes without default grenades got ammo set but no weapon slot and couldn't select them.
 
-**Notable historical fixes:** 1.0.7 INI section parsing removed (sections never enforced — class names globally unique); 1.0.6 INI key copy not clamped to buffer (config keys >31 chars overflowed `key[32]`); 1.0.6 `g_bTaskScheduled` not reset on map change blocked all future spawn processing if a map change happened mid-batch.
+**Notable historical fixes:** 1.0.9 INI value validation (inline-comment-safe parsing) plus failure logging on the give-grenade path; 1.0.7 INI section parsing removed (sections never enforced — class names globally unique); 1.0.6 INI key copy not clamped to buffer (config keys >31 chars overflowed `key[32]`); 1.0.6 `g_bTaskScheduled` not reset on map change blocked all future spawn processing if a map change happened mid-batch.
 
 </details>
 
@@ -1523,7 +1650,7 @@ Covers all grenade weapon IDs: `DODW_HANDGRENADE` (US), `DODW_STICKGRENADE` (Ger
 
 #### KTPScoreTracker
 
-**Repository:** [github.com/afraznein/KTPScoreTracker](https://github.com/afraznein/KTPScoreTracker) — **Version:** 1.1.1 — **License:** GPL v2
+**Repository:** [github.com/afraznein/KTPScoreTracker](https://github.com/afraznein/KTPScoreTracker) — **Version:** 1.1.3 — **License:** GPL v2
 
 Verbose capture scoring — emits real-time chat notifications for each capture (with all cappers and points) and writes HLStatsX-compatible log entries (`KTP_CP_CAPTURED`, `ktp_cap_score`, `ktp_cap_summary`). End-of-match summary is sorted by points and printed to chat. Hooks DODX's `controlpoints_init`, `dod_control_point_captured`, and `dod_score_event` forwards.
 
@@ -1546,7 +1673,36 @@ KTP_CP_CAPTURED (cp "3") (name "POINT_ANZIO_PLAZA") (new_owner "2") (old_owner "
 
 Match boundaries are taken from KTPMatchHandler's `ktp_match_start` / `ktp_match_end` forwards.
 
+**Notable historical fixes:** 1.1.3 — match-id bookkeeping reset on every start, warmup-capture counters disarmed per map, and per-player capture stats cleared on disconnect (slot reuse could otherwise inherit them); 1.1.2 — gamerules guard in the capout-recovery path plus a stuck-batch fix in `dod_score_event` handling.
+
 </details>
+
+---
+
+#### KTPHudObserver
+
+**Repository:** [github.com/JimmyLockhart65616/DoD-hud-observer](https://github.com/JimmyLockhart65616/DoD-hud-observer) — **Version:** 2.0.0 — **License:** MIT — **Author:** Jimmy Lockhart ("Cadaver", [@JimmyLockhart65616](https://github.com/JimmyLockhart65616))
+
+A live broadcast overlay system for Day of Defeat 1.3, written and maintained by Jimmy Lockhart. It is not a KTP-authored plugin — it lives in Jimmy's own repository under his active development — but it is a first-class citizen of the KTP stack: it runs on the designated casting/observer instance on each fleet host and is what spectators and casters see during KTP competitive matches.
+
+![DoD-hud-observer broadcast overlay: live scoreboard, flag tracker, kill feed, and player bars](images/hud-observer-overview.png)
+*Screenshot from [DoD-hud-observer](https://github.com/JimmyLockhart65616/DoD-hud-observer) by Jimmy Lockhart (MIT license).*
+
+The system is two halves: the game-server plugin (`KTPHudObserver.amxx` — the piece deployed on the casting instance) emits match events over HTTP, and a Node.js/React backend streams those events into an OBS browser source for broadcasters. The overlay shows real-time scoreboards, flag-capture tracking, a kill feed, and a "prone shame timer."
+
+Its centerpiece is a per-frame closed-loop broadcast clock: the on-screen match clock is driven from the engine's own round timer rather than a plugin-side estimate, so it can't drift from what players experience. It is the sole consumer of DODX's `dodx_get_round_time()` native, which was added to KTPAMXX (DODX 2.7.23) specifically to give it an engine-authoritative time source.
+
+The collaboration has run in both directions across the stack:
+
+| Contribution | Where |
+|--------------|-------|
+| `dodx_get_round_time()` — engine-authoritative half clock for the HUD | KTPAMXX PR #7 (DODX 2.7.23) |
+| `.override_ready_limits` — SteamID-allowlisted solo go-live, so HUD-clock work can be validated against a real live match state without twelve players | KTPMatchHandler PR #3 (0.10.145) |
+| Local match-config parity for development environments | KTPInfrastructure PR #39 |
+| HudObserver contract tests in the integration suite | KTPInfrastructure PR #10 |
+| Reported a DODX control-point order/identity drift on multi-master maps | KTPAMXX issue #5 |
+
+Jimmy has also contributed fixes to the wider stack found through HudObserver development, including the KTPAdminAudit `.changemap` task-scheduler corruption fix (2.7.14) and the DODX forwards-stall fix (KTPAMXX 2.7.13). Screenshots of the HUD in action are in [his repository's README](https://github.com/JimmyLockhart65616/DoD-hud-observer).
 
 ---
 
@@ -1555,9 +1711,11 @@ Match boundaries are taken from KTPMatchHandler's `ktp_match_start` / `ktp_match
 #### Discord Relay
 
 **Repository:** [github.com/afraznein/discord-relay](https://github.com/afraznein/discord-relay)
-**Version:** 1.0.1
-**Platform:** Google Cloud Run (Node.js/Express)
+**Version:** 1.1.1
+**Platform:** Google Cloud Run (Node.js 22/Express)
 **License:** MIT
+
+**1.1.x (2026-07):** moved off Node 20 (EOL) to `node:22-alpine`, deleted a dead OAuth flow and its dependency, switched to timing-safe auth comparison, and removed the unauthenticated debug endpoints. 1.1.1 tightened the retry contract: 5xx retries are idempotent-only (no duplicate embeds/DMs when a request committed before the error), every upstream fetch carries a 10s timeout, and message truncation is surrogate-pair-safe.
 
 <details>
 <summary><b>HTTP Relay Architecture</b></summary>
@@ -1625,11 +1783,11 @@ The relay acts as a stateless, secure proxy between KTP services and Discord API
 | `/messages`                 | GET    | Fetch recent messages            |
 | `/message/:channelId/:msgId`| GET    | Fetch specific message           |
 | `/channel/:channelId`       | GET    | Get channel information          |
-| `/dm`                       | POST   | Send direct message to user      |
+| `/dm`                       | POST   | Send direct message to user (1900-char cap) |
 | `/health`                   | GET    | Health check                     |
 | `/whoami`                   | GET    | Get bot identity (authenticated) |
-| `/whoami-public`            | GET    | Get bot identity (public)        |
-| `/httpcheck`                | GET    | Test Discord gateway connectivity|
+
+Unauthenticated debug endpoints (`/whoami-public`, `/httpcheck`) were removed in 1.1.0.
 
 #### Request Format
 
@@ -1678,15 +1836,15 @@ async function fetchWithRetries(url, options, maxRetries = 3) {
 #### Deployment
 
 ```bash
-gcloud run deploy ktp-relay \
+gcloud run deploy discord-relay \
   --source . \
   --region us-central1 \
   --platform managed \
   --allow-unauthenticated \
   --set-env-vars "RELAY_SHARED_SECRET=xxx,DISCORD_BOT_TOKEN=xxx" \
-  --memory 256Mi \
+  --memory 512Mi \
   --concurrency 80 \
-  --timeout 30s
+  --timeout 300s
 ```
 
 </details>
@@ -1906,9 +2064,11 @@ GROUP BY (match_id IS NULL);
 #### KTPFileDistributor
 
 **Repository:** [github.com/afraznein/KTPFileDistributor](https://github.com/afraznein/KTPFileDistributor)
-**Version:** 1.1.2
+**Version:** 1.1.3
 **Platform:** .NET 8 Worker Service (Linux VPS)
 **License:** MIT
+
+**1.1.3 (2026-07):** a rename now emits a delete for the old remote path (renamed files no longer leave stale copies on targets), and a bad SSH key for one server fails just that server's result instead of faulting the whole distribution batch.
 
 <details>
 <summary><b>Automated File Distribution</b></summary>
@@ -2018,147 +2178,51 @@ WantedBy=multi-user.target
 
 #### KTPHLTVRecorder
 
-> **⚠️ SECTION SUPERSEDED — this describes the RETIRED 1.5.x record/stop
-> architecture. Fleet runs 1.7.0 (F+A, activated 2026-04-29):** recording is
-> ALWAYS-ON, driven by a `record auto_<friendly>` line in each HLTV instance's
-> cfg — the plugin never starts or stops recording. The plugin's remaining
-> jobs: (a) `GET /hltv/<port>/state` health check at match start (chat warning
-> if the paired HLTV is down or not recording), (b) the `.hltvrestart` admin
-> command via `POST /hltv/<port>/restart`, (c) emitting `MATCH_WINDOW_OPEN/
-> CLOSE` log markers that the data server's **hltv-demo-renamer service**
-> consumes to rename the auto-*.dem files to canonical match names. See
-> KTPHLTVRecorder's own README/CLAUDE.md for current detail. The subsections
-> below are kept as history until the tracked full rewrite of this guide.
-
 **Repository:** [github.com/afraznein/KTPHLTVRecorder](https://github.com/afraznein/KTPHLTVRecorder)
-**Version:** 1.5.7 *(stale — fleet runs 1.7.0; see banner above)*
+**Version:** 1.7.2
 **Platform:** AMX/Pawn Plugin
 **License:** GPL-3.0
-**Requires:** KTPMatchHandler v0.10.4+ (for forwards), Curl module (for HTTP API)
+**Requires:** KTPMatchHandler (for forwards), Curl module (for HTTP API)
 
-**Key Features (1.5.x-era, superseded):**
-- **Per-half demo files** (v1.3.0) - Each half records to `_h1`, `_h2`, `_ot1` suffixes
-- **Pre-match HLTV health check** (v1.4.0) - Verifies HLTV API responds before recording, auto-recovery on failure
-- **Recording verification** (v1.5.5) - In-game chat feedback confirming recording started successfully (HLTV API v2.1)
-- **Admin `.hltvrestart` command** (v1.2.1) - Restart paired HLTV from game server (ADMIN_RCON), logged to Discord audit
-- **Orphaned recording cleanup** (v1.2.2) - Sends `stoprecording` on plugin startup/shutdown
+Since 1.7.0 (April 2026), **recording is always-on and the plugin never starts or stops it.** Each HLTV instance's own config carries a `record auto_<alias>` line, so a demo is being written from the moment HLTV boots. The plugin's jobs shrank to three:
+
+1. **Health check at match start** — `GET /hltv/<port>/state` against the HLTV API; if the paired HLTV is down or not recording, players get a chat warning before the match goes live instead of discovering a missing demo afterward.
+2. **`.hltvrestart` admin command** — `POST /hltv/<port>/restart` (ADMIN_RCON), logged to Discord audit.
+3. **Match-window markers** — structured `MATCH_WINDOW_OPEN` / `MATCH_WINDOW_CLOSE` log lines around each match, which the data server's renamer service consumes.
 
 <details>
-<summary><b>Automatic HLTV Demo Recording via HTTP API</b></summary>
+<summary><b>Why the record/stop model was retired (1.5.x → 1.7.0)</b></summary>
 
-#### Purpose
+The original design sent `record <name>` at match start and `stoprecording` at match end. An April 2026 fleet audit found dozens of misfiled demos, and the root cause was structural: HLTV silently ignores a `record` command while already recording, keeping the original basename across match and half boundaries. Layering verification and retry state machines on top (1.6.0) reduced but couldn't eliminate the problem — per-match record commands were the wrong primitive.
 
-Automatically records HLTV demos when KTPMatchHandler matches start and stop. Eliminates manual demo recording and ensures consistent naming for match archives.
+The replacement ("always-on + rename"):
+- **HLTV cfg-driven recording** — every HLTV instance records continuously to `auto_<alias>`-stamped files. Nothing at match time can fail to start a recording, because nothing at match time starts one.
+- **`hltv-demo-renamer` service** (data server, Python/systemd) — tails the game hosts' logs for the plugin's `MATCH_WINDOW_OPEN`/`CLOSE` markers and renames the covering `auto_*.dem` files to canonical match-id names (with `_h1`/`_h2`/`_ot` half suffixes) for the demo portal.
+- **Retention** — non-match `auto_*.dem` churn is swept on a short age threshold; renamed match demos follow the tiered retention policy (competitive/draft longer than scrim/12man).
 
-KTPHLTVRecorder:
-1. Hooks KTPMatchHandler's `ktp_match_start` forward
-2. Sends HTTP POST to HLTV API with `record` command
-3. Hooks `ktp_match_end` forward
-4. Sends `stoprecording` via HTTP API
+</details>
 
-#### Architecture (v1.1.0+ - HTTP API via FIFO pipes)
+<details>
+<summary><b>Data server components & pairing</b></summary>
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  KTPMatchHandler                                             │
-│  - Fires ktp_match_start(matchid, map, type, half)          │
-│  - Fires ktp_match_end(matchid, map)                         │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ AMX Forward
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  KTPHLTVRecorder                                             │
-│  - Receives match events                                     │
-│  - Formats demo name: <type>_<matchid>.dem                  │
-│  - Uses Curl module for HTTP POST to HLTV API               │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ HTTP POST
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  HLTV API Service (port 8087)                                │
-│  - Python HTTP server on data server                         │
-│  - Authenticates via X-Auth-Key header                       │
-│  - Writes commands to FIFO pipes                            │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ FIFO pipe
-                              ↓
-┌─────────────────────────────────────────────────────────────┐
-│  HLTV Wrapper + HLTV Instance                                │
-│  - hltv-wrapper.sh runs tail -f on FIFO                     │
-│  - Commands fed to HLTV stdin                               │
-│  - Receives: record ktpOT_KTP-1735052400-dod_anzio          │
-│  - Receives: stoprecording                                   │
-└─────────────────────────────────────────────────────────────┘
-```
-
-#### Data Server Components
-
-1. **HLTV API Service** (`/home/hltvserver/hltv-api.py`)
-   - Python HTTP server on port 8087
-   - Receives commands via POST /hltv/<port>/command
-   - Authenticates requests via X-Auth-Key header
-   - Writes commands to FIFO pipes
-
-2. **FIFO Pipes** (`/home/hltvserver/cmdpipes/hltv-<port>.pipe`)
-   - One pipe per HLTV instance
-   - Commands written to pipe are fed to HLTV stdin
-
-3. **HLTV Wrapper** (`/home/hltvserver/hltv-wrapper.sh`)
-   - Runs `tail -f` on FIFO pipe
-   - Pipes output to HLTV process stdin
+- **HLTV API Service** (`hltv-api.py`) — small authenticated HTTP service on the data server; exposes per-instance `/state` (parses the journal for recording state, actively poking HLTV for a fresh status line first) and `/restart`. Commands reach each HLTV instance's stdin through per-instance FIFO pipes.
+- **HLTV proxies** — one per game instance, all hosted on the data server: 24 HLTV instances paired 1:1 with the 24 game servers (five each for Atlanta, Dallas, Denver, New York; four for Chicago). Ports follow a fixed sequential mapping from game instance to HLTV instance.
+- **Scheduled restarts** — all HLTV instances restart twice daily (systemd timer), with each instance verified alive a few seconds after its restart before the run reports success.
 
 #### Configuration (hltv_recorder.ini)
 
 ```ini
 ; HLTV Recorder Configuration
 hltv_enabled = 1
-hltv_api_url = http://74.91.112.242:8087
+hltv_api_url = http://<DATA_SERVER_IP>:8087
 hltv_api_key = YOUR_API_KEY_HERE
 hltv_port = 27020
 ```
 
-#### Demo Naming Format
+#### Notable fixes
 
-`<matchtype>_<matchid>.dem` (matchId already contains map name)
-
-Examples:
-- `ktp_KTP-1735052400-dod_anzio.dem`
-- `scrim_KTP-1735052400-dod_flash.dem`
-- `draft_KTP-1735052400-dod_avalanche.dem`
-- `ktpOT_KTP-1735052400-dod_anzio.dem` (explicit OT)
-- `draftOT_KTP-1735052400-dod_avalanche.dem` (explicit OT)
-
-#### HLTV Server Pairing
-
-Each game server should have a 1:1 pairing with an HLTV instance. 25 game servers across 5 locations, each paired with an HLTV proxy on the data server:
-
-| Game Server | Port | HLTV Port | Location |
-|-------------|------|-----------|----------|
-| Atlanta 1   | 27015 | 27020 | 74.91.121.9 |
-| Atlanta 2   | 27016 | 27021 | 74.91.121.9 |
-| Atlanta 3   | 27017 | 27022 | 74.91.121.9 |
-| Atlanta 4   | 27018 | 27023 | 74.91.121.9 |
-| Atlanta 5   | 27019 | 27024 | 74.91.121.9 |
-| Dallas 1    | 27015 | 27025 | 74.91.126.55 |
-| Dallas 2    | 27016 | 27026 | 74.91.126.55 |
-| Dallas 3    | 27017 | 27027 | 74.91.126.55 |
-| Dallas 4    | 27018 | 27028 | 74.91.126.55 |
-| Dallas 5    | 27019 | 27029 | 74.91.126.55 |
-| Denver 1    | 27015 | 27030 | 66.163.114.109 |
-| Denver 2    | 27016 | 27031 | 66.163.114.109 |
-| Denver 3    | 27017 | 27032 | 66.163.114.109 |
-| Denver 4    | 27018 | 27033 | 66.163.114.109 |
-| Denver 5    | 27019 | 27034 | 66.163.114.109 |
-| New York 1  | 27015 | 27035 | 74.91.123.64 |
-| New York 2  | 27016 | 27036 | 74.91.123.64 |
-| New York 3  | 27017 | 27037 | 74.91.123.64 |
-| New York 4  | 27018 | 27038 | 74.91.123.64 |
-| New York 5  | 27019 | 27039 | 74.91.123.64 |
-| Chicago 1   | 27015 | 27040 | 172.238.176.101 |
-| Chicago 2   | 27016 | 27041 | 172.238.176.101 |
-| Chicago 3   | 27017 | 27042 | 172.238.176.101 |
-| Chicago 4   | 27018 | 27043 | 172.238.176.101 |
-| Chicago 5   | 27019 | 27044 | 172.238.176.101 |
+- 1.7.2 — `.hltvrestart`'s delayed confirmation message re-verifies the requesting admin by SteamID at callback time; player slots recycle, so a disconnect inside the 30s window could previously print the confirmation to whoever now held the slot. The restart outcome is logged unconditionally either way.
+- 1.7.1 — documentation rewritten for the 1.7.0 architecture plus review-driven hardening.
 
 </details>
 
@@ -2175,20 +2239,42 @@ Each game server should have a 1:1 pairing with an HLTV instance. 25 game server
 
 ---
 
+#### Fleet Monitoring & Operations
+
+The fleet is 24 game instances across five hosts (four bare-metal, one KVM VPS), plus a data server carrying MySQL, HLStatsX, the HLTV proxies, FastDL, and the backend services. Monitoring is deliberately in-house: **Netdata was retired fleet-wide 2026-07-02** after its plugin collection was found burning significant CPU on a housekeeping core that shares hardware with a game instance. The replacement is a small set of purpose-built scripts, all in this repo:
+
+| Component | Cadence | What it does |
+|-----------|---------|--------------|
+| `ktp-fleet-health.sh` | 1-min cron, each host | Counts running `hlds_linux` processes vs expected; one Discord alert on degrade (3-min debounce), one on recovery. Posts direct to a webhook, not via the relay, so relay outages can't mask alerts |
+| KTPCrashReporter | inotify, each host | Turns kernel core dumps into Discord embeds with backtraces (see Admin Infrastructure below) |
+| Telemetry aggregation | 5-min cycle, data server | Pulls engine-emitted `[KTP_PROFILE]` / `[KTP_SPIKE*]` lines from fleet logs into MySQL |
+| `ktp-perf-rollup` | daily cron | Per-host FPS and spike-rate digests against trailing baselines, with both statistical (σ-breach) and absolute-ceiling alert gates so a slowly degrading host can't hide inside its own worsening baseline |
+| Fleet drift audit | weekly cron | Compares live sysctl, binary checksums, kernel cmdline, timers, and rc.local against declarative expected-state files in `provision/` |
+| Tier-2 heartbeat + stack-drift tripwire | 6-h cron | Alerts if the integration-test runner dies, and if the runner's module stack drifts from the fleet reference host — a green test suite certifying a stale stack is worse than a red one |
+
+**Nightly restarts and staged deploys.** Every game host restarts at 03:00 ET (Discord-notified). Between stop and start, `ktp-scheduled-restart.sh` swaps any staged `<file>.new` binaries into place — engine binaries, the KTPAMXX core, modules, and `.amxx` plugins. The swap glob list is explicit, not recursive; a new deploy path requires editing the script. Two hard-won details are baked in: `chmod +x` after every swap (an SFTP-uploaded file otherwise arrives without the execute bit and takes the fleet down at 03:00 — this happened once), and a post-start assert that `ktp_extension_loaded >= 1` over rcon, so a server that silently degraded to vanilla HLDS is caught at restart time rather than by a confused player.
+
+**Deploy discipline.** One change class per nightly — an engine cut never ships the same night as a plugin wave, so a 03:00 core or load failure has exactly one suspect. Post-activation verification checks binary checksums on all 24 instances, absence of leftover `.new` files, and absence of fresh core dumps in the crash-dump directory.
+
+**Host tuning (summary).** All hosts run a lowlatency kernel with CPU isolation (`isolcpus`/`nohz_full`/`rcu_nocbs`), per-instance CPU pinning, SCHED_FIFO scheduling, 25MB UDP buffers, conntrack bypass for game traffic, and disabled RT throttling. Two additions from mid-2026: transparent hugepages forced to `never` (khugepaged compaction stalls; HLDS gets no THP benefit) and the soft-lockup watchdog disabled on isolated cores (`kernel.watchdog = 0`) — both persisted so reboots can't revert them. Provisioning is automated in `provision/` (see `clone-ktp-stack.sh` / `lan-deploy.sh`).
+
+---
+
 ### Admin Infrastructure (added April 2026)
 
 Four components launched April 2026 forming a separate admin/ops tier that runs alongside the game stack. The first three (KTPAntiCheat, KTPAdminBot, KTPProfileAggregator) live in private repos — see their respective in-repo documentation for design and implementation specifics. The fourth (KTPCrashReporter) ships in-tree under `monitoring/crashreporter/` since it's a thin gdb wrapper with no IP worth siloing.
 
-**Friendly-alias convention.** Across this tier, fleet hosts are referenced by their **region-3 + instance** shorthand: `ATL1...ATL5`, `DAL1...DAL5`, `DEN1...DEN5`, `NY1...NY5`, `CHI1...CHI5`. The mapping is `<region-code>{port - 27014}`. Region codes: `atlanta → ATL`, `dallas → DAL`, `denver → DEN`, `newyork → NY`, `chicago → CHI`. This shorthand was already in use in `match_id` (`{unix_ts}-ATL5`), is the canonical embed key for `ktp-crashreporter` (`ATL3 (74.91.121.9:27017) — SIGSEGV in Mem_Free`), and is the operator vernacular ("ATL3 just died") — KTPAdminBot's `/ops` cog migrates to it incrementally so all admin-facing surfaces speak the same language.
+**Friendly-alias convention.** Across this tier, fleet hosts are referenced by their **region-3 + instance** shorthand: `ATL1...ATL5`, `DAL1...DAL5`, `DEN1...DEN5`, `NY1...NY5`, `CHI1...CHI4` (Chicago runs four instances since 2026-07). The mapping is `<region-code>{port - 27014}`. Region codes: `atlanta → ATL`, `dallas → DAL`, `denver → DEN`, `newyork → NY`, `chicago → CHI`. This shorthand was already in use in `match_id` (`{unix_ts}-ATL5`), is the canonical embed key for `ktp-crashreporter` (`ATL3 (<host>:27017) — SIGSEGV in Mem_Free`), and is the operator vernacular ("ATL3 just died") — KTPAdminBot's `/ops` cog migrates to it incrementally so all admin-facing surfaces speak the same language.
 
 #### KTPAntiCheat
 
 League anti-cheat for competitive Day of Defeat (GoldSrc). **100% VAC-safe** — uses only standard OS-level APIs.
 
-- **Repo:** private (security-by-obscurity for cheat-evasion prevention)
-- **Components:** desktop client (Avalonia UI, Windows + macOS) + ASP.NET Core API on the data server
-- **Integration with the game stack:** KTPMatchHandler 0.10.115+ announces match start/end events to the AC backend, allowing uploaded session data to correlate to specific KTP matches. AC client polls the backend on session start to learn the active match for its server endpoint.
-- **Discord workflow:** flagged sessions auto-post review embeds to the admin channel via KTPAdminBot's loopback HTTP listener. Admins acknowledge or escalate via embed buttons.
+- **Role:** an external, evidence-based anti-cheat client. Players run it during competitive matches; it collects session evidence and uploads it for human review. It is **mandatory for league play and version-gated** — the backend tells clients the current required version, and the client self-updates.
+- **Components:** signed desktop client (Avalonia UI) + ASP.NET Core API on the data server.
+- **Repo:** private. The detection side stays unpublished on purpose — publishing what is checked and how would primarily serve people trying to evade it.
+- **Integration with the game stack:** KTPMatchHandler 0.10.115+ announces match start/end to the AC backend so uploaded sessions correlate to specific KTP matches; every match-teardown path closes the match row (0.10.146). The client learns the active match for its server from the backend at session start.
+- **Review workflow:** sessions that need attention surface as Discord embeds for the admin team. Decisions are made by humans, not automatically.
 
 For methodology, contracts, schema, and operational detail, see the private repo's `docs/` directory.
 
@@ -2224,7 +2310,7 @@ Per-host inotify watcher + gdb wrapper that turns kernel-emitted core dumps into
 
 - **Path in this repo:** `monitoring/crashreporter/` — Python daemon (`report_core.py`), systemd unit, install script, Discord-embed schema, README
 - **Trigger:** new `core.*` file appears in `/tmp` → inotify wakes the daemon
-- **Discord post:** embed with the friendly-alias header (e.g. `ATL3 (74.91.121.9:27017) — SIGSEGV in Mem_Free`), top-20 backtrace, signal name, gdb command line. Posted via the Discord Relay's `/reply` endpoint with `X-Relay-Auth`. `@here` ping on first crash per server-alias per hour; subsequent crashes within the cooldown post silently
+- **Discord post:** embed with the friendly-alias header (e.g. `ATL3 (<host>:27017) — SIGSEGV in Mem_Free`), top-20 backtrace, signal name, gdb command line. Posted via the Discord Relay's `/reply` endpoint with `X-Relay-Auth`. `@here` ping on first crash per server-alias per hour; subsequent crashes within the cooldown post silently
 - **Sidecar files:** `*.bt` (full `gdb -batch` output: `bt`, `thread apply all bt`, `info registers`, `info proc mappings` — for deep dives) and `*.reported` (JSON state — alias, port, signal, top frame, post status; consumable by future MySQL trend ingestion)
 - **The core itself is preserved** — never deleted by the reporter. Run `gdb hlds_linux /tmp/core.hlds_linux.<pid>.<ts>` interactively for any deeper analysis
 
@@ -2305,6 +2391,17 @@ addons/ktpamx/
 ├── plugins/
 └── scripting/
 ```
+
+**Create the extension loader config** — this is the step that makes KTPAMXX load at all:
+
+```bash
+# File: <gamedir>/addons/extensions.ini   (for DoD: dod/addons/extensions.ini)
+# Each line is resolved relative to the game directory, so the entry
+# needs the addons/ prefix:
+addons/ktpamx/dlls/ktpamx_i386.so
+```
+
+> ⚠️ **Get this path right.** The loader returns *silently* when no config is found, and the server boots as vanilla HLDS — no wall-penetration fix, no cvar enforcement, no match handler — with nothing but a single console line to show for it. After starting the server, verify with `rcon ktp_extension_loaded` (engine v3.22.0.928+): it must report `>= 1`.
 
 ---
 
@@ -2465,12 +2562,23 @@ discord_channel_id_audit_competitive=5555555555555555555
 |-------------------|--------------------------|
 | `.kick`           | Open kick menu           |
 | `.ban`            | Open ban menu            |
+| `.unban <steamid>`| Remove a timed ban       |
 | `.changemap`      | Open map selection menu  |
 | `.restart`        | Restart server           |
 | `.quit`           | Shutdown server          |
 | `ktp_kick`        | Console kick command     |
 | `ktp_ban`         | Console ban command      |
 | `ktp_changemap`   | Console changemap command|
+
+### Practice & HLTV
+
+| Command                 | Description                                  |
+|-------------------------|----------------------------------------------|
+| `.practice` / `.prac`   | Enter practice mode (when no match active)   |
+| `.endpractice`          | Exit practice mode                           |
+| `.noclip` / `.nc`       | Toggle noclip (practice only)                |
+| `.grenade` / `.nade`    | Spawn a team-appropriate grenade (practice)  |
+| `.hltvrestart`          | Restart the paired HLTV instance (ADMIN_RCON)|
 
 ---
 
@@ -2480,36 +2588,37 @@ discord_channel_id_audit_competitive=5555555555555555555
 
 | Layer    | Repository                                              | Version       | Description                         |
 |----------|---------------------------------------------------------|---------------|-------------------------------------|
-| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS)    | 3.22.0.920    | Custom ReHLDS with extension loader + frame profiler + HPAK defensive |
+| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS)    | 3.22.0.929    | Custom ReHLDS with extension loader + frame profiler + async log writer |
 | SDK      | [KTP HLSDK](https://github.com/afraznein/KTPhlsdk)      | 1.0.0         | SDK headers with callback support   |
-| Platform | [KTPAMXX](https://github.com/afraznein/KTPAMXX)         | 2.7.13        | AMX Mod X extension mode fork + JIT + DODX FNullEnt fix |
-| Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTPReAPI)      | 5.29.0.364-ktp| ReAPI extension mode fork           |
-| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAmxxCurl)| 1.3.8-ktp    | Non-blocking HTTP module (CMake migration Apr 2026) |
+| Platform | [KTPAMXX](https://github.com/afraznein/KTPAMXX)         | 2.7.24        | AMX Mod X extension mode fork + JIT + async CLog + lifecycle fixes |
+| Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTPReAPI)      | 5.29.0.365-ktp| ReAPI extension mode fork           |
+| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAmxxCurl)| 1.3.15-ktp   | Non-blocking HTTP module + connection-reuse fix |
 
 ### Application Plugins
 
 | Plugin        | Repository                                                      | Version  | Description                    |
 |---------------|-----------------------------------------------------------------|----------|--------------------------------|
-| Match Handler | [KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) | 0.10.116 | Match workflow + explicit OT + HLStatsX + AC integration |
-| HLTV Recorder | [KTPHLTVRecorder](https://github.com/afraznein/KTPHLTVRecorder) | 1.5.7    | Auto HLTV demo recording via HTTP API |
-| Cvar Checker  | [KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker)   | 7.23     | Real-time cvar enforcement + deferred pipeline |
-| File Checker  | [KTPFileChecker](https://github.com/afraznein/KTPFileChecker)   | 2.7      | File consistency + Discord     |
-| Admin Audit   | [KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit)     | 2.7.13   | Menu-based kick/ban/changemap + audit |
-| Practice Mode | [KTPPracticeMode](https://github.com/afraznein/KTPPracticeMode) | 1.4.2    | Practice mode with noclip + grenades |
-| Grenades      | [KTPGrenades](https://github.com/afraznein/KTPGrenades)         | 1.0.8/1.0.5 | Grenade loadout + damage reduction |
-| Score Tracker | [KTPScoreTracker](https://github.com/afraznein/KTPScoreTracker) | 1.1.1    | Verbose capture scoring + HLStatsX |
+| Match Handler | [KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) | 0.10.146 | Match workflow + explicit OT + score persistence + HLStatsX + AC integration |
+| HLTV Recorder | [KTPHLTVRecorder](https://github.com/afraznein/KTPHLTVRecorder) | 1.7.2    | HLTV health checks + demo-rename markers (always-on recording) |
+| Cvar Checker  | [KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker)   | 7.30     | Real-time cvar enforcement + deferred pipeline |
+| File Checker  | [KTPFileChecker](https://github.com/afraznein/KTPFileChecker)   | 2.7      | File consistency + Discord (audit-only) |
+| Admin Audit   | [KTPAdminAudit](https://github.com/afraznein/KTPAdminAudit)     | 2.7.17   | Menu-based kick/ban/changemap + timed bans + audit |
+| Practice Mode | [KTPPracticeMode](https://github.com/afraznein/KTPPracticeMode) | 1.4.6    | Practice mode with noclip + grenades |
+| Grenades      | [KTPGrenades](https://github.com/afraznein/KTPGrenades)         | 1.0.9/1.0.5 | Grenade loadout + damage reduction |
+| Score Tracker | [KTPScoreTracker](https://github.com/afraznein/KTPScoreTracker) | 1.1.3    | Verbose capture scoring + HLStatsX |
+| HUD Observer  | [DoD-hud-observer](https://github.com/JimmyLockhart65616/DoD-hud-observer) | 2.0.0 | Broadcast overlay by Jimmy Lockhart (external project, deployed on casting instances) |
 
-All Apr 2026: adopt `ktp_version_reporter` shared include. `rcon amx_ktp_versions` reports name + version + git SHA + UTC build time across all loaded KTP plugins.
+All KTP plugins adopt the `ktp_version_reporter` shared include. `rcon amx_ktp_versions` reports name + version + git SHA + UTC build time across all loaded KTP plugins.
 
 ### Supporting Infrastructure
 
 | Service          | Repository                                                        | Version | Description                |
 |------------------|-------------------------------------------------------------------|---------|----------------------------|
-| Discord Relay    | [Discord Relay](https://github.com/afraznein/discord-relay)       | 1.0.1   | Cloud Run webhook proxy    |
+| Discord Relay    | [Discord Relay](https://github.com/afraznein/discord-relay)       | 1.1.1   | Cloud Run Discord API proxy |
 | HLStatsX         | [KTPHLStatsX](https://github.com/afraznein/KTPHLStatsX)           | 0.3.3   | Per-half stats + batched processing |
-| File Distributor | [KTPFileDistributor](https://github.com/afraznein/KTPFileDistributor) | 1.1.2 | SFTP file distribution + Discord |
+| File Distributor | [KTPFileDistributor](https://github.com/afraznein/KTPFileDistributor) | 1.1.3 | SFTP file distribution + Discord |
 | ~~HLTV Kicker~~  | [KTPHLTVKicker](https://github.com/afraznein/KTPHLTVKicker)       | 5.9     | DEFUNCT - replaced by systemd restarts |
-| KTPAntiCheat     | (private)                                                         | —       | League anti-cheat (added Apr 2026) — see "Admin Infrastructure" section |
+| KTPAntiCheat     | (private)                                                         | —       | League anti-cheat client + API — see "Admin Infrastructure" section |
 | KTPAdminBot      | (private)                                                         | —       | Discord admin/ops bot (added Apr 2026) — see "Admin Infrastructure" section |
 | KTPProfileAggregator | (private)                                                     | —       | Metrics aggregator daemon (added Apr 2026) — see "Admin Infrastructure" section |
 
@@ -2562,6 +2671,6 @@ All Apr 2026: adopt `ktp_version_reporter` shared include. `rcon amx_ktp_version
 
 *Cross-platform: Windows + Linux*
 
-**Last Updated:** 2026-03-29
+**Last Updated:** 2026-07-20
 
 </div>
