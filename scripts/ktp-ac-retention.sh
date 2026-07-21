@@ -7,8 +7,10 @@
 #
 #   1. Evidence bundles: /opt/ktp-ac-api/uploads/YYYY-MM-DD/ day-dirs older
 #      than UPLOAD_RETENTION_DAYS. DB session rows (verdicts, review state)
-#      are kept forever — only the raw ZIPs age out. Sessions still under
-#      admin review past the window should be exported before they age out.
+#      are kept forever — only the raw ZIPs age out, and each pruned bundle's
+#      zip_path is nulled so /api/mybundles availability stays truthful.
+#      Sessions still under admin review past the window should be exported
+#      before they age out.
 #   2. Weapon timeline rows (ktp_ac_weapon_hits / _switches) older than
 #      WEAPON_RETENTION_DAYS, deleted in LIMIT-batches — a naive one-shot
 #      DELETE of tens of millions of rows on spinning rust stalls the shared
@@ -40,10 +42,19 @@ if [ -d "$UPLOADS_DIR" ]; then
         day=$(basename "$d")
         # Lexicographic compare works for ISO dates.
         if [[ "$day" < "$cutoff" ]]; then
+            # SQL-escape single quotes (defensive; the fixed uploads path has none).
+            esc=${d//\'/\'\'}
             if [ "$DRY_RUN" = "1" ]; then
-                echo "[$(ts)] DRY_RUN: would delete $d ($(du -sh "$d" 2>/dev/null | cut -f1))"
+                n=$(mysql hlstatsx -N -e "SELECT COUNT(*) FROM ktp_ac_sessions WHERE zip_path LIKE '${esc}/%';")
+                echo "[$(ts)] DRY_RUN: would delete $d ($(du -sh "$d" 2>/dev/null | cut -f1)) and NULL ${n} zip_path(s)"
             else
                 rm -rf -- "$d"
+                # Reconcile the DB: the session row lives forever but its ZIP is now
+                # gone, so clear zip_path. Otherwise GET /api/mybundles reports
+                # available:true for a bundle whose file no longer exists — the
+                # detail/download routes 410 on the file stat, but the LIST derives
+                # availability from this column alone.
+                mysql hlstatsx -e "UPDATE ktp_ac_sessions SET zip_path = NULL WHERE zip_path LIKE '${esc}/%';"
             fi
             swept=$((swept + 1))
         fi
