@@ -71,15 +71,18 @@ SERVER_NAME_PREFIX="KTP LAN"
 # pick something short and sayable.
 SV_PASSWORD="CHANGEME"
 
-# Number of DoD game server instances and starting port. The current LAN plan
-# uses 6 (one server per concurrent match, 12 teams). The host needs at least
-# NUM_INSTANCES + 2 CPU cores, or provisioning warns about servers sharing cores.
+# Number of DoD game server instances and starting port. The LAN plan is 5
+# KTP-stack competitive servers. The stock 32-slot warmup server is a SEPARATE
+# manual install (own LinuxGSM tree, non-KTP) and is NOT part of this count.
+# The host needs at least NUM_INSTANCES + 2 CPU cores, or provisioning warns
+# about servers sharing cores.
 NUM_INSTANCES=5
 BASE_PORT=27015
 
 # HLTV proxy starting port (the dataserver provisioner uses this too). Leave
-# EMPTY to auto-place it right after the last game port (BASE_PORT+NUM_INSTANCES)
-# — that avoids a collision when NUM_INSTANCES=6 (game 27015-27020, HLTV 27021+).
+# EMPTY to auto-place it right after the last game port (BASE_PORT+NUM_INSTANCES).
+# With NUM_INSTANCES=5 this auto-places HLTV at 27020-27024 (game 27015-27019),
+# which leaves the stock warmup server free to take 27050.
 # Only set a fixed value if you have a specific reason.
 HLTV_BASE_PORT=""
 

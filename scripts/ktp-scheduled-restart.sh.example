@@ -73,6 +73,10 @@ log() {
 
 # Send Discord embed and capture message ID
 send_discord_embed() {
+    # No relay configured (e.g. a LAN box where provisioning blanked RELAY_URL):
+    # skip cleanly rather than curl an empty URL or post to the wrong Discord.
+    [ -z "$RELAY_URL" ] && return 0
+
     local channel_id="$1"
     local title="$2"
     local description="$3"
@@ -105,6 +109,9 @@ EOF
 
 # Edit existing Discord embed
 edit_discord_embed() {
+    # No relay configured (LAN neuter blanks EDIT_URL): skip, don't curl "".
+    [ -z "$EDIT_URL" ] && return 0
+
     local channel_id="$1"
     local message_id="$2"
     local title="$3"

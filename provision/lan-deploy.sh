@@ -115,11 +115,16 @@ if [ -f "$CREDS_FILE" ]; then
                 if [ -z "${HLTV_API_KEY:-}" ]; then HLTV_API_KEY="$v"; fi ;;
             DODSERVER_PASSWORD)
                 if [ -z "${DODSERVER_PASSWORD:-}" ]; then DODSERVER_PASSWORD="$v"; fi ;;
+            RCON_PASSWORD)
+                if [ -z "${RCON_PASSWORD:-}" ]; then RCON_PASSWORD="$v"; fi ;;
         esac
     done < "$CREDS_FILE"
 fi
 HLTV_API_KEY="${HLTV_API_KEY:-$(gen_pw)}"
 DODSERVER_PASSWORD="${DODSERVER_PASSWORD:-$(gen_pw)}"
+# RCON password for the game servers. Generated once and persisted so an onsite
+# re-run (new LAN_IP) re-renders the cfgs with the SAME rcon rather than churning it.
+RCON_PASSWORD="${RCON_PASSWORD:-$(gen_pw)}"
 # SV_PASSWORD can't be generated — players have to type it — so it must be set
 # explicitly. It previously defaulted to the literal "REDACTED" left behind by
 # the history scrub, which deployed as a working join password and printed as
@@ -133,6 +138,11 @@ case "${SV_PASSWORD}" in
     REDACTED|REDACTED_*|CHANGEME|changeme )
         echo "ERROR: SV_PASSWORD is still the placeholder '${SV_PASSWORD}'." >&2
         echo "Set a real value in lan-deploy.conf or the environment." >&2
+        exit 1 ;;
+    *[!A-Za-z0-9]* )
+        echo "ERROR: SV_PASSWORD must be alphanumeric ([A-Za-z0-9])." >&2
+        echo "It is typed by players and substituted into dodserver.cfg via sed —" >&2
+        echo "a '&', '|', or '\\' would silently corrupt the password or break the deploy." >&2
         exit 1 ;;
 esac
 NUM_INSTANCES="${NUM_INSTANCES:-5}"
@@ -185,6 +195,91 @@ log_phase() {
 }
 
 # ----------------------------------------------------------------------------
+# Convenience files: an IP helper + a shortcut to this conf, so the onsite
+# "set LAN_IP and re-apply" step is easy to find. Terminal helpers land in
+# root's, dodserver's, and the GUI login user's home dirs; the clickable
+# desktop launchers go to the GUI user's Desktop only. Called AFTER Phase 1 so
+# the dodserver user exists.
+# ----------------------------------------------------------------------------
+install_convenience_files() {
+    local ipsh="$SCRIPT_DIR/lan-show-ip.sh"
+    local adminsh="$SCRIPT_DIR/lan-admin.sh"
+    local conf="$SCRIPT_DIR/lan-deploy.conf"
+    local u home spec sub rest name icon dfile
+    # Desktop launcher specs: subcommand|Display Name|Icon. All admin actions run
+    # via `taskset -c 0,1` so they stay on the housekeeping cores (cpu0/cpu1) and
+    # never touch the isolated game cores (2-7). isolcpus already confines them;
+    # the taskset makes it explicit and survives an isolation-config change.
+    local launchers=(
+        "menu|KTP LAN Admin|utilities-terminal"
+        "details|Server Details (all)|network-server"
+        "status|Live Status|utilities-system-monitor"
+        "console|Attach Console|utilities-terminal"
+        "restart|Restart Servers|view-refresh"
+        "hltv|HLTV Status|camera-video"
+        "warmup|Warmup Server|applications-games"
+        "perf|Perf Monitor|utilities-system-monitor"
+        "ip|Show LAN IP|network-wired"
+        "editconf|Edit LAN Config|text-editor"
+    )
+    # The GUI login user is the install-time desktop account (first UID-1000
+    # user), NOT root/dodserver. getent MUST be set -e-safe: a missing user
+    # exits 2 and pipefail would otherwise abort the whole deploy silently.
+    local gui_user; gui_user=$(getent passwd 1000 | cut -d: -f1) || gui_user=""
+    local users="root dodserver"
+    [ -n "$gui_user" ] && [ "$gui_user" != root ] && [ "$gui_user" != dodserver ] && users="$users $gui_user"
+    for u in $users; do
+        home=$(getent passwd "$u" | cut -d: -f6) || home=""
+        [ -n "$home" ] && [ -d "$home" ] || continue
+        # Helpers in the home dir (headless-safe).
+        [ -f "$ipsh" ]    && { install -m 755 "$ipsh" "$home/lan-show-ip.sh"; [ "$u" != root ] && chown "$u:$u" "$home/lan-show-ip.sh"; }
+        [ -f "$adminsh" ] && { install -m 755 "$adminsh" "$home/lan-admin.sh"; [ "$u" != root ] && chown "$u:$u" "$home/lan-admin.sh"; }
+        ln -sf "$conf" "$home/lan-deploy.conf"
+        # Clickable desktop launchers only for the GUI login user (the one who
+        # logs into GNOME); root/dodserver have no session. Create ~/Desktop —
+        # a fresh GNOME that hasn't logged in yet may not have it.
+        [ -n "$gui_user" ] && [ "$u" = "$gui_user" ] || continue
+        mkdir -p "$home/Desktop"; chown "$u:$u" "$home/Desktop" 2>/dev/null
+        ln -sf "$conf" "$home/Desktop/lan-deploy.conf"
+        chown -h "$u:$u" "$home/Desktop/lan-deploy.conf" 2>/dev/null
+        # lan-admin.sh must run AS dodserver — it reads dodserver's dod-* trees,
+        # which useradd -m makes non-world-readable. If the GUI user IS dodserver,
+        # run it directly; otherwise go through a NOPASSWD sudo -u dodserver.
+        local exec_body
+        if [ "$u" = dodserver ]; then
+            exec_body="taskset -c 0,1 /home/dodserver/lan-admin.sh"
+        else
+            exec_body="taskset -c 0,1 sudo -u dodserver -H /home/dodserver/lan-admin.sh"
+            local sudoers=/etc/sudoers.d/ktp-lan-admin
+            echo "$u ALL=(dodserver) NOPASSWD: /home/dodserver/lan-admin.sh" > "$sudoers.tmp"
+            if visudo -cf "$sudoers.tmp" >/dev/null 2>&1; then
+                install -m 440 "$sudoers.tmp" "$sudoers"
+            else
+                log_warn "sudoers validation failed — desktop launchers will prompt for the dodserver password"
+            fi
+            rm -f "$sudoers.tmp"
+        fi
+        for spec in "${launchers[@]}"; do
+            sub="${spec%%|*}"; rest="${spec#*|}"; name="${rest%|*}"; icon="${rest##*|}"
+            dfile="$home/Desktop/ktp-${sub}.desktop"
+            {
+                echo "[Desktop Entry]"
+                echo "Type=Application"
+                echo "Name=$name"
+                echo "Comment=KTP LAN admin: $sub"
+                echo "Exec=gnome-terminal -- $exec_body $sub"
+                echo "Icon=$icon"
+                echo "Terminal=false"
+                echo "Categories=System;"
+            } > "$dfile"
+            chmod +x "$dfile"; chown "$u:$u" "$dfile"
+            # Mark trusted so GNOME launches it without the "untrusted" prompt.
+            su -l "$u" -c "gio set '$dfile' metadata::trusted true" 2>/dev/null || true
+        done
+    done
+}
+
+# ----------------------------------------------------------------------------
 # Phase 1: provision-gameserver.sh — host hardening, kernel, sysctls, services
 # ----------------------------------------------------------------------------
 log_phase "Phase 1: host hardening (provision-gameserver.sh)"
@@ -193,6 +288,9 @@ PROV_FLAGS=(-y --num-servers "$NUM_INSTANCES" --password "$DODSERVER_PASSWORD")
 # Co-located HLTV is set up by Phase 4 (provision-lan-dataserver.sh), not by
 # the gameserver script's --with-hltv flag, so we omit --with-hltv here.
 TIMEZONE="$TIMEZONE" bash "$SCRIPT_DIR/provision-gameserver.sh" "${PROV_FLAGS[@]}"
+
+# dodserver + the GUI user now exist — drop in the convenience helpers/launchers.
+install_convenience_files
 
 # ----------------------------------------------------------------------------
 # Phase 2: install-linuxgsm.sh — LinuxGSM bootstrap + NUM_INSTANCES DoD instances
@@ -218,6 +316,11 @@ CLONE_FLAGS=(
     --sv-password "$SV_PASSWORD"
     --data-server-ip "$LAN_IP"
     --hltv-api-key "$HLTV_API_KEY"
+    --rcon-password "$RCON_PASSWORD"
+    --server-cfg-template "$SCRIPT_DIR/../config/lan/dodserver.cfg.example"
+    --plugins-ini "$SCRIPT_DIR/../config/lan/plugins.ini"
+    --modules-ini "$SCRIPT_DIR/../config/lan/modules.ini"
+    --discord-ini "$SCRIPT_DIR/../config/lan/discord.ini"
 )
 [ -n "${DOD_BASE_PATH:-}" ]        && CLONE_FLAGS+=(--dod-base "$DOD_BASE_PATH")
 [ -n "${DISCORD_RELAY_URL:-}" ]    && CLONE_FLAGS+=(--relay-url "$DISCORD_RELAY_URL")
@@ -266,6 +369,7 @@ touch "$CREDS_FILE"; chmod 600 "$CREDS_FILE"
     echo "# lan-deploy.sh $(date -Iseconds)"
     echo "DODSERVER_PASSWORD=$DODSERVER_PASSWORD"
     grep -q "^HLTV_API_KEY=" "$CREDS_FILE" || echo "HLTV_API_KEY=$HLTV_API_KEY"
+    grep -q "^RCON_PASSWORD=" "$CREDS_FILE" || echo "RCON_PASSWORD=$RCON_PASSWORD"
 } >> "$CREDS_FILE"
 
 # ----------------------------------------------------------------------------
@@ -315,6 +419,18 @@ echo "========================================"
 echo "LAN deployment complete!"
 echo "========================================"
 echo
+echo "**********************************************************************"
+echo "  REBOOT REQUIRED before the servers are event-ready."
+echo "  Phase 1 installed the lowlatency kernel + CPU isolation; neither"
+echo "  takes effect until a reboot. After rebooting, HARD-VERIFY:"
+echo "    uname -r                              # must end in -lowlatency"
+echo "    cat /proc/cmdline                     # must contain isolcpus=<list Phase 1 logged> (2,3,4,5,6,7 on a 4c/8t box)"
+echo "    systemctl is-active ktp-chrt.timer    # active"
+echo "  If uname shows a GENERIC kernel, the GRUB default didn't take — run:"
+echo "    grub-set-default 'Advanced options for Ubuntu>Ubuntu, with Linux <ver>-lowlatency'"
+echo "    update-grub && reboot"
+echo "**********************************************************************"
+echo
 echo "Status:"
 echo "  - ${NUM_INSTANCES} game server instances staged at ~/dod-* (port ${BASE_PORT}+)"
 echo "  - Scheduled restart cron installed (3 AM local time daily)"
@@ -325,6 +441,8 @@ fi
 echo
 echo "Next steps (manual — this script does NOT do them):"
 step=1
+printf "  %d. Reboot + verify the lowlatency kernel booted (see the box above)\n" $step
+step=$((step + 1))
 printf "  %d. Verify game servers:    su - dodserver -c '~/restart-all-servers.sh && ~/status.sh'\n" $step
 if [ "$ENABLE_DATASERVER" = "true" ]; then
     if [ -z "${HLTV_BINARIES_PATH:-}" ]; then

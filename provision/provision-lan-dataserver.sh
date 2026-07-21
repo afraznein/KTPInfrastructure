@@ -178,7 +178,17 @@ log_info "Configuring MySQL..."
 # cloud data server (8.0) and this LAN box (8.4).
 # Fresh installs authenticate root via auth_socket, so this first ALTER runs as
 # the OS root over the socket with no password; everything after uses -p.
-mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';"
+# Idempotent: only run the passwordless-socket ALTER on a FRESH install (root
+# still on auth_socket). On a re-run root already has a password, the socket-only
+# connect fails, and set -e would kill Phase 4 right here — so guard on whether
+# the passwordless socket still works. (A password probe is no good: auth_socket
+# ignores the password and would falsely succeed on a fresh box.)
+if mysql -e "SELECT 1" >/dev/null 2>&1; then
+    mysql -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';"
+    log_info "Set MySQL root password (fresh install)"
+else
+    log_info "MySQL root already password-protected — skipping initial ALTER (re-run)"
+fi
 
 # Create HLStatsX database and user. ALTER after CREATE makes a re-run reset the
 # password to the current generated value (idempotent).
@@ -759,6 +769,17 @@ systemctl daemon-reload
 systemctl enable hltv-api
 systemctl restart hltv-api
 
+# HLTV-API hang watchdog. Restart=always covers a crash, but NOT a hung-but-alive
+# API — which silently kills match record start/stop for the whole event. Probe
+# the unauthenticated /health endpoint every 5 min and restart if it stops
+# answering. (Mirrors the prod data server's /etc/cron.d/hltv-api-watchdog.)
+cat > /etc/cron.d/hltv-api-watchdog << 'CRON'
+# KTP LAN — restart hltv-api if its /health endpoint stops responding
+*/5 * * * * root curl -fsS --max-time 5 http://127.0.0.1:8087/health >/dev/null 2>&1 || systemctl restart hltv-api
+CRON
+chmod 644 /etc/cron.d/hltv-api-watchdog
+log_info "Installed hltv-api /health watchdog (/etc/cron.d/hltv-api-watchdog)"
+
 # ============================================
 # 6. FastDL Setup (Nginx)
 # ============================================
@@ -873,26 +894,39 @@ if [ -n "${HLSTATSX_SOURCE_PATH:-}" ]; then
     if [ -z "$SCHEMA_LOADED" ]; then
         log_info "Importing base schema (install.sql)..."
         mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx < /opt/hlstatsx/sql/install.sql
+    else
+        log_info "HLStatsX base schema already present — skipping base import"
+    fi
 
-        # The KTP additions are optional on top of a working base HLStatsX. Don't
-        # let a bug in one of them abort the whole dataserver provision (which
-        # would skip the service/creds/firewall below) — warn and continue so
-        # base stats still come up. Re-run after fixing to apply the rest.
+    # KTP additions (ktp_schema + migrate_*) gated on their OWN canary — the LAST
+    # table ktp_schema.sql creates (ktp_match_stats), not the base canary and not
+    # the first KTP table (ktp_matches). A run that loaded the base or the early
+    # KTP tables but failed partway then still retries the rest on re-run, instead
+    # of a half-applied schema surviving quietly to match day. Warn-and-continue
+    # so a KTP glitch never aborts the whole provision (service/creds/firewall
+    # come after). --force: mysql otherwise aborts at the FIRST error (e.g. an
+    # already-applied ALTER on re-run) and never reaches the missing later
+    # statements — --force keeps going so re-runs actually converge.
+    KTP_LOADED=$(mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx -sN -e \
+        "SHOW TABLES LIKE 'ktp_match_stats';" 2>/dev/null || true)
+    if [ -z "$KTP_LOADED" ]; then
         if [ -f /opt/hlstatsx/sql/ktp_schema.sql ]; then
             log_info "Importing KTP schema additions (ktp_schema.sql)..."
-            mysql_compat /opt/hlstatsx/sql/ktp_schema.sql | mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx \
+            mysql_compat /opt/hlstatsx/sql/ktp_schema.sql | mysql --force -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx \
                 || log_warn "ktp_schema.sql import failed — base HLStatsX still configured; fix + re-import"
         fi
-        # Apply migrate_*.sql in lexicographic order (matches numbered prefix
-        # convention: migrate_001_*, migrate_002_*, ...).
+        # Apply migrate_*.sql in lexicographic order (migrate_001_*, migrate_002_*, ...).
+        # NOTE: migrate_002 re-adds the `half` column that ktp_schema 0.3.3+ already
+        # creates, so a 1060 "duplicate column" warn here is EXPECTED and benign —
+        # don't chase it. A genuinely new migration failing is the one to look at.
         for migration in /opt/hlstatsx/sql/migrate_*.sql; do
             [ -f "$migration" ] || continue
             log_info "  applying $(basename "$migration")"
-            mysql_compat "$migration" | mysql -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx \
-                || log_warn "$(basename "$migration") failed — continuing"
+            mysql_compat "$migration" | mysql --force -u root -p"$MYSQL_ROOT_PASSWORD" hlstatsx \
+                || log_warn "$(basename "$migration") failed (may be already-applied — continuing)"
         done
     else
-        log_info "HLStatsX base schema already present — skipping import"
+        log_info "KTP schema additions already present — skipping"
     fi
 
     # hlstats.conf — daemon reads this for DB connection params at startup.

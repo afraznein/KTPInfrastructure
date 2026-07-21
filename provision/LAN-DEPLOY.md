@@ -7,11 +7,13 @@ One config file, one script invocation.
 > day-of runbook, HLTV/stats/**TeamSpeak** setup, and troubleshooting, see
 > [`../docs/LAN_SETUP.md`](../docs/LAN_SETUP.md). Keep the two in sync.
 >
-> **Current plan (July 2026 LAN):** one all-in-one box for up to **72 players
-> (12 teams × 6)** — game servers + HLTV + TeamSpeak. Set `NUM_INSTANCES=6` for
-> the 6 concurrent match servers; the orchestrator creates all 6, auto-places
-> HLTV after them, and pins one CPU core per server (warns if the box has fewer
-> than `NUM_INSTANCES + 2` cores). TeamSpeak is a manual post-install step.
+> **Current plan (July 2026 LAN):** one all-in-one box — **5 KTP-stack
+> competitive servers** + HLTV + TeamSpeak. Set `NUM_INSTANCES=5`; the
+> orchestrator creates all 5, auto-places HLTV after them (27020-27024), and
+> pins one CPU core per server (warns if the box has fewer than
+> `NUM_INSTANCES + 2` cores). A stock 24-slot **warmup** server (port 27050,
+> non-KTP, no plugins/HLTV) is a SEPARATE manual install outside this count.
+> TeamSpeak is a manual post-install step.
 
 ## TL;DR
 
@@ -108,13 +110,26 @@ empty if you'd rather do it manually post-install.
   extracts it into every instance. Empty = stock maps only (the script
   warns). **This is the historical "left out the maps/overviews folder"
   gap — now wired into the orchestrator via `DOD_BASE_PATH`.**
-- **TeamSpeak voice server** — not installed by the orchestrator. It's a
-  64-bit upstream download (no i386 multilib), runs as its own
-  `ts3server` systemd unit on the OS/housekeeping cores next to HLTV.
-  Full install (download, license, systemd, the free 512-slot key for
-  72 players, UFW 9987/udp + 30033/tcp + 10011/tcp) is in
+- **TeamSpeak voice server** — not installed by the orchestrator. Run
+  `provision/install-teamspeak.sh` (creates the `teamspeak` user, installs to
+  `/opt/teamspeak`, writes the `ts3server` systemd unit). It's a 64-bit upstream
+  download (no i386 multilib), runs on the OS/housekeeping cores next to HLTV.
+  Data (the `ts3server.sqlitedb`, logs) lives in `/opt/teamspeak`, which the disk
+  prep above bind-mounts onto the larger HDD — tiny footprint, rides it for tidiness.
+  **This LAN uses a paid license:** drop `licensekey.dat` into `/opt/teamspeak` and
+  restart `ts3server`. Open UFW 9987/udp + 30033/tcp + 10011/tcp. Air-gapped LANs
+  must stage the tarball + `licensekey.dat` ahead of time. Full walkthrough in
   [`../docs/LAN_SETUP.md`](../docs/LAN_SETUP.md) § TeamSpeak Voice Server.
-  Air-gapped LANs must stage the tarball + `licensekey.dat` ahead of time.
+- **Warmup / pub server (6th instance, port 27050)** — a STOCK HLDS DoD
+  server for pre-match warmup, deliberately outside the KTP stack (no
+  custom engine, no plugins, no HLTV, no stats). A separate manual
+  LinuxGSM install on the larger HDD (`/srv/ktpdata/warmup`), pinned
+  `taskset -c 0,1`. 24 slots, 60-min timer, rotates
+  `dod_pandemic_aim ↔ dod_orange`, rcon `Philly2026`, logging off.
+  Config + step-by-step in
+  [`../config/lan/warmup/README.md`](../config/lan/warmup/README.md)
+  (its `dodserver.cfg` + `mapcycle.txt` live in that folder). Needs its
+  own `ufw allow 27050/udp`.
 
 Each `_PATH` is optional. Whatever you leave unset becomes a manual
 step listed in the script's post-install output.
@@ -148,6 +163,44 @@ sudo ./scripts/validate-map-assets.sh dod_X.bsp          # one map only
 
 Defaults to checking `/home/dodserver/dod-27015/serverfiles/dod`; use
 `--maps-dir <path>` to point elsewhere.
+
+## Disk prep (two-HDD box) — do this BEFORE `lan-deploy.sh`
+
+The pipeline has **no disk logic**. On the two-HDD LAN box, mount the larger HDD and
+bind-mount the bulk / heavy-write dirs onto it first. The **MySQL bind in particular
+must exist before Phase 4 installs `mysql-server`**. Game servers (`/home/dodserver`)
+stay on the **primary** disk; everything else rides the larger HDD.
+
+```bash
+# larger HDD = /dev/sdb — VERIFY with lsblk first!
+parted /dev/sdb --script mklabel gpt mkpart primary ext4 0% 100%
+mkfs.ext4 -L ktpdata /dev/sdb1
+mkdir -p /srv/ktpdata
+echo 'LABEL=ktpdata /srv/ktpdata ext4 defaults,noatime 0 2' >> /etc/fstab
+mount /srv/ktpdata
+mkdir -p /srv/ktpdata/{hltvserver,mysql,fastdl,warmup,teamspeak,demo-archive}
+mkdir -p /home/hltvserver /var/lib/mysql /var/www/fastdl /opt/teamspeak
+cat >> /etc/fstab <<'EOF'
+/srv/ktpdata/hltvserver /home/hltvserver none bind 0 0
+/srv/ktpdata/mysql      /var/lib/mysql   none bind 0 0
+/srv/ktpdata/fastdl     /var/www/fastdl  none bind 0 0
+/srv/ktpdata/teamspeak  /opt/teamspeak   none bind 0 0
+EOF
+mount -a
+```
+
+Bind-mounting **subdirs** (not the partition directly) keeps `/var/lib/mysql`
+identical (no datadir/AppArmor surgery) and avoids `lost+found` (mysqld refuses a
+non-empty datadir). What lands where:
+- **Larger HDD (`/srv/ktpdata`):** HLTV home + all demo output (`/home/hltvserver/hlds/dod`,
+  the dominant writer — ~15 GB/day for 5 instances, no auto-cleanup), MySQL datadir,
+  FastDL, the warmup server tree (`/srv/ktpdata/warmup`), and TeamSpeak (tiny — rides
+  it for tidiness, not I/O).
+- **Primary disk:** OS + the 5 competitive game trees (`/home/dodserver/dod-*`) — kept
+  quiet (engine + AMXX logging are async, HLStatsX is UDP-out).
+
+If provisioning already ran before the MySQL bind existed, recover with:
+`systemctl stop mysql; rsync -a /var/lib/mysql/ /srv/ktpdata/mysql/; mv /var/lib/mysql /var/lib/mysql.old; mkdir /var/lib/mysql; mount -a; systemctl start mysql`.
 
 ## Pre-flight requirements
 

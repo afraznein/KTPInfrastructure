@@ -14,7 +14,7 @@
 hostname ""
 exec configs/servernamedefault.cfg
 sv_region 255                       // 255 = World/LAN
-sv_lan 1                            // LAN mode (no Steam auth required)
+sv_lan 0                            // Real SteamIDs (needs venue internet for Steam auth) — required for per-player HLStatsX, admin auth, and AC identity
 rcon_password "<RCON_PASSWORD>"
 sv_password "<SERVER_PASSWORD>"
 
@@ -130,7 +130,19 @@ ktp_grenade_dmg_reduce 0            // Reduction percentage (0 = full damage)
 //-----------------------------------------------
 //               Server Performance
 //-----------------------------------------------
-sys_ticrate 1000
+// 1500 (NOT 1000) is required with the -absgrid frame scheduler: at ticrate
+// 1000 the Host_FilterTime 1.0ms gate rejects ~31% of grid frames → ~690 fps.
+// 1500 lets the 1ms-grid frames through → ~1000 fps. Matches the live fleet.
+sys_ticrate 1500
+
+// KTP frame-profiling telemetry — emits [KTP_PROFILE] / [KTP_SPIKE_IO] to the
+// logs. Left on (as on the prod fleet) so hitreg/stall complaints at the event
+// have data to look at; negligible overhead.
+ktp_profile_frame 1
+ktp_profile_interval 10
+ktp_profile_spike_threshold 3
+ktp_profile_steam_detail 0
+
 sv_stats 0
 max_queries_sec 3
 max_queries_sec_global 100

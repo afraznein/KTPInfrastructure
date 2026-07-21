@@ -439,14 +439,21 @@ LOWLATENCY_KERNEL=$(ls /boot/vmlinuz-*-lowlatency 2>/dev/null | sort -V | tail -
 if [ -n "$LOWLATENCY_KERNEL" ]; then
     log_info "Lowlatency kernel installed: $LOWLATENCY_KERNEL"
 
-    # Fix GRUB to boot lowlatency kernel by default
-    # Ubuntu 24.04+ puts lowlatency in Advanced submenu, GRUB_DEFAULT=0 boots generic
-    # "1>2" means: submenu 1 (Advanced options), entry 2 (first lowlatency kernel)
-    if ! grep -q 'GRUB_DEFAULT="1>2"' /etc/default/grub; then
-        log_info "Configuring GRUB to boot lowlatency kernel..."
-        sed -i 's/^GRUB_DEFAULT=.*/GRUB_DEFAULT="1>2"/' /etc/default/grub
-        update-grub
-        log_info "GRUB configured for lowlatency kernel"
+    # Boot the lowlatency kernel by NAME, not by positional submenu index. The
+    # old "1>2" (submenu 1, entry 2) silently inverts if grub's version sort
+    # orders the freshly-pulled lowlatency kernel differently from the ISO's
+    # generic — booting generic (250Hz, no CPU isolation) with no error. The
+    # name path is stable across sort order.
+    GRUB_LL_ENTRY="Advanced options for Ubuntu>Ubuntu, with Linux ${LOWLATENCY_KERNEL}"
+    log_info "Configuring GRUB to boot lowlatency kernel by name..."
+    sed -i "s|^GRUB_DEFAULT=.*|GRUB_DEFAULT=\"${GRUB_LL_ENTRY}\"|" /etc/default/grub
+    update-grub
+    if grep -q "with Linux ${LOWLATENCY_KERNEL}'" /boot/grub/grub.cfg 2>/dev/null; then
+        log_info "GRUB default set to: $GRUB_LL_ENTRY"
+    else
+        log_warn "Could not confirm the lowlatency menuentry in grub.cfg — VERIFY after reboot"
+        log_warn "  uname -r should end in -lowlatency; if it doesn't, run:"
+        log_warn "  grub-set-default '$GRUB_LL_ENTRY' && update-grub"
     fi
 
     log_warn "REBOOT REQUIRED to activate lowlatency kernel!"
@@ -510,6 +517,31 @@ if command -v iptables &>/dev/null; then
         iptables -t raw -A PREROUTING -p udp --dport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
         iptables -t raw -A OUTPUT -p udp --sport $HLTV_PORT_RANGE -j NOTRACK 2>/dev/null || true
     fi
+fi
+
+# Persist NOTRACK in ufw's before.rules too — not just rc.local. rc.local only
+# re-applies at BOOT, so a mid-event `ufw reload`/`ufw enable` would flush the
+# raw-table NOTRACK rules and per-packet conntrack overhead returns until the
+# next reboot. The *raw table block must be a complete block with its own COMMIT.
+UFW_BEFORE=/etc/ufw/before.rules
+if [ -f "$UFW_BEFORE" ] && ! grep -q "KTP NOTRACK" "$UFW_BEFORE"; then
+    RAW_BLOCK="*raw
+:PREROUTING ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+# KTP NOTRACK - bypass conntrack for game UDP (survives ufw reload)
+-A PREROUTING -p udp --dport ${GAME_PORT_RANGE} -j NOTRACK
+-A OUTPUT -p udp --sport ${GAME_PORT_RANGE} -j NOTRACK"
+    if [ "$WITH_HLTV" = true ]; then
+        RAW_BLOCK="${RAW_BLOCK}
+-A PREROUTING -p udp --dport ${HLTV_PORT_RANGE} -j NOTRACK
+-A OUTPUT -p udp --sport ${HLTV_PORT_RANGE} -j NOTRACK"
+    fi
+    RAW_BLOCK="${RAW_BLOCK}
+COMMIT
+"
+    # Prepend the complete *raw block above before.rules' existing *filter block.
+    printf '%s\n%s\n' "$RAW_BLOCK" "$(cat "$UFW_BEFORE")" > "$UFW_BEFORE"
+    log_info "Added KTP NOTRACK *raw block to $UFW_BEFORE (survives ufw reload)"
 fi
 
 # Create rc.local for persistence across reboots
@@ -766,6 +798,11 @@ dodserver hard nofile 65535
 dodserver soft nproc 65535
 dodserver hard nproc 65535
 dodserver        -       nice            -5
+# Allow crash cores to actually be written: core_pattern=/tmp/core.%e.%p.%t is
+# configured via sysctl.d, but without an unlimited core ulimit hlds may write
+# no core at all.
+dodserver soft core unlimited
+dodserver hard core unlimited
 EOF
 
 log_info "File descriptor limits increased to 65535"

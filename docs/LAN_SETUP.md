@@ -223,10 +223,19 @@ hltv_port = 27020
 
 **dodserver.cfg:**
 ```
-sv_lan 1
-log_address_add 192.168.1.100:27500
+sv_lan 0
+logaddress_add 192.168.1.100 27500
 sv_downloadurl "http://192.168.1.100/"
 ```
+
+> **`sv_lan 0` depends on venue internet for Steam auth.** It is the correct
+> setting — real SteamIDs are required for per-player HLStatsX, admin auth, and
+> AC identity. But if the venue uplink dies mid-event, players can't authenticate
+> and new joins break. **Contingency:** set `sv_lan 1` on the affected server(s)
+> to let players connect without Steam, and set `Mode "LAN"` (or `NameTrack`) in
+> `hlstats.conf` so HLStatsX keys players by name instead of collapsing every
+> `STEAM_ID_LAN` player into one row. Cost: no per-player SteamID stats, SteamID
+> admin/AC identity degrades. Revert to `sv_lan 0` once the uplink is back.
 
 #### 3. Apply to All Instances
 
@@ -497,9 +506,9 @@ channels keeps per-channel voice relay tiny (a few Mbps) instead of one big
    ps aux | grep hlstats
    ```
 
-2. Verify log_address_add is set:
+2. Verify logaddress_add is set:
    ```bash
-   grep log_address ~/dod-27015/serverfiles/dod/dodserver.cfg
+   grep logaddress ~/dod-27015/serverfiles/dod/dodserver.cfg
    ```
 
 3. Check for UDP traffic:
@@ -597,11 +606,11 @@ on the USB — neither can be fetched on the day without internet.
 - Gigabit switch
 
 ### Configuration
-- 3 game server instances (27015, 27016, 27017)
-- 3 HLTV instances (27020, 27021, 27022)
-- Port 27015: Match server (main)
-- Port 27016: Match server (backup)
-- Port 27017: Warmup/practice
+- 5 competitive game server instances (27015-27019, full KTP stack)
+- 5 HLTV proxy instances (27020-27024, index-paired to the game servers)
+- 1 stock warmup server (27050 — 32 slots, no plugins, no HLTV; a SEPARATE manual
+  install, not part of `NUM_INSTANCES`). Its port is outside Phase 1's firewall
+  range, so it needs an explicit `ufw allow 27050/udp` (clientport 27040).
 
 ### IP Assignments
 | Machine | IP | Role |

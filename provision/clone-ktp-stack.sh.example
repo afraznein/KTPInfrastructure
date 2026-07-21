@@ -73,6 +73,11 @@ show_usage() {
     echo "  --hltv-base-port <port> HLTV base port (default: auto based on hostname)"
     echo "  --hltv-api-key <key>    HLTV API authentication key (production secret)"
     echo "  --sv-password <pwd>     Server join password (sv_password)"
+    echo "  --rcon-password <pwd>   RCON password (rendered into the cfg template)"
+    echo "  --server-cfg-template <path>  Render dodserver.cfg per instance from this template (LAN)"
+    echo "  --plugins-ini <path>    Authoritative plugins.ini to deploy (overwrites; LAN)"
+    echo "  --modules-ini <path>    Authoritative modules.ini to deploy (overwrites; LAN)"
+    echo "  --discord-ini <path>    Authoritative discord.ini to deploy (overwrites; LAN empty-profile)"
     echo "  --relay-url <url>       Discord relay URL for restart notifications"
     echo "  --relay-secret <secret> Discord relay auth secret"
     echo "  --data-server-ip <ip>   Data server IP for HLTV API (default: <DATA_SERVER_IP>)"
@@ -102,8 +107,16 @@ BASE_PORT=27015
 LIBSTEAM_API_PATH=""
 HLTV_API_KEY=""
 SV_PASSWORD=""
+RCON_PASSWORD=""
 RELAY_URL=""
 RELAY_SECRET=""
+# LAN path: render the full competitive dodserver.cfg from this template and
+# treat these plugin/module lists as authoritative (overwrite). Empty = keep the
+# current fleet behavior (LinuxGSM default cfg + only-if-absent embedded lists).
+SERVER_CFG_TEMPLATE=""
+PLUGINS_INI_SRC=""
+MODULES_INI_SRC=""
+DISCORD_INI_SRC=""
 # Data server hosting the HLTV API the recorder posts to. Defaults preserve
 # the public-cloud KTP deployment; LAN deployments pass --data-server-ip
 # (often the same host as the game server for all-in-one LAN boxes).
@@ -152,6 +165,26 @@ while [[ $# -gt 0 ]]; do
             ;;
         --sv-password)
             SV_PASSWORD="$2"
+            shift 2
+            ;;
+        --rcon-password)
+            RCON_PASSWORD="$2"
+            shift 2
+            ;;
+        --server-cfg-template)
+            SERVER_CFG_TEMPLATE="$2"
+            shift 2
+            ;;
+        --plugins-ini)
+            PLUGINS_INI_SRC="$2"
+            shift 2
+            ;;
+        --modules-ini)
+            MODULES_INI_SRC="$2"
+            shift 2
+            ;;
+        --discord-ini)
+            DISCORD_INI_SRC="$2"
             shift 2
             ;;
         --relay-url)
@@ -302,6 +335,8 @@ REQUIRED_FILES=(
     "engine/engine_i486.so"
     "ktpamx/dlls/ktpamx_i386.so"
     "ktpamx/modules/dodx_ktp_i386.so"
+    "ktpamx/modules/reapi_ktp_i386.so"
+    "ktpamx/modules/amxxcurl_ktp_i386.so"
 )
 
 for file in "${REQUIRED_FILES[@]}"; do
@@ -310,6 +345,28 @@ for file in "${REQUIRED_FILES[@]}"; do
         exit 1
     fi
 done
+
+# LAN plugin-completeness pre-flight: every KTP-authored plugin the authoritative
+# plugins.ini enables must have a binary in artifacts, or it silently fails to
+# load (e.g. the HUD overlay missing on all servers, found only when casting
+# starts). Hard-fail on KTP*/ktp_* (unambiguously sourced from artifacts/plugins);
+# warn on stock AMXX plugins whose binary may ship with the ktpamx base tree.
+if [ -n "$PLUGINS_INI_SRC" ] && [ -f "$PLUGINS_INI_SRC" ]; then
+    MISSING_KTP=""
+    while read -r plugin _ || [ -n "$plugin" ]; do
+        case "$plugin" in ''|';'*) continue ;; esac
+        [ -f "$ARTIFACTS_DIR/plugins/$plugin" ] && continue
+        case "$plugin" in
+            KTP*|ktp_*) MISSING_KTP="$MISSING_KTP $plugin" ;;
+            *) log_warn "plugins.ini enables $plugin but it's not in $ARTIFACTS_DIR/plugins (may ship with the ktpamx base)" ;;
+        esac
+    done < "$PLUGINS_INI_SRC"
+    if [ -n "$MISSING_KTP" ]; then
+        log_error "Required KTP plugin binaries missing from $ARTIFACTS_DIR/plugins:$MISSING_KTP"
+        log_error "Assemble artifacts from a live fleet host (which carries the current KTP plugin set + HUD)."
+        exit 1
+    fi
+fi
 
 log_info "Artifacts verified"
 
@@ -507,21 +564,47 @@ KTPHLTVRecorder.amxx
 KTPPracticeMode.amxx
 KTPGrenadeLoadout.amxx
 KTPGrenadeDamage.amxx
-KTPHudObserver.amxx debug
+KTPHudObserver.amxx
 ; KTPScoreTracker.amxx     ; pre-production — enable when declared ready
 EOF
 )
+
+# One-time source validation. A missing --discord-ini source is dangerous: the
+# per-instance write below would silently fall through and leave any prod
+# discord.ini from the artifact/dod-base bundle live — the exact prod-posting the
+# empty LAN profile exists to prevent. Fail hard rather than ship that.
+if [ -n "$DISCORD_INI_SRC" ] && [ ! -f "$DISCORD_INI_SRC" ]; then
+    log_error "--discord-ini set but not a file: $DISCORD_INI_SRC (would leave a prod discord.ini live)"
+    exit 1
+fi
+for src in "$PLUGINS_INI_SRC" "$MODULES_INI_SRC"; do
+    if [ -n "$src" ] && [ ! -f "$src" ]; then
+        log_warn "authoritative ini source missing, using embedded fallback: $src"
+    fi
+done
 
 for i in $(seq 1 $NUM_INSTANCES); do
     PORT=$((BASE_PORT + i - 1))
     CONFIGS_DIR="$HOME/dod-$PORT/serverfiles/dod/addons/ktpamx/configs"
 
-    # Only create if doesn't exist
-    if [ ! -f "$CONFIGS_DIR/modules.ini" ]; then
+    # plugins.ini / modules.ini: an explicit --plugins-ini/--modules-ini source
+    # (LAN) is authoritative and overwrites every run; otherwise fall back to the
+    # embedded fleet template only if absent (never clobber a fleet host's config).
+    if [ -n "$MODULES_INI_SRC" ] && [ -f "$MODULES_INI_SRC" ]; then
+        cp "$MODULES_INI_SRC" "$CONFIGS_DIR/modules.ini"
+    elif [ ! -f "$CONFIGS_DIR/modules.ini" ]; then
         echo "$MODULES_INI" > "$CONFIGS_DIR/modules.ini"
     fi
-    if [ ! -f "$CONFIGS_DIR/plugins.ini" ]; then
+    if [ -n "$PLUGINS_INI_SRC" ] && [ -f "$PLUGINS_INI_SRC" ]; then
+        cp "$PLUGINS_INI_SRC" "$CONFIGS_DIR/plugins.ini"
+    elif [ ! -f "$CONFIGS_DIR/plugins.ini" ]; then
         echo "$PLUGINS_INI" > "$CONFIGS_DIR/plugins.ini"
+    fi
+    # discord.ini: an explicit --discord-ini source (LAN empty-profile) overwrites,
+    # so a prod discord.ini carried in the artifact/dod-base bundle can't enable
+    # Discord posting to production channels at the LAN.
+    if [ -n "$DISCORD_INI_SRC" ] && [ -f "$DISCORD_INI_SRC" ]; then
+        cp "$DISCORD_INI_SRC" "$CONFIGS_DIR/discord.ini"
     fi
     if [ ! -f "$CONFIGS_DIR/dodx.ini" ]; then
         cat > "$CONFIGS_DIR/dodx.ini" << 'EOF'
@@ -533,6 +616,32 @@ EOF
 done
 
 log_info "Default configs created"
+
+# ============================================
+# 5b. Render competitive dodserver.cfg from the LAN profile template
+# ============================================
+# A bare LinuxGSM cfg lacks the competitive netcode/rates, sv_downloadurl,
+# logaddress, rcon, flood protection and class limits. When --server-cfg-template
+# is given (LAN path), render it per instance. Renders every run, so an onsite
+# LAN_IP change re-applies by re-running with the new --ip/--data-server-ip.
+# The hostname (step 6) and sv_password (step 6b) steps then layer on top.
+if [ -n "$SERVER_CFG_TEMPLATE" ]; then
+    if [ ! -f "$SERVER_CFG_TEMPLATE" ]; then
+        log_warn "Server cfg template not found: $SERVER_CFG_TEMPLATE — leaving LinuxGSM default"
+    else
+        log_info "Rendering competitive dodserver.cfg from template ($NUM_INSTANCES instances)..."
+        for i in $(seq 1 $NUM_INSTANCES); do
+            PORT=$((BASE_PORT + i - 1))
+            DOD_DIR="$HOME/dod-$PORT/serverfiles/dod"
+            mkdir -p "$DOD_DIR"
+            sed -e "s|<DATA_SERVER_IP>|$DATA_SERVER_IP|g" \
+                -e "s|<RCON_PASSWORD>|$RCON_PASSWORD|g" \
+                -e "s|<SERVER_PASSWORD>|$SV_PASSWORD|g" \
+                "$SERVER_CFG_TEMPLATE" > "$DOD_DIR/dodserver.cfg"
+        done
+        log_info "Competitive dodserver.cfg rendered"
+    fi
+fi
 
 # ============================================
 # 6. Configure Game Server Hostname (In-Game Name)
@@ -941,6 +1050,12 @@ if [ -f "$RESTART_SCRIPT" ]; then
         sed -i "s|https://discord-relay-78814186981.us-central1.run.app/reply|${EFFECTIVE_RELAY_URL}/reply|g" "$RESTART_SCRIPT"
         sed -i "s|https://discord-relay-78814186981.us-central1.run.app/edit|${EFFECTIVE_RELAY_URL}/edit|g" "$RESTART_SCRIPT"
         log_info "Updated restart script relay URL"
+    else
+        # No relay configured (LAN): blank the restart script's baked-in prod relay
+        # so the nightly restart can't post to the production Discord. Paired with
+        # the send_discord_embed guard, this makes the notification a clean no-op.
+        sed -i 's|^RELAY_URL=.*|RELAY_URL=""|; s|^EDIT_URL=.*|EDIT_URL=""|; s|^AUTH_SECRET=.*|AUTH_SECRET=""|' "$RESTART_SCRIPT"
+        log_info "No relay configured — neutered restart-script Discord posting (LAN-safe)"
     fi
     if [ -n "$EFFECTIVE_RELAY_SECRET" ]; then
         sed -i "s|YOUR_AUTH_SECRET_HERE|$EFFECTIVE_RELAY_SECRET|g" "$RESTART_SCRIPT"

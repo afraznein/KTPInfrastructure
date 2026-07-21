@@ -4,7 +4,8 @@
 #
 # Usage: ./install-linuxgsm.sh <SERVER_IP> [NUM_INSTANCES]
 #        NUM_INSTANCES may also be passed as an environment variable.
-#        LAN events use 6 (one server per concurrent match, 12 teams).
+#        The July 2026 LAN uses 5 KTP-stack competitive servers (the stock
+#        warmup server is a separate manual install, not created here).
 #
 # Run as: dodserver user
 #
@@ -140,7 +141,7 @@ clientport="$((BASE_PORT - 10))"
 ip="$SERVER_IP"
 
 # Startup parameters
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2"
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
 EOF
 
 log_info "First instance configured"
@@ -177,7 +178,7 @@ clientport="$((PORT - 10))"
 ip="$SERVER_IP"
 
 # Startup parameters
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2"
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
 EOF
 
     log_info "Instance $i created (port $PORT)"
