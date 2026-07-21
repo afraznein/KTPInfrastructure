@@ -1,13 +1,5 @@
 # KTP Development History
 
-> ## ⚠️ STALE — timeline ends 2026-04-25; ~10 weeks of history missing
-> Everything since end-of-April (ReHLDS .925–.927, KTPAMXX 2.7.15–2.7.20,
-> KTPAmxxCurl 1.3.9–1.3.13, KTPMatchHandler 0.10.12x–0.10.142, HLTVRecorder
-> 1.7.0, the 2026-05-31 credential rotation, Netdata disabled fleet-wide,
-> the July assessment waves) is recorded in the root
-> `discord-embeds/CHANGES_SUMMARY_*.md` period files, not here. A rewrite/
-> append pass is tracked in the root TODO. Banner added 2026-07-07.
-
 > Development timeline for the KTP competitive Day of Defeat server infrastructure — covers the full stack (engine, scripting platform, modules, match-handling plugins, anti-cheat, admin bot, infrastructure).
 >
 > **Doc home note:** This file (and `technical_guide.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
@@ -15,9 +7,9 @@
 | Metric | Value |
 |--------|-------|
 | **Project Duration** | October 2025 - Present |
-| **Total Repositories** | 20 |
-| **Estimated Development Hours** | 1430-1800 |
-| **Last Updated** | 2026-04-25 |
+| **Total Repositories** | 20+ |
+| **Estimated Development Hours** | 2100-2650 |
+| **Last Updated** | 2026-07-20 |
 
 **Doc convention going forward:** Major releases (architectural changes, root-causes, incident responses) get full prose. Minor/patch releases get one-line entries in component-version tables. Reduces maintenance burden vs. backfilling per-version detail that's already in repo CHANGELOG files.
 
@@ -35,6 +27,9 @@
 - [February 2026](#february-2026---bare-metal--performance) - Bare Metal & Performance
 - [March 2026](#march-2026---jit--code-review) - JIT & Code Review
 - [April 2026](#april-2026---engine-threading-jit-activation-stack-expansion) - Engine Threading, JIT, Stack Expansion
+- [May 2026](#may-2026---hltv-rebuild-1000fps-shutdown-races) - HLTV Rebuild, 1000fps, Shutdown Races
+- [June 2026](#june-2026---hitreg-audit--lan-preparation) - Hitreg Audit & LAN Preparation
+- [July 2026](#july-2026---root-cause-month) - Root-Cause Month
 
 ---
 
@@ -49,7 +44,10 @@
 | February 2026 | 240-320 | Bare metal migration, performance optimization, lag investigation, CPU isolation, bug audit, 2 new server deployments |
 | March 2026 | 220-280 | JIT re-enablement, 3-round KTPAMXX code review (60+ fixes), fleet-wide plugin audit, match system performance, score persistence fix, engine profiler optimization |
 | April 2026 | 220-280 | Engine threading (917-920), full-stack optimization pass, JIT activation, KTPAntiCheat launch, KTPAdminBot launch, KTPProfileAggregator launch, fleet outage recovery, AntiCheat integration phases 1-5 + 8.x, ktp_version_reporter rollout across all 9 plugins |
-| **Total** | **1430-1800** | |
+| May 2026 | 200-260 | HLTV always-on recording rebuild (1.7.0 + renamer service), 1000fps at idle CPU (absgrid + sys_ticrate), AmxxCurl shutdown-race saga begins, HPAK closure, score-persistence build, Tier-2 test runner live, credential rotation |
+| June 2026 | 200-260 | Fleet hitreg audit (lag-compensation root cause, `sv_unlagsamples 1`), engine spike-attribution telemetry (.925/.926), LAN provisioning dry-run, Tier-2 made self-sustaining, WSDoD LAN web app |
+| July 2026 | 260-340 | Root-cause month: async log writers (engine + AMXX), extension-mode shutdown callback, score persistence live, full-stack review fix waves, socket-lifecycle fix, monitoring rework (Netdata retired), pre-LAN release train |
+| **Total** | **2100-2650** | |
 
 ### Repository Breakdown
 
@@ -1041,6 +1039,172 @@ Per-host inotify watcher + `gdb` wrapper that turns kernel-emitted core dumps in
 
 ---
 
+## May 2026 - HLTV Rebuild, 1000fps, Shutdown Races
+
+**Focus: stabilizing the always-on HLTV recording architecture, closing the April HPAK crash chain, reaching true 1000fps at idle CPU cost, and the start of the KTPAmxxCurl shutdown-race saga — a crash class whose real root cause wouldn't be found until July.**
+
+The Spring 2026 season ended 2026-05-03, so the second half of the month ran on organic traffic rather than match load. That made it a good window for infrastructure work: the Tier-2 integration-test runner went live, the score-persistence subsystem was built and canary-validated, and all fleet credentials were rotated.
+
+### May 1-4: HLTV F+A Architecture Shakeout
+
+The always-on recording architecture (KTPHLTVRecorder 1.7.0 + the demo-renamer service, deployed April 29) needed a shakeout week:
+
+| Date | Fix |
+|------|-----|
+| 05-01 | Renamer "double-friendly" filename bug — `match_id` already ends in the host alias for some match types, so the renamer appended it twice. One-line fix; 12 stuck demos backfilled (KTPInfrastructure 1.5.11) |
+| 05-03 | **Data-server disk 100% incident** — always-on recording raised raw `auto_*.dem` churn to ~75 GB/day fleet-wide, and the cleanup script was still tuned for the old architecture (7-day threshold, daily cadence). Manual sweep freed 305 GB; retuned to a 6-hour threshold every 30 minutes |
+| 05-04 | Four observability bugs from the first post-matchday soak — all label/monitoring issues, zero actual data loss: h2 demos mislabeled when HLTV's internal file rotation straddles the half boundary, a false-negative `/state` recording check (the journal line it looked for only appears when externally polled), a duplicate-OPEN guard for re-fired match-start forwards, and a soak-verify grep matching its own success line as a failure (1.5.14) |
+
+### May 4-13: The KTPAmxxCurl Shutdown-Race Saga (Chapter One)
+
+Servers started segfaulting at the nightly 03:00 restart — always at shutdown, always inside the curl module's static destructors. This month produced three point releases against it; the full story took until July to land.
+
+- **1.3.9 (05-05):** root-caused the visible crash — the module's singleton destructor runs at process exit *after* KTPAMXX core has been unmapped, and its `IsAmxValid()` check calls through a now-dangling function pointer. Fix: an atomic `g_amxxcurl_detached` flag so late destructors take a safe path. Deployed to all 24 active instances the same morning.
+- **1.3.10 (05-05, staged 05-09):** moved the flag store earlier to close a residual window. Initially held back as "defensive only" — then a Dallas shutdown crash at a *different* binary offset proved 1.3.9 hadn't covered every destructor sub-path, and 1.3.10 went out.
+- **1.3.11 (05-13):** a different crash class entirely — a `std::system_error` thrown across a C callback boundary when libcurl handed the module a stale file descriptor, aborting the process. Fixed with asio's non-throwing `assign` overload plus a catch-all at the boundary.
+
+What nobody knew yet: the reason the module's own detach guard never armed is that **extension-mode shutdown never calls module detach at all** — that discovery, and the structural fix, came in July. The 1.3.11 stale-fd crash also turned out to be a symptom of a self-inflicted socket-lifecycle bug fixed in 1.3.14 (July).
+
+### May 7: HPAK Crash Chain Closed — `sv_send_logos` Restored
+
+The April 22 crash day's precautionary `sv_send_logos "0"` was lifted fleet-wide after the full phased plan completed: hotfix → ReHLDS 920 defensive hardening → three-instance canary soak (1,279 player connects, 36 organized matches, zero cores) → fleet propagation via live cvar change, no restart needed. Sprays visible again.
+
+### May 9-13: Engine Releases + The 1000fps Result
+
+**ReHLDS .921-.923** (held on main since April) shipped riding the 05-10 nightly: five more HPAK NULL guards, physics-loop micro-hoists, and suppression of the noisy HLTV-spawn opcode alert (historically ~85% of all opcode alert volume, none of it actionable).
+
+**The absgrid breakthrough (05-12/13).** April's Stage C experiment — an absolute-time frame grid targeting ~999fps at baseline CPU — had stalled at ~643fps and been written off pending kernel research. A probe build (.924) falsified the working theory: the main loop was iterating cleanly at 1000Hz; the real blocker was `Host_FilterTime`'s frame gate at `sys_ticrate 1000` rejecting ~31% of frames against the loop's bimodal timing distribution. Setting `sys_ticrate 1500` (lowering the gate threshold) took the canary from 690 to 1000fps within two profiling cycles at **no measurable CPU increase** — roughly 50× more CPU-efficient than the never-sleep `-pingboost 4` mode it replaced.
+
+Rolled fleet-wide 05-13: ~24fps lift (fleet average ~975 → ~999.1), the never-sleep canary retired, and server-config layout standardized onto a shared-inheritance pattern across all five hosts in the same pass. The planned custom-kernel research track was closed as unnecessary. A four-day soak through 05-17 held clean.
+
+### May 6: Ten-TODO Day + Tier-2 Runner Live
+
+A single session closed ten open items, the headline being the **Tier-2 integration-test runner going live** on the data server: a self-hosted CI runner that boots a real `hlds_linux` against a mirror of the fleet's module stack and runs integration tests against it (first real run: 39 green). Also landed: the Tier-3 spike-categorizer telemetry aggregator wired into MySQL with a daily digest cron, and a perf-rollup FPS-floor refinement that cut false WARN alerts.
+
+### May 21: Score Persistence Built (Canary-Validated)
+
+KTPAMXX 2.7.17 added the DODX infrastructure for mid-match disconnect/rejoin score persistence (observed-deaths counter, deaths write-back, scoreboard broadcast), and KTPMatchHandler 0.10.13x carried the plugin half. Validated end-to-end on a single canary instance. In hindsight this subsystem's validation gate carried a subtle flaw that would silently reject nearly all production saves — the June deployment made it live, and July's root-causing made it *work* (see July).
+
+### May 31: Fleet Credential Rotation
+
+An audit found fleet credentials had been exposed in a public repository's history. All fleet SSH, game RCON, and database credentials were rotated the same day, and the exposure class was addressed going forward (public repos use placeholder conventions for hosts and secrets; one-off deploy tooling with embedded credentials is gitignored). A follow-up history audit in June confirmed no evidence of misuse.
+
+---
+
+## June 2026 - Hitreg Audit & LAN Preparation
+
+**Focus: a fleet-wide hit-registration audit that found a years-old lag-compensation misconfiguration, engine telemetry to attribute the remaining frame spikes, and the provisioning dry-run for the July LAN.**
+
+### June 11: The Hitreg Audit — Lag Compensation Root Cause
+
+The long-standing "high-ping players are harder to hit than on legacy servers" complaint finally got a systematic audit, and the answer was a config value based on a wrong premise. The fleet ran `sv_unlagsamples 20` on the theory that at 1000Hz, more samples meant finer smoothing. But the client frame buffer advances per *client packet* (~100/s), not per server frame — so 20 samples meant ~200ms of latency smoothing, and the jitter guard scaled with it such that **a single ping spike silently zeroed lag compensation for subsequent shots**. Exactly the busy-server, high-ping-target pattern the complaints described.
+
+Fix: `sv_unlagsamples 1` (the engine default), set live and persisted on all instances 06-11. **ReHLDS .925** (06-12) added verification telemetry: a counter for how often the live config zeroes compensation, plus a shadow recompute of what the old 20-sample config would have done on the same traffic.
+
+The same audit produced the **CPU placement policy**: on the 4-core/8-thread bare metals, five instances can't all get exclusive physical cores, so the highest-stakes match goes on the one instance with a clean exclusive core, and the two instances sharing a physical core don't host simultaneous matches.
+
+### June 16: Audit Closed on Load Data
+
+A four-day telemetry pull with real match traffic (15,332 spike frames across 24 instances) settled both audit questions:
+
+- **Lag compensation:** the new config zeroed compensation **zero** times; the shadow counter showed the old config would have done it thousands of times on the busiest instances. Root cause confirmed, fix validated.
+- **Frame spikes:** severe ≥50ms spikes were 97% physics-phase, attributed by the .925 per-entity telemetry to `dod_control_point_master`'s think function inside the closed-source game DLL — recorded at the time as "inherent to stock DoD, no KTP-side leverage." *This interpretation was overturned in July:* the game thread wasn't burning CPU in that think, it was **blocked on disk I/O** from per-line log writes. The June conclusion was measuring where the thread was, not why it was stuck. (See July — the async log writers.)
+
+**ReHLDS .926** (06-16) split the I/O telemetry by sink (UDP logaddress vs disk file write) — the cheap diagnostic that would later prove which sink was blocking — and retired the now-answered audit instrumentation. Also that day: **KTPAdminAudit 2.7.14** (contributed) removed a synchronous `server_exec()` from the `.changemap` countdown that corrupted the destination map's task scheduler, and the HLTV `/state` endpoint's false "not recording" warnings were fixed (a fixed-delay journal scan replaced with poll-until-fresh).
+
+### June 21: LAN Provisioning Dry-Run
+
+Full scratch-host dry-run of `lan-deploy.sh` on the actual July LAN machine (Ubuntu 26.04): six game servers up, pinned, at ~990fps, with HLStatsX/HLTV/FastDL/MySQL/TeamSpeak alongside. The newer OS surfaced ~16 provisioning fixes (sysctl application at boot, kernel flavor availability, library naming, MySQL auth plugin and schema compatibility, service drift) — all fixed and committed, which is the point of a dry-run a month early.
+
+### June 23-30: Tier-2 Self-Sustaining + Odds and Ends
+
+- **KTPMatchHandler**: new `ktp_half_end` public forward (contributed) — the existing `KTP_HALF_END` log line never reaches `register_logevent` in extension mode, so plugin consumers (KTPHudObserver) needed a real forward.
+- **Tier-2 runner** became self-sustaining: nightly scheduled runs (not just PR-triggered), per-run recompiles of companion plugins from upstream master so the runner can't silently drift from live code, a Discord heartbeat so a dead runner reads as dead rather than green, and dynamic version pins instead of hardcoded constants.
+- Three quarantined maps (`dod_caen2`, `dod_overlord`, `dod_zalec` — missing-model crash risks) restored fleet-wide after the missing models turned up elsewhere on-box.
+- **DODX 2.7.18** staged and activated (06-30): adds a dormant per-shot `dod_client_weapon_fire` forward for future work; no consumer yet.
+- The **WSDoD LAN web app** (dodworldseries.com) — captain seeding, schedule, result reporting, live standings, bracket, Discord check-in, demo/VOD uploads, map veto — had been built in a ~57-commit sprint June 1-11; the domain went live with HTTPS 06-15.
+- Anti-cheat client and API releases continued in the private repo.
+
+---
+
+## July 2026 - Root-Cause Month
+
+**Focus: the month the long-tail mysteries fell. The frame-spike class, the shutdown segfault class, the score-persistence rejections, and the stale-name class all got root-caused and fixed. Most traced back to one structural fact about extension mode. All of it ran on a release train against the 2026-07-24 LAN freeze.**
+
+### The Extension-Mode Lifecycle Reckoning
+
+The unifying discovery of the month: **large parts of stock AMX Mod X's init and teardown only exist on the Metamod code path, and KTP doesn't run Metamod.** State that Metamod-era code reset per map was never reset; teardown Metamod performed at shutdown never happened; forwards Metamod-era wrappers fired never fired. Four separate production incidents traced back to this one fact:
+
+| Incident | Root cause | Fix |
+|----------|-----------|-----|
+| Recurring shutdown segfault (Chicago, later matched to a Dallas core) | Extension-mode shutdown never calls module detach — module static destructors ran after KTPAMXX was unmapped | ReHLDS .928 `KTP_ExtensionShutdown` callback + KTPAMXX 2.7.22 export; module detach now runs at every shutdown. Positively verified: the detach log lines appear on every nightly stop, and the crash class has not recurred |
+| Score-persistence saves silently rejected | DODX's observed-deaths counter was reset only in a Metamod-only code path — it grew forever, and the validation gate compared it against live values | Reset wired into extension-mode paths (2.7.20), counter made structurally exactly-once (2.7.22), gate re-tuned (0.10.144) |
+| Mid-match crash on a Dallas instance | The `hostname` cvar pointer is cached in Metamod's spawn hook — never in extension mode; NULL for the process lifetime | 2.7.22 caches it in extension-mode init + NULL guards |
+| Stale player names everywhere (`get_user_name` returned connect-time names for the whole session) | The engine's `SV_ClientUserInfoChanged` hookchain call site had been disabled since Dec 2025 — the `client_infochanged` forward never fired in extension mode | ReHLDS .929 re-enables it behind `ktp_userinfo_hook` (exactly-once dispatch, live rollback cvar); KTPAMXX 2.7.24 fixes the forward's ordering so rename detection works |
+
+### The Frame-Spike Class: Solved and Killed
+
+June's "no leverage — it's the game DLL" conclusion was overturned on 07-03 by off-CPU profiling on a live New York instance: the game thread wasn't burning CPU inside entity thinks, it was **blocked on ext4 journal commits** — synchronous per-line log writes (open/write/close per line, on the game thread) stalling up to 167ms on the consumer SSDs. Seventeen of seventeen stall timestamps matched AMXX log lines. One offender was a debug log in KTPPracticeMode that fired on every grenade explosion in every live match (removed in 1.4.3).
+
+The fix was structural, in both layers that write logs:
+
+- **ReHLDS .927 (async log-file writer):** the game thread enqueues lines into a ring buffer; a writer thread owns the file. Full queue drops-and-counts, never blocks. `ktp_log_async 0` is an exact-legacy-path rollback. Canaried on New York through a prime-time match night (game-thread worst-case fell from 167ms to ≤1ms while the writer absorbed 72-187 disk stalls per instance), then fleet-wide at the 07-04 nightly.
+- **KTPAMXX 2.7.19 (async CLog):** the same treatment for `log_amx`/`LogError`, plus per-map log rotation that extension mode had never run.
+
+The proof arrived in the telemetry: all five physics-phase stall-magnitude classes — 12,282 lifetime occurrences in the worst bucket — **stopped firing entirely** the night the async writers activated, and stayed at zero.
+
+### Score Persistence: From Silently Broken to Declared Live
+
+The May-built subsystem turned out to have been rejecting nearly every save in production — the validation gate demanded two independently-derived death counts agree exactly, and they legitimately differ by one in a common case. The July arc: root cause (the never-reset counter, 07-05) → lifecycle fixes (2.7.20/2.7.22) → plugin-side baselines and resync (0.10.142/0.10.143) → gate re-tuned to tolerate exactly the benign divergence while still refusing anything shaped like real corruption (0.10.144) → **declared live 2026-07-13** on a validation sweep: 36 validated saves, zero rejections, six disconnect-rejoin cycles restored exactly.
+
+One methodology lesson from the arc stuck: single-instance sweeps flatter the result. The rejection rate measured on one host read 4.5% when the true fleet rate was ~14%. Multi-instance data before declaring anything live.
+
+### Full-Stack Review Fix Waves (07-05 → 07-18)
+
+A five-agent full-stack code review (07-05) plus deeper per-surface assessments drove a coordinated fix-and-deploy sequence, shipped as attribution-clean waves — one change class per nightly, never an engine cut and a plugin wave on the same night:
+
+| Wave | Contents |
+|------|----------|
+| 07-07 | KTPAMXX 2.7.20 + KTPMatchHandler 0.10.142 (two long-standing criticals: OT state clobber, permanent changelevel-debounce latch) — activated early via a manual restart-script run |
+| 07-07 | Discord Relay 1.1.0 deployed: Node 22, dead code and unauthenticated debug endpoints removed, timing-safe auth |
+| 07-09 | ReHLDS .928: every-attempt RCON audit, `KTP_ExtensionShutdown`, `ktp_extension_loaded` sentinel, async-writer hardening |
+| 07-10 | Wave A/B plugins: KTPMatchHandler 0.10.143, KTPScoreTracker 1.1.3, KTPAdminAudit 2.7.17 (timed-ban persistence + `.unban` + failed-RCON consumer), KTPCvarChecker 7.29 (silent-client tripwire), KTPPracticeMode 1.4.6, KTPHLTVRecorder 1.7.1, KTPGrenadeLoadout 1.0.9, re-keyed KTPFileChecker |
+| 07-11 | Platform wave: KTPAMXX 2.7.22 + ReAPI 5.29.0.365. Refcounted SP forwards closed a multi-year mystery — recycled forward handles executing the wrong callback explained both a historic event double-fire and a silent timer-loss class. Plus the `hostname` NULL fix, shipped one day after the crash it fixes was captured live |
+| 07-12 | KTPCvarChecker 7.30 (`cl_mousegrab` de-enforced for windowed/multi-monitor players) |
+| 07-14 | KTPAmxxCurl 1.3.14: the socket-lifecycle fix — the module had been closing sockets libcurl still owned, destroying connection reuse for every HTTP call on the box. Post-activation: zero warnings, zero cores |
+| 07-15 | KTPMatchHandler 0.10.145 (contributed `.override_ready_limits` for HUD-clock validation) + KTPHLTVRecorder 1.7.2 |
+| 07-17 | KTPMatchHandler 0.10.146: all ~10 match-teardown exits routed through one idempotent notifier — every exit now closes every sink (Discord, HLStatsX, backend match row) |
+| 07-18 | KTPAMXX 2.7.24: the extension-mode lifecycle cut (changelevel-failure recovery, disconnect cleanup, `client_infochanged` ordering, message-parameter bounds) |
+| 07-19 | ReHLDS .929: `SV_ClientUserInfoChanged` re-enabled behind `ktp_userinfo_hook`; live rename test passed (exactly one dispatch, fresh name, no kick) |
+
+### Monitoring & Operations Rework
+
+- **Netdata retired fleet-wide (07-02)** after its plugin collection was found consuming significant CPU on a housekeeping core that hardware-shares with a game instance. Replaced by the in-house script set (fleet-health heartbeat, perf rollup, crash reporter, telemetry aggregation — see TECHNICAL_GUIDE § Fleet Monitoring).
+- **Host tuning additions (07-02):** transparent hugepages forced to `never`, soft-lockup watchdog disabled on isolated cores; both persisted across reboots. Firmware interrupt rates measured and ruled out as a hitreg factor on all bare metals.
+- **`mp_logecho 0` fleet-wide (07-09):** AMXX event lines no longer echo to console; log analysis reads AMXX logs directly.
+- **The core-dump location trap (07-14):** every prior wave's "no new cores" check had been searching the game trees, where the only `core.*` matches are innocent files (`core.so`, `core.ini`, `core.wav`) — a check that looks clean whether or not anything crashed. Cores actually land in the system temp directory. A full historical sweep confirmed the bad check had never actually masked a crash (an independent crash-reporter alert path existed the whole time), and the correct check is now codified. The same sweep matched a June Dallas core to the Chicago shutdown-segfault signature — independent confirmation that the class was structural, not host-specific.
+- **Perf-rollup gates hardened (07-14):** the async-log fix worked so well that most hosts' spike baselines collapsed to zero, which would have made the statistical alert gate fire on a single 10ms frame. Added magnitude floors, a severe-stall bypass, and an absolute ceiling so a slowly-degrading host can't hide inside its own worsening baseline.
+- **Fleet topology:** Chicago's fifth instance — disabled since April because 4 dedicated vCPUs can't host 5 instances without contention — was deleted outright 07-13. The fleet is now a flat **24 instances** (4×5 bare-metal + 4 Chicago), with the 4-instance Chicago configuration measuring best-in-fleet on every spike metric.
+- **Backend deploys (07-19):** Discord Relay 1.1.1 (idempotent-only 5xx retry, per-fetch timeouts, surrogate-safe truncation), KTPFileDistributor 1.1.3 (rename emits delete for the old path; per-server key failures isolated), HLTV restart script verifies each instance alive post-restart before reporting green.
+- **Process lesson (07-09, preserved on purpose):** an evening investigation concluded fleet RCON authentication was broken; a same-evening re-investigation found both "failures" were bugs in the ad-hoc probe tool (an unstripped trailing newline; a CRLF-vs-LF config read). The engine had been fine throughout. Standing rule since: RCON tooling reuses the canonical tested client, nobody hand-rolls the wire protocol twice.
+
+### Tier-2: The Runner That Must Match the Fleet
+
+Two coverage findings this month sharpened what the integration-test tier is for:
+
+- **Stack drift (07-10):** the runner's module stack had silently drifted from the fleet — recent green runs had been certifying an environment production didn't run. Re-synced, and a drift tripwire added to the 6-hour heartbeat comparing the runner's binaries against a fleet reference host. Policy: the runner is re-synced deliberately after each verified fleet wave, never automatically.
+- **The keep-alive blind spot (07-13/14):** the mock HTTP relay spoke HTTP/1.0, so libcurl never cached a connection — meaning Tier-2 had never exercised the curl module's connection-reuse path, where its entire crash history lived. The mock now defaults to keep-alive and counts TCP connections separately from requests; the new reuse test was verified **red on the old build before its green was trusted** on the new one. A regression test nobody has watched fail is a test nobody should trust.
+
+### Anti-Cheat (High Level)
+
+KTPAntiCheat client and API releases continued through the 0.7.x line in the private repo: the client remains mandatory for league play and version-gated (the backend advertises the required version; the client self-updates), the API moved behind TLS, and match-linkage integration on the game-server side was hardened (0.10.146's teardown coverage closes every match row). Detection specifics stay out of public docs by policy.
+
+### Rounding Out: The Pre-LAN Calendar
+
+The month closed with the release train through the 2026-07-24 LAN freeze: KTPAmxxCurl 1.3.15 (crash-safety hardening at every game-thread boundary) built 07-18 and staged for the 07-20 nightly, the Tier-2 runner re-synced to the .929 stack, a stale FileDistributor target for the deleted Chicago instance pruned, and a documentation-refresh pass across the C++ repos that produced a standing module/engine release checklist (the short version: commit before you build, verify by checksum not banner, re-verify install paths against a live host, and never skip the docs step again).
+
+---
+
 ## Related Documentation
 
 > For granular per-version changelogs, see the `CHANGELOG.md` in each project's repository.
@@ -1051,4 +1215,4 @@ Per-host inotify watcher + `gdb` wrapper that turns kernel-emitted core dumps in
 
 ---
 
-*Last updated: 2026-04-25*
+*Last updated: 2026-07-20*

@@ -7,7 +7,7 @@ Watches `/tmp/core.*` on each game host. When a new core appears, runs `gdb -bat
 ## What gets posted
 
 ```
-ATL3 (74.91.121.9:27017) — SIGSEGV in Mem_Free
+ATL3 (<host>:27017) — SIGSEGV in Mem_Free
 ─────────────────────────────────────────────
 Binary: hlds_linux       PID: 12345        Signal: SIGSEGV (Segmentation fault)
 Top frame: Mem_Free at zone.cpp:432
@@ -77,15 +77,15 @@ Within ~3 seconds you should see a new `/tmp/core.hlds_linux.<pid>.<ts>` plus ma
 
 Embeds use `<region><instance>` shorthand — same convention as KTPMatchHandler's `match_id` (`1772072225-ATL5`):
 
-| Host IP | Region | 27015 | 27016 | 27017 | 27018 | 27019 |
+| Host | Region | 27015 | 27016 | 27017 | 27018 | 27019 |
 |---------|--------|-------|-------|-------|-------|-------|
-| 74.91.121.9 | ATL | ATL1 | ATL2 | ATL3 | ATL4 | ATL5 |
-| 74.91.126.55 | DAL | DAL1 | DAL2 | DAL3 | DAL4 | DAL5 |
-| 66.163.114.109 | DEN | DEN1 | DEN2 | DEN3 | DEN4 | DEN5 |
-| 74.91.123.64 | NY | NY1 | NY2 | NY3 | NY4 | NY5 |
-| 172.238.176.101 | CHI | CHI1 | CHI2 | CHI3 | CHI4 | CHI5† |
+| `<ATL_BM_GAME_IP>` | ATL | ATL1 | ATL2 | ATL3 | ATL4 | ATL5 |
+| `<DAL_GAME_IP>` | DAL | DAL1 | DAL2 | DAL3 | DAL4 | DAL5 |
+| `<DEN_GAME_IP>` | DEN | DEN1 | DEN2 | DEN3 | DEN4 | DEN5 |
+| `<NYC_GAME_IP>` | NY | NY1 | NY2 | NY3 | NY4 | NY5 |
+| `<CHI_GAME_IP>` | CHI | CHI1 | CHI2 | CHI3 | CHI4 | — |
 
-† Chicago 27019 is intentionally trial-disabled but the alias still resolves if it crashes.
+Chicago runs four instances — its fifth (27019) was removed 2026-07-13.
 
 If port resolution fails (PID gone before daemon could check `/proc`, no live PID matched), the alias becomes `<REGION>?` and the embed flags it.
 

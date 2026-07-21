@@ -80,7 +80,7 @@ DRY_RUN=1 /usr/local/bin/ktp-demo-cleanup-auto.sh   # preview
 | 27025-27029 | DAL1-DAL5 |
 | 27030-27034 | DEN1-DEN5 |
 | 27035-27039 | NY1-NY5   |
-| 27040-27044 | CHI1-CHI5 (CHI5 currently disabled) |
+| 27040-27043 | CHI1-CHI4 (the CHI5 instance and its HLTV pair were removed 2026-07) |
 
 ## OT handling
 
