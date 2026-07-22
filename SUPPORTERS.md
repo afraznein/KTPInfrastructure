@@ -14,7 +14,11 @@ Even a few bucks a month covers a real slice of the hosting bill.
 
 ---
 
-## Server Month ($25/mo)
+## Server Month ($55/mo)
+
+_Be the first._
+
+## Half a Server ($25/mo)
 
 _Be the first._
 
