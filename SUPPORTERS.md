@@ -16,7 +16,7 @@ Even a few bucks a month covers a real slice of the hosting bill.
 
 ## Server Month ($55/mo)
 
-- **Toxinator** — covers the **Chicago** server in full, directly through his workplace. Thank you.
+- **Toxinator** — covers the **Chicago** dedicated VPS in full, in-kind through his workplace. It runs more than $55/mo, but Server Month is the highest tier on the list. Thank you.
 
 ## Half a Server ($25/mo)
 
