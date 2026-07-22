@@ -4,6 +4,28 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### GitHub Sponsors funding integration (2026-07-21 / 22)
+
+Stood up community funding for the fleet: a GitHub Sponsors profile
+(`github.com/sponsors/afraznein`) with five tiers, plumbed into the repos and the
+Discord tooling. Perks are recognition-only by design — sponsorship never affects
+a match, a queue, roster spots, or anything competitive (a hard rule for a league
+that runs an anti-cheat).
+
+- **`SUPPORTERS.md`** — recognition list for $5-and-up sponsors, grouped by tier
+  (Server Month $55 / Half a Server $25 / MVP $10 / Supporter $5). One bare-metal
+  game server runs $55/mo, which anchors the top tier and the funding goal.
+- **`scripts/list-sponsors.sh`** — on-demand sponsor/tier lister via the GitHub
+  GraphQL API (`gh api graphql`); needs no extra token scope for login + tier
+  (only `read:user` if timestamps are wanted).
+- **`.github/FUNDING.yml`** rolled out to all 19 public KTP repos (Sponsor button
+  → `github.com/sponsors/afraznein`).
+- **Real-time alerts** — KTPAdminBot 0.9.10 serves `POST /github/sponsors` behind
+  the `api.ktpdod.com` nginx vhost (exact-match location + `limit_req`), HMAC-SHA256
+  verified, posting new/tier-change/cancel events to a Discord alert channel.
+  Confirmed live end-to-end by GitHub's own setup ping. See the KTPAdminBot
+  CHANGELOG for the handler detail.
+
 ### Documentation stack refresh (2026-07-20)
 
 The two big reference docs had been carrying staleness banners since 2026-07-07;

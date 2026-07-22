@@ -16,7 +16,7 @@ Even a few bucks a month covers a real slice of the hosting bill.
 
 ## Server Month ($55/mo)
 
-_Be the first._
+- **Toxinator** — covers the **Chicago** server in full, directly through his workplace. Thank you.
 
 ## Half a Server ($25/mo)
 
