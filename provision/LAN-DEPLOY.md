@@ -255,6 +255,46 @@ failure (SIGSEGV + coredump), so a typo would take the fleet down. On boot the
 servers come up bound to the *old* IP and crash until you run the tool; that
 first crash is expected.
 
+### Broadcast: live web overlay + HLTV-over-internet
+
+Two optional broadcast pieces, both codified and both idempotent. Neither is
+required for the tournament to run — they're for streaming/online viewers.
+
+**Live web overlay** (Jimmy Lockhart's DoD HUD Observer, the receiving half of
+the `KTPHudObserver.amxx` plugin that already ships with the servers). Stands up
+the Node backend + React frontend **on the box**, on the bulk disk, single-origin
+behind nginx on `:8080`:
+
+```bash
+sudo BOXIP=<box-lan-ip> ./lan-hud-overlay.sh --restart-servers
+# OBS browser source -> http://<box-ip>:8080/screen?server=KTP%20LAN%201  (…LAN 2-5)
+```
+
+Installs git + Node 20 if absent; builds with `--legacy-peer-deps` (react-bootstrap
+vs react 19 peer conflict). A same-origin source patch makes the frontend resolve
+the backend from `window.location.origin`, so it is **IP-portable** — a venue IP
+change needs nothing here. `--restart-servers` reloads the plugins so they POST to
+`127.0.0.1:8088/ingest`; without it, restart the game servers when ready. Verify
+with `curl -s http://127.0.0.1:8080/api/servers` (all 5 should be `online`).
+
+**HLTV over the internet** (frp UDP relay). Makes the HLTV proxies reachable from
+the internet **without any port-forward on the box's network** — works behind
+venue NAT. Run the relay side first on a public host (the KTP data server), then
+the client side on the box with the token it prints:
+
+```bash
+# on the public relay host:
+sudo ./lan-hltv-tunnel.sh relay                 # prints TOKEN + the client command
+
+# on the LAN box:
+sudo RELAY_HOST=<relay-public-ip> TUNNEL_TOKEN=<token> ./lan-hltv-tunnel.sh client
+# viewers spectate with:  connect <relay-public-ip>:28020   (LAN 1; +1 per instance)
+```
+
+The token is generated on the relay, never stored in-repo. Both sides install as
+systemd units (`frps` / `frpc`) that survive reboots. `RELAY_HOST` is the fixed
+public relay, so a box IP change doesn't affect the tunnel.
+
 ## Differences from the public-cloud fleet
 
 | Concern | Cloud fleet | LAN |
