@@ -11,6 +11,7 @@
 #   warmup    The stock warmup server: details / console / start / stop
 #   perf      Live system monitor (htop) + per-instance fps sweep
 #   ip        Show this box's LAN IP(s)
+#   changeip  Retarget the whole stack to a new bind IP (venue day; needs root)
 #   editconf  Open lan-deploy.conf in a text editor
 #   menu      Interactive menu of all of the above (default)
 
@@ -165,6 +166,31 @@ cmd_ip() {
     pause
 }
 
+cmd_changeip() {
+    # Venue-day retarget to a new bind IP. Needs root (edits configs across
+    # dodserver/hltvserver/warmup + the stats DB + restarts servers), so it
+    # sudo's the dedicated tool — a full lan-deploy re-run CANNOT change the IP
+    # on a live box (see LAN-DEPLOY.md). Runs AS the GUI user; sudo prompts.
+    local tool=/opt/ktp/KTPInfrastructure/provision/lan-change-ip.sh
+    if [ ! -x "$tool" ]; then echo "lan-change-ip.sh not found at $tool"; pause; return; fi
+    local cur
+    cur=$(grep -E '^LAN_IP=' /opt/ktp/KTPInfrastructure/provision/lan-deploy.conf 2>/dev/null | cut -d= -f2 | tr -d '"')
+    echo "Retarget the LAN stack to a new bind IP (venue day)."
+    echo "  Configured IP: ${cur:-unknown}"
+    echo "  Local IP(s)  : $(hostname -I)"
+    read -rp "New venue IP (blank = cancel): " ip
+    [ -n "$ip" ] || { echo "cancelled"; pause; return; }
+    echo; echo "--- preview (dry run) ---"
+    sudo "$tool" "$ip" --dry-run
+    echo
+    read -rp "Apply this change and restart all servers? [y/N] " ok
+    case "$ok" in
+        y|Y|yes|YES) echo; sudo "$tool" "$ip" ;;
+        *) echo "cancelled — no changes made" ;;
+    esac
+    pause
+}
+
 cmd_editconf() {
     if [ ! -e "$CONF" ]; then echo "Config not found at $CONF"; pause; return; fi
     if command -v gnome-text-editor >/dev/null 2>&1; then gnome-text-editor "$CONF"
@@ -181,13 +207,14 @@ cmd_menu() {
         echo "  2) Live status               7) Warmup server"
         echo "  3) Attach to a console       8) Perf / system monitor"
         echo "  4) Restart (server/all)      9) Show LAN IP"
-        echo "  5) Edit LAN config           q) quit"
+        echo "  5) Edit LAN config           c) Change LAN IP (venue)"
+        echo "                               q) quit"
         echo "======================================================="
         read -rp "> " pick
         case "$pick" in
             1) cmd_details ;; 2) cmd_status ;; 3) cmd_console ;; 4) cmd_restart ;;
             5) cmd_editconf ;; 6) cmd_hltv ;; 7) cmd_warmup ;; 8) cmd_perf ;;
-            9) cmd_ip ;; q|Q) break ;; *) : ;;
+            9) cmd_ip ;; c|C) cmd_changeip ;; q|Q) break ;; *) : ;;
         esac
     done
 }
@@ -201,6 +228,7 @@ case "${1:-menu}" in
     warmup)  cmd_warmup ;;
     perf)    cmd_perf ;;
     ip)      cmd_ip ;;
+    changeip) cmd_changeip ;;
     editconf) cmd_editconf ;;
     menu|*)  cmd_menu ;;
 esac

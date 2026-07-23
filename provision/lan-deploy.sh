@@ -220,6 +220,7 @@ install_convenience_files() {
         "warmup|Warmup Server|applications-games"
         "perf|Perf Monitor|utilities-system-monitor"
         "ip|Show LAN IP|network-wired"
+        "changeip|Change LAN IP|network-transmit"
         "editconf|Edit LAN Config|text-editor"
     )
     # The GUI login user is the install-time desktop account (first UID-1000
@@ -262,12 +263,18 @@ install_convenience_files() {
         for spec in "${launchers[@]}"; do
             sub="${spec%%|*}"; rest="${spec#*|}"; name="${rest%|*}"; icon="${rest##*|}"
             dfile="$home/Desktop/ktp-${sub}.desktop"
+            # changeip needs ROOT (edits configs across users + the stats DB +
+            # restarts systemd units), so it runs AS the GUI user and sudo-prompts
+            # for their password — NOT through the dodserver NOPASSWD shim the
+            # read-only commands use.
+            local sub_exec="$exec_body"
+            [ "$sub" = changeip ] && sub_exec="taskset -c 0,1 $home/lan-admin.sh"
             {
                 echo "[Desktop Entry]"
                 echo "Type=Application"
                 echo "Name=$name"
                 echo "Comment=KTP LAN admin: $sub"
-                echo "Exec=gnome-terminal -- $exec_body $sub"
+                echo "Exec=gnome-terminal -- $sub_exec $sub"
                 echo "Icon=$icon"
                 echo "Terminal=false"
                 echo "Categories=System;"
