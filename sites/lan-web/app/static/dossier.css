@@ -1003,7 +1003,9 @@ section.chapter {
 }
 .reg {
   display: grid;
-  grid-template-columns: 48px 1fr;
+  /* first column fits its label: numbers ("3.2") stay ~48px, longer text
+     labels ("Schedule"/"Standings") grow instead of bleeding into the body */
+  grid-template-columns: minmax(48px, max-content) 1fr;
   gap: 14px;
   align-items: baseline;
   padding: 4px 0;
