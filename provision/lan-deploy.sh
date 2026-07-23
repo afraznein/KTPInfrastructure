@@ -131,10 +131,10 @@ RCON_PASSWORD="${RCON_PASSWORD:-$(gen_pw)}"
 # "Join password: REDACTED" in the summary, reading like sanitized output.
 case "${SV_PASSWORD}" in
     "" )
-        echo "ERROR: SV_PASSWORD is not set." >&2
-        echo "Set it in lan-deploy.conf or the environment — it is the join password" >&2
-        echo "players type, so it cannot be auto-generated." >&2
-        exit 1 ;;
+        # Empty is a deliberate "open server" config — no join password. clone-ktp-stack.sh
+        # already treats an empty sv-password as open; competitive access is gated by the
+        # .ktp match password, not sv_password.
+        echo "NOTE: SV_PASSWORD empty — servers deploy OPEN (no join password)." ;;
     REDACTED|REDACTED_*|CHANGEME|changeme )
         echo "ERROR: SV_PASSWORD is still the placeholder '${SV_PASSWORD}'." >&2
         echo "Set a real value in lan-deploy.conf or the environment." >&2
@@ -162,7 +162,7 @@ Timezone:              $TIMEZONE
 Game servers:          $NUM_INSTANCES instances on ports $BASE_PORT-$((BASE_PORT + NUM_INSTANCES - 1))
 HLTV ports:            $HLTV_BASE_PORT-$((HLTV_BASE_PORT + NUM_INSTANCES - 1))
 Server name prefix:    $SERVER_NAME_PREFIX
-Join password:         $SV_PASSWORD
+Join password:         ${SV_PASSWORD:-(open — no join password)}
 Artifacts:             $ARTIFACTS_PATH
 libsteam_api.so:       $LIBSTEAM_API_PATH
 HLTV binaries:         ${HLTV_BINARIES_PATH:-(unset — manual copy required after install)}

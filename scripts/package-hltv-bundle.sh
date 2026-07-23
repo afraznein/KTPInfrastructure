@@ -76,7 +76,7 @@ echo
 echo "Bundle written: $OUT ($FINAL_SIZE)"
 echo
 echo "Verify by listing top-level entries:"
-tar -tzf "$OUT" | awk -F/ '{print $2}' | sort -u | head -15
+tar -tzf "$OUT" | awk -F/ '{print $2}' | sort -u | head -15 || true   # info-only; tolerate SIGPIPE under pipefail
 echo
 echo "Transfer to the LAN box (scp / rsync / USB), then:"
 echo "  mkdir -p /tmp/hltv-staging"

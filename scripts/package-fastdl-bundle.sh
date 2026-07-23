@@ -66,7 +66,7 @@ echo
 echo "Bundle written: $OUT ($FINAL_SIZE)"
 echo
 echo "Top-level entries:"
-tar -tzf "$OUT" | awk -F/ '{print $1}' | sort -u | head -10
+tar -tzf "$OUT" | awk -F/ '{print $1}' | sort -u | head -10 || true   # info-only; tolerate SIGPIPE under pipefail
 echo
 echo "Transfer to the LAN box, then:"
 echo "  mkdir -p /tmp/fastdl-staging"

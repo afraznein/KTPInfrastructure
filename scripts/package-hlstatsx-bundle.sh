@@ -62,7 +62,7 @@ echo
 echo "Bundle written: $OUT ($FINAL_SIZE)"
 echo
 echo "Contents:"
-tar -tzf "$OUT" | head -20
+tar -tzf "$OUT" | head -20 || true   # info-only; tolerate SIGPIPE under pipefail
 echo "  ..."
 echo "  (total $(tar -tzf "$OUT" | wc -l) entries)"
 echo

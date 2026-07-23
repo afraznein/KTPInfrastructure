@@ -125,7 +125,7 @@ empty if you'd rather do it manually post-install.
   custom engine, no plugins, no HLTV, no stats). A separate manual
   LinuxGSM install on the larger HDD (`/srv/ktpdata/warmup`), pinned
   `taskset -c 0,1`. 24 slots, 60-min timer, rotates
-  `dod_pandemic_aim ↔ dod_orange`, rcon `Philly2026`, logging off.
+  `dod_pandemic_aim ↔ dod_orange`, rcon `<WARMUP_RCON>` (real value in the gitignored `infrastructure.md`), logging off.
   Config + step-by-step in
   [`../config/lan/warmup/README.md`](../config/lan/warmup/README.md)
   (its `dodserver.cfg` + `mapcycle.txt` live in that folder). Needs its
@@ -172,9 +172,17 @@ must exist before Phase 4 installs `mysql-server`**. Game servers (`/home/dodser
 stay on the **primary** disk; everything else rides the larger HDD.
 
 ```bash
-# larger HDD = /dev/sdb — VERIFY with lsblk first!
-parted /dev/sdb --script mklabel gpt mkpart primary ext4 0% 100%
-mkfs.ext4 -L ktpdata /dev/sdb1
+# ⚠️ IDENTIFY THE BULK DISK FIRST — do NOT assume /dev/sdb. Device letters are
+# not stable and may be the OS disk (on the Philly box /dev/sdb IS the OS/root
+# disk; the bulk disk is /dev/sda). Confirm with `lsblk -o NAME,SIZE,MODEL,MOUNTPOINT`,
+# then use the /dev/disk/by-id/ path so a rename can't point mkfs at the wrong disk.
+# ("two-HDD" is historical — the disks may both be SSDs.)
+DISK=/dev/disk/by-id/ata-XXXX          # <- the BULK disk from `ls -l /dev/disk/by-id/`
+lsblk "$DISK"                          # sanity: NOT the OS disk, nothing mounted
+wipefs -a "$DISK"
+parted "$DISK" --script mklabel gpt mkpart primary ext4 0% 100%
+partprobe "$DISK"; udevadm settle
+mkfs.ext4 -L ktpdata "${DISK}-part1"
 mkdir -p /srv/ktpdata
 echo 'LABEL=ktpdata /srv/ktpdata ext4 defaults,noatime 0 2' >> /etc/fstab
 mount /srv/ktpdata
@@ -224,6 +232,28 @@ Everything else has a default. Empty Discord URLs == silent monitoring.
 Each phase checks for existing state and skips if already done. Safe to
 re-run after a failure once you've fixed the cause. To force a full
 reinstall, remove `/home/dodserver/dod-<port>/serverfiles/` and re-run.
+
+### Changing the bind IP (venue day) — use `lan-change-ip.sh`, NOT a re-run
+
+A full `lan-deploy.sh` re-run **cannot** change `LAN_IP` on a box whose servers
+are already running: `clone-ktp-stack.sh` refuses to overwrite live binaries
+while any `hlds_linux` is up, and Phase 1 re-installs the LinuxGSM monitor cron,
+which revives the servers within a minute — before Phase 3 runs. A catch-22.
+
+To retarget a live deployment to a new IP (the normal venue-day case), use the
+dedicated tool. It rewrites only the IP-bearing config values + the
+`hlstats_Servers` rows and restarts the game/HLTV/warmup servers — no re-deploy,
+keys (RCON, HLTV API) untouched:
+
+```bash
+lan-show-ip.sh                          # read the new (venue) IP
+sudo ./lan-change-ip.sh <new-ip>        # --dry-run to preview; --force to skip the local-IP guard
+```
+
+It refuses an IP that isn't on a local interface — hlds crashes on a bind
+failure (SIGSEGV + coredump), so a typo would take the fleet down. On boot the
+servers come up bound to the *old* IP and crash until you run the tool; that
+first crash is expected.
 
 ## Differences from the public-cloud fleet
 
