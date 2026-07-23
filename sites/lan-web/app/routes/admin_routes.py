@@ -14,7 +14,7 @@ router = APIRouter()
 
 
 def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
-    """Returns (current admins, promotable operators).
+    """Returns (current admins, promotable players).
 
     Admins merge env bootstrap ids with web-granted rows; labels resolve from
     the roster where a Discord id is linked. Config admins are never removable;

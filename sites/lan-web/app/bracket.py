@@ -279,6 +279,21 @@ def generate_bracket():
             )
 
 
+def regenerate_bracket():
+    """Re-freeze seeding from current standings (e.g. after an audit-undo fixed a
+    Saturday score). Regenerating wipes lan_bracket, so refuse once any series
+    carries a reported result — mirrors materialize_matches' guard."""
+    from . import db
+    played = db.query_one(
+        "SELECT COUNT(*) AS c FROM lan_bracket WHERE status='final' "
+        "OR score_a IS NOT NULL OR score_b IS NOT NULL OR winner_team_id IS NOT NULL")
+    if played and played["c"]:
+        raise ValueError(
+            "Playoff series already have reported results — regenerating would erase them. "
+            "Undo the series results first if you truly mean to rebuild the bracket.")
+    generate_bracket()
+
+
 def get_bracket() -> list[dict]:
     from . import db
     field = ",".join("'%s'" % s for s in STAGE_ORDER)

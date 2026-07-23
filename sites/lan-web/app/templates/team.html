@@ -26,7 +26,7 @@
         .tm-empty { font-size:13px; color:var(--ink-faint); font-style:italic; }
       </style>
 
-      <a class="tm-back" href="{{ url_for('teams') }}">&larr; Order of Battle</a>
+      <a class="tm-back" href="{{ url_for('teams') }}">&larr; All teams</a>
       <a class="tm-back" href="{{ url_for('team_ics', team_id=team.id) }}" style="margin-left:18px;color:var(--wsdod-blue);">&#43; Add matches to calendar (.ics)</a>
 
       <h3>Roster</h3>
@@ -53,7 +53,7 @@
             <td class="tm-rnd">{{ ('R' ~ m.round) if kind == 'sat' else m.label }}</td>
             {% if kind == 'sat' %}<td class="tm-rnd">{{ m.time or '' }}</td>{% endif %}
             <td>{% if m.opponent %}{{ m.opponent }}{% if m.opp_tag %} <span class="tm-tag">[{{ m.opp_tag }}]</span>{% endif %}{% else %}<span class="tm-p">TBD</span>{% endif %}</td>
-            <td class="tm-srv">{% if m.station %}LAN {{ m.station }}{% else %}—{% endif %}</td>
+            <td class="tm-srv">{% if m.station %}Server {{ m.station }}{% else %}—{% endif %}</td>
             <td class="tm-srv">{{ m.map or '—' }}</td>
             <td class="tm-score">{% if m.status == 'final' or (m.our_score is not none and m.opp_score is not none) %}{{ m.our_score }}–{{ m.opp_score }}{% else %}—{% endif %}</td>
             <td>{% if m.result == 'W' %}<span class="tm-w">WIN</span>{% elif m.result == 'L' %}<span class="tm-l">LOSS</span>{% elif m.status == 'live' %}<span class="tm-p">live</span>{% else %}<span class="tm-p">—</span>{% endif %}</td>

@@ -13,7 +13,7 @@
   <section class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">&#9733;</div>
-      <h2 class="chapter-title">Staff — Roster &amp; Control</h2>
+      <h2 class="chapter-title">Admin — Event Control</h2>
       <span class="chapter-stamp">RESTRICTED</span>
     </header>
     <div class="chapter-body">
@@ -21,7 +21,7 @@
       <h3>Event control</h3>
       <table>
         <tbody>
-          <tr><td>Companies / operators</td><td>{{ teams|length }} teams · {{ total_players }} players</td></tr>
+          <tr><td>Teams / players</td><td>{{ teams|length }} teams · {{ total_players }} players</td></tr>
           <tr><td>Saturday map-skip poll</td><td>{{ 'OPEN' if map_skip_poll_open else 'closed' }}{% if skip_map %} · skip = <strong>{{ skip_map }}</strong>{% endif %} — <a href="{{ url_for('mapskip') }}">manage</a> · {{ pubtoggle('map_skip_results_published', map_skip_published) }}</td></tr>
           <tr><td>Seeding poll</td><td>{{ 'OPEN' if poll_open else 'closed' }} — <a href="{{ url_for('seeds') }}">manage</a> · {{ pubtoggle('seeding_results_published', seeding_published) }}</td></tr>
           <tr><td>Seeds locked</td><td>{{ 'yes' if seeds_locked else 'no' }}</td></tr>
@@ -33,7 +33,7 @@
       </table>
       <p style="font-size:13px;color:var(--ink-faint);">Order of operations: build rosters → map-skip poll → seeding poll → close + compute seeds → generate Saturday matches → report results → generate bracket.</p>
 
-      <h3 style="margin-top:24px;">Broadcast dispatch <span style="font-size:12px;color:var(--ink-faint);">(shows on every page)</span></h3>
+      <h3 style="margin-top:24px;">Site-wide announcement <span style="font-size:12px;color:var(--ink-faint);">(shows on every page)</span></h3>
       <form method="post" action="{{ url_for('admin_announce') }}" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
         <input name="announcement" value="{{ announcement }}" maxlength="240"
                placeholder="e.g. Round 2 begins in 10 minutes — report to your station" style="flex:1;min-width:22rem;">
@@ -77,7 +77,7 @@
       <div style="display:flex;flex-wrap:wrap;gap:10px 28px;align-items:flex-end;margin-top:12px;">
         {% if admin_candidates %}
         <form method="post" action="{{ url_for('admin_grant') }}" style="display:flex;gap:6px;align-items:center;">
-          <label style="font-size:12px;color:var(--ink-soft);">Promote an operator&nbsp;
+          <label style="font-size:12px;color:var(--ink-soft);">Promote a player&nbsp;
             <select name="discord_id" required style="margin-left:4px;">
               {% for c in admin_candidates %}<option value="{{ c.discord_id }}">{{ c.display_name }}{% if c.team %} · {{ c.team }}{% endif %}</option>{% endfor %}
             </select>
@@ -92,7 +92,7 @@
           <button type="submit">Grant staff</button>
         </form>
       </div>
-      <p style="font-size:12px;color:var(--ink-faint);">The promote list is operators whose Discord is linked on a roster. For anyone else, paste their
+      <p style="font-size:12px;color:var(--ink-faint);">The promote list is players whose Discord is linked on a roster. For anyone else, paste their
          Discord ID (Discord → Settings → Advanced → Developer Mode, then right-click the user → Copy User ID). Access takes effect on their next page load.</p>
 
       <h3 style="margin-top:30px;">Rosters</h3>
@@ -152,7 +152,7 @@
       </article>
       {% endfor %}
 
-      <h3 style="margin-top:24px;">Add company</h3>
+      <h3 style="margin-top:24px;">Add team</h3>
       <form method="post" action="{{ url_for('admin_team_add') }}" style="display:flex;gap:6px;align-items:center;">
         <input name="name" placeholder="team name" required style="width:14rem;">
         <input name="tag" placeholder="tag" style="width:6rem;">

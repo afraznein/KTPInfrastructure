@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Bracket{% endblock %}
+{% block title %}WSDoD / LAN 2026 / Sunday Playoffs{% endblock %}
 
 {% macro competitor(c) %}
   <div class="bkt-c {{ 'win' if c.win }} {{ 'tbd' if c.tbd }}">
@@ -18,7 +18,7 @@
   {% if m.slot %}
     {% set s = m.slot %}
     {% set need = ((m.best_of or 3) // 2 + 1) %}
-    {% if s.station %}<div class="bkt-srv">LAN {{ s.station }}</div>{% endif %}
+    {% if s.station %}<div class="bkt-srv">Server {{ s.station }}</div>{% endif %}
     {% if m.map %}<div class="bkt-srv">{{ m.map }}</div>{% endif %}
     {% if s.team_a_id and s.team_b_id %}<div class="bkt-srv"><a href="{{ url_for('veto', mkey=s.mkey) }}" style="color:var(--wsdod-blue);">{% if m.map %}map veto{% else %}run map veto{% endif %} &rsaquo;</a></div>{% endif %}
     {% set ready = s.team_a_id and s.team_b_id %}
@@ -36,7 +36,7 @@
       <input type="hidden" name="mkey" value="{{ s.mkey }}">
       <select name="station" onchange="this.form.submit()" title="Assign server / station">
         <option value="">—</option>
-        {% for n in range(1, 6) %}<option value="{{ n }}"{{ ' selected' if s.station == n }}>LAN {{ n }}</option>{% endfor %}
+        {% for n in range(1, 6) %}<option value="{{ n }}"{{ ' selected' if s.station == n }}>Server {{ n }}</option>{% endfor %}
       </select>
     </form>
     {% endif %}
@@ -69,7 +69,7 @@
   <section id="bracket" class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">06</div>
-      <h2 class="chapter-title">Bracket — Sunday Playoffs</h2>
+      <h2 class="chapter-title">Sunday Playoffs</h2>
       <span class="chapter-stamp">ROAD TO THE VERDICT / BO3</span>
     </header>
     <div class="chapter-body">
@@ -139,6 +139,11 @@
         </form>
         <span style="font-size:12px;color:{{ 'var(--olive)' if schedule_sun_published else 'var(--ink-faint)' }};">
           {{ 'PUBLIC — everyone can see the bracket' if schedule_sun_published else 'staff-only — the public sees a “pending” note until you publish' }}</span>
+        <form method="post" action="{{ url_for('bracket_regenerate') }}" style="display:inline;margin-left:12px;"
+              onsubmit="return confirm('Regenerate the bracket from current Saturday standings? This re-freezes the playoff seeds. It is refused automatically once any series has a reported result.');">
+          <button type="submit">Regenerate bracket</button>
+        </form>
+        <span style="font-size:12px;color:var(--ink-faint);">re-seeds from standings after a result correction — refused once any series has a result</span>
       </div>
       {% endif %}
 
@@ -168,9 +173,9 @@
 
       <p class="bkt-section-note">Single elimination — one loss ends your run for the title. The Play-in is best-of-one; the championship rounds are best-of-three:
          <b>Play-in 11:00</b> → <b>Quarterfinals 12:00</b> → <span style="color:var(--alert);">🍔 break</span> → <b>Semifinals 3:30</b> → <span style="color:var(--alert);">🍔 dinner</span> → <b>Placement finals 7:00</b> → <b>Final 8:00</b>, done by <b>~10:30 PM</b>.
-         Eliminated teams keep playing in the lower bracket below for final standing.</p>
+         Eliminated teams keep playing in the placement bracket below for final standing.</p>
 
-      <h3>Upper bracket &mdash; the title</h3>
+      <h3>Championship bracket</h3>
       <p class="bkt-section-note">Seeds {{ playin_lo }}–{{ playin_hi }} open in the Play-in (BO1); the {{ playin|length }} winner{{ '' if playin|length == 1 else 's' }} join seeds 1–{{ bye_seeds }} (byes) in the Quarterfinals. From there it's a clean run: Quarterfinals → Semifinals → Final, all BO3. The Final winner takes it all.</p>
 
       <div class="bkt-tree bkt-upper">
@@ -211,7 +216,7 @@
         </div>
       </div>
 
-      <h3 style="margin-top:32px;">Lower bracket &mdash; final standings (3rd–{{ n_teams }}th)</h3>
+      <h3 style="margin-top:32px;">Placement bracket (3rd–{{ n_teams }}th)</h3>
       <p class="bkt-section-note">Runs in parallel on spare servers — never feeds the title. Eliminated teams keep playing to settle every place.
          The play-in losers settle the bottom; the four QF losers play a lower semifinal, then off for 5/6 and 7/8; the two SF losers play for 3/4.
          The <strong>lower semifinals and lowest-tier matches are best-of-three</strong>; the <strong>3/4, 5/6 and 7/8 deciders are best-of-one</strong> at 7:00 PM, before the Final.</p>

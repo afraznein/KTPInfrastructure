@@ -1,6 +1,7 @@
 """Saturday schedule: template view, result reporting, live standings."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import auth, common, db, notify, seeding, standings
 from .. import schedule as sched
@@ -92,7 +93,7 @@ async def set_station(request: Request):
     except (KeyError, ValueError):
         raise HTTPException(400, "match id required")
     raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 6 else None
+    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
     sched.set_station(match_id, station)
     if station:  # ping both captains: you're up on Server N
         m = db.query_one(
@@ -101,7 +102,9 @@ async def set_station(request: Request):
             (match_id,),
         )
         if m:
-            notify.notify_captains(
+            # notify_captains does blocking urllib I/O — keep it off the event loop.
+            await run_in_threadpool(
+                notify.notify_captains,
                 [m["team_a_id"], m["team_b_id"]],
                 f"\U0001f3ae You're up — Round {m['round']}: **{m['a']}** vs **{m['b']}** on **Server {station}**. Report to your station.",
             )

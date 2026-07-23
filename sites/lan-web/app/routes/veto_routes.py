@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import auth, common, veto
+from .. import auth, common, seeding, veto
 from ..templating import templates
 
 router = APIRouter()
@@ -22,6 +22,11 @@ def veto_page(request: Request, mkey: str):
     if st is None:
         raise HTTPException(404, "No such match.")
     ctx = common.base_ctx(request, "bracket")
+    # Same publish gate as the bracket page — mkeys are guessable, so an
+    # un-gated veto page would leak unpublished Sunday pairings.
+    if not (ctx["is_admin"] or seeding.is_published("schedule_sun_published")):
+        st = {"mkey": st["mkey"], "label": st["label"], "best_of": st["best_of"],
+              "supported": st.get("supported", True), "ready": False}
     my_turn = _can_act(st, ctx["ident"], ctx["is_admin"])
     ctx.update(
         st=st, my_turn=my_turn,
@@ -39,6 +44,9 @@ async def veto_act(request: Request, mkey: str):
     st = veto.get_state(mkey)
     if not st:
         raise HTTPException(404, "No such match.")
+    # Mirror the page gate: no captain actions until the bracket is published.
+    if not (is_admin or seeding.is_published("schedule_sun_published")):
+        raise HTTPException(403, "The bracket isn't published yet.")
     if not _can_act(st, ident, is_admin):
         raise HTTPException(403, "It's not your turn — only the on-the-clock captain (or staff) may act.")
     su = auth.session_user(request) or {}

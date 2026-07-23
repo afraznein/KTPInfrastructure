@@ -43,7 +43,7 @@
         {% if standing %}
           <h3>Consensus seeds</h3>
           <table>
-            <thead><tr><td>Seed</td><td>Company</td><td>Score</td></tr></thead>
+            <thead><tr><td>Seed</td><td>Team</td><td>Score</td></tr></thead>
             <tbody>
             {% for tid in standing %}
               <tr>
@@ -155,16 +155,16 @@
          staff decision and stay staff-side (see the is_admin Options panel) — never
          name them here, and never state this draw's merits by comparison with them. #}
       <p class="sos-lede">Could Saturday's draw be any fairer? Command put the question to the machine.
-        Every one of the <strong>11,180,820</strong> legal ways to draw this ten-company field &mdash;
+        Every one of the <strong>11,180,820</strong> legal ways to draw this ten-team field &mdash;
         each team facing six of the other nine, no rematches, no top-four meeting before Round&nbsp;4 &mdash;
         was enumerated and scored on the evenness of its schedules. A perfectly even field is provably
-        out of reach: no draw in that space gives all ten companies an identical slate. The draw that
+        out of reach: no draw in that space gives all ten teams an identical slate. The draw that
         was selected, and how it scores, is set out below.</p>
 
       <div class="sos-callout">
         <h4>The draw, measured</h4>
         Mean slate strength is fixed at <strong>33</strong> for every possible draw &mdash; only the spread moves.
-        On this one every company lands between <strong>{{ sos.min }}</strong> and <strong>{{ sos.max }}</strong>:
+        On this one every team lands between <strong>{{ sos.min }}</strong> and <strong>{{ sos.max }}</strong>:
         a gap of {{ sos.max - sos.min }} seed-points across the whole field, on a scale that runs from
         {{ sos.dom_min }} to {{ sos.dom_max }}. Nobody runs a gauntlet and nobody coasts.
         {% if sos.top4_clashes == 6 and sos.has_1v2 %}
@@ -178,11 +178,11 @@
         {% endif %}
       </div>
 
-      <h3>The evidence &mdash; each company's slate</h3>
+      <h3>The evidence &mdash; each team's slate</h3>
       <div class="sos-wrap">
       <table class="sos-table">
         <thead>
-          <tr><th>Seed</th><th>Company</th><th>Six opponents (by seed)</th><th class="r">Strength of schedule</th></tr>
+          <tr><th>Seed</th><th>Team</th><th>Six opponents (by seed)</th><th class="r">Strength of schedule</th></tr>
         </thead>
         <tbody>
           {% for r in sos.rows %}
@@ -205,10 +205,10 @@
       </div>
       <p class="sos-foot">Mean 33.0 &middot; range {{ sos.min }}&ndash;{{ sos.max }} on a {{ sos.dom_min }}&ndash;{{ sos.dom_max }} scale.
         The bar reads difficulty &mdash; a fuller bar means a tougher draw (facing lower, stronger seeds) &mdash; and is
-        drawn against the full range of slates a company <em>could</em> have been dealt, so the bars sit close together
+        drawn against the full range of slates a team <em>could</em> have been dealt, so the bars sit close together
         because the slates genuinely are close together.</p>
 
-      <p class="sos-method"><b>Method.</b> Each captain ranked the other nine companies (1 = strongest); ballots
+      <p class="sos-method"><b>Method.</b> Each captain ranked the other nine teams (1 = strongest); ballots
         are weighted by the ranking team's own standing and iterated to a fixed point, so stronger teams' opinions
         carry more weight (lower score = stronger = better seed). A team's strength of schedule is the sum of its
         six opponents' seed numbers. The audit scored that figure's spread across all ten teams for every legal draw
@@ -283,11 +283,11 @@
     </header>
     <div class="chapter-body">
 
-      <p class="opt-intro">Three legal draws for the ten-company group stage, teams overlaid on the locked seeds.
+      <p class="opt-intro">Three legal draws for the ten-team group stage, teams overlaid on the locked seeds.
         The <strong>locked</strong> draw is the default; the two alternatives came out of the fairness search over
         all 11,180,820 draws. Every option obeys both standing rules &mdash; no rematches, no top-four meeting
-        before Round&nbsp;4. Set one active below, then run &ldquo;Generate schedule&rdquo; on the Communiqu&eacute;
-        page to materialize it into the bracket.</p>
+        before Round&nbsp;4. Set one active below, then run &ldquo;Generate schedule&rdquo; on the Saturday
+        schedule page to materialize it into the bracket.</p>
 
       {% set active_opt = sched_options|selectattr('current')|first %}
       <p class="opt-active">Currently set to generate: <strong>{{ active_opt.title }}</strong>.

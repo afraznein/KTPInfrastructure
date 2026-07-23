@@ -1,27 +1,27 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Personnel File{% endblock %}
+{% block title %}WSDoD / LAN 2026 / My Profile{% endblock %}
 {% block content %}
   <section class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">&#9733;</div>
-      <h2 class="chapter-title">Personnel File</h2>
+      <h2 class="chapter-title">My Profile</h2>
       <span class="chapter-stamp">EYES ONLY</span>
     </header>
     <div class="chapter-body">
       {% if not session_user %}
-        <p>Not signed in. <a href="{{ url_for('login') }}">Report for duty via Discord</a>.</p>
+        <p>Not signed in. <a href="{{ url_for('login') }}">Sign in with Discord</a>.</p>
       {% elif not ident %}
         <div class="pending-note">
           <strong style="font-family: var(--stencil); letter-spacing:0.16em; color: var(--alert); display:block; margin-bottom:4px;">UNLINKED</strong>
           Signed in as <strong>{{ session_user.discord_name }}</strong> (Discord ID {{ session_user.discord_id }}),
-          but this account isn't tied to a drafted roster yet. Staff links your Discord once your company is set.
+          but this account isn't tied to a drafted roster yet. Staff links your Discord once your team is set.
         </div>
       {% else %}
         <dl class="briefing-orders">
-          <dt>Callsign</dt>   <dd>{{ ident.display_name }}</dd>
+          <dt>Player name</dt> <dd>{{ ident.display_name }}</dd>
           <dt>Discord</dt>    <dd>{{ ident.discord_name }}</dd>
-          <dt>Company</dt>    <dd>{{ ident.team_name }}{% if ident.team_tag %} · {{ ident.team_tag }}{% endif %}</dd>
-          <dt>Role</dt>       <dd>{% if ident.is_captain %}Captain — submits seeding ballot &amp; reports results{% else %}Operator{% endif %}</dd>
+          <dt>Team</dt>       <dd>{{ ident.team_name }}{% if ident.team_tag %} · {{ ident.team_tag }}{% endif %}</dd>
+          <dt>Role</dt>       <dd>{% if ident.is_captain %}Captain — submits seeding ballot &amp; reports results{% else %}Player{% endif %}</dd>
           <dt>Group seed</dt> <dd>{{ ident.seed if ident.seed is not none else "TBD" }}</dd>
         </dl>
       {% endif %}

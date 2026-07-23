@@ -15,7 +15,7 @@
         </div>
       {% else %}
         <p>Submitting <strong>{{ my_team.name }}</strong>'s team ballot — gather your squad's read and rank
-           the other {{ n }} companies, <strong>1 = strongest</strong> (you don't rank your own team).
+           the other {{ n }} teams, <strong>1 = strongest</strong> (you don't rank your own team).
            Use each rank 1–{{ n }} exactly once.</p>
         <form method="post" action="{{ url_for('poll') }}">
           <table>

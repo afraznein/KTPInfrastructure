@@ -62,12 +62,12 @@
         <dt>From</dt><dd>WSDoD COMMAND</dd>
         <dt>To</dt><dd>ALL ENLISTED OPERATORS</dd>
         <dt>Re</dt><dd>LAN 2026 / 31 JUL – 2 AUG / TAP ESPORT CENTER</dd>
-        <dt>Operator</dt>
+        <dt>Player</dt>
         <dd class="op-line">
           {% if session_user %}{{ session_user.discord_name }}{% if ident %} &middot;
-            <a href="{{ url_for('team', team_id=ident.team_id) }}" title="Your company — roster, schedule &amp; bracket">{{ ident.team_name }}{% if ident.is_captain %} (CPT){% endif %}</a>{% endif %} &mdash;
-            <a href="{{ url_for('logout') }}">stand down</a>
-          {% else %}<a href="{{ url_for('login') }}">report for duty (Discord)</a>{% endif %}
+            <a href="{{ url_for('team', team_id=ident.team_id) }}" title="Your team — roster, schedule &amp; bracket">{{ ident.team_name }}{% if ident.is_captain %} (CPT){% endif %}</a>{% endif %} &mdash;
+            <a href="{{ url_for('logout') }}">Sign out</a>
+          {% else %}<a href="{{ url_for('login') }}">Sign in with Discord</a>{% endif %}
         </dd>
         <dt>Rev</dt><dd>{{ last_updated }}</dd>
       </dl>
@@ -77,31 +77,31 @@
 
   {% if announcement %}
   <aside class="announce" role="status">
-    <span class="announce-tag">DISPATCH</span>
+    <span class="announce-tag">ANNOUNCEMENT</span>
     <span class="announce-body">{{ announcement }}</span>
   </aside>
   {% endif %}
 
   <nav class="toc" aria-label="Document Index">
     <div class="toc-head">
-      <h2>Index of Sections</h2>
+      <h2>Contents</h2>
       <span class="toc-classif">Select a section</span>
     </div>
     <ol class="toc-list">
-      <li><a href="{{ url_for('index') }}"    class="{{ 'active' if active_page == 'briefing' }}"><span class="toc-num">01</span> <span class="toc-title">Mission Briefing &amp; Theater</span> <span class="toc-page">p. 01</span></a></li>
-      <li><a href="{{ url_for('teams') }}"    class="{{ 'active' if active_page == 'teams' }}"><span class="toc-num">02</span> <span class="toc-title">Order of Battle</span>            <span class="toc-page">p. 02</span></a></li>
-      <li><a href="{{ url_for('mapskip') }}"  class="{{ 'active' if active_page == 'mapskip' }}"><span class="toc-num">03</span> <span class="toc-title">Saturday Map Skip &mdash; Team Ballot</span> <span class="toc-page">p. 03</span></a></li>
-      <li><a href="{{ url_for('seeds') }}"    class="{{ 'active' if active_page == 'seeds' }}"><span class="toc-num">04</span> <span class="toc-title">Seeding — Team Ballot</span> <span class="toc-page">p. 04</span></a></li>
-      <li><a href="{{ url_for('schedule') }}" class="{{ 'active' if active_page == 'schedule' }}"><span class="toc-num">05</span> <span class="toc-title">Communiqué — Schedule</span>      <span class="toc-page">p. 05</span></a></li>
-      <li><a href="{{ url_for('bracket') }}"  class="{{ 'active' if active_page == 'bracket' }}"><span class="toc-num">06</span> <span class="toc-title">Bracket — Playoffs</span>          <span class="toc-page">p. 06</span></a></li>
-      <li><a href="{{ url_for('stations') }}" class="{{ 'active' if active_page == 'stations' }}"><span class="toc-num">07</span> <span class="toc-title">Now Playing — Stations</span>     <span class="toc-page">p. 07</span></a></li>
+      <li><a href="{{ url_for('index') }}"    class="{{ 'active' if active_page == 'briefing' }}"><span class="toc-num">01</span> <span class="toc-title">Event Info</span> <span class="toc-page">p. 01</span></a></li>
+      <li><a href="{{ url_for('teams') }}"    class="{{ 'active' if active_page == 'teams' }}"><span class="toc-num">02</span> <span class="toc-title">Teams</span>            <span class="toc-page">p. 02</span></a></li>
+      <li><a href="{{ url_for('mapskip') }}"  class="{{ 'active' if active_page == 'mapskip' }}"><span class="toc-num">03</span> <span class="toc-title">Map-Skip Vote</span> <span class="toc-page">p. 03</span></a></li>
+      <li><a href="{{ url_for('seeds') }}"    class="{{ 'active' if active_page == 'seeds' }}"><span class="toc-num">04</span> <span class="toc-title">Seeding</span> <span class="toc-page">p. 04</span></a></li>
+      <li><a href="{{ url_for('schedule') }}" class="{{ 'active' if active_page == 'schedule' }}"><span class="toc-num">05</span> <span class="toc-title">Saturday Group Stage</span>      <span class="toc-page">p. 05</span></a></li>
+      <li><a href="{{ url_for('bracket') }}"  class="{{ 'active' if active_page == 'bracket' }}"><span class="toc-num">06</span> <span class="toc-title">Sunday Playoffs</span>          <span class="toc-page">p. 06</span></a></li>
+      <li><a href="{{ url_for('stations') }}" class="{{ 'active' if active_page == 'stations' }}"><span class="toc-num">07</span> <span class="toc-title">Live Now — Servers</span>     <span class="toc-page">p. 07</span></a></li>
       <li><a href="{{ url_for('placements') }}" class="{{ 'active' if active_page == 'placements' }}"><span class="toc-num">08</span> <span class="toc-title">Final Placements</span>          <span class="toc-page">p. 08</span></a></li>
       <li><a href="{{ url_for('checkin') }}" class="{{ 'active' if active_page == 'checkin' }}"><span class="toc-num">09</span> <span class="toc-title">Check-in</span>                   <span class="toc-page">p. 09</span></a></li>
       <li><a href="{{ url_for('demos') }}"   class="{{ 'active' if active_page == 'demos' }}"><span class="toc-num">10</span> <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 10</span></a></li>
       <li><a href="{{ url_for('rules') }}"    class="{{ 'active' if active_page == 'rules' }}"><span class="toc-num">11</span> <span class="toc-title">Rules &amp; Format</span>           <span class="toc-page">p. 11</span></a></li>
-      <li><a href="{{ url_for('awards') }}"  class="{{ 'active' if active_page == 'awards' }}"><span class="toc-num">12</span> <span class="toc-title">Awards &amp; Honors</span>          <span class="toc-page">p. 12</span></a></li>
+      <li><a href="{{ url_for('awards') }}"  class="{{ 'active' if active_page == 'awards' }}"><span class="toc-num">12</span> <span class="toc-title">Awards</span>          <span class="toc-page">p. 12</span></a></li>
       <li><a href="{{ url_for('gallery') }}" class="{{ 'active' if active_page == 'gallery' }}"><span class="toc-num">13</span> <span class="toc-title">Photo Gallery</span>              <span class="toc-page">p. 13</span></a></li>
-      {% if is_admin %}<li><a href="{{ url_for('admin') }}" class="{{ 'active' if active_page == 'admin' }}"><span class="toc-num">&#9733;</span> <span class="toc-title">Staff — Roster &amp; Control</span> <span class="toc-page">restricted</span></a></li>{% endif %}
+      {% if is_admin %}<li><a href="{{ url_for('admin') }}" class="{{ 'active' if active_page == 'admin' }}"><span class="toc-num">&#9733;</span> <span class="toc-title">Admin</span> <span class="toc-page">restricted</span></a></li>{% endif %}
     </ol>
   </nav>
 

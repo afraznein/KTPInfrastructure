@@ -68,7 +68,7 @@
       {% set who = st.ts_name if c.actor == 'TS' else st.ls_name %}
       <div class="vt-turn {{ 'you' if my_turn }}">
         <strong style="font-family:var(--stencil);letter-spacing:.08em;">
-          {{ who }} ({{ c.actor }}) to
+          {{ who }} ({{ 'higher seed' if c.actor == 'TS' else 'lower seed' }}) to
           {% if c.action == 'ban' %}BAN a map{% elif c.action == 'pick' %}PICK a map &amp; side{% else %}choose the DECIDER side{% endif %}
         </strong>
         {% if my_turn %}

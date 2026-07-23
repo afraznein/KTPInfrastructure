@@ -1,25 +1,25 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Order of Battle{% endblock %}
+{% block title %}WSDoD / LAN 2026 / Teams{% endblock %}
 {% block content %}
 
   <section id="order-of-battle" class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">02</div>
-      <h2 class="chapter-title">Order of Battle</h2>
+      <h2 class="chapter-title">Teams</h2>
       <span class="chapter-stamp">DRAFTED COMPANIES</span>
     </header>
 
     <div class="chapter-body">
       <div class="units-meta">
-        <span>Companies in muster: <strong>{{ team_count }}/12</strong></span>
-        <span>Operators sworn in: <strong>{{ total_players }}</strong></span>
-        <span>Last muster pulled: {{ last_updated }}</span>
+        <span>Teams registered: <strong>{{ team_count }}/12</strong></span>
+        <span>Players registered: <strong>{{ total_players }}</strong></span>
+        <span>Updated: {{ last_updated }}</span>
       </div>
 
       {% if team_count == 0 %}
       <div class="pending-note">
-        <strong style="font-family: var(--stencil); letter-spacing: 0.16em; color: var(--alert); display:block; margin-bottom:4px;">MUSTER PENDING</strong>
-        Companies are drafted at the Friday draft event. The order of battle posts here once rosters are set.
+        <strong style="font-family: var(--stencil); letter-spacing: 0.16em; color: var(--alert); display:block; margin-bottom:4px;">ROSTERS PENDING</strong>
+        Teams are drafted at the Friday draft event. Rosters post here once they're set.
       </div>
       {% endif %}
 

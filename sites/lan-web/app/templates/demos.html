@@ -83,9 +83,9 @@
       <h3 style="margin-top:26px;">Archive</h3>
       {% if teams %}
       <form method="get" style="margin-bottom:10px;">
-        <label style="font-size:12px;color:var(--ink-soft);">Filter by company&nbsp;
+        <label style="font-size:12px;color:var(--ink-soft);">Filter by team&nbsp;
           <select name="team" onchange="this.form.submit()">
-            <option value="">All companies</option>
+            <option value="">All teams</option>
             {% for t in teams %}<option value="{{ t.id }}" {{ 'selected' if filter_team == t.id }}>{{ t.name }}</option>{% endfor %}
           </select>
         </label>
@@ -111,7 +111,7 @@
         </tbody>
       </table>
       {% else %}
-      <div class="pending-note">No demos {% if filter_team %}for that company {% endif %}uploaded yet.</div>
+      <div class="pending-note">No demos {% if filter_team %}for that team {% endif %}uploaded yet.</div>
       {% endif %}
     </div>
   </section>

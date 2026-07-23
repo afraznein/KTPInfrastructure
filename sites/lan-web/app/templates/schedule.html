@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Communiqué{% endblock %}
+{% block title %}WSDoD / LAN 2026 / Saturday Group Stage{% endblock %}
 {% macro slot(seed, team) -%}
   {%- if team -%}<strong>{{ team.name }}</strong> <span style="color:var(--ink-faint);">#{{ seed }}</span>
   {%- else -%}<span style="color:var(--ink-faint);">Seed {{ seed }}</span>{%- endif -%}
@@ -8,7 +8,7 @@
   <section id="communique" class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">04</div>
-      <h2 class="chapter-title">Communiqué — Saturday Schedule</h2>
+      <h2 class="chapter-title">Saturday Group Stage</h2>
       <span class="chapter-stamp">GROUP STAGE / BO1</span>
     </header>
 
@@ -34,7 +34,7 @@
       {% if not seeds_locked %}
       <div class="pending-note" style="margin-bottom:24px;">
         <strong style="font-family:var(--stencil);letter-spacing:.14em;color:var(--alert);display:block;margin-bottom:4px;">PROVISIONAL — SEEDS NOT YET LOCKED</strong>
-        Pairings are fixed by <em>seed slot</em>. Company names drop in once staff lock seeds from the
+        Pairings are fixed by <em>seed slot</em>. Team names drop in once staff lock seeds from the
         <a href="{{ url_for('seeds') }}">captains' ballot</a>.
       </div>
       {% elif is_admin %}
@@ -44,8 +44,8 @@
       </div>
       {% endif %}
 
-      <p>{{ n_teams }} companies, six rounds, one map each.{% if n_teams == 11 %} With an odd field, one company rests each round.{% endif %} The pairings are fixed in advance and balanced for
-         strength of schedule — no company draws a tougher slate than another. Why it's built this way is below.</p>
+      <p>{{ n_teams }} teams, six rounds, one map each.{% if n_teams == 11 %} With an odd field, one team rests each round.{% endif %} The pairings are fixed in advance and balanced for
+         strength of schedule — no team draws a tougher slate than another. Why it's built this way is below.</p>
 
       <div class="units-grid">
         {% for rnd in rounds %}
@@ -73,7 +73,7 @@
 
       <h3>Standings</h3>
       <table class="standings-sheet">
-        <thead><tr><td>#</td><td>Company</td><td>W–L–D</td><td>Diff</td><td>Buch.</td></tr></thead>
+        <thead><tr><td>#</td><td>Team</td><td>W–L–D</td><td>Diff</td><td>Buch.</td></tr></thead>
         <tbody>
         {% for s in standings %}
           <tr>
@@ -91,7 +91,7 @@
 
       <h3 style="margin-top:30px;">Matches</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Each map is best-of-one. Report the two <strong>flag scores</strong> — the
-         higher score wins the map. The left box is the team listed first.{% if is_admin %} Every match in a round is on the <strong>same map</strong>, set once at the round header; staff also set each match's <strong>server</strong> (1–6).{% endif %}</p>
+         higher score wins the map. The left box is the team listed first.{% if is_admin %} Every match in a round is on the <strong>same map</strong>, set once at the round header; staff also set each match's <strong>server</strong> (1–5).{% endif %}</p>
       <datalist id="comp-maps">{% for mp in comp_maps %}<option value="{{ mp }}">{% endfor %}</datalist>
       {% for rnum, group in matches|groupby('round') %}
       {% set rmap = (group|first).map %}
@@ -130,13 +130,13 @@
                 {% if m.status == 'final' %}{{ m.score_a }}–{{ m.score_b }}{% else %}<span style="color:var(--ink-faint);">pending</span>{% endif %}
               </td>
               <td style="width:7rem;">
-                {% if m.station %}<span style="font-family:var(--mono);font-size:12px;color:var(--olive);">LAN {{ m.station }}</span>{% endif %}
+                {% if m.station %}<span style="font-family:var(--mono);font-size:12px;color:var(--olive);">Server {{ m.station }}</span>{% endif %}
                 {% if is_admin %}
                 <form method="post" action="{{ url_for('schedule_set_station') }}" style="display:inline;">
                   <input type="hidden" name="match_id" value="{{ m.id }}">
                   <select name="station" onchange="this.form.submit()" style="font-size:11px;" title="Assign server / station">
                     <option value="">—</option>
-                    {% for n in range(1, 6) %}<option value="{{ n }}"{{ ' selected' if m.station == n }}>LAN {{ n }}</option>{% endfor %}
+                    {% for n in range(1, 6) %}<option value="{{ n }}"{{ ' selected' if m.station == n }}>Server {{ n }}</option>{% endfor %}
                   </select>
                 </form>
                 {% endif %}
@@ -161,7 +161,7 @@
     {% endif %}
 
       <h3 style="margin-top:30px;">Why this schedule — strength of schedule</h3>
-      <p><strong>The format.</strong> Ten companies, six rounds, one map each (best-of-one). It's a
+      <p><strong>The format.</strong> Ten teams, six rounds, one map each (best-of-one). It's a
          <em>partial</em> round-robin — each team plays six of the other nine, never the same opponent twice.</p>
       <p><strong>How the six opponents are chosen.</strong> A careless draw can hand one team a
          murderers' row while another cruises, which would distort the standings. To prevent that we score
@@ -175,7 +175,7 @@
          early draw. The upshot: Sunday's seeding reflects how teams actually played, not who they drew.</p>
 
       <h3 style="margin-top:30px;">How standings are decided</h3>
-      <p>Companies are ranked by, in order:</p>
+      <p>Teams are ranked by, in order:</p>
       <ol style="font-family:var(--typed);font-size:14px;line-height:1.6;padding-left:20px;max-width:64ch;">
         <li><strong>Record</strong> — wins first.</li>
         <li><strong>Head-to-head</strong> — among teams tied on record, whoever won the meeting ranks higher.</li>

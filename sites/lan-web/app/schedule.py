@@ -172,11 +172,11 @@ def schedule_options():
     active = active_draw_key()
     defs = [
         ("locked", "Locked draw",
-         "Every headline game is played and no company draws a slate worse than 37.",
+         "Every headline game is played and no team draws a slate worse than 37.",
          SCHEDULE_10),
         ("balanced", "Balanced draw",
          "Same marquee shape as the locked draw — all six top-seed clashes, 1 v 2 closing — with "
-         "tighter variance, but it hands one company a 38 slate, the harshest in any option.",
+         "tighter variance, but it hands one team a 38 slate, the harshest in any option.",
          SCHEDULE_10_BALANCED),
         ("fairest", "Fairest draw",
          "The statistical floor — provably the most even draw of all. The cost: the top-two (1 v 2) and "
@@ -377,8 +377,9 @@ def set_round_map(round_no: int, mapname):
 
 
 # LAN 2026 map pool — drives the map-picker datalist (free text still allowed).
+# Versioned server names, dod_ prefix dropped: dod_<name> is the changelevel target.
 COMP_MAPS = [
-    "Harrington", "Lennon", "Anzio", "Saints",
-    "Thunder2", "Railroad2", "Armory",
+    "harrington", "lennon5_b1", "anzio", "saints2_b3e",
+    "thunder2", "railroad2_s9a", "armory_b6",
 ]
 

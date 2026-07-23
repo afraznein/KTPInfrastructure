@@ -17,7 +17,7 @@
         <p>Saturday runs only <strong>6 matches</strong>, so one map drops from the rotation and
            becomes the <strong>play-in map</strong>. Submitting <strong>{{ my_team.name }}</strong>'s
            ballot — gather your squad's read and name the <strong>one map to skip on Saturday</strong>.
-           The most-voted map across all companies wins.</p>
+           The most-voted map across all teams wins.</p>
         <form method="post" action="{{ url_for('mappoll') }}">
           <table>
             <tbody>
@@ -40,7 +40,7 @@
               Submit Ballot
             </button>
           </p>
-          <p style="font-size:13px;color:var(--ink-faint);">One vote per company. Resubmitting overwrites your previous ballot.</p>
+          <p style="font-size:13px;color:var(--ink-faint);">One vote per team. Resubmitting overwrites your previous ballot.</p>
         </form>
       {% endif %}
     </div>

@@ -1,31 +1,31 @@
 {% extends "base.html" %}
-{% block title %}WSDoD / LAN 2026 / Mission Briefing{% endblock %}
+{% block title %}WSDoD / LAN 2026 / Event Info{% endblock %}
 {% block content %}
 
   <section id="briefing" class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">01</div>
-      <h2 class="chapter-title">Mission Briefing</h2>
+      <h2 class="chapter-title">Event Info</h2>
       <span class="chapter-stamp">PHILADELPHIA THEATER / EDT</span>
     </header>
 
     <div class="chapter-body">
       <dl class="briefing-orders">
-        <dt>Operation</dt> <dd>WORLD SERIES OF DAY OF DEFEAT — LAN 2026 <span class="stamp-inline">field exercise</span></dd>
-        <dt>D-Day</dt>     <dd>31 JULY 2026 / FRIDAY · DRAFT EVENT</dd>
-        <dt>D+1</dt>       <dd>01 AUGUST 2026 / SATURDAY · GROUP STAGE</dd>
-        <dt>D+2</dt>       <dd>02 AUGUST 2026 / SUNDAY · PLAYOFFS &amp; FINALS</dd>
-        <dt>Theater</dt>   <dd>Philadelphia, Pennsylvania — TAP Esport Center (Chinatown), basement floor, 924 Cherry St.</dd>
-        <dt>Forces</dt>    <dd>Twelve (12) companies cap, 5–7 enlisted apiece. <strong>{{ team_count }}/12</strong> companies confirmed.</dd>
-        <dt>Fee</dt>       <dd><strong>$160</strong> full weekend &nbsp;·&nbsp; <strong>$50</strong> Friday draft only</dd>
+        <dt>Event</dt>     <dd>WORLD SERIES OF DAY OF DEFEAT — LAN 2026 <span class="stamp-inline">field exercise</span></dd>
+        <dt>Friday</dt>    <dd>31 JULY 2026 · DRAFT EVENT</dd>
+        <dt>Saturday</dt>  <dd>01 AUGUST 2026 · GROUP STAGE</dd>
+        <dt>Sunday</dt>    <dd>02 AUGUST 2026 · PLAYOFFS &amp; FINALS</dd>
+        <dt>Venue</dt>     <dd>Philadelphia, Pennsylvania — TAP Esport Center (Chinatown), basement floor, 924 Cherry St.</dd>
+        <dt>Teams</dt>     <dd>12 teams max, 5–7 players each. <strong>{{ team_count }}/12</strong> teams confirmed.</dd>
+        <dt>Entry fee</dt> <dd><strong>$160</strong> full weekend &nbsp;·&nbsp; <strong>$50</strong> Friday draft only</dd>
         <dt>Payment</dt>   <dd>Through your captain. Initial deposit fronted by <strong>las1k64</strong> — much obliged.</dd>
-        <dt>Comms</dt>     <dd>Official Discord: <a href="https://discord.gg/bDw2NmEFj2">discord.gg/bDw2NmEFj2</a></dd>
+        <dt>Discord</dt>   <dd>Official Discord: <a href="https://discord.gg/bDw2NmEFj2">discord.gg/bDw2NmEFj2</a></dd>
       </dl>
 
       <div class="briefing-body">
         <p>We're convening companies of Day of Defeat operators on the basement floor of the TAP Esport Center, Philadelphia — the same Chinatown room that hosted the 2025 LAN. The last day of July through the first weekend of August, 2026. Whether you're old guard, new blood, or somewhere bewildered in between, this is your dossier. Read it. Sign it. Bring it with you.</p>
 
-        <p>Friday opens with the <strong>draft event</strong> — a standalone pickup tournament open to anyone in attendance who wants in, seats limited at the door. It runs independently of the weekend's team competition. Saturday is the <strong>group stage</strong>: every company plays a fixed slate to settle seeding. Sunday is the <strong>playoffs</strong> — bracket to a verdict, finals Sunday evening.</p>
+        <p>Friday opens with the <strong>draft event</strong> — a standalone pickup tournament open to anyone in attendance who wants in, seats limited at the door. It runs independently of the weekend's team competition. Saturday is the <strong>group stage</strong>: every team plays a fixed slate to settle seeding. Sunday is the <strong>playoffs</strong> — bracket to a verdict, finals Sunday evening.</p>
 
         <p>Inside this dossier you'll find your <strong>order of battle</strong> (who's registered and with whom), your <strong>communiqué</strong> (the Saturday schedule), the <strong>bracket</strong> (Sunday's road to the title), and your <strong>rules of engagement</strong> (what's a fair shot and what's a forfeit). Captains submit seeding ballots once rosters are locked.</p>
 
@@ -42,7 +42,7 @@
   <section id="theater" class="chapter">
     <header class="chapter-head">
       <div class="chapter-num">02</div>
-      <h2 class="chapter-title">Theater of Operations</h2>
+      <h2 class="chapter-title">Venue &amp; Getting There</h2>
       <span class="chapter-stamp">GRID REFERENCE — PHL/CHERRY</span>
     </header>
 
@@ -55,14 +55,14 @@
           <em>2025's Chinatown location — same room, second year.</em>
         </div>
         <dl>
-          <dt>Air</dt>      <dd>PHL Intl. → SEPTA Regional Rail (~25 min)</dd>
-          <dt>Rail</dt>     <dd>30th Street Station → 10 min E on foot</dd>
-          <dt>Motor</dt>    <dd>I-95 / I-76 — street parking limited; commercial garages nearby</dd>
+          <dt>Flying in</dt> <dd>PHL Intl. → SEPTA Regional Rail (~25 min)</dd>
+          <dt>Amtrak / Regional Rail</dt> <dd>30th Street Station → 10 min E on foot</dd>
+          <dt>Driving &amp; parking</dt> <dd>I-95 / I-76 — street parking limited; commercial garages nearby</dd>
           <dt>Subway</dt>   <dd>SEPTA Race-Vine (BSL) — 4 blocks south</dd>
-          <dt>Local</dt>    <dd>Chinatown gate, two blocks east. Dinner solves itself.</dd>
+          <dt>Food nearby</dt> <dd>Chinatown gate, two blocks east. Dinner solves itself.</dd>
         </dl>
         <div class="venue-quarters">
-          <strong>Book your accommodations now.</strong> Billeting is your own affair — command does not coordinate lodging. Consult your captain or staff for venue-adjacent hotel suggestions.
+          <strong>Book your accommodations now.</strong> Book your own hotel — we don't coordinate lodging. Consult your captain or staff for venue-adjacent hotel suggestions.
         </div>
       </div>
 

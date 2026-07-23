@@ -3,6 +3,7 @@ import json
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import auth, bracket, common, db, notify, seeding
 from .. import schedule as sched
@@ -175,6 +176,18 @@ def generate(request: Request):
     return RedirectResponse(url=request.url_for("bracket"), status_code=303)
 
 
+@router.post("/admin/bracket/regenerate", name="bracket_regenerate")
+def regenerate(request: Request):
+    """Re-run generation after a Saturday result correction — refuses once any
+    series has a reported result (regenerating wipes lan_bracket)."""
+    auth.require_admin(request)
+    try:
+        bracket.regenerate_bracket()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return RedirectResponse(url=request.url_for("bracket"), status_code=303)
+
+
 @router.post("/admin/bracket/station", name="bracket_set_station")
 async def set_station(request: Request):
     auth.require_admin(request)
@@ -183,7 +196,7 @@ async def set_station(request: Request):
     if not db.query_one("SELECT 1 FROM lan_bracket WHERE mkey=%s", (mkey,)):
         raise HTTPException(404, "No such bracket match.")
     raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 6 else None
+    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
     bracket.set_station(mkey, station)
     if station:
         row = db.query_one(
@@ -193,7 +206,9 @@ async def set_station(request: Request):
         )
         if row and row["team_a_id"] and row["team_b_id"]:
             label = bracket.BY_KEY.get(mkey, {}).get("label", mkey)
-            notify.notify_captains(
+            # notify_captains does blocking urllib I/O — keep it off the event loop.
+            await run_in_threadpool(
+                notify.notify_captains,
                 [row["team_a_id"], row["team_b_id"]],
                 f"\U0001f3ae You're up — {label}: **{row['a']}** vs **{row['b']}** on **Server {station}**. Report to your station.",
             )
