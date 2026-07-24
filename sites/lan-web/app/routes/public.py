@@ -1,4 +1,7 @@
 """Public, no-auth pages."""
+import json
+import urllib.request
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
@@ -8,6 +11,16 @@ from .. import schedule as sched
 from ..templating import templates
 
 router = APIRouter()
+
+# Public HLTV relay targets (frp tunnel on the data server) — order = LAN 1..5.
+# The names must match the hostnames the HUD overlay reports.
+_WATCH_SERVERS = [
+    ("KTP LAN 1", "74.91.112.242:28020"),
+    ("KTP LAN 2", "74.91.112.242:28021"),
+    ("KTP LAN 3", "74.91.112.242:28022"),
+    ("KTP LAN 4", "74.91.112.242:28023"),
+    ("KTP LAN 5", "74.91.112.242:28024"),
+]
 
 
 @router.get("/health")
@@ -108,3 +121,38 @@ def team_detail(request: Request, team_id: int):
 @router.get("/rules", name="rules")
 def rules(request: Request):
     return templates.TemplateResponse(request, "rules.html", common.base_ctx(request, "rules"))
+
+
+@router.get("/watch", name="watch")
+def watch(request: Request):
+    ctx = common.base_ctx(request, "watch")
+    try:
+        ctx["twitch_channel"] = (seeding.get_setting("twitch_channel") or "").strip()
+    except Exception:
+        ctx["twitch_channel"] = ""
+    return templates.TemplateResponse(request, "watch.html", ctx)
+
+
+@router.get("/watch/servers.json", name="watch_servers")
+def watch_servers():
+    """Live field-feed status for the watch page. Reads the HUD overlay backend
+    through the local frp tunnel; falls back to offline-per-server so the board
+    never breaks."""
+    live: dict[str, dict] = {}
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:28080/api/servers", timeout=4) as r:
+            for s in json.loads(r.read()).get("servers", []):
+                if s.get("hostname"):
+                    live[s["hostname"]] = s
+    except Exception:
+        pass
+    servers = []
+    for name, connect in _WATCH_SERVERS:
+        s = live.get(name)
+        servers.append({
+            "name": name,
+            "connect": connect,
+            "online": bool(s.get("online")) if s else False,
+            "players": int(s.get("players") or 0) if s else 0,
+        })
+    return {"servers": servers, "ok": bool(live)}

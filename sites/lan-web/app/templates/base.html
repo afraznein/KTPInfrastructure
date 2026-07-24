@@ -95,12 +95,13 @@
       <li><a href="{{ url_for('schedule') }}" class="{{ 'active' if active_page == 'schedule' }}"><span class="toc-num">05</span> <span class="toc-title">Saturday Group Stage</span>      <span class="toc-page">p. 05</span></a></li>
       <li><a href="{{ url_for('bracket') }}"  class="{{ 'active' if active_page == 'bracket' }}"><span class="toc-num">06</span> <span class="toc-title">Sunday Playoffs</span>          <span class="toc-page">p. 06</span></a></li>
       <li><a href="{{ url_for('stations') }}" class="{{ 'active' if active_page == 'stations' }}"><span class="toc-num">07</span> <span class="toc-title">Live Now — Servers</span>     <span class="toc-page">p. 07</span></a></li>
-      <li><a href="{{ url_for('placements') }}" class="{{ 'active' if active_page == 'placements' }}"><span class="toc-num">08</span> <span class="toc-title">Final Placements</span>          <span class="toc-page">p. 08</span></a></li>
-      <li><a href="{{ url_for('checkin') }}" class="{{ 'active' if active_page == 'checkin' }}"><span class="toc-num">09</span> <span class="toc-title">Check-in</span>                   <span class="toc-page">p. 09</span></a></li>
-      <li><a href="{{ url_for('demos') }}"   class="{{ 'active' if active_page == 'demos' }}"><span class="toc-num">10</span> <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 10</span></a></li>
-      <li><a href="{{ url_for('rules') }}"    class="{{ 'active' if active_page == 'rules' }}"><span class="toc-num">11</span> <span class="toc-title">Rules &amp; Format</span>           <span class="toc-page">p. 11</span></a></li>
-      <li><a href="{{ url_for('awards') }}"  class="{{ 'active' if active_page == 'awards' }}"><span class="toc-num">12</span> <span class="toc-title">Awards</span>          <span class="toc-page">p. 12</span></a></li>
-      <li><a href="{{ url_for('gallery') }}" class="{{ 'active' if active_page == 'gallery' }}"><span class="toc-num">13</span> <span class="toc-title">Photo Gallery</span>              <span class="toc-page">p. 13</span></a></li>
+      <li><a href="{{ url_for('watch') }}"    class="{{ 'active' if active_page == 'watch' }}"><span class="toc-num">08</span> <span class="toc-title">Watch — Broadcast</span>        <span class="toc-page">live</span></a></li>
+      <li><a href="{{ url_for('placements') }}" class="{{ 'active' if active_page == 'placements' }}"><span class="toc-num">09</span> <span class="toc-title">Final Placements</span>          <span class="toc-page">p. 09</span></a></li>
+      <li><a href="{{ url_for('checkin') }}" class="{{ 'active' if active_page == 'checkin' }}"><span class="toc-num">10</span> <span class="toc-title">Check-in</span>                   <span class="toc-page">p. 10</span></a></li>
+      <li><a href="{{ url_for('demos') }}"   class="{{ 'active' if active_page == 'demos' }}"><span class="toc-num">11</span> <span class="toc-title">Demo Archive</span>               <span class="toc-page">p. 11</span></a></li>
+      <li><a href="{{ url_for('rules') }}"    class="{{ 'active' if active_page == 'rules' }}"><span class="toc-num">12</span> <span class="toc-title">Rules &amp; Format</span>           <span class="toc-page">p. 12</span></a></li>
+      <li><a href="{{ url_for('awards') }}"  class="{{ 'active' if active_page == 'awards' }}"><span class="toc-num">13</span> <span class="toc-title">Awards</span>          <span class="toc-page">p. 13</span></a></li>
+      <li><a href="{{ url_for('gallery') }}" class="{{ 'active' if active_page == 'gallery' }}"><span class="toc-num">14</span> <span class="toc-title">Photo Gallery</span>              <span class="toc-page">p. 14</span></a></li>
       {% if is_admin %}<li><a href="{{ url_for('admin') }}" class="{{ 'active' if active_page == 'admin' }}"><span class="toc-num">&#9733;</span> <span class="toc-title">Admin</span> <span class="toc-page">restricted</span></a></li>{% endif %}
     </ol>
   </nav>

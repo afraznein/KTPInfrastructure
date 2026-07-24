@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Watch{% endblock %}
+{% block content %}
+
+<style>
+  /* Broadcast page — built on the dossier tokens only */
+
+  /* Main feed: a field monitor filed into the dossier */
+  .bcast-frame {
+    border: 1px solid var(--ink);
+    background: linear-gradient(180deg, var(--paper-edge) 0 34px, var(--paper) 34px 100%);
+    box-shadow: 3px 3px 0 var(--paper-deep);
+    margin: 0 0 22px;
+  }
+  .bcast-head {
+    display: flex; justify-content: space-between; align-items: center; gap: 14px;
+    padding: 8px 16px;
+    border-bottom: var(--rule-thin);
+    font-family: var(--stencil);
+    font-size: 12px; letter-spacing: 0.22em; color: var(--ink);
+  }
+  .bcast-head .freq {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.06em;
+    color: var(--ink-soft); text-transform: none;
+  }
+  .bcast-screen {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,0.05) 0 2px, transparent 2px 4px),
+      radial-gradient(ellipse at center, var(--olive-bright) 0%, var(--olive) 60%, var(--olive-dark) 100%);
+  }
+  .bcast-screen > #twitch-embed,
+  .bcast-screen > #twitch-embed iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* Standby card when no channel is on the air */
+  .bcast-standby {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; padding: 24px;
+  }
+  .bcast-standby .standby-stamp {
+    font-family: var(--stencil); font-size: clamp(16px, 3vw, 24px);
+    letter-spacing: 0.2em; color: var(--paper);
+    border: 3px double var(--paper); padding: 10px 22px;
+    transform: rotate(-3deg); opacity: 0.92;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.4);
+  }
+  .bcast-standby .standby-note {
+    font-family: var(--typed); font-size: 13px; letter-spacing: 0.1em;
+    color: var(--paper); opacity: 0.85; text-transform: uppercase;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.4); max-width: 44ch;
+  }
+
+  .bcast-caption {
+    font-family: var(--typed); font-size: 13.5px; color: var(--ink-soft);
+    border-left: 3px solid var(--olive); padding-left: 16px; max-width: 72ch;
+  }
+
+  /* Field feeds — one filed card per server */
+  .feed-status-line {
+    display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px 18px;
+    font-family: var(--typed); font-size: 12.5px; color: var(--ink-soft);
+    margin: 0 0 16px; padding-bottom: 12px;
+    border-bottom: 1px dashed var(--ink-margin);
+  }
+  .feed-status-line .warn { color: var(--alert); letter-spacing: 0.1em; text-transform: uppercase; }
+
+  .feed-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 16px;
+  }
+  .feed-card {
+    position: relative;
+    border: 1px solid var(--ink);
+    background: var(--paper);
+    box-shadow: 2px 2px 0 var(--paper-deep);
+    padding: 14px 16px 12px;
+    font-family: var(--typed); font-size: 13px;
+  }
+  .feed-card.on-air { border-left: 4px solid var(--alert); }
+  .feed-top {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
+    border-bottom: 1px dashed var(--ink-margin);
+    padding-bottom: 8px; margin-bottom: 10px;
+  }
+  .feed-name { font-family: var(--stencil); font-size: 17px; letter-spacing: 0.06em; color: var(--ink); }
+  .feed-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--stencil); font-size: 10.5px; letter-spacing: 0.18em;
+    padding: 2px 8px; border: 2px solid var(--ink-faint); color: var(--ink-faint);
+    transform: rotate(-2deg); white-space: nowrap;
+  }
+  .feed-badge .lamp {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ink-faint); flex: 0 0 auto;
+  }
+  .feed-card.on-air .feed-badge { border-color: var(--alert); color: var(--alert); }
+  .feed-card.on-air .feed-badge .lamp { background: var(--alert); }
+  @media (prefers-reduced-motion: no-preference) {
+    .feed-card.on-air .feed-badge .lamp { animation: lamp-pulse 1.6s infinite; }
+  }
+  @keyframes lamp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+  .feed-observers { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); margin-bottom: 4px; }
+  .feed-observers .lbl { color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; }
+  .feed-connect { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); margin-bottom: 12px; }
+
+  .feed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .feed-actions .tune-in {
+    font-family: var(--stencil); font-size: 12px; font-weight: 700;
+    letter-spacing: 0.13em; text-transform: uppercase; text-decoration: none;
+    color: var(--paper); background: var(--olive);
+    border: 1px solid var(--ink); padding: 6px 13px;
+    box-shadow: 2px 2px 0 rgba(26,20,14,0.3);
+  }
+  .feed-actions .tune-in:hover { background: var(--olive-bright); }
+  .feed-actions .tune-in:active { transform: translate(2px, 2px); box-shadow: none; }
+  .feed-actions .tune-in:focus-visible { outline: 2px solid var(--wsdod-blue); outline-offset: 2px; }
+  .feed-actions button.copy-cmd { font-size: 11px; padding: 6px 11px; }
+  .copy-ack {
+    font-family: var(--typed); font-size: 11px; letter-spacing: 0.14em;
+    color: var(--wsdod-blue); text-transform: uppercase;
+    visibility: hidden;
+  }
+  .copy-ack.show { visibility: visible; }
+
+  /* Caster's field manual — collapsible OBS how-to, filed at the foot of the page */
+  .field-manual {
+    border: 1px solid var(--ink); background: var(--paper);
+    box-shadow: 2px 2px 0 var(--paper-deep); margin: 28px 0 0;
+  }
+  .field-manual > summary {
+    list-style: none; cursor: pointer; display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px; font-family: var(--stencil); font-size: 14px;
+    letter-spacing: 0.13em; color: var(--ink); text-transform: uppercase;
+  }
+  .field-manual > summary::-webkit-details-marker { display: none; }
+  .field-manual[open] > summary { border-bottom: var(--rule-thin); }
+  .field-manual > summary .fm-toggle {
+    font-family: var(--mono); font-size: 15px; line-height: 1; color: var(--alert);
+    border: 1px solid var(--ink-margin); width: 20px; height: 20px; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .field-manual > summary .fm-toggle::before { content: "+"; }
+  .field-manual[open] > summary .fm-toggle::before { content: "\2212"; }
+  .field-manual > summary .fm-hint {
+    margin-left: auto; font-family: var(--typed); font-size: 11px;
+    letter-spacing: 0.08em; color: var(--ink-faint); text-transform: none;
+  }
+  .field-manual > summary:focus-visible { outline: 2px solid var(--wsdod-blue); outline-offset: -2px; }
+  .manual-body { padding: 6px 20px 18px; }
+  .manual-intro {
+    font-family: var(--typed); font-size: 13px; color: var(--ink-soft);
+    border-left: 3px solid var(--olive); padding-left: 14px; margin: 14px 0 16px; max-width: 74ch;
+  }
+  .manual-steps { margin: 0 0 14px; padding: 0; list-style: none; counter-reset: step; max-width: 80ch; }
+  .manual-steps > li {
+    font-family: var(--typed); font-size: 13.5px; color: var(--ink); line-height: 1.55;
+    position: relative; padding: 1px 0 13px 42px;
+  }
+  .manual-steps > li::before {
+    counter-increment: step; content: counter(step, decimal-leading-zero);
+    position: absolute; left: 0; top: 1px; font-family: var(--stencil); font-size: 12px;
+    color: var(--alert); border: 1px solid var(--ink-margin); padding: 1px 6px;
+  }
+  .manual-steps b { font-family: var(--stencil); font-weight: 700; font-size: 12.5px; letter-spacing: 0.03em; }
+  .manual-url {
+    display: inline-block; font-family: var(--mono); font-size: 12.5px; color: var(--ink);
+    background: var(--paper-deep); border: 1px dashed var(--ink-margin);
+    padding: 2px 7px; margin: 3px 0; word-break: break-all;
+  }
+  .manual-note {
+    font-family: var(--typed); font-size: 12.5px; color: var(--ink-soft); line-height: 1.55;
+    border-top: 1px dashed var(--ink-margin); padding-top: 12px; max-width: 80ch;
+  }
+  .manual-note .tag { font-family: var(--stencil); letter-spacing: 0.1em; color: var(--ink-faint); font-size: 11.5px; }
+</style>
+
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">14</div>
+      <h2 class="chapter-title">Broadcast — Live Transmission</h2>
+      <span class="chapter-stamp">SIGNAL CORPS / MAIN FEED</span>
+    </header>
+    <div class="chapter-body">
+
+      <div class="bcast-frame">
+        <div class="bcast-head">
+          <span>MAIN FEED — TRANSMISSION 1</span>
+          {% if twitch_channel %}
+          <span class="freq">FREQ: twitch.tv/{{ twitch_channel }}</span>
+          {% else %}
+          <span class="freq">FREQ: unassigned</span>
+          {% endif %}
+        </div>
+        <div class="bcast-screen">
+          {% if twitch_channel %}
+          <div id="twitch-embed"></div>
+          {% else %}
+          <div class="bcast-standby">
+            <span class="standby-stamp">BROADCAST OFFLINE — STANDBY</span>
+            <span class="standby-note">This frequency goes live at match time. Hold position.</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <p class="bcast-caption">
+        HOW TO WATCH — the main transmission above carries the featured match with
+        casters. Own Day of Defeat 1.3? Tune into any field feed below and observe
+        from inside the server.
+      </p>
+
+    </div>
+  </section>
+
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">15</div>
+      <h2 class="chapter-title">Field Feeds — Observer Channels</h2>
+      <span class="chapter-stamp">HLTV / FIVE STATIONS</span>
+    </header>
+    <div class="chapter-body">
+
+      <div class="feed-status-line">
+        <span id="feed-updated">STATION BOARD — awaiting first status check&hellip;</span>
+        <span id="feed-error" class="warn" hidden>STATUS UNAVAILABLE — showing last known board</span>
+      </div>
+
+      {% set field_feeds = [
+        ("KTP LAN 1", "74.91.112.242:28020"),
+        ("KTP LAN 2", "74.91.112.242:28021"),
+        ("KTP LAN 3", "74.91.112.242:28022"),
+        ("KTP LAN 4", "74.91.112.242:28023"),
+        ("KTP LAN 5", "74.91.112.242:28024"),
+      ] %}
+      <div class="feed-grid" id="feed-grid" aria-live="polite">
+        {% for name, connect in field_feeds %}
+        <div class="feed-card" data-name="{{ name }}" data-connect="{{ connect }}">
+          <div class="feed-top">
+            <span class="feed-name">{{ name }}</span>
+            <span class="feed-badge"><span class="lamp" aria-hidden="true"></span><span class="feed-badge-text">NO SIGNAL</span></span>
+          </div>
+          <div class="feed-observers"><span class="lbl">Observers</span> <span class="feed-count">&mdash;</span></div>
+          <div class="feed-connect">connect {{ connect }}</div>
+          <div class="feed-actions">
+            <a class="tune-in" href="steam://connect/{{ connect }}">Tune In</a>
+            <button type="button" class="copy-cmd" data-cmd="connect {{ connect }}">Copy Cmd</button>
+            <span class="copy-ack" role="status">Copied</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+      <p class="bcast-caption" style="margin-top:18px;">
+        FIELD NOTE — observer channels require Day of Defeat 1.3 installed. Each is
+        an HLTV feed: a free-look spectator relay, no password, no slot on the match
+        server. TUNE IN launches the game; COPY CMD puts the console order on your
+        clipboard for manual entry.
+      </p>
+
+    </div>
+  </section>
+
+  <details class="field-manual">
+    <summary>
+      <span class="fm-toggle" aria-hidden="true"></span>
+      Caster's Field Manual — put the overlay on your stream
+      <span class="fm-hint">new to OBS? open this</span>
+    </summary>
+    <div class="manual-body">
+      <p class="manual-intro">
+        The on-screen graphics — scores, flags, timers, kill feed — are a transparent web page
+        you lay over your game video in OBS. First time doing this? These steps take about two minutes.
+      </p>
+      <ol class="manual-steps">
+        <li>Have your <b>game video</b> in OBS already: a <b>Window</b> or <b>Display Capture</b> of your
+            Day of Defeat spectator (HLTV) client. That is the picture — the overlay sits on top of it.</li>
+        <li>In the <b>Sources</b> panel, click <b>+</b>, choose <b>Browser</b>, name it
+            &ldquo;KTP Overlay&rdquo;, and click <b>OK</b>.</li>
+        <li>In the <b>URL</b> field, paste:
+            <span class="manual-url">https://watch.ktpdod.com/screen?server=KTP%20LAN%201</span>
+            &mdash; change the <b>1</b> on the end to whichever server you are casting (2, 3, 4, or 5).</li>
+        <li>Set <b>Width</b> to <b>1920</b> and <b>Height</b> to <b>1080</b> to match your stream
+            resolution. Leave everything else as-is and click <b>OK</b>.</li>
+        <li>In the Sources list, drag &ldquo;KTP Overlay&rdquo; <b>above</b> your game capture so it draws
+            on top. Its background is see-through &mdash; only the graphics show.</li>
+        <li>Done. To cast a different server, double-click the source and change the <b>server=</b>
+            number in the URL &mdash; or add one Browser source per server and switch between them.</li>
+      </ol>
+      <p class="manual-note">
+        <span class="tag">TIP</span> &mdash; right-click the overlay source &rarr; <b>Properties</b> &rarr;
+        tick <b>&ldquo;Refresh browser when scene becomes active&rdquo;</b> so it always loads clean.<br>
+        <span class="tag">BLANK OVERLAY?</span> &mdash; the graphics only fill in while a match is live, and
+        the address must be exact (<b>https</b>, and <b>%20</b> for the spaces in the server name).
+      </p>
+    </div>
+  </details>
+
+{% if twitch_channel %}
+<script src="https://embed.twitch.tv/embed/v1.js"></script>
+<script>
+  new Twitch.Embed("twitch-embed", {
+    channel: "{{ twitch_channel }}",
+    parent: ["dodworldseries.com", "www.dodworldseries.com", "localhost"],
+    width: "100%",
+    height: "100%"
+  });
+</script>
+{% endif %}
+
+<script>
+(function () {
+  "use strict";
+
+  var grid = document.getElementById("feed-grid");
+  var updatedEl = document.getElementById("feed-updated");
+  var errorEl = document.getElementById("feed-error");
+  var cards = Array.prototype.slice.call(grid.querySelectorAll(".feed-card"));
+
+  function setCard(card, online, players) {
+    var badge = card.querySelector(".feed-badge-text");
+    var count = card.querySelector(".feed-count");
+    card.classList.toggle("on-air", !!online);
+    badge.textContent = online ? "ON AIR" : "OFF AIR";
+    count.textContent = (typeof players === "number") ? String(players) : "—";
+  }
+
+  function findCard(server, index) {
+    for (var i = 0; i < cards.length; i++) {
+      if (cards[i].getAttribute("data-connect") === server.connect ||
+          cards[i].getAttribute("data-name") === server.name) return cards[i];
+    }
+    return cards[index] || null;
+  }
+
+  function refresh() {
+    fetch("/watch/servers.json", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("status " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        var servers = (data && data.servers) || [];
+        servers.forEach(function (s, i) {
+          var card = findCard(s, i);
+          if (card) setCard(card, s.online, s.players);
+        });
+        errorEl.hidden = true;
+        var now = new Date();
+        var hh = String(now.getHours()).padStart(2, "0");
+        var mm = String(now.getMinutes()).padStart(2, "0");
+        var ss = String(now.getSeconds()).padStart(2, "0");
+        updatedEl.textContent = "STATION BOARD — status confirmed " + hh + ":" + mm + ":" + ss + " local";
+      })
+      .catch(function () {
+        errorEl.hidden = false;
+      });
+  }
+
+  refresh();
+  setInterval(refresh, 15000);
+
+  // clipboard, with a fallback for non-secure contexts
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy") ? resolve() : reject(new Error("copy failed"));
+      } catch (e) {
+        reject(e);
+      } finally {
+        document.body.removeChild(ta);
+      }
+    });
+  }
+
+  grid.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button.copy-cmd");
+    if (!btn) return;
+    var ack = btn.parentElement.querySelector(".copy-ack");
+    copyText(btn.getAttribute("data-cmd")).then(function () {
+      ack.classList.add("show");
+      clearTimeout(ack._t);
+      ack._t = setTimeout(function () { ack.classList.remove("show"); }, 1800);
+    }).catch(function () {
+      ack.textContent = "Copy failed";
+      ack.classList.add("show");
+    });
+  });
+})();
+</script>
+
+{% endblock %}
