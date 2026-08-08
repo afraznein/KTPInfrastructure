@@ -23,7 +23,18 @@ storage:
   matches_dir: ./matches
 
 frontend:
-  origin: "http://localhost:3000"
+  # Single-origin: the overlay is served origin-relative behind the in-container
+  # nginx reverse proxy at https://localhost (:443, no hosts file needed), so
+  # Socket.IO's credentials CORS origin must match the serving origin. Prod runs
+  # the same setup at https://hud.ktpdod.com.
+  #
+  # Comma-separated because the raw :3000 port stays published for direct debug
+  # (see docker-compose.local.yml). Socket.IO sets credentials:true, which
+  # forbids a wildcard origin and requires an exact match — so serving the
+  # overlay from http://localhost:3000 while this listed only https://localhost
+  # would render the page and then silently never connect. The backend splits
+  # this list for exactly that case (backend/src/socket/socket.ts).
+  origin: "https://localhost,http://localhost:3000"
 
 auth:
   steam_api_key: ""
