@@ -72,6 +72,51 @@ def test_online_example_has_production_shape():
     )
 
 
+def test_online_example_keeps_the_operator_tail():
+    """Guards the settings that only ever existed on the live servers.
+
+    On 2026-08-06 a `sed -i` was run against /home/dod/distribute/dodserver.cfg.
+    That path is the KTPFileDistributor watch-dir ROOT and its WatchPatterns
+    include *.cfg, so the edit fanned the file to all 25 instances
+    ("Distribution complete: 25/25 servers") straight over each server's live
+    config. The distributed copy had never carried the block below, so the whole
+    fleet silently lost it — surfacing only at the 03:00 restart the next day,
+    when the HUD went blind because its exec line was gone.
+
+    These are cheap to lose and expensive to notice, so pin them here: this
+    example file is the shape any distributed copy should be built from.
+
+    Online profile only. The local profile sets dod_hud_url directly in
+    dodserver.cfg instead of exec'ing a separate file.
+    """
+    example = CONFIG_ROOT / "online" / "dodserver.cfg.example"
+    if not example.exists():
+        pytest.skip("online/dodserver.cfg.example not present")
+
+    cvars = parse_dodserver_cfg(example)
+    # sv_allow_dlfile 0 prevents a 2+ second SERVER-WIDE freeze when a client
+    # without the map joins; the profiling cvars are the fleet's frame-spike
+    # telemetry. Values matter, not just presence.
+    for cvar, expected in (
+        ("sv_allow_dlfile", "0"),
+        ("sv_send_logos", "1"),
+        ("ktp_profile_frame", "1"),
+    ):
+        assert cvars.get(cvar) == expected, (
+            f"online/dodserver.cfg.example: {cvar} should be {expected!r}, "
+            f"got {cvars.get(cvar)!r} — see the 2026-08-06 distributor incident"
+        )
+
+    # Asserted on raw text, not the parsed dict: parse_dodserver_cfg collapses
+    # every `exec` line onto one key, so a dict lookup would only ever see the
+    # last one and would pass or fail depending on line order.
+    hud_exec = "exec addons/ktpamx/configs/hud_observer.cfg"
+    assert hud_exec in example.read_text(encoding="utf-8"), (
+        f"online/dodserver.cfg.example: missing {hud_exec!r} — without it the "
+        f"HUD plugin keeps its compiled-in localhost defaults and ingest goes dark"
+    )
+
+
 def test_sys_ticrate_is_1000(cfg_path):
     """KTP fleet runs sys_ticrate 1000 — verified in CLAUDE.md and
     KTPReHLDS Host_FilterTime fix. Anything else silently caps server FPS."""

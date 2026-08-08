@@ -168,3 +168,24 @@ sv_voicequality 2
 exec listip.cfg
 exec banned.cfg
 heartbeat
+
+//-----------------------------------------------
+//               KTP Frame Profiling
+//-----------------------------------------------
+ktp_profile_frame 1
+ktp_profile_interval 10
+ktp_profile_spike_threshold 3
+ktp_profile_steam_detail 0
+
+// Reject dlfile fallback when FastDL is configured.
+// Prevents 2+sec server-wide freeze when a client without the map
+// tries engine-fragment download (Netchan_CreateFileFragments reads
+// entire BSP synchronously in SV_ReadPackets).
+sv_allow_dlfile "0"
+
+// KTP HUD Observer. The cfg it execs carries dod_hud_url + dod_hud_key and is
+// installed per-server by DoD-hud-observer/deploy/deploy-plugin.sh --bootstrap
+// (gitignored there — it holds the ingest auth key). Without this line the
+// plugin keeps its compiled-in localhost defaults and posts nowhere.
+exec addons/ktpamx/configs/hud_observer.cfg
+sv_send_logos "1"
