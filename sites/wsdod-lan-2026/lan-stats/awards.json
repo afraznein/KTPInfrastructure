@@ -18,36 +18,42 @@
    "top": [
     {
      "who": "hildebrand?",
-     "value": "1.388 KTPR",
-     "where": "icyHOT"
+     "value": "1.440 KTPR",
+     "where": "icyHOT",
+     "rank": 1
     },
     {
-     "who": "jules",
-     "value": "1.299 KTPR",
-     "where": "onLAN thunder"
-    },
-    {
-     "who": "piff",
-     "value": "1.274 KTPR",
-     "where": "Best Buds",
-     "as": "piff ＃4Monty"
+     "who": "baiko",
+     "value": "1.266 KTPR",
+     "where": "North Atlantic Treaty Org",
+     "as": "baiko ＃gubbe.se",
+     "rank": 2
     },
     {
      "who": "Seanality",
-     "value": "1.223 KTPR",
-     "where": "icyHOT"
+     "value": "1.256 KTPR",
+     "where": "icyHOT",
+     "rank": 3
     },
     {
-     "who": "s i k",
-     "value": "1.199 KTPR",
-     "where": "icyHOT",
-     "as": "s i k <3 n a t"
+     "who": "piff",
+     "value": "1.241 KTPR",
+     "where": "Best Buds",
+     "as": "piff ＃4Monty",
+     "rank": 4
+    },
+    {
+     "who": "jules",
+     "value": "1.217 KTPR",
+     "where": "onLAN thunder",
+     "rank": 5
     }
    ],
    "leader": {
     "who": "hildebrand?",
-    "value": "1.388 KTPR",
-    "where": "icyHOT"
+    "value": "1.440 KTPR",
+    "where": "icyHOT",
+    "rank": 1
    }
   },
   {
@@ -57,38 +63,45 @@
    "status": "proposed",
    "top": [
     {
-     "who": "vertex",
-     "value": "1.413 KTPR",
-     "where": "icyHOT"
-    },
-    {
      "who": "bR0M",
-     "value": "1.349 KTPR",
+     "value": "1.365 KTPR",
      "where": "Best Buds",
-     "as": "bR0M ＃wetya"
-    },
-    {
-     "who": "sTarK_ x_0",
-     "value": "1.266 KTPR",
-     "where": "b Team",
-     "as": "sTarK_ x_0 <3＃77"
+     "as": "bR0M ＃wetya",
+     "rank": 1
     },
     {
      "who": "Seanality",
-     "value": "1.242 KTPR",
-     "where": "icyHOT"
+     "value": "1.339 KTPR",
+     "where": "icyHOT",
+     "rank": 2
     },
     {
-     "who": "piff",
-     "value": "1.240 KTPR",
-     "where": "Best Buds",
-     "as": "piff ＃4Monty"
+     "who": "baiko",
+     "value": "1.268 KTPR",
+     "where": "North Atlantic Treaty Org",
+     "as": "baiko ＃gubbe.se",
+     "rank": 3
+    },
+    {
+     "who": "vertex",
+     "value": "1.254 KTPR",
+     "where": "icyHOT",
+     "rank": 4
+    },
+    {
+     "who": "hey hi",
+     "value": "1.225 KTPR",
+     "where": "b Team",
+     "as": "hey hi <3 dustbin",
+     "rank": 5
     }
    ],
    "leader": {
-    "who": "vertex",
-    "value": "1.413 KTPR",
-    "where": "icyHOT"
+    "who": "bR0M",
+    "value": "1.365 KTPR",
+    "where": "Best Buds",
+    "as": "bR0M ＃wetya",
+    "rank": 1
    }
   },
   {
@@ -100,27 +113,32 @@
     {
      "who": "element",
      "value": "750",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 1
     },
     {
      "who": "player",
      "value": "684",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 2
     },
     {
      "who": "vertex",
      "value": "684",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 2
     },
     {
      "who": "Savage¬",
      "value": "654",
-     "where": "NoSoul"
+     "where": "NoSoul",
+     "rank": 4
     },
     {
      "who": "NoName^",
      "value": "652",
-     "where": "North Atlantic Treaty Org"
+     "where": "North Atlantic Treaty Org",
+     "rank": 5
     }
    ],
    "leader": {
@@ -138,28 +156,39 @@
     {
      "who": "Seanality",
      "value": "159",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 1
     },
     {
      "who": "billbsod",
      "value": "156",
-     "where": "Price is Right"
+     "where": "Price is Right",
+     "rank": 2
     },
     {
      "who": "Khoi",
      "value": "146",
-     "where": "NoSoul"
+     "where": "NoSoul",
+     "rank": 3
     },
     {
      "who": "warchyld[dd]",
      "value": "143",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 4
     },
     {
      "who": "kroD",
      "value": "136",
      "where": "Arrested Development",
-     "as": "kroD-"
+     "as": "kroD-",
+     "rank": 5
+    },
+    {
+     "who": "hypnotik_ 0_x",
+     "value": "136",
+     "where": "Price is Right",
+     "rank": 5
     }
    ],
    "leader": {
@@ -170,36 +199,47 @@
   },
   {
    "slug": "flags-rate",
-   "title": "Flags Are My Life",
-   "blurb": "Most flags per half — the Calebsod award.",
+   "title": "Touch Grass",
+   "blurb": "Most flags per half — and he actually does. The Calebsod award.",
    "status": "proposed",
    "top": [
     {
      "who": "Seanality",
      "value": "6.91 / half",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 1
     },
     {
      "who": "billbsod",
      "value": "6.50 / half",
-     "where": "Price is Right"
+     "where": "Price is Right",
+     "rank": 2
     },
     {
      "who": "piff",
      "value": "6.15 / half",
      "where": "Best Buds",
-     "as": "piff ＃4Monty"
+     "as": "piff ＃4Monty",
+     "rank": 3
     },
     {
      "who": "Khoi",
      "value": "6.08 / half",
-     "where": "NoSoul"
+     "where": "NoSoul",
+     "rank": 4
     },
     {
      "who": "kroD",
      "value": "5.67 / half",
      "where": "Arrested Development",
-     "as": "kroD-"
+     "as": "kroD-",
+     "rank": 5
+    },
+    {
+     "who": "hypnotik_ 0_x",
+     "value": "5.67 / half",
+     "where": "Price is Right",
+     "rank": 5
     }
    ],
    "leader": {
@@ -217,27 +257,32 @@
     {
      "who": "hildebrand?",
      "value": "1.73 K/D",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 1
     },
     {
      "who": "jules",
      "value": "1.40 K/D",
-     "where": "onLAN thunder"
+     "where": "onLAN thunder",
+     "rank": 2
     },
     {
      "who": "vertex",
      "value": "1.38 K/D",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 3
     },
     {
      "who": "LaNGoNdd",
      "value": "1.32 K/D",
-     "where": "onLAN thunder"
+     "where": "onLAN thunder",
+     "rank": 4
     },
     {
      "who": "NoName^",
      "value": "1.31 K/D",
-     "where": "North Atlantic Treaty Org"
+     "where": "North Atlantic Treaty Org",
+     "rank": 5
     }
    ],
    "leader": {
@@ -255,27 +300,45 @@
     {
      "who": "Seanality",
      "value": "14",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 1
     },
     {
      "who": "hildebrand?",
      "value": "13",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 2
     },
     {
      "who": "jules",
      "value": "13",
-     "where": "onLAN thunder"
+     "where": "onLAN thunder",
+     "rank": 2
     },
     {
      "who": "Polak",
      "value": "12",
-     "where": "Best Buds"
+     "where": "Best Buds",
+     "rank": 4
     },
     {
      "who": "ddorito",
      "value": "11",
-     "where": "onLAN thunder"
+     "where": "onLAN thunder",
+     "rank": 5
+    },
+    {
+     "who": "ian",
+     "value": "11",
+     "where": "onLAN thunder",
+     "as": "bonchon",
+     "rank": 5
+    },
+    {
+     "who": "LaNGoNdd",
+     "value": "11",
+     "where": "onLAN thunder",
+     "rank": 5
     }
    ],
    "leader": {
@@ -293,28 +356,33 @@
     {
      "who": "nicholson",
      "value": "20",
-     "where": "Arrested Development"
+     "where": "Arrested Development",
+     "rank": 1
     },
     {
      "who": "TillJim",
      "value": "16",
      "where": "Arrested Development",
-     "as": "SilverPlayer"
+     "as": "SilverPlayer",
+     "rank": 2
     },
     {
      "who": "player",
      "value": "14",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 3
     },
     {
      "who": "Hub",
      "value": "12",
-     "where": "North Atlantic Treaty Org"
+     "where": "North Atlantic Treaty Org",
+     "rank": 4
     },
     {
      "who": "m00cat :D",
      "value": "12",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 4
     }
    ],
    "leader": {
@@ -333,28 +401,33 @@
      "who": "p12",
      "value": "144",
      "where": "Arrested Development",
-     "as": "p12 ＃7-33"
+     "as": "p12 ＃7-33",
+     "rank": 1
     },
     {
      "who": "baiko",
      "value": "131",
      "where": "North Atlantic Treaty Org",
-     "as": "baiko ＃gubbe.se"
+     "as": "baiko ＃gubbe.se",
+     "rank": 2
     },
     {
      "who": "incite[bc]",
      "value": "131",
-     "where": "Arrested Development"
+     "where": "Arrested Development",
+     "rank": 2
     },
     {
      "who": "kanguhhh?!",
      "value": "128",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 4
     },
     {
      "who": "m00cat :D",
      "value": "127",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 5
     }
    ],
    "leader": {
@@ -373,28 +446,33 @@
     {
      "who": "element",
      "value": "124,520",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 1
     },
     {
      "who": "Savage¬",
      "value": "112,059",
-     "where": "NoSoul"
+     "where": "NoSoul",
+     "rank": 2
     },
     {
      "who": "vertex",
      "value": "111,593",
-     "where": "icyHOT"
+     "where": "icyHOT",
+     "rank": 3
     },
     {
      "who": "nomistizzle",
      "value": "109,822",
-     "where": "Price is Right"
+     "where": "Price is Right",
+     "rank": 4
     },
     {
      "who": "cory?",
      "value": "109,104",
      "where": "Price is Right",
-     "as": "cory <3 liah,jkimbro,rdk"
+     "as": "cory <3 liah,jkimbro,rdk",
+     "rank": 5
     }
    ],
    "leader": {
@@ -412,29 +490,34 @@
     {
      "who": "player",
      "value": "141",
-     "where": "dicE"
+     "where": "dicE",
+     "rank": 1
     },
     {
      "who": "billbsod",
      "value": "133",
-     "where": "Price is Right"
+     "where": "Price is Right",
+     "rank": 2
     },
     {
      "who": "jules",
      "value": "132",
-     "where": "onLAN thunder"
+     "where": "onLAN thunder",
+     "rank": 3
     },
     {
      "who": "nein",
      "value": "121",
      "where": "Price is Right",
-     "as": "nein_"
+     "as": "nein_",
+     "rank": 4
     },
     {
      "who": "nightmare",
      "value": "120",
      "where": "North Atlantic Treaty Org",
-     "as": "nightmare＃old"
+     "as": "nightmare＃old",
+     "rank": 5
     }
    ],
    "leader": {
@@ -452,29 +535,34 @@
     {
      "who": "Kevs Dolmetscher",
      "value": "17:44",
-     "where": "Uncle Rico's Time Machine"
+     "where": "Uncle Rico's Time Machine",
+     "rank": 1
     },
     {
      "who": "incite[bc]",
      "value": "14:53",
-     "where": "Arrested Development"
+     "where": "Arrested Development",
+     "rank": 2
     },
     {
      "who": "nicholson",
      "value": "12:04",
-     "where": "Arrested Development"
+     "where": "Arrested Development",
+     "rank": 3
     },
     {
      "who": "omenayr",
      "value": "10:27",
      "where": "onLAN thunder",
-     "as": "1337$k337"
+     "as": "1337$k337",
+     "rank": 4
     },
     {
      "who": "bR0M",
      "value": "9:21",
      "where": "Best Buds",
-     "as": "bR0M ＃wetya"
+     "as": "bR0M ＃wetya",
+     "rank": 5
     }
    ],
    "leader": {
@@ -491,37 +579,37 @@
    {
     "role": "Rifle #1",
     "who": "vertex",
-    "value": "1.413 KTPR",
+    "value": "1.254 KTPR",
     "where": "Sun · icyHOT"
    },
    {
     "role": "Heavy #1",
-    "who": "jules",
-    "value": "1.299 KTPR",
-    "where": "Sat · onLAN thunder"
+    "who": "piff",
+    "value": "1.241 KTPR",
+    "where": "Sat · Best Buds"
    },
    {
     "role": "3rd",
     "who": "bR0M",
-    "value": "1.349 KTPR",
+    "value": "1.365 KTPR",
     "where": "Sun · Best Buds"
    },
    {
     "role": "Rifle #2",
-    "who": "s i k",
-    "value": "1.199 KTPR",
-    "where": "Sat · icyHOT"
+    "who": "nicholson",
+    "value": "1.195 KTPR",
+    "where": "Sat · Arrested Development"
    },
    {
     "role": "Heavy #2",
-    "who": "piff",
-    "value": "1.274 KTPR",
-    "where": "Sat · Best Buds"
+    "who": "jules",
+    "value": "1.217 KTPR",
+    "where": "Sat · onLAN thunder"
    },
    {
     "role": "Sniper",
     "who": "hildebrand?",
-    "value": "1.388 KTPR",
+    "value": "1.440 KTPR",
     "where": "Sat · icyHOT"
    }
   ],
@@ -538,29 +626,34 @@
      "who": "sTarK_ x_0",
      "value": "23",
      "where": "saints2_b3e · Sat · v Uncle Rico's Time Machine",
-     "as": "sTarK_ x_0 <3＃77"
+     "as": "sTarK_ x_0 <3＃77",
+     "rank": 1
     },
     {
      "who": "incite[bc]",
      "value": "21",
-     "where": "harrington · Sat · v b Team"
+     "where": "harrington · Sat · v b Team",
+     "rank": 2
     },
     {
      "who": "s i k",
      "value": "20",
      "where": "lennon5_b1 · Sat · v Arrested Development",
-     "as": "s i k <3 n a t"
+     "as": "s i k <3 n a t",
+     "rank": 3
     },
     {
      "who": "baiko",
      "value": "20",
      "where": "lennon5_b1 · Sat · v Uncle Rico's Time Machine",
-     "as": "baiko ＃gubbe.se"
+     "as": "baiko ＃gubbe.se",
+     "rank": 3
     },
     {
      "who": "kanguhhh?!",
      "value": "19",
-     "where": "armory_b6 · Sun · v Arrested Development"
+     "where": "armory_b6 · Sun · v Arrested Development",
+     "rank": 5
     }
    ],
    "leader": {
@@ -582,28 +675,33 @@
      "who": "cK",
      "value": "29",
      "where": "lennon5_b1 · Sun · v Price is Right",
-     "as": "cK- ＃phillylan2026"
+     "as": "cK- ＃phillylan2026",
+     "rank": 1
     },
     {
      "who": "s i k",
      "value": "26",
      "where": "lennon5_b1 · Sat · v Arrested Development",
-     "as": "s i k <3 n a t"
+     "as": "s i k <3 n a t",
+     "rank": 2
     },
     {
      "who": "vertex",
      "value": "23",
-     "where": "harrington · Sun · v Price is Right"
+     "where": "harrington · Sun · v Price is Right",
+     "rank": 3
     },
     {
      "who": "LaNGoNdd",
      "value": "21",
-     "where": "armory_b6 · Sat · v b Team"
+     "where": "armory_b6 · Sat · v b Team",
+     "rank": 4
     },
     {
      "who": "warchyld[dd]",
      "value": "19",
-     "where": "harrington · Sat · v North Atlantic Treaty Org"
+     "where": "harrington · Sat · v North Atlantic Treaty Org",
+     "rank": 5
     }
    ],
    "leader": {
@@ -624,28 +722,33 @@
     {
      "who": "Ke:>^1.de",
      "value": "6",
-     "where": "armory_b6 · Sat · v icyHOT"
+     "where": "armory_b6 · Sat · v icyHOT",
+     "rank": 1
     },
     {
      "who": "element",
      "value": "5",
-     "where": "lennon5_b1 · Sat · v NoSoul"
+     "where": "lennon5_b1 · Sat · v NoSoul",
+     "rank": 2
     },
     {
      "who": "Hub",
      "value": "5",
-     "where": "harrington · Sat · v dicE"
+     "where": "harrington · Sat · v dicE",
+     "rank": 2
     },
     {
      "who": "cK",
      "value": "5",
      "where": "harrington · Sat · v NoSoul",
-     "as": "cK- ＃phillylan2026"
+     "as": "cK- ＃phillylan2026",
+     "rank": 2
     },
     {
      "who": "warchyld[dd]",
      "value": "5",
-     "where": "anzio · Sat · v icyHOT"
+     "where": "anzio · Sat · v icyHOT",
+     "rank": 2
     }
    ],
    "leader": {
@@ -665,28 +768,33 @@
     {
      "who": "hildebrand?",
      "value": "2,841",
-     "where": "thunder2 · Sat · v b Team"
+     "where": "thunder2 · Sat · v b Team",
+     "rank": 1
     },
     {
      "who": "ian",
      "value": "3,844",
      "where": "anzio · Sat · v North Atlantic Treaty Org",
-     "as": "bonchon"
+     "as": "bonchon",
+     "rank": 2
     },
     {
      "who": "arachnid",
      "value": "4,765",
-     "where": "armory_b6 · Sun · v Uncle Rico's Time Machine"
+     "where": "armory_b6 · Sun · v Uncle Rico's Time Machine",
+     "rank": 3
     },
     {
      "who": "jules",
      "value": "4,859",
-     "where": "thunder2 · Sat · v Uncle Rico's Time Machine"
+     "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+     "rank": 4
     },
     {
      "who": "LaNGoNdd",
      "value": "5,019",
-     "where": "thunder2 · Sat · v Uncle Rico's Time Machine"
+     "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+     "rank": 5
     }
    ],
    "leader": {
@@ -706,27 +814,32 @@
     {
      "who": "tokih",
      "value": "77",
-     "where": "harrington · Sun · v Best Buds"
+     "where": "harrington · Sun · v Best Buds",
+     "rank": 1
     },
     {
      "who": "o[bb]y",
      "value": "75",
-     "where": "thunder2 · Sat · v icyHOT"
+     "where": "thunder2 · Sat · v icyHOT",
+     "rank": 2
     },
     {
      "who": "billbsod",
      "value": "74",
-     "where": "harrington · Sun · v icyHOT"
+     "where": "harrington · Sun · v icyHOT",
+     "rank": 3
     },
     {
      "who": "nomistizzle",
      "value": "73",
-     "where": "lennon5_b1 · Sun · v Best Buds"
+     "where": "lennon5_b1 · Sun · v Best Buds",
+     "rank": 4
     },
     {
      "who": "Ke:>^1.de",
      "value": "72",
-     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org"
+     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org",
+     "rank": 5
     }
    ],
    "leader": {
@@ -738,81 +851,48 @@
    "tied": null
   },
   {
-   "slug": "no-cap",
-   "title": "No Cap For You",
-   "blurb": "Most enemy captures broken up in a match. HUD.",
+   "slug": "tourist",
+   "title": "Difficulty: Tourist",
+   "blurb": "Best K/D in a single match, 30-kill minimum. Match record.",
    "status": "proposed",
    "top": [
     {
-     "who": "piff",
-     "value": "4",
-     "where": "armory_b6 · Sat · v North Atlantic Treaty Org",
-     "as": "piff ＃4Monty"
+     "who": "hildebrand?",
+     "value": "5.15 K/D (67-13)",
+     "where": "thunder2 · Sat · v b Team",
+     "rank": 1
     },
     {
-     "who": "billbsod",
-     "value": "4",
-     "where": "armory_b6 · Sat · v dicE"
+     "who": "stealthlol",
+     "value": "2.78 K/D (75-27)",
+     "where": "thunder2 · Sat · v Arrested Development",
+     "rank": 2
     },
     {
-     "who": "player",
-     "value": "4",
-     "where": "saints2_b3e · Sat · v onLAN thunder"
+     "who": "ian",
+     "value": "2.45 K/D (49-20)",
+     "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+     "rank": 3
     },
     {
-     "who": "Ke:>^1.de",
-     "value": "4",
-     "where": "harrington · Sat · v Price is Right"
+     "who": "NoName^",
+     "value": "2.27 K/D (75-33)",
+     "where": "saints2_b3e · Sun · v dicE",
+     "rank": 4
     },
     {
-     "who": "o[bb]y",
-     "value": "4",
-     "where": "harrington · Sat · v Arrested Development"
+     "who": "jules",
+     "value": "2.26 K/D (79-35)",
+     "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 5
     }
    ],
    "leader": {
-    "who": "piff",
-    "value": "4",
-    "where": "armory_b6 · Sat · v North Atlantic Treaty Org",
-    "as": "piff ＃4Monty",
-    "ties": 8
+    "who": "hildebrand?",
+    "value": "5.15 K/D (67-13)",
+    "where": "thunder2 · Sat · v b Team"
    },
-   "tied": [
-    {
-     "who": "piff",
-     "where": "armory_b6 · Sat · v North Atlantic Treaty Org",
-     "as": "piff ＃4Monty"
-    },
-    {
-     "who": "billbsod",
-     "where": "armory_b6 · Sat · v dicE"
-    },
-    {
-     "who": "player",
-     "where": "saints2_b3e · Sat · v onLAN thunder"
-    },
-    {
-     "who": "Ke:>^1.de",
-     "where": "harrington · Sat · v Price is Right"
-    },
-    {
-     "who": "o[bb]y",
-     "where": "harrington · Sat · v Arrested Development"
-    },
-    {
-     "who": "nicholson",
-     "where": "harrington · Sat · v b Team"
-    },
-    {
-     "who": "TillJim",
-     "where": "anzio · Sat · v Price is Right",
-     "as": "SilverPlayer"
-    },
-    {
-     "who": "nicholson",
-     "where": "armory_b6 · Sun · v Best Buds"
-    }
-   ]
+   "tied": null
   },
   {
    "slug": "horizontal",
@@ -823,28 +903,33 @@
     {
      "who": "Kevs Dolmetscher",
      "value": "4:23",
-     "where": "harrington · Sat · v Price is Right"
+     "where": "harrington · Sat · v Price is Right",
+     "rank": 1
     },
     {
      "who": "jules",
      "value": "3:23",
-     "where": "railroad2_s9a · Sun · v Best Buds"
+     "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 2
     },
     {
      "who": "bR0M",
      "value": "3:11",
      "where": "lennon5_b1 · Sat · v onLAN thunder",
-     "as": "bR0M ＃wetya"
+     "as": "bR0M ＃wetya",
+     "rank": 3
     },
     {
      "who": "incite[bc]",
      "value": "3:09",
-     "where": "lennon5_b1 · Sat · v icyHOT"
+     "where": "lennon5_b1 · Sat · v icyHOT",
+     "rank": 4
     },
     {
      "who": "Hub",
      "value": "3:08",
-     "where": "lennon5_b1 · Sun · v dicE"
+     "where": "lennon5_b1 · Sun · v dicE",
+     "rank": 5
     }
    ],
    "leader": {
@@ -865,28 +950,33 @@
      "who": "bR0M",
      "value": "20",
      "where": "anzio · Sat · v b Team",
-     "as": "bR0M ＃wetya"
+     "as": "bR0M ＃wetya",
+     "rank": 1
     },
     {
      "who": "e p y o n",
      "value": "19",
-     "where": "thunder2 · Sat · v icyHOT"
+     "where": "thunder2 · Sat · v icyHOT",
+     "rank": 2
     },
     {
      "who": "nein",
      "value": "19",
      "where": "railroad2_s9a · Sun · v b Team",
-     "as": "nein_"
+     "as": "nein_",
+     "rank": 2
     },
     {
      "who": "Ke:>^1.de",
      "value": "19",
-     "where": "armory_b6 · Sun · v NoSoul"
+     "where": "armory_b6 · Sun · v NoSoul",
+     "rank": 2
     },
     {
      "who": "element",
      "value": "19",
-     "where": "armory_b6 · Sun · v Arrested Development"
+     "where": "armory_b6 · Sun · v Arrested Development",
+     "rank": 2
     }
    ],
    "leader": {
@@ -907,27 +997,32 @@
     {
      "who": "patten",
      "value": "10",
-     "where": "harrington · Sat · v b Team"
+     "where": "harrington · Sat · v b Team",
+     "rank": 1
     },
     {
      "who": "nomistizzle",
      "value": "7",
-     "where": "harrington · Sat · v Uncle Rico's Time Machine"
+     "where": "harrington · Sat · v Uncle Rico's Time Machine",
+     "rank": 2
     },
     {
      "who": "Sq =)))",
      "value": "7",
-     "where": "saints2_b3e · Sun · v onLAN thunder"
+     "where": "saints2_b3e · Sun · v onLAN thunder",
+     "rank": 2
     },
     {
      "who": "element",
      "value": "6",
-     "where": "armory_b6 · Sat · v Price is Right"
+     "where": "armory_b6 · Sat · v Price is Right",
+     "rank": 4
     },
     {
      "who": "Ho0liii",
      "value": "6",
-     "where": "lennon5_b1 · Sun · v onLAN thunder"
+     "where": "lennon5_b1 · Sun · v onLAN thunder",
+     "rank": 4
     }
    ],
    "leader": {
@@ -947,30 +1042,35 @@
     {
      "who": "Kevs Dolmetscher",
      "value": "4",
-     "where": "saints2_b3e · Sat · v b Team"
+     "where": "saints2_b3e · Sat · v b Team",
+     "rank": 1
     },
     {
      "who": "nein",
      "value": "3",
      "where": "thunder2 · Sat · v Best Buds",
-     "as": "nein_"
+     "as": "nein_",
+     "rank": 2
     },
     {
      "who": "Khoi",
      "value": "3",
-     "where": "anzio · Sat · v Uncle Rico's Time Machine"
+     "where": "anzio · Sat · v Uncle Rico's Time Machine",
+     "rank": 2
     },
     {
      "who": "omenayr",
      "value": "2",
      "where": "armory_b6 · Sat · v b Team",
-     "as": "1337$k337"
+     "as": "1337$k337",
+     "rank": 4
     },
     {
      "who": "hey hi",
      "value": "2",
      "where": "thunder2 · Sat · v icyHOT",
-     "as": "hey hi <3 dustbin"
+     "as": "hey hi <3 dustbin",
+     "rank": 4
     }
    ],
    "leader": {
@@ -990,28 +1090,33 @@
     {
      "who": "SirSnipeys",
      "value": "13,406",
-     "where": "harrington · Sat · v Price is Right"
+     "where": "harrington · Sat · v Price is Right",
+     "rank": 1
     },
     {
      "who": "o[bb]y",
      "value": "12,878",
-     "where": "thunder2 · Sat · v icyHOT"
+     "where": "thunder2 · Sat · v icyHOT",
+     "rank": 2
     },
     {
      "who": "billbsod",
      "value": "12,751",
-     "where": "harrington · Sun · v icyHOT"
+     "where": "harrington · Sun · v icyHOT",
+     "rank": 3
     },
     {
      "who": "nein",
      "value": "12,738",
      "where": "harrington · Sun · v icyHOT",
-     "as": "nein_"
+     "as": "nein_",
+     "rank": 4
     },
     {
      "who": "Ke:>^1.de",
      "value": "12,562",
-     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org"
+     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org",
+     "rank": 5
     }
    ],
    "leader": {
@@ -1032,29 +1137,34 @@
      "who": "sTarK_ x_0",
      "value": "86",
      "where": "saints2_b3e · Sun · v Uncle Rico's Time Machine",
-     "as": "sTarK_ x_0 <3＃77"
+     "as": "sTarK_ x_0 <3＃77",
+     "rank": 1
     },
     {
      "who": "vertex",
      "value": "83",
-     "where": "railroad2_s9a · Sun · v Price is Right"
+     "where": "railroad2_s9a · Sun · v Price is Right",
+     "rank": 2
     },
     {
      "who": "cK",
      "value": "82",
      "where": "harrington · Sun · v Price is Right",
-     "as": "cK- ＃phillylan2026"
+     "as": "cK- ＃phillylan2026",
+     "rank": 3
     },
     {
      "who": "nomistizzle",
      "value": "80",
-     "where": "harrington · Sat · v Uncle Rico's Time Machine"
+     "where": "harrington · Sat · v Uncle Rico's Time Machine",
+     "rank": 4
     },
     {
      "who": "piff",
      "value": "79",
      "where": "lennon5_b1 · Sun · v Price is Right",
-     "as": "piff ＃4Monty"
+     "as": "piff ＃4Monty",
+     "rank": 5
     }
    ],
    "leader": {

@@ -27,7 +27,11 @@ SLUG = "damage"
 
 
 def top5():
-    """(display name, team, damage) for the five biggest HLStatsX damage totals."""
+    """(display name, team, damage) down to the 5th-biggest HLStatsX total.
+
+    Whole tie groups: if the 5th mark is shared, everyone on it is included
+    rather than the cut slicing through the group (fix_award_ties.py rule).
+    """
     stats = json.load(open(STATS, encoding="utf-8"))
     board = json.load(open(os.path.join(HERE, "season-board.json"), encoding="utf-8"))
     page = open(PAGE, encoding="utf-8").read()
@@ -35,10 +39,12 @@ def top5():
                   page, re.S)
     if not m:
         sys.exit("lanboard-data block not found — run inject_season_board.py first")
-    # display name + team come from the leaderboard block, so the award answers
-    # to the same naming rule as every other name on the page
-    by_full = {p["n"]: p for p in json.loads(m.group(1))["players"]}
-    sid_name = {r["steam_id"]: r["name"] for r in board["players"]}
+    # display name + team come from the board block's weekend view, so the
+    # award answers to the same naming rule as every other name on the page
+    by_full = {p["n"]: p
+               for p in json.loads(m.group(1))["views"]["weekend"]["players"]}
+    sid_name = {r["steam_id"]: r["name"]
+                for r in board["views"]["weekend"]["players"]}
 
     dmg = collections.Counter()
     for day in stats["days"].values():
@@ -46,7 +52,9 @@ def top5():
             dmg[p["steam_id"]] += p.get("damage_hlstatsx") or 0
 
     out = []
-    for sid, v in dmg.most_common(5):
+    for sid, v in dmg.most_common():
+        if len(out) >= 5 and v != out[-1][2]:
+            break
         row = by_full.get(sid_name.get(sid, ""), {})
         if not row:
             sys.exit(f"no leaderboard row for {sid_name.get(sid)!r}")
@@ -73,15 +81,20 @@ def main() -> int:
     if idx is None:
         sys.exit(f"no decided award with slug {SLUG!r}")
 
-    new = build(awards["decided"][idx])
+    # ranks belong to fix_award_ties.py — compare and rebuild without them,
+    # so this script neither strips them nor goes stale over them
+    cur = awards["decided"][idx]
+    bare = dict(cur, top=[{k: v for k, v in e.items() if k != "rank"}
+                          for e in cur["top"]])
+    new = build(bare)
     if "--check" in sys.argv:
-        if awards["decided"][idx] != new:
+        if bare != new:
             print("Heavy Hitter is STALE — re-run fix_damage_award.py")
             return 1
         print("Heavy Hitter is current")
         return 0
 
-    if awards["decided"][idx] == new:
+    if bare == new:
         print("no change")
         return 0
     awards["decided"][idx] = new
@@ -90,7 +103,7 @@ def main() -> int:
     print("rewrote Heavy Hitter from HLStatsX damage:")
     for e in new["top"]:
         print(f"  {e['who']:<14} {e['value']:>9}  {e['where']}")
-    print("\nnow re-embed it into the page:  python build_ballots.py")
+    print("\nnow re-rank and re-embed:  python fix_award_ties.py && python build_ballots.py")
     return 0
 
 
