@@ -201,9 +201,23 @@ duplicates halves 1..n exactly; every query must exclude it.
 Validated offline against the LAN dumps before the change: scoped to the same 56
 matches, HLstatsX damage runs **+5.5%** against the HUD (consistent with the
 ~4–6% HUD undercount documented below), with 59 of 61 players inside 0.90–1.25×.
-The team-kill-damage theory for the remaining outliers does **not** hold —
-correlation between the per-player ratio and team-kill count is **0.044**. The
-shape instead matches HUD missing snapshots, i.e. HLstatsX is the fuller record.
+The remaining outliers are **not explained**. Correlation between the per-player
+ratio and team-**kill count** is 0.044, but that is a weak proxy: a player can
+deal a lot of team *damage* without a single team kill, and no team-damage column
+exists in `ktp_match_stats` to test against. So team damage is neither confirmed
+nor ruled out; HUD missing snapshots fit the shape too. Both point the same way —
+HLstatsX is the fuller record — but which dominates is unmeasured.
+
+**Warmup is not the explanation** (checked 2026-08-09, because damage is stamped
+at *flush* time rather than event time, so unlike kills it is not warmup-proof by
+construction). If warmup leaked in it would concentrate in half 1, and at ~160
+damage/kill the HUD's 2,248 warmup kills would inflate half-1 damage/kill to
+about 186 against half 2's 160. Measured: **163.7 vs 160.5**, and zero rows
+anywhere carry damage with no kills and no deaths. That is ~1/7 of the expected
+signature, so the mechanism (flush + reset before the match id is set) is holding.
+⚠️ Still unverified at source on the live fleet: a Statsme row stamped with a
+match_id but timestamped before that match's `KTP_MATCH_START` would be the
+direct proof, and that needs the DB.
 ⚠️ Scope the comparison before reading it: run unscoped (70 matches vs 56) the
 same figure reads **+27.9%**, which is an artifact, not a finding.
 
