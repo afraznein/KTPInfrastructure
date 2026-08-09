@@ -84,12 +84,90 @@ bot-kit/                     (NOT in this repo — you create it)
 
 ```
 tests/e2e_stats/
+  artifacts.py         build/collect the artifact set from branch refs
   ephemeral_tree.py    per-run serverfiles copy + bot overlay + integrity guard
   ephemeral_mysql.py   private mysqld, schema/migration/seed loading
+  hlstats_daemon.py    hlstats.pl in --stdin mode, fed from the game log
   bot_driver.py        bot adapter: staging, add-command probing, team filling
 scripts/
-  spike_bot_lane.py    Phase 0 — answers the unknowns, asserts nothing
+  build_stats_lane_artifacts.py   the build step
+  spike_bot_lane.py               Phase 0 — answers the unknowns, asserts nothing
 ```
+
+## The build step
+
+Lane B tests a *branch*, so it needs that branch's artifacts from two repos:
+
+| Artifact | Repo | Built? |
+|---|---|---|
+| `stats_logging.amxx` | KTPAMXX (+ `ktp_stats_capture.inc`) | compiled with amxxpc |
+| `hlstats.pl` | KTPHLStatsX | no — Perl, copied |
+| `ktp_schema.sql`, `migrate_00*.sql` | KTPHLStatsX | no — copied |
+
+Everything is extracted with `git show <ref>:<path>`, never read from a working
+tree — "the tests passed" has to mean "passed against this commit". A manifest
+records every SHA and md5, so a result is traceable to exact bytes the same way
+the deployment plan insists deploys are verified by md5 rather than by console
+banner.
+
+```bash
+# Daemon + SQL only — needs no AMXX toolchain, runs anywhere
+python3 scripts/build_stats_lane_artifacts.py \
+    --amxx-repo   ../branches/KTPAMXX       --amxx-ref   feat/stats-positions \
+    --daemon-repo ../branches/KTPHLStatsX   --daemon-ref feat/seed-cap-break-action \
+    --no-plugin --out build/lane-b
+
+# Full set, compiling the plugin locally
+python3 scripts/build_stats_lane_artifacts.py \
+    ... --amxxpc ~/ktpamx/scripting/amxxpc \
+        --includes ../branches/KTPAMXX/plugins/include
+```
+
+Three ways to get the compiled plugin: `--amxxpc` (compile here),
+`--prebuilt-plugin` (adopt a Docker-build or CI artifact), `--no-plugin`
+(daemon + SQL only). The runner is Docker-free, so the Docker plugin build stays
+on a Docker-capable machine or a GH-hosted runner and the artifact is passed in.
+
+Two constraints the builder encodes rather than documents:
+
+- **`stats_logging.sma` and `ktp_stats_capture.inc` must be siblings.** The
+  `.sma` includes the `.inc` by relative path; the production Docker build
+  needed a dedicated `COPY` line for it, and the mismatched-pair failure is in
+  the deployment plan ("amxxpc fails: cannot read ktp_stats_capture.inc").
+- **A failed compile is fatal.** `build/plugins/Dockerfile` ends each compile
+  with `|| echo "WARNING: $name may have had errors"`, so a broken plugin does
+  not fail that image build. Survivable when a human inspects the output;
+  useless in a test lane, where the run would proceed against a stale or absent
+  plugin. `compile_plugin()` raises — including when amxxpc exits 0 having
+  written nothing.
+
+## The daemon step
+
+`hlstats.pl` runs in **`--stdin` mode**, fed by a thread tailing the ephemeral
+server's log:
+
+```
+hlstats.pl --stdin --server-ip 127.0.0.1 --server-port <port> --db-host localhost;mysql_socket=...
+```
+
+Stdin mode disables the UDP listener *and* sets `$g_rcon = 0`, which is worth
+having for free — a test daemon that rcons the server under test is a moving
+part with no upside. Feeding the log directly also takes UDP loss and reordering
+out of a test that exists to prove attribution logic. `--server-ip` and
+`--server-port` are mandatory there; the daemon exits 255 without them.
+
+Two prerequisites, both enforced in code because both fail *silently*:
+
+- **`hlstats_Servers` row** matching address+port, or lines have no server to
+  attach to (`ensure_server_row`).
+- **Action seeds loaded before the daemon starts**, because it caches
+  `hlstats_Actions` in memory at boot.
+
+⚠️ **Unverified:** whether stdin mode wants log lines with the engine's
+`L 08/09/2026 - 12:00:00: ` prefix intact, and whether `--timestamp` should be
+passed. `strip_prefix` and `timestamp_flag` make the answer a config change;
+the default feeds lines exactly as the engine wrote them, which is what a UDP
+forward would have delivered. Phase 0 settles it.
 
 ## Phase 0: run the spike first
 
@@ -166,10 +244,12 @@ someone has to remember.
 
 ## Not yet built
 
-- `hlstats_daemon.py` — run `scripts/hlstats.pl` against the private socket,
-  tailing the ephemeral server's log
 - `match_driver.py` — drive a real match via the existing test-mode rcons
+  (`amx_ktp_test_*`), so rows carry a `match_id` and a `half`
 - `assertions.py` + the tests themselves
-- CI wiring (nightly, non-gating, inheriting the 7pm–midnight ET match embargo)
+- CI wiring (nightly, non-gating, inheriting the 7pm–midnight ET match embargo,
+  and not sharing the nightly Tier 2 slot — two hlds processes on the box that
+  also runs production HLStatsX is not a good trade)
 
-All of it is downstream of the spike answering yes.
+The assertions are downstream of the spike answering yes. The match driver is
+not, and is the next thing to build regardless.
