@@ -67,14 +67,14 @@ def active_schedule() -> list:
 # ⚠ Keep 'round' rows in "H:MM AM/PM – H:MM AM/PM" form: ics.py parses those via
 # strptime("%I:%M %p"). 'setup'/'break' rows are display-only (any text is fine).
 SATURDAY_TIMETABLE = [
-    ("11:00 AM – 11:30 AM", "Player Check In / Setup", "setup"),
-    ("11:30 AM – 12:30 PM", "Round 1", "round"),
-    ("12:30 PM – 1:30 PM",  "Round 2", "round"),
-    ("1:30 PM – 2:30 PM",   "Round 3", "round"),
-    ("2:30 PM – 4:00 PM",   "Food Break", "break"),
-    ("4:00 PM – 5:00 PM",   "Round 4", "round"),
-    ("5:00 PM – 6:00 PM",   "Round 5", "round"),
-    ("6:00 PM – 7:00 PM",   "Round 6", "round"),
+    ("12:30 PM – 1:00 PM", "Player Check In / Setup", "setup"),
+    ("1:00 PM – 2:00 PM", "Round 1", "round"),
+    ("2:00 PM – 3:00 PM",  "Round 2", "round"),
+    ("3:00 PM – 4:00 PM",   "Round 3", "round"),
+    ("4:00 PM – 6:00 PM",   "Food Break", "break"),
+    ("6:00 PM – 7:00 PM",   "Round 4", "round"),
+    ("7:00 PM – 8:00 PM",   "Round 5", "round"),
+    ("8:00 PM – 9:00 PM",   "Round 6", "round"),
 ]
 
 
