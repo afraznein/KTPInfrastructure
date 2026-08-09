@@ -15,7 +15,7 @@ LAN-PHILLY2026 is skipped -- it has its own generator that knows the team names.
 
 Idempotent: only ever writes index.html. Usage: fastdl_indexes.py [--apply]
 """
-import argparse, collections, html, os, re
+import argparse, collections, html, os, re, time
 
 FASTDL = "/var/www/fastdl"
 DEMOS = "/home/hltvserver/hlds/dod/demos"
@@ -250,6 +250,49 @@ for s in servers:
     m = re.match(r"([A-Z]+)\d+$", s)
     by_city.setdefault(CITY.get(m.group(1), "Other") if m else "Other", []).append(s)
 
+def rec_stamp(fname):
+    """'2026-06-11 21:29' from a demo filename's YYMMDDHHMM field, or ''.
+
+    That field is when HLTV started recording — near the match id's epoch but not
+    equal to it, so the two are shown in different places rather than merged.
+    """
+    m = re.search(r"-(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-", fname)
+    if not m:
+        return ""
+    yy, mo, dd, hh, mi = m.groups()
+    if not ("01" <= mo <= "12" and "01" <= dd <= "31" and hh <= "23"):
+        return ""      # a 10-digit run that isn't a date — say nothing rather than guess
+    return "20%s-%s-%s %s:%s" % (yy, mo, dd, hh, mi)
+
+
+def match_when(mid, files):
+    """(display string, [search keys]) for when a match happened.
+
+    Prefers the match id, which IS a unix epoch — that is the match's own clock.
+    Falls back to the recording stamp in the filename when the id is not an epoch
+    (older names), and to nothing at all when neither parses, because a wrong date
+    on an archive is worse than no date.
+    """
+    ts = None
+    if re.fullmatch(r"\d{10}", mid or ""):
+        n = int(mid)
+        if 1_400_000_000 < n < 2_000_000_000:      # sane range, not a stray 10-digit run
+            ts = time.localtime(n)
+    if ts is None:
+        for f in sorted(files):
+            r = rec_stamp(f)
+            if r:
+                ts = time.strptime(r, "%Y-%m-%d %H:%M")
+                break
+    if ts is None:
+        return "", []
+    # a literal middot, not the entity: this string goes through html.escape,
+    # which would turn "&middot;" into a visible "&amp;middot;"
+    disp = time.strftime("%a %d %b %Y · %H:%M", ts)
+    keys = [time.strftime(f, ts) for f in ("%Y-%m-%d", "%d %b %Y", "%b %d", "%B %Y", "%a")]
+    return disp, keys
+
+
 def count_dems(p):
     n = 0
     for root, _, fs in os.walk(p):
@@ -309,20 +352,26 @@ for s in servers:
         for mid, fl in groups.items():
             first = sorted(fl)[0]
             mp = re.search(r"-\d{10}-(.+?)(?:_part\d)?\.dem$", first)
+            when, when_keys = match_when(mid, fl)
             chips = []
             for f in sorted(fl):
                 hm = re.search(r"_(h\d)-", f)
                 pm = re.search(r"_part(\d)", f)
                 lbl = (hm.group(1) if hm else "dem") + (("·p" + pm.group(1)) if pm else "")
-                chips.append('<a class="f" href="' + html.escape(f) + '"><span class="h">' + lbl
-                             + '</span><span class="sz">'
+                rec = rec_stamp(f)
+                chips.append('<a class="f" href="' + html.escape(f) + '"'
+                             + (' title="recorded ' + html.escape(rec, quote=True) + '"' if rec else "")
+                             + '><span class="h">' + lbl + '</span><span class="sz">'
                              + human(os.path.getsize(tp + "/" + f)) + '</span></a>')
-            # match id + map + every filename, so a search hits on any of them
-            key = " ".join([mid, mp.group(1) if mp else ""] + sorted(fl)).lower()
+            # match id + date (several spellings) + map + every filename, so a search
+            # hits on any of them — "aug 1", "2026-08-01" and the id all work
+            key = " ".join([mid] + when_keys + [mp.group(1) if mp else ""] + sorted(fl)).lower()
             cards.append('<div class="match" data-s="' + html.escape(key, quote=True)
                          + '"><div class="mh"><span class="teams">'
-                         + html.escape(mid) + '</span><span class="meta">'
-                         + html.escape(mp.group(1) if mp else "") + '</span></div>'
+                         + html.escape(when or mid) + '</span><span class="meta">'
+                         + html.escape(mp.group(1) if mp else "")
+                         + ('  &middot;  ' + html.escape(mid) if when else "")
+                         + '</span></div>'
                          '<div class="files">' + "".join(chips) + '</div></div>')
         body = ('<div class="crumb"><a href="/">fastdl</a> / <a href="/demos/">demos</a> / '
                 '<a href="/demos/' + s + '/">' + s + '</a> / ' + t + '</div>'
