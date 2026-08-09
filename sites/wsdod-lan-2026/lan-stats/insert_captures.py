@@ -10,6 +10,7 @@ the live league database, whose serverIds and playerIds overlap the LAN's.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import warnings
 
@@ -39,9 +40,19 @@ def main() -> int:
     caps = json.load(open("captures-placed.json", encoding="utf-8"))
     print("captures to insert:", len(caps))
 
+    # Nothing hardcoded: this repo is public, and a committed password is a
+    # published one. Key auth is the direction the data server is moving in;
+    # KTP_DATA_PASSWORD stays as a fallback until that lands everywhere.
+    host = os.environ.get("KTP_DATA_HOST", "")
+    if not host:
+        raise SystemExit(
+            "KTP_DATA_HOST is unset — set it to the stats host (user@host or "
+            "host). Unset otherwise surfaces as a connection failure.")
+    user, _, hostname = host.rpartition("@")
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect("74.91.112.242", username="root", password="g8eSS6k3GH", timeout=25)
+    c.connect(hostname, username=user or "root",
+              password=os.environ.get("KTP_DATA_PASSWORD") or None, timeout=25)
 
     def sql(q, t=300):
         cmd = "mysql %s -N -e %s 2>&1" % (DB, _quote(q))

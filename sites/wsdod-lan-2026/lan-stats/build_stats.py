@@ -27,6 +27,7 @@ carries that warning so nobody sorts one table by it.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import warnings
 from collections import defaultdict
@@ -62,9 +63,22 @@ def sid(v: str) -> str:
 
 
 def connect():
+    """SSH to the stats host. Prefers a key; falls back to KTP_DATA_PASSWORD.
+
+    Nothing is hardcoded because this repo is public — a password committed here
+    is a published password, and deleting it later does not unpublish it.
+    """
+    host = os.environ.get("KTP_DATA_HOST", "")
+    if not host:
+        raise SystemExit(
+            "KTP_DATA_HOST is unset — set it to the stats host (user@host or "
+            "host). Unset otherwise surfaces as a connection failure.")
+    user, _, hostname = host.rpartition("@")
     c = paramiko.SSHClient()
     c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    c.connect("74.91.112.242", username="root", password="g8eSS6k3GH", timeout=25)
+    c.connect(hostname, username=user or "root",
+              password=os.environ.get("KTP_DATA_PASSWORD") or None,
+              timeout=25)
     return c
 
 
