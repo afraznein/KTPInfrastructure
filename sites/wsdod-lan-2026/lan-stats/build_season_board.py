@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Season-wide KTPR board for the WSDoD page, using the current `team` formula.
+
+The per-day boards in lan-stats.json run the legacy additive formula and are
+normalized within a day, so they deliberately do not compare across days. This
+adds one weekend-wide rating computed by the real engine
+(docs/ktpr_mcp/ktpr_engine.py) rather than a fourth reimplementation of KTPR —
+the site and the MCP tool disagreeing about what KTPR means is the failure this
+avoids.
+
+team_placement_weight is forced to 0 here. The engine's live profile multiplies
+each player by their team's FINAL tournament finish, which would bake the result
+into a rating the page presents as individual performance — and the awards it
+feeds are per-stage.
+
+    python build_season_board.py            # -> season-board.json
+    python build_season_board.py --check    # exit 1 if the board is stale
+"""
+import collections
+import copy
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ENGINE_DIR = os.path.normpath(os.path.join(HERE, "..", "..", "..", "docs", "ktpr_mcp"))
+sys.path.insert(0, ENGINE_DIR)
+
+from ktpr_engine import Player, load_params, compute_team, classify_styles  # noqa: E402
+
+STATS = os.path.join(HERE, "lan-stats.json")
+TEAMS = os.path.join(HERE, "player_teams.json")
+OUT = os.path.join(HERE, "season-board.json")
+
+# "3rd" is the league's own position name; the engine's vocabulary calls that
+# bucket SMG. Translate on the way in so a future non-neutral role_weight can't
+# silently miss it, and keep the league's name for display.
+ROLE_ALIASES = {"3rd": "SMG"}
+
+
+def build() -> dict:
+    stats = json.load(open(STATS, encoding="utf-8"))
+    teams = json.load(open(TEAMS, encoding="utf-8"))
+
+    totals = collections.defaultdict(collections.Counter)
+    role, position, name, role_src = {}, {}, {}, {}
+    days_played = collections.defaultdict(set)
+    for day, dd in stats["days"].items():
+        for p in dd["players"]:
+            sid = p["steam_id"]
+            days_played[sid].add(day)
+            name[sid] = p["name"]
+            raw = p.get("primary_role") or "?"
+            position[sid] = raw
+            role[sid] = ROLE_ALIASES.get(raw, raw)
+            if role_src.get(sid) != "roster":
+                role_src[sid] = p.get("role_source") or "inferred"
+            # damage_hlstatsx, not damage_hud: the match record logs damage
+            # (half 1+2 only), so the rating shouldn't take the HUD's
+            # warmup-tainted copy of a stat the record already has.
+            for k in ("matches", "halves", "kills", "deaths", "flags",
+                      "assists", "damage_hlstatsx", "cap_breaks"):
+                totals[sid][k] += p.get(k) or 0
+
+    sids = sorted(totals)
+    players = []
+    for sid in sids:
+        t = totals[sid]
+        halves = t["halves"] or 1
+        players.append(Player(
+            name=name[sid], matches=t["matches"],
+            kd_ratio=(t["kills"] / t["deaths"]) if t["deaths"] else float(t["kills"]),
+            kills_half=t["kills"] / halves, deaths_half=t["deaths"] / halves,
+            flags_half=t["flags"] / halves, assists_half=t["assists"] / halves,
+            damage_half=t["damage_hlstatsx"] / halves, breaks_half=t["cap_breaks"] / halves,
+            role=role[sid], team=(teams.get(sid) or {}).get("team", "?")))
+
+    params = copy.deepcopy(load_params("new", os.path.join(ENGINE_DIR, "weights.toml")))
+    params.team_placement_weight = 0.0
+
+    vals = compute_team(players, params, None)
+    styles = classify_styles(players, params)
+
+    rows = []
+    for sid, pl, v, st in zip(sids, players, vals, styles):
+        if v is None:
+            continue
+        t = totals[sid]
+        rows.append({
+            "steam_id": sid, "name": pl.name, "team": pl.team,
+            "position": position[sid], "role": pl.role,
+            "role_source": role_src[sid],
+            "ktpr": round(v, 3), "style": st,
+            "matches": t["matches"], "halves": t["halves"],
+            "kd": round(pl.kd_ratio, 3),
+            "kills_per_half": round(pl.kills_half, 2),
+            "deaths_per_half": round(pl.deaths_half, 2),
+            "assists_per_half": round(pl.assists_half, 2),
+            "damage_per_half": round(pl.damage_half, 1),
+            "flags_per_half": round(pl.flags_half, 2),
+            "breaks_per_half": round(pl.breaks_half, 3),
+            "days": sorted(days_played[sid]),
+        })
+    rows.sort(key=lambda r: -r["ktpr"])
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+
+    knobs = {k: getattr(params, k) for k in
+             ("kill_exp", "tw_kill", "tw_kd", "tw_assist", "tw_damage", "tw_flag",
+              "tw_break", "break_smooth_k", "death_kill_relief", "ratio_cap",
+              "ratio_floor", "team_placement_weight")}
+
+    return {
+        "_source": [
+            "Season-wide KTPR across both days, computed by docs/ktpr_mcp/ktpr_engine.py",
+            "([profiles.new], the team formula). Generated by build_season_board.py --",
+            "do not hand-edit.",
+            "team_placement_weight is forced to 0: the live profile boosts players by",
+            "their team's final finish, which does not belong in a rating the page",
+            "presents as individual performance.",
+            "The per-day boards elsewhere on this page use the older additive formula",
+            "and are normalized within a day; these numbers are not those numbers.",
+            "Damage is HLStatsX (ktp_match_stats, halves 1+2). Assists and capture",
+            "breaks are the only HUD-sourced inputs -- the match record doesn't log",
+            "them yet.",
+        ],
+        "generated_for": stats.get("generated_for"),
+        "formula": "team", "profile": "new", "knobs": knobs,
+        "players": rows,
+    }
+
+
+def main() -> int:
+    board = build()
+    text = json.dumps(board, ensure_ascii=False, indent=1)
+    if "--check" in sys.argv:
+        cur = open(OUT, encoding="utf-8").read() if os.path.exists(OUT) else ""
+        if cur.strip() != text.strip():
+            print("season-board.json is STALE — re-run build_season_board.py")
+            return 1
+        print("season-board.json is current")
+        return 0
+    with open(OUT, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text + "\n")
+    print(f"wrote {OUT}: {len(board['players'])} players")
+    top = board["players"][:5]
+    for r in top:
+        print(f"  {r['rank']:>2}. {r['name'][:26]:<26} {r['team'][:22]:<22} "
+              f"{r['ktpr']:.3f}  {r['style']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

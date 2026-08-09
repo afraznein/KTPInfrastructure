@@ -297,7 +297,8 @@ def main() -> int:
             "steam_id": steam, "name": b["name"], "ktpr": round(ktpr, 3),
             "matches": len(b["matches"]), "halves": b["halves"],
             "kills": b["kills"], "deaths": b["deaths"], "kd": round(kd, 3),
-            "flags": b["flags"], "assists": b["assists"],
+            "flags": b["flags"], "damage_hlstatsx": b["damage_hl"],
+            "assists": b["assists"],
             "damage_hud": b["damage_hud"], "prone_changes": b["prone"],
         })
     for d in report["days"].values():

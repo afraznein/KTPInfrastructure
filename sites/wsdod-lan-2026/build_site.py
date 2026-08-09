@@ -33,8 +33,9 @@ DIST = os.path.join(HERE, "dist")
 
 # Which data blocks belong to which edition. Anything not listed is shared.
 OWNED = {
-    "philly-2026": ["lan-data", "player-names", "demo-urls", "awards-data",
-                    "veto-data", "match-teams", "match-notes", "uploads"],
+    "philly-2026": ["lan-data", "lanboard-data", "player-names", "demo-urls",
+                    "awards-data", "veto-data", "match-teams", "match-notes",
+                    "uploads"],
     "philly-2025": ["lan-data-2025"],
     "next": [],
 }
