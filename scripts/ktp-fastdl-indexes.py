@@ -200,6 +200,31 @@ def human(n):
             return ("%.1f %s" % (v, u)) if u == "GB" else ("%.0f %s" % (v, u))
         v /= 1024.0
 
+def searchable(markup, *extra):
+    """Lowercase search key built FROM the rendered card, plus anything extra.
+
+    Derived rather than hand-listed on purpose: every visible string, every
+    filename in an href and every tooltip in a title becomes searchable by
+    construction, so adding a field to a card cannot silently leave it
+    unsearchable. `extra` carries what is real but not rendered — alternate date
+    spellings, the server, the match type.
+    """
+    vals = re.findall(r'(?:title|href|alt)="([^"]*)"', markup)
+    text = re.sub(r"<[^>]+>", " ", markup)
+    blob = html.unescape(" ".join(vals) + " " + text + " " + " ".join(str(x) for x in extra if x))
+    # split on punctuation too, so "dod_anzio" is found by "anzio" and
+    # "2026-06-11" by "06" — then keep the joined forms as well
+    parts = re.split(r"[^0-9a-z]+", blob.lower())
+    return " ".join(dict.fromkeys([w for w in parts if w] + blob.lower().split()))
+
+
+def card(inner, href, *extra, cls="card"):
+    """One linked tile whose search key is derived from its own rendered content."""
+    return ('<a class="' + cls + '" data-s="'
+            + html.escape(searchable(inner, href, *extra), quote=True)
+            + '" href="' + html.escape(href) + '">' + inner + '</a>')
+
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--apply", action="store_true")
 args = ap.parse_args()
@@ -219,10 +244,9 @@ for label, dirs in DOD_GROUPS:
     if not have:
         continue
     cards.append('<h2>' + label + '</h2><div class="row2">' + "".join(
-        '<a class="card" data-s="' + (d + " " + label).lower() + '" href="' + d + '/">'
-        '<div class="t">' + d + '/</div>'
-        '<div class="d">' + str(len(os.listdir(FASTDL + "/dod/" + d))) + ' entries</div></a>'
-        for d in have) + '</div>')
+        card('<div class="t">' + d + '/</div><div class="d">'
+             + str(len(os.listdir(FASTDL + "/dod/" + d))) + ' entries</div>',
+             d + "/", label) for d in have) + '</div>')
 loose = sorted(f for f in os.listdir(FASTDL + "/dod") if os.path.isfile(FASTDL + "/dod/" + f))
 body = ('<div class="crumb"><a href="/">fastdl</a> / dod</div>'
         '<h1>Client <span class="accent">download</span> files</h1>'
@@ -233,8 +257,7 @@ body = ('<div class="crumb"><a href="/">fastdl</a> / dod</div>'
         + ' loose files. Served over HTTP as <code>sv_downloadurl</code>.</p>'
         + SEARCH + "".join(cards)
         + '<h2>Other directories</h2><div class="row2">' + "".join(
-            '<a class="card" data-s="' + d.lower() + '" href="' + d + '/">'
-            '<div class="t">' + d + '/</div></a>'
+            card('<div class="t">' + d + '/</div>', d + "/")
             for d in sorted(present - {x for _, ds in DOD_GROUPS for x in ds})) + '</div>')
 out.append((FASTDL + "/dod/index.html",
             page("KTP FastDL — client downloads", "Client Downloads", body,
@@ -250,19 +273,45 @@ for s in servers:
     m = re.match(r"([A-Z]+)\d+$", s)
     by_city.setdefault(CITY.get(m.group(1), "Other") if m else "Other", []).append(s)
 
-def rec_stamp(fname):
-    """'2026-06-11 21:29' from a demo filename's YYMMDDHHMM field, or ''.
+# The box runs America/New_York, so localtime() is already league time. "ET" and
+# not "EST": half the archive is recorded in EDT, and stamping those EST is just
+# wrong. Matches how times are written everywhere else in KTP's docs.
+TZ_LABEL = "ET"
+
+
+def clock(ts):
+    """'11:38 PM' — 12-hour, no leading zero, portable.
+
+    %-I is glibc-only and this file is edited on Windows; lstrip is safe because
+    %I never yields '00' (midnight is 12).
+    """
+    return time.strftime("%I:%M %p", ts).lstrip("0")
+
+
+def rec_parts(fname):
+    """struct_time from a demo filename's YYMMDDHHMM field, or None.
 
     That field is when HLTV started recording — near the match id's epoch but not
     equal to it, so the two are shown in different places rather than merged.
     """
     m = re.search(r"-(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})-", fname)
     if not m:
-        return ""
+        return None
     yy, mo, dd, hh, mi = m.groups()
     if not ("01" <= mo <= "12" and "01" <= dd <= "31" and hh <= "23"):
-        return ""      # a 10-digit run that isn't a date — say nothing rather than guess
-    return "20%s-%s-%s %s:%s" % (yy, mo, dd, hh, mi)
+        return None    # a 10-digit run that isn't a date — say nothing rather than guess
+    try:
+        return time.strptime("20%s-%s-%s %s:%s" % (yy, mo, dd, hh, mi), "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None    # e.g. the 31st of a 30-day month
+
+
+def rec_stamp(fname):
+    """'2026-06-11 9:29 PM ET' for a file's own recording start, or ''."""
+    ts = rec_parts(fname)
+    return "" if ts is None else time.strftime("%Y-%m-%d ", ts) + clock(ts) + " " + TZ_LABEL
+
+
 
 
 def match_when(mid, files):
@@ -280,17 +329,20 @@ def match_when(mid, files):
             ts = time.localtime(n)
     if ts is None:
         for f in sorted(files):
-            r = rec_stamp(f)
-            if r:
-                ts = time.strptime(r, "%Y-%m-%d %H:%M")
+            ts = rec_parts(f)
+            if ts is not None:
                 break
     if ts is None:
         return "", []
     # a literal middot, not the entity: this string goes through html.escape,
     # which would turn "&middot;" into a visible "&amp;middot;"
-    disp = time.strftime("%a %d %b %Y · %H:%M", ts)
-    keys = [time.strftime(f, ts) for f in ("%Y-%m-%d", "%d %b %Y", "%b %d", "%B %Y", "%a")]
+    disp = time.strftime("%a %d %b %Y · ", ts) + clock(ts) + " " + TZ_LABEL
+    # both clock spellings, so "9pm" and "21" both find the same match
+    keys = [time.strftime(f, ts) for f in ("%Y-%m-%d", "%d %b %Y", "%b %d", "%B %Y", "%a", "%H:%M")]
+    keys.append(clock(ts))
     return disp, keys
+
+
 
 
 def count_dems(p):
@@ -303,15 +355,14 @@ sections = []
 lan = DEMOS + "/LAN-PHILLY2026"
 if os.path.isdir(lan):
     sections.append('<h2>Event archive</h2><div class="row2">'
-                    '<a class="card" data-s="wsdod philly 2026 lan event archive"'
-                    ' href="LAN-PHILLY2026/"><div class="t">WSDoD Philly 2026</div>'
-                    '<div class="d">' + str(count_dems(lan)) + ' demos &middot; kept indefinitely'
-                    '</div></a></div>')
+                    + card('<div class="t">WSDoD Philly 2026</div><div class="d">'
+                           + str(count_dems(lan)) + ' demos &middot; kept indefinitely</div>',
+                           "LAN-PHILLY2026/", "wsdod philly 2026 lan event archive")
+                    + '</div>')
 for city, srvs in by_city.items():
     sections.append('<h2>' + city + '</h2><div class="row2">' + "".join(
-        '<a class="card" data-s="' + (s + " " + city).lower() + '" href="' + s + '/">'
-        '<div class="t">' + s + '</div>'
-        '<div class="d">' + str(count_dems(DEMOS + "/" + s)) + ' demos</div></a>'
+        card('<div class="t">' + s + '</div><div class="d">'
+             + str(count_dems(DEMOS + "/" + s)) + ' demos</div>', s + "/", city, s)
         for s in srvs) + '</div>')
 body = ('<div class="crumb"><a href="/">fastdl</a> / demos</div>'
         '<h1>Demo <span class="accent">archive</span></h1>'
@@ -333,11 +384,10 @@ for s in servers:
             '<h1>' + s + ' <span class="accent">demos</span></h1>'
             '<p class="lede">Recorded matches on ' + s + ', by match type.</p>'
             + SEARCH + '<div class="row2">' + "".join(
-              '<a class="card" data-s="' + (t + " " + TYPE_LABEL.get(t, t)).lower()
-              + '" href="' + t + '/"><div class="t">'
-              + html.escape(TYPE_LABEL.get(t, t)) + '</div><div class="d">'
-              + str(count_dems(sp + "/" + t)) + ' demos &middot; kept '
-              + RETENTION.get(t, "90 days") + '</div></a>' for t in types) + '</div>')
+              card('<div class="t">' + html.escape(TYPE_LABEL.get(t, t))
+                   + '</div><div class="d">' + str(count_dems(sp + "/" + t))
+                   + ' demos &middot; kept ' + RETENTION.get(t, "90 days") + '</div>',
+                   t + "/", t, s) for t in types) + '</div>')
     out.append((sp + "/index.html", page("KTP demos — " + s, "Demo Archive", body,
                 "Every competitive match on the KTP fleet, recorded by HLTV.")))
 
@@ -363,16 +413,16 @@ for s in servers:
                              + (' title="recorded ' + html.escape(rec, quote=True) + '"' if rec else "")
                              + '><span class="h">' + lbl + '</span><span class="sz">'
                              + human(os.path.getsize(tp + "/" + f)) + '</span></a>')
-            # match id + date (several spellings) + map + every filename, so a search
-            # hits on any of them — "aug 1", "2026-08-01" and the id all work
-            key = " ".join([mid] + when_keys + [mp.group(1) if mp else ""] + sorted(fl)).lower()
+            inner = ('<div class="mh"><span class="teams">'
+                     + html.escape(when or mid) + '</span><span class="meta">'
+                     + html.escape(mp.group(1) if mp else "")
+                     + ('  &middot;  ' + html.escape(mid) if when else "")
+                     + '</span></div><div class="files">' + "".join(chips) + '</div>')
+            # everything on the card, plus what is true but not shown: the other
+            # date spellings, the server and the match type
+            key = searchable(inner, *(when_keys + [s, t, TYPE_LABEL.get(t, t)]))
             cards.append('<div class="match" data-s="' + html.escape(key, quote=True)
-                         + '"><div class="mh"><span class="teams">'
-                         + html.escape(when or mid) + '</span><span class="meta">'
-                         + html.escape(mp.group(1) if mp else "")
-                         + ('  &middot;  ' + html.escape(mid) if when else "")
-                         + '</span></div>'
-                         '<div class="files">' + "".join(chips) + '</div></div>')
+                         + '">' + inner + '</div>')
         body = ('<div class="crumb"><a href="/">fastdl</a> / <a href="/demos/">demos</a> / '
                 '<a href="/demos/' + s + '/">' + s + '</a> / ' + t + '</div>'
                 '<h1>' + s + ' &mdash; <span class="accent">'
@@ -408,16 +458,14 @@ for root, dirs, files in os.walk(FASTDL + "/dod"):
     cards = ""
     if subs:
         cards += '<h2>Folders</h2><div class="row2">' + "".join(
-            '<a class="card" data-s="' + html.escape(x.lower(), quote=True) + '" href="'
-            + html.escape(x) + '/"><div class="t">' + html.escape(x)
-            + '/</div><div class="d">' + str(len(os.listdir(os.path.join(root, x))))
-            + ' entries</div></a>' for x in subs) + '</div>'
+            card('<div class="t">' + html.escape(x) + '/</div><div class="d">'
+                 + str(len(os.listdir(os.path.join(root, x)))) + ' entries</div>',
+                 x + "/") for x in subs) + '</div>'
     if fl:
         rows = "".join(
-            '<a class="f" data-s="' + html.escape(f.lower(), quote=True) + '" href="'
-            + html.escape(f) + '"><span class="h">' + html.escape(f)
-            + '</span><span class="sz">' + human(os.path.getsize(os.path.join(root, f)))
-            + '</span></a>' for f in fl)
+            card('<span class="h">' + html.escape(f) + '</span><span class="sz">'
+                 + human(os.path.getsize(os.path.join(root, f))) + '</span>',
+                 f, cls="f") for f in fl)
         cards += ('<h2>' + str(len(fl)) + ' files</h2><div class="files">' + rows + '</div>')
     body = ('<div class="crumb">' + " / ".join(crumbs) + '</div>'
             '<h1><span class="accent">' + html.escape(rel) + '</span></h1>'
