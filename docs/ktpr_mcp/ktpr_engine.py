@@ -270,7 +270,7 @@ def _archetype(r_kd, r_k, r_a, r_d, r_f, r_b, hi=1.12, lead=0.12):
 
 
 def classify_styles(players: list["Player"], p: KtprParams) -> list[str]:
-    """Return a '<tier> <archetype>' style label per player (e.g. 'Elite Fragger').
+    """Return a '<tier> <archetype>' style label per player (e.g. 'Ace Fragger').
     Tier = overall KTPR percentile (role-aware, matches the score). Archetype =
     profile shape vs the GLOBAL median (absolute playstyle, not role-relative)."""
     vals = compute_ktpr(players, p)

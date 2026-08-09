@@ -148,7 +148,7 @@ which tags each player's role + archetype and shows Current→New movement.
 
 ### 4b. Player styles (`classify_styles`)
 
-Each player gets a `<tier> <archetype>` label (e.g. **"Elite Sharpshooter"**):
+Each player gets a `<tier> <archetype>` label (e.g. **"Ace Sharpshooter"**):
 - **Tier** = overall KTPR percentile (role-aware, matches the score), military
   flavor: **Ace** (top 15%) / **Veteran** / **Regular** / **Recruit**
   (edit `STYLE_TIERS` in `ktpr_engine.py` to rename).
@@ -156,7 +156,7 @@ Each player gets a `<tier> <archetype>` label (e.g. **"Elite Sharpshooter"**):
   not role-relative), across three axes — fragging (`0.5·K/D + 0.5·kills`),
   objective (`0.7·flags + 0.3·breaks`), support (`0.6·assists + 0.4·damage`):
   **Sharpshooter** (efficient fragger), **Fragger** (volume), **Flagger**,
-  **Support**, **All-rounder** (≥2 axes strong), **Balanced** (flat profile).
+  **Support**, **All-rounder** (≥2 axes strong), **Generalist** (flat profile).
 
 Styles are descriptive metadata (shown in the reports); they do not feed back
 into the KTPR value.

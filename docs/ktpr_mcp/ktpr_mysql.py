@@ -6,15 +6,8 @@ so no local MySQL driver is required (the access pattern is
 Set `KTPR_SSH_HOST` (`user@host`) before use; it is deliberately not hardcoded
 because this file lives in a public repo.
 
-Status: SCAFFOLD. We do not have DB access yet and have not seen the real
-schema, so `load_players_from_mysql` raises until the discovery step below
-tells us the actual table/column names. Everything else is ready to run the
-moment access lands.
-
-Discovery (run once access works):
+Schema discovery, for re-checking table/column names against a live DB:
     python ktpr_mysql.py discover     # lists tables + columns of likely-relevant ones
-
-Then wire the confirmed SQL into PLAYER_QUERY and implement load_players_from_mysql.
 """
 
 from __future__ import annotations
