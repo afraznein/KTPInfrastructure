@@ -1,0 +1,332 @@
+####################################################################
+# KTPR WEIGHTS  --  edit this file as discussions evolve.
+#
+# Nothing in the engine is hard-coded; every knob lives here.
+# Each [profiles.X] block is a self-contained KTPR definition.
+#   - old      : the original Excel formula (frozen, do not edit).
+#   - current  : the newer Excel formula (frozen, do not edit).
+#   - new      : the clean-redesign we are actively tuning. EDIT THIS.
+#
+# After editing, run:  python ktpr_engine.py --profile new
+# and compare rankings. Changes here never require touching code.
+####################################################################
+
+
+# =========================== FROZEN =============================
+# The two Excel formulas, kept for comparison. Leave these alone.
+
+[profiles.old]
+scale             = 0.80   # final multiplier
+kd_cap            = 1.10   # K/D is capped here before use
+flag_w_regular    = 0.50   # relative-flag weight for regular players
+flag_w_nonregular = 0.30   # relative-flag weight for non-regulars
+flag_cap          = 0.40   # ceiling on total flag bonus
+flag_log_base     = 25.0   # LOG(flags+1)/LOG(base) diminishing term
+death_w           = 0.20   # death penalty weight
+death_cap         = 0.15   # ceiling on death penalty
+part_floor        = 0.00   # floor on participation threshold
+guard_zero_median = false  # newer formula added divide-by-zero guards
+
+[profiles.current]
+scale             = 0.75
+kd_cap            = 1.10
+flag_w_regular    = 0.30
+flag_w_nonregular = 0.20
+flag_cap          = 0.35
+flag_log_base     = 25.0
+death_w           = 0.20
+death_cap         = 0.15
+part_floor        = 0.34
+guard_zero_median = true
+
+
+# ==================== DATAPOINT: artifact =======================
+# The additive formula someone else started (per-half, mean-normalized):
+#   KTPR = [ (K/D / avg) + (kills/half / avg) + 0.25*(flags/half / avg) ] / 2.25
+# A different shape from the Excel formulas — kept as a comparison datapoint.
+# Add assists/damage/breaks weights here to explore an additive redesign.
+
+[profiles.artifact]
+formula                = "additive"
+norm                   = "mean"
+additive_regulars_only = false
+add_kd     = 1.00
+add_kills  = 1.00
+add_flags  = 0.25
+add_assists = 0.00
+add_damage  = 0.00
+add_breaks  = 0.00
+
+
+# ==================== DATAPOINT: new_v1 ==========================
+# The redesigned KTPR as it stood before the 2026-08-07 predictive-accuracy
+# tuning pass below. Frozen here (not edited) purely as a before/after
+# comparison point — same role this file already gives `old`/`current`
+# relative to `new`. See KTPR_SPEC.md "Predictive tuning" for the story.
+
+[profiles.new_v1]
+formula     = "team"
+scale       = 1.00
+part_floor  = 0.34
+kill_exp    = 0.80
+tw_kill     = 1.00
+tw_kd       = 1.50
+tw_assist   = 1.00
+tw_damage   = 0.50
+tw_flag     = 0.70
+tw_break    = 1.00
+dmg_interaction    = 1.20
+assist_interaction = 1.20
+dmg_scale_min      = 0.60
+dmg_scale_max      = 2.50
+role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.00, SMG = 1.00 }
+ratio_cap   = 2.50
+ratio_floor = 0.55
+death_w           = 0.20
+death_cap         = 0.15
+team_death_up_cap = 0.10
+class_normalize = true
+class_min_size  = 4
+
+
+# ==================== DATAPOINT: new_v2 ==========================
+# The redesigned KTPR as it stood after the 2026-08-07 tw_kd/assist_interaction
+# tuning pass but before the 2026-08-08 kill_exp pass below. Frozen here
+# purely as a before/after comparison point (same role as new_v1 above).
+
+[profiles.new_v2]
+formula     = "team"
+scale       = 1.00
+part_floor  = 0.34
+kill_exp    = 0.80
+tw_kill     = 1.00
+tw_kd       = 3.00
+tw_assist   = 1.00
+tw_damage   = 0.50
+tw_flag     = 0.70
+tw_break    = 1.00
+dmg_interaction    = 1.20
+assist_interaction = 0.60
+dmg_scale_min      = 0.60
+dmg_scale_max      = 2.50
+role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.00, SMG = 1.00 }
+ratio_cap   = 2.50
+ratio_floor = 0.55
+death_w           = 0.20
+death_cap         = 0.15
+team_death_up_cap = 0.10
+class_normalize = true
+class_min_size  = 4
+
+
+# ==================== DATAPOINT: new_v3 ==========================
+# The redesigned KTPR as it stood after the 2026-08-08 kill_exp pass but
+# before the 2026-08-08 break-smoothing / team-placement pass below.
+# Frozen here purely as a before/after comparison point.
+
+[profiles.new_v3]
+formula     = "team"
+scale       = 1.00
+part_floor  = 0.34
+kill_exp    = 0.65
+tw_kill     = 1.00
+tw_kd       = 3.00
+tw_assist   = 1.00
+tw_damage   = 0.50
+tw_flag     = 0.70
+tw_break    = 1.00
+dmg_interaction    = 1.20
+assist_interaction = 0.60
+dmg_scale_min      = 0.60
+dmg_scale_max      = 2.50
+role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.00, SMG = 1.00 }
+ratio_cap   = 2.50
+ratio_floor = 0.55
+death_w           = 0.20
+death_cap         = 0.15
+team_death_up_cap = 0.10
+class_normalize = true
+class_min_size  = 4
+
+
+# ==================== DATAPOINT: new_v4 ==========================
+# The redesigned KTPR as it stood after the 2026-08-08 break-smoothing /
+# team-placement pass but before the 2026-08-08 death_kill_relief pass
+# below. Frozen here purely as a before/after comparison point.
+
+[profiles.new_v4]
+formula     = "team"
+scale       = 1.00
+part_floor  = 0.34
+kill_exp    = 0.65
+tw_kill     = 1.00
+tw_kd       = 3.00
+tw_assist   = 1.00
+tw_damage   = 0.50
+tw_flag     = 0.70
+tw_break    = 1.00
+dmg_interaction    = 1.20
+assist_interaction = 0.60
+dmg_scale_min      = 0.60
+dmg_scale_max      = 2.50
+role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.00, SMG = 1.00 }
+ratio_cap   = 2.50
+ratio_floor = 0.55
+break_smooth_k = 0.5
+death_w           = 0.20
+death_cap         = 0.15
+team_death_up_cap = 0.10
+team_placement_weight = 0.15
+team_placements = { NATO = 1, iH = 2, dice = 3, Bluth = 4, JTM = 5, bb = 6, NoSo = 7, "$" = 8, b = 9, uR = 10 }
+class_normalize = true
+class_min_size  = 4
+
+
+# ============================ ACTIVE ============================
+# The redesigned KTPR. These are STARTING VALUES to argue about,
+# not final. New stats (assists, damage, breaks) are wired in here.
+# All the "core" knobs above still apply; the block below adds the
+# new dimensions.
+
+[profiles.new]
+# TEAM-PLAYER formula: a weighted average of contributions (kills, assists,
+# damage, flags, breaks), each normalized so 1.0 = an average LAN player.
+# Contributions ADD, so support stats can carry a low-kill player, and a
+# one-dimensional fragger normalizes toward the middle. See KTPR_SPEC.md.
+formula     = "team"
+scale       = 1.00        # an average player scores ~1.0
+part_floor  = 0.34        # regular-player threshold floor
+
+# Diminishing returns on kills: <1 compresses top fraggers toward the pack.
+# 1.0 = linear (no normalization), 0.5 = strong normalization.
+#   2026-08-08 predictive-accuracy tuning: 0.80 -> 0.65. An exhaustive
+#   coordinate-descent + joint-grid search over 16 knobs against leave-one-out
+#   predict_accuracy found NO combination beats 77.8% (the search itself is
+#   evidence the remaining error is irreducible noise from genuinely close
+#   matchups, not a fixable bias -- see KTPR_SPEC.md predict_accuracy section).
+#   kill_exp was the one knob that moved a DIFFERENT metric for free: team
+#   season-KTPR-vs-actual-win-rate Spearman rho 0.830 -> 0.891, stable across
+#   the whole 0.55-0.65 range (not a fragile single point), with zero change
+#   to predict_accuracy and 0/61 players moving >=5 ranks (max per-player
+#   KTPR delta 0.007). Mechanism: at 0.80, ßℓυ†н ranked #2 by team KTPR
+#   despite a 50% win rate while [NATO] ranked #6 despite 75% -- the same
+#   fragging-overrated pattern the 2026-08-07 tw_kd pass targeted, just not
+#   fully resolved; stronger kill compression finishes the fix. Old value
+#   preserved verbatim under `new_v2` above.
+kill_exp    = 0.65
+
+# Contribution weights (relative importance). Breaks valued highly per design.
+# tw_kd rewards fragging EFFICIENCY (K/D) so elite fraggers who don't die stay
+# competitive even with little support.
+#   2026-08-07 predictive-accuracy tuning: tw_kd 1.50 -> 3.00. Leave-one-out
+#   validation (predict_accuracy) showed team-average KTPR was a WORSE
+#   predictor of who wins than raw K/D (70.4% tie) -- concretely, ßℓυ†н
+#   (6-6 record, 0.96 team K/D) rated as the tournament's #1 team by KTPR,
+#   ahead of iH.hildebrand? (10-1, 1.32 K/D). Coordinate search over the
+#   weights against leave-one-out accuracy found this the best minimal fix:
+#   accuracy 70.4% -> 77.8%, team-avg-KTPR-vs-win-rate Spearman 0.818 -> 0.830,
+#   iH now correctly rates #1, ßℓυ†н correctly falls to mid-pack. Individual
+#   player rankings stayed recognizable (rank correlation vs the old weights:
+#   rho=0.96, 17/61 players moved >=5 places). Old values preserved verbatim
+#   under `new_v1` above for comparison.
+tw_kill     = 1.00
+tw_kd       = 3.00
+tw_assist   = 1.00
+tw_damage   = 0.50
+tw_flag     = 0.70
+tw_break    = 1.00
+
+# Low-kill amplifiers: damage AND assists count MORE for low-kill players (their
+# damage/assists reveal contribution the kills didn't capture). Strengthened so
+# it actually moves the board; floor lifted so high-fraggers aren't over-punished.
+#   amplifier = clamp(1 + interaction*(1 - kill_ratio), min, max)
+#   2026-08-07: assist_interaction 1.20 -> 0.60 (same tuning pass as tw_kd
+#   above) -- the low-kill assist amplifier was part of what let a support-
+#   heavy, sub-1.0-K/D team (ßℓυ†н) outrate a dominant-K/D team (iH). Halving
+#   it was the coordinate-search optimum; dmg_interaction did NOT need to
+#   move (0.0-1.5 all scored the same once tw_kd/assist_interaction moved).
+dmg_interaction    = 1.20
+assist_interaction = 0.60
+dmg_scale_min      = 0.60    # high fraggers: credit reduced but not crushed
+dmg_scale_max      = 2.50    # low fraggers: strong bump available
+
+# Per-role final multiplier — float a whole role up/down (elite members gain most
+# in absolute KTPR). 1.0 = neutral. Reset to neutral for now; the tuning-round
+# value that gently floated heavies up was:
+#   role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.05, SMG = 1.00 }
+role_weights = { Rifle = 1.00, Sniper = 1.00, Heavy = 1.00, SMG = 1.00 }
+
+# Tame noisy/rare stats (esp. breaks): no single ratio counts more than this.
+ratio_cap   = 2.50
+# Floor each ratio: being weak in one stat can't drag you below this multiple of
+# the median. Lets a one-dimensional specialist (elite K/D, or elite flags) still
+# reach the top, and keeps normalization from becoming punishment.
+ratio_floor = 0.55
+
+# Smoothing added to both sides of the BREAKS ratio only: (x+k)/(median+k).
+#   2026-08-08: 0.0 -> 0.5. Breaks have a near-zero median (~0.08-0.4/half
+#   depending on role), so a plain ratio turns a small absolute break count
+#   into an extreme swing -- e.g. TillJim (0.667 breaks/half vs a 0.231
+#   Rifle median) was hitting the 2.5 ratio_cap and that ONE term outweighed
+#   element's real leads in kills/K-D/flags combined, despite element being
+#   ahead on 4 of 6 terms. Confirmed on 3 independent pairs from a user
+#   report (TillJim/element, steve/"s i k"): in each case a rare, low-median
+#   break count was deciding the ranking over players who were ahead on
+#   nearly everything else. k=0.5 fixes steve/"s i k" cleanly and shrinks
+#   TillJim/element from a 19.7% gap to 7.2% (doesn't fully flip it --
+#   TillJim has a real, non-break lead in assists that keeps him slightly
+#   ahead, which is correct). Rank impact: Spearman rho 0.945 vs the
+#   pre-change weights (`new_v3` above), 21/61 players moved >=5 ranks --
+#   more disruptive than prior single-knob passes, but expected and correct
+#   here: this is fixing a real, pervasive mechanism (every high-break-count
+#   player was overrated, every low-break-count player underrated), not
+#   chasing noise. A companion option (also lowering tw_break) was tested
+#   and rejected: it fully flips TillJim/element only past tw_break=0.4,
+#   with MORE collateral disruption (rho 0.912, 29 movers) for a marginal
+#   gain -- smoothing alone is the better-targeted fix.
+break_smooth_k = 0.5
+
+# Death handling: normalize, don't punish. Penalty capped small; a small bonus
+# for below-median deaths.
+death_w           = 0.20
+death_cap         = 0.15  # max penalty for high deaths
+team_death_up_cap = 0.10  # max bonus for low deaths
+
+# Softens the death penalty for above-median killers only: adj_rx = rx / (1 +
+# relief*max(0, kill_ratio-1)). DoD-specific reasoning (user report, 2026-08-08):
+# a player who dies often WHILE also fragging above the pack is pushing/being
+# aggressive, not failing -- the raw death-rate penalty was treating that the
+# same as a player who dies a lot for nothing. Below-median killers are
+# untouched (max(0, ...) floors the relief at zero), so this never ADDS
+# punishment to a passive player -- it only ever softens the penalty, and only
+# for players who are producing kills to justify it.
+#   Confirmed on the two players who prompted this: kroD- (rk=1.09, elevated
+#   deaths) death_adj 0.9475 -> 0.9769; Hub (NATO's LAN-winning roster,
+#   rk=1.06) 0.9657 -> 0.9850. Checked for runaway effects across all 61
+#   players at relief=1.5: no death_adj exceeds ~1.06 (nothing near the 0.15
+#   death_cap/0.10 up_cap ceiling), so aggressive high-death players are
+#   relieved, not flipped into an outsized bonus. Untested via leave-one-out
+#   (same caveat as team_placement_weight) -- this is a direct response to a
+#   reported design concern, not a search-validated fix.
+death_kill_relief = 1.5
+
+# Final-standing boost: 1st place gets the full team_placement_weight bonus,
+# last place gets none, linear in between. Added 2026-08-08 per request --
+# "results should matter," a team's actual tournament finish wasn't
+# reflected anywhere in KTPR before this (win rate/clutch stats are derived
+# from the round-robin log, which can diverge from final placement if there
+# was a separate playoff/bracket stage -- exactly what happened here: NATO
+# won the LAN outright despite iH having the better round-robin record).
+# Placements below are the real final standings, not round-robin win rate.
+# 0.15 = untested starting value, a "STARTING VALUE to argue about" like
+# role_weights above -- no leave-one-out validation exists for this knob
+# yet (there's only one LAN's worth of placement data to validate against).
+team_placement_weight = 0.15
+team_placements = { NATO = 1, iH = 2, dice = 3, Bluth = 4, JTM = 5, bb = 6, NoSo = 7, "$" = 8, b = 9, uR = 10 }
+
+# Within-class normalization: judge each player against the median of their OWN
+# role (Rifle/Sniper/Heavy/SMG), so a great sniper ranks high among snipers even
+# though the role produces few assists/flags. class_min_size = fall back to the
+# global median if a role has fewer than this many regulars.
+class_normalize = true
+class_min_size  = 4

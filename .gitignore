@@ -87,3 +87,7 @@ wsdod-lan-2026/index.rendered.html
 
 # WSDoD site build output — regenerate with sites/wsdod-lan-2026/build_site.py
 sites/wsdod-lan-2026/dist/
+
+# KTPR roster — maps every player's SteamID to every alias they've used.
+# Not a credential, but publishing it permanently deanonymizes alt accounts.
+docs/ktpr_mcp/roster.csv
