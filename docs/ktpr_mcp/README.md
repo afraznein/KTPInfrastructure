@@ -86,9 +86,11 @@ needed. `KTPR_SPEC.md` §4 documents every knob.
 
 ## Notes / handoff caveats
 
-- **Two telemetry systems:** KTPR uses **HLstatsX** for kills/deaths/flags
-  (authoritative) and **HUD** for assists/damage/breaks (newer, ~4–6% under
-  HLstatsX on overlapping stats). See `KTPR_SPEC.md` §5.
+- **Two telemetry systems:** KTPR uses **HLstatsX** for kills/deaths/flags/damage
+  (authoritative, gated to live match time) and **HUD** for assists/breaks only
+  (newer, ~4–6% under HLstatsX on overlapping stats, and **can include warmup**).
+  Damage moved off the HUD 2026-08-09; assists and breaks are the last two, and
+  moving them is the S10 workstream in `TODO.md`. See `KTPR_SPEC.md` §5.
 - **Scope:** live data is filtered to the Sat/Sun `match_type=0` tournament
   matches (constants `TOURNAMENT_MATCH_TYPES` / `TOURNAMENT_DAYS` in
   `ktpr_mysql.py`).

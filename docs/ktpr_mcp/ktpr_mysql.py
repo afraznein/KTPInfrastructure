@@ -142,6 +142,8 @@ def _idlist(ids: list[str]) -> str:
 
 
 def _aggregate_sql(night: str | None, tournament_only: bool = True) -> str:
+    # Unused — the HUD-only aggregation the HLstatsX-spine loaders replaced. Its
+    # damage still comes from the HUD; do not revive it without repointing that.
     where = "is_final=1"
     if tournament_only:
         where += (f" AND match_id COLLATE utf8mb4_0900_ai_ci IN "
@@ -425,6 +427,36 @@ def _match_maps(tournament_only: bool = True) -> dict[str, str]:
     ))}
 
 
+def _hlx_damage(idl: str, by: str = "player") -> dict:
+    """HLstatsX damage per player, from `ktp_match_stats`.
+
+    The daemon's KTP_MATCH_END handler already aggregates
+    `hlstats_Events_Statsme` into this table per player per half, so damage does
+    not need the HUD. It is also gated to live match time the same way kills and
+    flags are, which the HUD's own figures are not.
+
+    ⚠️ `half = 0` is the whole-match total and duplicates halves 1..n exactly —
+    including it doubles every number. Measured on the LAN set: half 0 summed to
+    7,948,398 against 4,010,320 + 3,938,078 for halves 1 and 2.
+
+    by: "player" -> {pid: dmg} · "match" -> {(pid, mid): dmg}
+        · "half" -> {(pid, mid, half): dmg}
+    """
+    cols = {"player": "player_id",
+            "match": "player_id, match_id",
+            "half": "player_id, match_id, half"}[by]
+    sql = f"""
+        SELECT {cols}, SUM(damage)
+        FROM ktp_match_stats
+        WHERE half > 0 AND match_id IN ({idl})
+        GROUP BY {cols};
+    """
+    out: dict = {}
+    for r in _parse_rows(run_sql(sql)):
+        out[r[0] if by == "player" else tuple(r[:-1])] = float(r[-1])
+    return out
+
+
 def load_match_player_stats(tournament_only: bool = True):
     """
     Return list[ktpr_engine.Player], one row PER (player, match), with `.team`,
@@ -478,15 +510,16 @@ def load_match_player_stats(tournament_only: bool = True):
         flags[(pid, match_id)] = float(cnt)
 
     hud_sql = f"""
-        SELECT steam_id, match_id, SUM(assists) AS a, SUM(damage) AS d, SUM(cap_breaks) AS b,
+        SELECT steam_id, match_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
                COUNT(DISTINCT half) AS hh
         FROM hud_player_stats
         WHERE is_final=1 AND match_id IN ({idl})
         GROUP BY steam_id, match_id;
     """
-    hud: dict[tuple[str, str], tuple[float, float, float, int]] = {}
-    for steam_id, match_id, a, d, b, hh in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id)] = (float(a), float(d), float(b), int(hh))
+    hud: dict[tuple[str, str], tuple[float, float, int]] = {}
+    for steam_id, match_id, a, b, hh in _parse_rows(run_sql(hud_sql)):
+        hud[(steam_id, match_id)] = (float(a), float(b), int(hh))
+    hlx_dmg = _hlx_damage(idl, "match")
 
     out = []
     for pid, match_id, kills, deaths, halves in spine:
@@ -497,7 +530,8 @@ def load_match_player_stats(tournament_only: bool = True):
         if not uid or ":" not in uid:
             continue
         steam_id = "STEAM_0:" + uid
-        assists, damage, breaks, hud_halves = hud.get((steam_id, match_id), (0.0, 0.0, 0.0, 0))
+        assists, breaks, hud_halves = hud.get((steam_id, match_id), (0.0, 0.0, 0))
+        damage = hlx_dmg.get((pid, match_id), 0.0)   # HLstatsX stat, not HUD
         hud_h = hud_halves or halves
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         team = teams.get(steam_id, "?")
@@ -519,7 +553,7 @@ def load_match_player_stats(tournament_only: bool = True):
             deaths_half=deaths / halves,
             flags_half=flags.get((pid, match_id), 0.0) / halves,
             assists_half=assists / hud_h,
-            damage_half=damage / hud_h,
+            damage_half=damage / halves,         # HLstatsX stat / HLstatsX halves
             breaks_half=breaks / hud_h,
             role=roles.get(steam_id, "?"),
             team=team,
@@ -585,15 +619,16 @@ def load_raw_match_stats(tournament_only: bool = True):
         flags[(pid, match_id)] = float(cnt)
 
     hud_sql = f"""
-        SELECT steam_id, match_id, SUM(assists) AS a, SUM(damage) AS d, SUM(cap_breaks) AS b,
+        SELECT steam_id, match_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
                COUNT(DISTINCT half) AS hh
         FROM hud_player_stats
         WHERE is_final=1 AND match_id IN ({idl})
         GROUP BY steam_id, match_id;
     """
-    hud: dict[tuple[str, str], tuple[float, float, float, int]] = {}
-    for steam_id, match_id, a, d, b, hh in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id)] = (float(a), float(d), float(b), int(hh))
+    hud: dict[tuple[str, str], tuple[float, float, int]] = {}
+    for steam_id, match_id, a, b, hh in _parse_rows(run_sql(hud_sql)):
+        hud[(steam_id, match_id)] = (float(a), float(b), int(hh))
+    hlx_dmg = _hlx_damage(idl, "match")
 
     out = []
     for pid, match_id, kills, deaths, halves in spine:
@@ -604,7 +639,8 @@ def load_raw_match_stats(tournament_only: bool = True):
         if not uid or ":" not in uid:
             continue
         steam_id = "STEAM_0:" + uid
-        assists, damage, breaks, hud_halves = hud.get((steam_id, match_id), (0.0, 0.0, 0.0, 0))
+        assists, breaks, hud_halves = hud.get((steam_id, match_id), (0.0, 0.0, 0))
+        damage = hlx_dmg.get((pid, match_id), 0.0)   # HLstatsX stat, not HUD
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         out.append(E.RawMatchStats(
             steam_id=steam_id,
@@ -670,14 +706,15 @@ def load_half_player_stats(tournament_only: bool = True):
         flags[(steam_id, match_id, int(half))] = float(cnt)
 
     hud_sql = f"""
-        SELECT steam_id, match_id, half, SUM(assists) AS a, SUM(damage) AS d, SUM(cap_breaks) AS b, team
+        SELECT steam_id, match_id, half, SUM(assists) AS a, SUM(cap_breaks) AS b, team
         FROM hud_player_stats
         WHERE is_final=1 AND match_id IN ({idl})
         GROUP BY steam_id, match_id, half, team;
     """
-    hud: dict[tuple[str, str, int], tuple[float, float, float, str]] = {}
-    for steam_id, match_id, half, a, d, b, side in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id, int(half))] = (float(a), float(d), float(b), side)
+    hud: dict[tuple[str, str, int], tuple[float, float, str]] = {}
+    for steam_id, match_id, half, a, b, side in _parse_rows(run_sql(hud_sql)):
+        hud[(steam_id, match_id, int(half))] = (float(a), float(b), side)
+    hlx_dmg = _hlx_damage(idl, "half")
 
     out = []
     for pid, match_id, half, kills, deaths in spine:
@@ -687,7 +724,8 @@ def load_half_player_stats(tournament_only: bool = True):
             continue
         steam_id = "STEAM_0:" + uid
         key = (steam_id, match_id, half)
-        assists, damage, breaks, side = hud.get(key, (0.0, 0.0, 0.0, None))
+        assists, breaks, side = hud.get(key, (0.0, 0.0, None))
+        damage = hlx_dmg.get((pid, match_id, str(half)), 0.0)   # HLstatsX stat, not HUD
         if side is None:
             continue    # no HUD row for this player/match/half -> can't tell which side
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
@@ -715,7 +753,8 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
     Return list[ktpr_engine.Player] for the tournament, using the TWO telemetry
     systems as designed:
       * HLstatsX (authoritative) -> kills, deaths, flags, matches, halves
-      * HUD (new stats)          -> assists, damage, breaks
+      * HLstatsX (ktp_match_stats) -> damage
+      * HUD (new stats)          -> assists, breaks
     per-half rates all use the HLstatsX half count (the primary participation basis).
 
     tournament_only=True (default) restricts to Sat/Sun match_type=0 matches.
@@ -766,15 +805,17 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
     # HUD new stats per steam_id. Keep HUD's OWN half count: HUD sometimes drops
     # half-snapshots, so a HUD total must be divided by the halves HUD actually
     # captured (not the HLstatsX halves) or the per-half rate is understated.
+    # Damage is no longer read here — see hlx_dmg below.
     hud_sql = f"""
-        SELECT steam_id, SUM(assists) AS a, SUM(damage) AS d, SUM(cap_breaks) AS b,
+        SELECT steam_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
                COUNT(DISTINCT match_id, half) AS hh
         FROM hud_player_stats
         WHERE is_final=1 AND match_id IN ({idl})
         GROUP BY steam_id;
     """
-    hud = {r[0]: (float(r[1]), float(r[2]), float(r[3]), int(r[4]))
+    hud = {r[0]: (float(r[1]), float(r[2]), int(r[3]))
            for r in _parse_rows(run_sql(hud_sql))}
+    hlx_dmg = _hlx_damage(idl, "player")
 
     out = []
     for pid, row in spine.items():
@@ -787,8 +828,9 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
         if not uid or ":" not in uid:      # skip HLTV / bots / unmapped
             continue
         steam_id = "STEAM_0:" + uid
-        assists, damage, breaks, hud_halves = hud.get(steam_id, (0.0, 0.0, 0.0, 0))
+        assists, breaks, hud_halves = hud.get(steam_id, (0.0, 0.0, 0))
         hud_h = hud_halves or halves            # fall back to HLstatsX halves if HUD absent
+        damage = hlx_dmg.get(pid, 0.0)          # HLstatsX stat -> HLstatsX halves
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         out.append(E.Player(
             name=name,
@@ -798,7 +840,7 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
             deaths_half=deaths / halves,
             flags_half=flags.get(pid, 0.0) / halves,
             assists_half=assists / hud_h,        # HUD stats / HUD halves
-            damage_half=damage / hud_h,
+            damage_half=damage / halves,         # HLstatsX stat / HLstatsX halves
             breaks_half=breaks / hud_h,
             role=roles.get(steam_id, "?"),
             team=teams.get(steam_id, "?"),
