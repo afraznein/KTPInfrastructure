@@ -187,8 +187,25 @@ with HUD-only stats** (they will be reconciled in a future release):
 | flags | **HLstatsX** | `hlstats_Events_PlayerActions` with action code `dod_capture_area` / `dod_control_point` |
 | matches / halves | **HLstatsX** | distinct `match_id` / `(match_id, half)` where player was killer or victim |
 | assists *(new)* | **HUD** | `hud_player_stats.assists` (is_final) |
-| damage *(new)* | **HUD** | `hud_player_stats.damage` |
+| damage *(new)* | **HLstatsX** | `ktp_match_stats.damage`, `half > 0` (repointed 2026-08-09 — see below) |
 | breaks *(new)* | **HUD** | `hud_player_stats.cap_breaks` |
+
+**Damage moved off the HUD on 2026-08-09.** The daemon's `KTP_MATCH_END` handler
+already aggregates `hlstats_Events_Statsme` into `ktp_match_stats` per player per
+half, so damage never needed the HUD — and unlike the HUD it is gated to live
+match time, the same as kills and flags. It is now divided by the **HLstatsX**
+half count rather than the HUD's, which also takes it out of the HUD
+missing-snapshot denominator problem. ⚠️ `half = 0` is the whole-match total and
+duplicates halves 1..n exactly; every query must exclude it.
+
+Validated offline against the LAN dumps before the change: scoped to the same 56
+matches, HLstatsX damage runs **+5.5%** against the HUD (consistent with the
+~4–6% HUD undercount documented below), with 59 of 61 players inside 0.90–1.25×.
+The team-kill-damage theory for the remaining outliers does **not** hold —
+correlation between the per-player ratio and team-kill count is **0.044**. The
+shape instead matches HUD missing snapshots, i.e. HLstatsX is the fuller record.
+⚠️ Scope the comparison before reading it: run unscoped (70 matches vs 56) the
+same figure reads **+27.9%**, which is an artifact, not a finding.
 
 Why not just HUD: the HUD `is_final` snapshot **undercounts** kills/deaths by
 ~10% vs the raw log (missing snapshot rows for subbed players + the summary
