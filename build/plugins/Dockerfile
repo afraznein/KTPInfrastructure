@@ -37,6 +37,11 @@ COPY KTPHudObserver /build/plugins/KTPHudObserver
 # AMXX 1.10 — hence built here instead of pulled from upstream tarball).
 COPY --from=amxx-compiler /build/KTPAMXX/plugins/admin.sma          /build/plugins/amxx-stock/admin.sma
 COPY --from=amxx-compiler /build/KTPAMXX/plugins/dod/stats_logging.sma /build/plugins/amxx-stock/stats_logging.sma
+# stats_logging.sma #includes this by relative path, so it has to land in the
+# same directory. Stock plugins are copied as individual files (not whole
+# directories), so a new sibling include needs its own line here or the compile
+# fails on a missing file.
+COPY --from=amxx-compiler /build/KTPAMXX/plugins/dod/ktp_stats_capture.inc /build/plugins/amxx-stock/ktp_stats_capture.inc
 
 WORKDIR /build
 
