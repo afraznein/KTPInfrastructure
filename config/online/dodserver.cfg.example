@@ -137,12 +137,24 @@ mapchangecfgfile "dodserver.cfg"
 //-----------------------------------------------
 //               ReHLDS Flood Protection
 //-----------------------------------------------
-// Tuned for high cmdrate competitive play
-// Kick-only (-1) instead of ban (KTPAdminAudit blocks addip anyway)
+// Tuned for high cmdrate competitive play.
+// Kick-only (-1) instead of ban (KTPAdminAudit blocks addip anyway).
+// The punish cvars are a DURATION, not a flag: < 0 kicks (SV_DropClient only),
+// >= 0 bans the IP for that many minutes. Engine default is 5, i.e. a 5-minute
+// ban -- so omitting these does not disable them, it restores stock banning.
 sv_rehlds_movecmdrate_max_burst 10000
 sv_rehlds_movecmdrate_burst_punish -1
+sv_rehlds_movecmdrate_avg_punish -1
 sv_rehlds_stringcmdrate_max_burst 800
 sv_rehlds_stringcmdrate_burst_punish -1
+sv_rehlds_stringcmdrate_avg_punish -1
+
+// Bound the engine's rcon auto-ban. Default is 0, which SV_AddIPFilterInternal
+// treats as PERMANENT (banEndTime 0 never expires). RH-02 took these auto-bans
+// from inert to live in .930, and HLStatsX + all 24 HLTV proxies share the data
+// server's IP -- a banned IP cannot rcon in to lift its own ban. 10 minutes lets
+// a mistake self-heal.
+sv_rcon_banpenalty 10
 
 //-----------------------------------------------
 //               Logging

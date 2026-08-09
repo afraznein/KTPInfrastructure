@@ -117,6 +117,45 @@ def test_online_example_keeps_the_operator_tail():
     )
 
 
+def test_online_example_keeps_the_anti_lockout_settings():
+    """Pins the three cvars that make a ban BOUNDED rather than permanent.
+
+    All three were live on 24/24 and absent from this example, so rebuilding a
+    distributed config from this file would have silently reverted them to stock
+    engine behaviour. That is not a no-op:
+
+      * sv_rcon_banpenalty defaults to 0, and SV_AddIPFilterInternal treats 0 as
+        PERMANENT (banEndTime 0 never expires). RH-02 made the engine's rcon
+        auto-bans live in .930, and HLStatsX plus all 24 HLTV proxies share the
+        data server's IP -- a banned IP cannot rcon in to lift its own ban.
+      * the *_avg_punish cvars default to 5, i.e. a 5-minute IP ban. Negative
+        means kick-only. Omitting them does not disable punishment, it re-enables
+        banning -- which is the opposite of the stated policy two lines above them
+        in the example ("Kick-only (-1) instead of ban").
+
+    The example already pinned the *burst* variants and not the *avg* ones, so
+    the policy was half-applied. Values matter here, not just presence.
+    """
+    example = CONFIG_ROOT / "online" / "dodserver.cfg.example"
+    if not example.exists():
+        pytest.skip("online/dodserver.cfg.example not present")
+
+    cvars = parse_dodserver_cfg(example)
+    for cvar, expected in (
+        ("sv_rcon_banpenalty", "10"),
+        ("sv_rehlds_movecmdrate_avg_punish", "-1"),
+        ("sv_rehlds_stringcmdrate_avg_punish", "-1"),
+        # the burst siblings, so the pair can never drift apart again
+        ("sv_rehlds_movecmdrate_burst_punish", "-1"),
+        ("sv_rehlds_stringcmdrate_burst_punish", "-1"),
+    ):
+        assert cvars.get(cvar) == expected, (
+            f"online/dodserver.cfg.example: {cvar} should be {expected!r}, got "
+            f"{cvars.get(cvar)!r} -- these bound a ban's duration; losing them "
+            f"restores stock permanent/5-minute IP banning"
+        )
+
+
 def test_sys_ticrate_is_1000(cfg_path):
     """KTP fleet runs sys_ticrate 1000 — verified in CLAUDE.md and
     KTPReHLDS Host_FilterTime fix. Anything else silently caps server FPS."""
