@@ -1,0 +1,12 @@
+{
+  "_comment": "Update the absolute path in args to wherever you cloned this, or register via: claude mcp add ktpr -- python /abs/path/to/ktpr_mcp.py. Set KTPR_SSH_HOST (user@host) for the mysql source.",
+  "mcpServers": {
+    "ktpr": {
+      "command": "python",
+      "args": ["/abs/path/to/ktpr_mcp/ktpr_mcp.py"],
+      "env": {
+        "KTPR_SSH_HOST": "user@host"
+      }
+    }
+  }
+}
