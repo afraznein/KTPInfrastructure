@@ -71,6 +71,59 @@ in no deploy manifest, loads from the **command line** rather than
 `plugins.ini` (so a copy of the tree booted normally has no bot), and the
 ephemeral tree is deleted on teardown.
 
+Bot decision confirmed with the operator: **Marine Bot primary, new_bot
+fallback** — Sturmbot is not available for Linux at all, so the substitution is
+forced by the platform rather than chosen.
+
+#### Build + daemon steps (same series)
+
+- **`tests/e2e_stats/artifacts.py`** + **`scripts/build_stats_lane_artifacts.py`**
+  — the build step. Extracts `stats_logging.sma`, `ktp_stats_capture.inc`,
+  `hlstats.pl` and the SQL from **branch refs via `git show`**, never from a
+  working tree: "Lane B passed on this branch" must not silently mean "passed
+  on whatever was lying around on the runner". Writes a manifest of SHAs and
+  md5s so a run is traceable to exact bytes, the same way the deployment plan
+  verifies deploys by md5 rather than by console banner. Three plugin sources
+  supported — compile with `--amxxpc`, adopt a Docker/CI build with
+  `--prebuilt-plugin`, or `--no-plugin` for the toolchain-free daemon+SQL half.
+  Encodes two constraints instead of documenting them: the `.sma`/`.inc`
+  sibling requirement (the production Dockerfile needed a dedicated `COPY` for
+  it), and **compile failures are fatal** — unlike `build/plugins/Dockerfile`,
+  which ends each compile with `|| echo "WARNING: …"` and so does not fail on a
+  broken plugin. A test lane that proceeds against a stale artifact reports on
+  the wrong thing.
+- **`tests/e2e_stats/hlstats_daemon.py`** — runs `hlstats.pl` in its
+  **`--stdin` mode** (hlstats.pl:1971), fed by a thread tailing the ephemeral
+  server's log. Stdin mode disables the UDP listener *and* sets `$g_rcon = 0`,
+  so the test daemon cannot rcon the server under test; feeding the log
+  directly also removes UDP loss and reordering from a test whose whole purpose
+  is attribution. Enforces both silent-failure prerequisites: the
+  `hlstats_Servers` row the daemon resolves lines against (hlstats.pl:815), and
+  seeds-before-daemon-start. `drain()` waits past the plugin's own 5s
+  `KSC_BUF_FLUSH_SECS` — asserting before that flush looks identical to the
+  capture being broken.
+
+Unverified and flagged in code: whether stdin mode wants the engine's
+`L <date> - <time>: ` line prefix intact, and whether `--timestamp` belongs on
+the command line. Both are config switches with a documented default, settled
+by Phase 0.
+
+#### Verification (build + daemon)
+
+- `pytest tests/e2e_stats/` — **35 passed, 1 skipped**.
+- The build step was run for real against the actual branches:
+  `--amxx-ref feat/stats-positions` (`5f0e5379`) and
+  `--daemon-ref feat/seed-cap-break-action` (`a8c9a97`) — SHAs match
+  `KTPR_DEPLOYMENT_PLAN.md`, all four daemon-side artifacts extracted, manifest
+  written with md5s.
+- Incidental finding, now documented in `artifacts.py`: `git show` may emit LF
+  even where the working tree is CRLF, depending on `core.autocrlf` /
+  `.gitattributes`. The CRLF normalisation before amxxpc is therefore
+  unconditional rather than guarded on "looks like CRLF".
+- Compile paths are covered by monkeypatched-compiler tests (failing rc,
+  exit-0-writes-nothing, CRLF normalisation) rather than a real amxxpc — no
+  AMXX toolchain on the authoring machine.
+
 #### Verification
 
 - `pytest tests/e2e_stats/` — 11 passed, 1 skipped (symlink case needs
