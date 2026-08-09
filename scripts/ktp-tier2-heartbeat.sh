@@ -140,7 +140,12 @@ fi
 case "$state" in
     ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite healthy (running + stack in sync)."; color=5763719 ;;
     failed) title="❌ KTP Tier 2 — last run failed"; desc="$detail"; color=15548997 ;;
-    drift)  title="⚠️ KTP Tier 2 — runner stack drifted from fleet"; desc="$detail"; color=16763904 ;;
+    # Say the suite passed. `drift` is only reachable from state=ok, so this is
+    # always true here — and after a red spell the state goes failed → drift
+    # without passing through ok, so nothing else ever announces the recovery.
+    drift)  title="⚠️ KTP Tier 2 — runner stack drifted from fleet"
+            desc="**The suite ran and passed** — this is about the runner's binaries, not the tests."$'\n\n'"$detail"
+            color=16763904 ;;
     *)      title="⚠️ KTP Tier 2 — not running"; desc="$detail"; color=16763904 ;;
 esac
 if [ "$repeat" = "1" ]; then

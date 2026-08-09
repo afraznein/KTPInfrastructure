@@ -139,6 +139,17 @@ check "state file untouched" "" "$(cat "$T/state" 2>/dev/null || echo '')"
 echo 200 > "$T/http_code"
 out="$(run_hb)"; check "edge survives to the next run" "-> failed" "$out"
 
+echo "== 5b. a green-but-drifted run must SAY the suite passed =="
+# failed -> drift never passes through ok, so without this line the embed reads
+# as "still broken" to anyone who watched the red spell.
+mk_marker failure 3600; mk_checker 1 "runner stack DRIFTED: engine_i486.so"; rm -f "$T/state"
+out="$(run_hb)"                                   # red + drift -> state failed+drift
+mk_marker success 3600                            # suite recovers, drift remains
+out="$(run_hb)"
+check "state advances to drift"       "-> drift" "$out"
+check "embed says the suite passed"   "The suite ran and passed" "$(cat "$T/last-payload.json")"
+check "and still names the drift"     "re-sync the runner stack" "$(cat "$T/last-payload.json")"
+
 echo "== 6. inconclusive drift check never flaps the state =="
 mk_marker success 3600; mk_checker 2 "ssh timeout"; rm -f "$T/state"
 out="$(run_hb)"; check "logged, not alerted" "drift check inconclusive" "$out"
