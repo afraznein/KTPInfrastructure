@@ -23,7 +23,15 @@ import paramiko
 
 warnings.filterwarnings("ignore")
 
-HOST, USER, PW = "100.127.243.126", "seanality", "DoDLAN2026"
+# The venue box's address and login, from the environment: this repo is public,
+# and a committed password is a published one.
+HOST = os.environ.get("KTP_LANBOX_HOST", "")
+USER = os.environ.get("KTP_LANBOX_USER", "")
+PW = os.environ.get("KTP_LANBOX_PASSWORD") or None
+if not HOST or not USER:
+    raise SystemExit(
+        "KTP_LANBOX_HOST / KTP_LANBOX_USER are unset — set them for the venue "
+        "box. Unset otherwise surfaces as a connection failure.")
 PORT_TO_SERVER = {27015: 26, 27016: 27, 27017: 28, 27018: 29, 27019: 30}
 ACTION_ID = {"dod_control_point": 337, "dod_capture_area": 338, "dod_object_goal": 339}
 BONUS = 6
