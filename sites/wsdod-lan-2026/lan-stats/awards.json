@@ -372,35 +372,34 @@
    "top": [
     {
      "who": "element",
-     "value": "123,851",
+     "value": "124,520",
      "where": "dicE"
     },
     {
+     "who": "Savage¬",
+     "value": "112,059",
+     "where": "NoSoul"
+    },
+    {
      "who": "vertex",
-     "value": "106,516",
+     "value": "111,593",
      "where": "icyHOT"
     },
     {
      "who": "nomistizzle",
-     "value": "106,127",
+     "value": "109,822",
      "where": "Price is Right"
     },
     {
-     "who": "baiko",
-     "value": "105,855",
-     "where": "North Atlantic Treaty Org",
-     "as": "baiko ＃gubbe.se"
-    },
-    {
      "who": "cory?",
-     "value": "105,199",
+     "value": "109,104",
      "where": "Price is Right",
      "as": "cory <3 liah,jkimbro,rdk"
     }
    ],
    "leader": {
     "who": "element",
-    "value": "123,851",
+    "value": "124,520",
     "where": "dicE"
    }
   },
