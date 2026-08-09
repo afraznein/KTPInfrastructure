@@ -958,15 +958,23 @@ def render(board: dict, names: dict) -> str:
         position</i> did &mdash; so a sniper is judged against snipers rather
         than against the field.</p>
 
-        <h4>Where it started</h4>
-        <p>The original formula, and what the day boards on this page used until
-        now. Three terms, each a ratio to the field average:</p>
+        <h4>Nine seasons of KTPR</h4>
+        <p>This is not a first draft. The three-term formula below is what KTPR
+        has been refined into across roughly <b>nine seasons</b> of KTP play,
+        and it is what the day boards on this page used until now. Every term in
+        it earned its place by being argued over and kept. Three ratios, each
+        against the field average:</p>
         <span class="formula">KTPR = [ (K/D &divide; field avg K/D)
        + (kills per half &divide; field avg)
        + 0.25 &times; (flags per half &divide; field avg) ] &divide; 2.25</span>
         <p>It is honest about what it measures, and what it measures is fragging
-        with a nod to flags. A player who never tops a kill count cannot rate
-        well in it, however the match was actually won.</p>
+        with a nod to flags &mdash; because for nine seasons that was all the
+        server could tell us. A player who never tops a kill count cannot rate
+        well in it, however the match was actually won. The version below is not
+        a replacement for that work so much as the same idea given more to work
+        with: the HUD finally made assists, damage and capture breaks
+        measurable, so they could join the formula rather than be argued about
+        from memory.</p>
 
         <h4>What this board uses</h4>
         <p>Six contributions instead of three, each normalised against the median

@@ -23,6 +23,11 @@ RENAMES = {
         # the joke only works if the blurb lets it land, so it says the quiet part
         "blurb": "Most flags per half — and he actually does. The Calebsod award.",
     },
+    "prone": {
+        # was "Sandbagging Like A Boss" — the pun was fine, the 2011 meme was not
+        "title": "Carpet Inspector",
+        "blurb": "Most time on the deck — someone has to check it. The Milo award.",
+    },
 }
 
 
