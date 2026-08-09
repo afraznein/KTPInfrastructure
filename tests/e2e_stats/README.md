@@ -1,0 +1,175 @@
+# Lane B — stats-capture end-to-end (bots + ephemeral MySQL)
+
+Proves the assist / cap-break / position capture actually lands rows in MySQL,
+by putting bots on a throwaway server and querying a throwaway database.
+
+Design and rationale: [`../integration/STATS_CAPTURE_E2E_DESIGN.md`](../integration/STATS_CAPTURE_E2E_DESIGN.md).
+What it verifies: [`../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`](../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md).
+
+**Status: Phase 0 (spike) only.** The modules here are built; no assertions are
+written yet, deliberately. Run the spike first — see below.
+
+## Why this lane exists
+
+Every emit path in `ktp_stats_capture.inc` is gated on `is_user_connected()`,
+and the cap-break detector's only input is a live poll of
+`dodx_area_get_data(...)` zone occupancy. So the deterministic Tier 2 lane
+cannot reach this feature at all: a synthetic `dodx_test_dispatch_client_death`
+on an empty server returns at the first guard and emits nothing. A test built
+that way would pass while proving nothing.
+
+Real bodies in real zones are the only way. That is what this lane buys, and
+it is why it is separate from — not a replacement for — Tier 2.
+
+## Three hard constraints, and how they are met
+
+**1. Do not contaminate the fleet-matching tree.** `help.md` requires
+`/opt/ktp-tier2-runner/serverfiles` to match the live fleet; drift is tripwired
+and re-sync is manual. A bot `.so` in there is that drift.
+→ `ephemeral_tree.py` copies the tree per run and overlays the bot in the copy.
+Read its module docstring before editing: hardlink copies make a naive
+`open(path, "w")` write *through* to the source, and there is an integrity
+check that fails the run loudly if that ever happens.
+
+**2. The runner is Docker-free.** So "ephemeral MySQL" is a second `mysqld`
+with a private datadir/socket/port, not a container — `ephemeral_mysql.py`.
+It runs as an unprivileged user, is loopback-only, uses `--no-defaults` so it
+cannot inherit `~/.my.cnf` (which on the data server points at the **live**
+server), and is deleted on teardown.
+
+**3. The bot must never reach production.** Quarantine, all five of these:
+
+| Rule | Mechanism |
+|---|---|
+| Bot lives outside any fleet-matching tree | `bot-kit/` root, passed via `--bot-kit` |
+| Not committed here | `.gitignore` covers `bot-kit/` and `*.so` under it |
+| Not in any deploy manifest | KTPFileDistributor and the Docker plugin build have no path to it |
+| Nothing *in* the tree enables it | loads via command-line `+localinfo mm_gamedll`, never `plugins.ini` — so a copy of the tree booted normally has no bot |
+| Doesn't outlive its run | ephemeral tree deleted on teardown |
+
+## Sturmbot does not work here — use Marine Bot
+
+Sturmbot was the first choice but is not viable on a Linux runner:
+
+- current release (1.9, Oct 2019) is a **Windows installer only**
+- the legacy Linux build is 1.5.1 targeting **DoD 3.1B, not 1.3**, and modern
+  glibc/loader versions break essentially all legacy bot `.so` binaries
+
+Per sturmbot.org's own [Linux DoD-with-bots guide](https://sturmbot.org/index.php/marine-bot/132-linux-dod-dedicated-server-setup-on-a-lan-with-bots),
+the Linux-viable DoD 1.3 bots are **Marine Bot** and **new_bot** (0.2.0+), both
+loaded as Metamod plugins via `+localinfo mm_gamedll <bot>/<bot>.so`.
+
+Marine Bot is primary (maintained modern Linux build). `new_bot` is the
+fallback, and can convert Sturmbot waypoints if Marine Bot's per-map coverage
+turns out thin. Swapping between them is one `--bot` flag; see `bot_driver.py`.
+
+⚠️ The console command names in `bot_driver.BotSpec` are **candidates, not
+verified facts** — nothing here has been run against either mod yet.
+`probe_add_command` tries them in order and reports which works. Turning those
+candidates into known-good values is Phase 0's job.
+
+Possible extra step on newer distros: glibc 2.41+ refuses shared libraries
+needing an executable stack unless the main binary does too. Fix is
+`execstack -c addons/amxmodx/dlls/amxmodx_mm_i386.so`. Whether this runner
+needs it is a Phase 0 finding.
+
+## Layout
+
+```
+bot-kit/                     (NOT in this repo — you create it)
+  marinebot/
+    marinebot.so
+    wps/                     waypoints, per map
+```
+
+```
+tests/e2e_stats/
+  ephemeral_tree.py    per-run serverfiles copy + bot overlay + integrity guard
+  ephemeral_mysql.py   private mysqld, schema/migration/seed loading
+  bot_driver.py        bot adapter: staging, add-command probing, team filling
+scripts/
+  spike_bot_lane.py    Phase 0 — answers the unknowns, asserts nothing
+```
+
+## Phase 0: run the spike first
+
+Do not write assertions before this passes. The reason is on the record: three
+`addbot`-based tests shipped on an unverified premise and were skip-marked a
+day later when the first real run showed DoD has no bot AI (`CHANGELOG.md`
+1.5.25). The spike exists so that cannot repeat.
+
+```bash
+python3 scripts/spike_bot_lane.py \
+    --serverfiles /opt/ktp-tier2-runner/serverfiles \
+    --bot-kit ~/ktp-bot-kit \
+    --bot marinebot \
+    --map dod_anzio \
+    --play-seconds 180 \
+    --schema /path/to/hlstatsx-schema.sql \
+             /path/to/migrate_003_assist_action.sql \
+             /path/to/migrate_004_cap_break_action.sql \
+    --out spike-report.json
+```
+
+It answers, stopping at the first "no":
+
+1. Does the bot `.so` load without displacing `amxxcurl` / `reapi` / `dodx`?
+2. Which add-bot command actually works?
+3. Do bots **connect, join a team, pick a class, spawn**? (where `addbot` failed)
+4. Do they **fight** — kills per minute?
+5. Do they **contest flags** — any cap activity at all?
+6. Event volume per minute, per type (the input Phase 6's damage ledger needs
+   for buffer sizing, and the check for `[KTP-STATS] dropped` lines)
+7. Can a private `mysqld` start as this user, does the migration SQL apply to
+   an empty database, and did the seed rows land with the flags the right way
+   round?
+
+Useful flags: `--skip-server` (MySQL half only), `--skip-mysql` (bot half
+only), `--bot new_bot` (fallback), `--copy-mode full` (slow, immune to
+hardlink write-through — use if you suspect tree corruption), `--keep` (leave
+the tree and datadir for inspection).
+
+Interpreting a failure at step 3 or 4: try `--bot new_bot` before changing
+anything else. If bots connect but never move or fight, suspect **waypoint
+coverage for that map** first — the spike reports whether any waypoint file
+mentions it.
+
+## Assertion posture, once we get there
+
+Existence and plausibility, never exact counts — bot AI decides how many kills
+happen, and the test's job is to prove the pipeline carries them.
+
+- assists: `≥1` row in `hlstats_Events_PlayerPlayerActions`, and **exactly 0**
+  in `hlstats_Events_PlayerActions` for the same action. That second one *is*
+  exact: it is a flag-correctness invariant, and getting it wrong
+  double-records every assist and double-applies the reward.
+- breaks: `≥1` row, `match_id` non-NULL for rows from live play
+- positions: non-NULL, **varied**, within map world bounds. Assert against
+  all-zero explicitly — `ksc_origin_str` omits the property on a failed read
+  specifically so a failure shows up as NULL rather than a plausible-looking
+  map origin, and "every row is `0 0 0`" is the signature of that guard being
+  bypassed.
+- regression: frags and weaponstats still non-zero
+- buffer: no `[KTP-STATS] dropped N capture line(s)`
+
+**A configured-but-broken lane fails; it does not skip.** `conftest.py`
+already applies this rule to an unreachable `KTP_HLDS_HOST`, for the same
+reason: a skip nobody reads is indistinguishable from coverage.
+
+## Ordering trap, enforced in code
+
+`hlstats.pl` reads `hlstats_Actions` into memory **at startup**. Seed after the
+daemon boots and every emitted line is silently discarded — the failure that
+lost every objective capture at the Philly LAN. `EphemeralMysql.prepare()`
+therefore runs before the daemon starts, as fixture order rather than as a note
+someone has to remember.
+
+## Not yet built
+
+- `hlstats_daemon.py` — run `scripts/hlstats.pl` against the private socket,
+  tailing the ephemeral server's log
+- `match_driver.py` — drive a real match via the existing test-mode rcons
+- `assertions.py` + the tests themselves
+- CI wiring (nightly, non-gating, inheriting the 7pm–midnight ET match embargo)
+
+All of it is downstream of the spike answering yes.

@@ -4,6 +4,86 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `tests`: Lane B scaffolding — bot-driven stats-capture e2e, Phase 0 (2026-08-09)
+
+The stats-capture branches (assists / cap breaks / positions, see
+`docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`) cannot be covered by the existing
+Tier 2 lane, and the reason is structural rather than a gap to fill in. Every
+emit path in `ktp_stats_capture.inc` is gated on `is_user_connected()`, and the
+cap-break detector's only input is a 0.5s poll of `dodx_area_get_data(...)`
+zone occupancy. So `dodx_test_dispatch_client_death(1, 2, …)` on an empty
+server returns at the first guard and emits nothing — **a synthetic-dispatch
+test of this code would pass while proving nothing.** The four negatives the
+deployment plan asks for (completed capture, off-point kill, voluntary
+walk-off, round restart) are timing behaviours of real bodies in real zones,
+and they are the ones that catch false-positive breaks, which silently inflate
+a player's objective rating.
+
+This lands the scaffolding and the spike, and deliberately **no assertions
+yet** — see the last bullet.
+
+- **`tests/integration/STATS_CAPTURE_E2E_DESIGN.md`** — two-lane model. Lane A
+  (existing, deterministic, dispatch primitives) gates merges; Lane B (new,
+  bot-driven, asserts on MySQL rows) runs nightly and never gates. Neither can
+  do the other's job: a non-deterministic lane that blocks merges becomes the
+  "disable the integration test to merge the urgent fix" antipattern the test
+  plan already warns about.
+- **Sturmbot is not usable here** — its current release (1.9) is a Windows
+  installer only, and the legacy Linux build targets DoD 3.1B rather than 1.3
+  and does not load against modern glibc. Per sturmbot.org's own Linux guide
+  the viable DoD 1.3 bots are **Marine Bot** (primary) and **new_bot**
+  (fallback, converts Sturmbot waypoints), both Metamod plugins loaded via
+  `+localinfo mm_gamedll`. `tests/e2e_stats/bot_driver.py` isolates the choice
+  behind a `BotSpec`, so swapping is a flag.
+- **`tests/e2e_stats/ephemeral_tree.py`** — per-run serverfiles copy, because
+  `help.md` requires the runner tree to match the fleet and a bot `.so` in it
+  is exactly the tripwired drift. Hardlink copies make this fast and also
+  dangerous: a bare `open(path, "w")` on a hardlinked path writes THROUGH to
+  the fleet-matching tree. Every write unlinks first, and teardown re-hashes
+  every shadowed source file and fails loudly if one changed. 11 unit tests
+  cover it; the guard was mutation-checked (removing the unlink fails two
+  tests, including the integrity backstop).
+- **`tests/e2e_stats/ephemeral_mysql.py`** — "ephemeral MySQL" as a second
+  `mysqld` on a private datadir/socket/port, not a container, because the
+  Tier 2 runner is deliberately Docker-free and also runs production HLStatsX.
+  Loopback-only and `--no-defaults`, so it cannot inherit the `~/.my.cnf` that
+  on that box points at the **live** server. `prepare()` loads schema +
+  migrations + seeds before the daemon may start, encoding the ordering trap
+  that lost every objective capture at the Philly LAN as fixture order rather
+  than as a note someone has to remember.
+- **`scripts/spike_bot_lane.py`** — Phase 0. Answers, stopping at the first
+  "no": does the bot load without displacing amxxcurl/reapi/dodx, which
+  add-bot command works, do bots join a team and spawn (where `addbot` failed),
+  do they fight, do they contest flags, what is the event volume per minute,
+  and can a private mysqld apply the migration SQL to an empty database.
+- **Assertions are deliberately not written yet.** This repo has already paid
+  for the alternative: `DODX_FORWARD_FIRING_DESIGN.md` Phase 2 was written on
+  the belief that `addbot` yields a playing bot, three tests shipped on it, and
+  they were skip-marked a day later (1.5.25) when the first real run showed DoD
+  ships no bot AI. Everything downstream of "the bots actually play" is cheap
+  to write and worthless if that premise is wrong, so the spike answers it
+  first. Lane B also inherits conftest's fail-don't-skip rule — a
+  configured-but-broken bot is a failure, not a skip.
+
+Quarantine, per the operator's requirement that the bot never reach
+production: bot kit lives outside any fleet-matching tree, is `.gitignore`d, is
+in no deploy manifest, loads from the **command line** rather than
+`plugins.ini` (so a copy of the tree booted normally has no bot), and the
+ephemeral tree is deleted on teardown.
+
+#### Verification
+
+- `pytest tests/e2e_stats/` — 11 passed, 1 skipped (symlink case needs
+  privileges on Windows).
+- Mutation check on the write-through guard: disabling the unlink fails
+  `test_write_text_does_not_touch_source[hardlink]` and
+  `test_overlay_file_shadowing_an_existing_file_leaves_source_intact`.
+- Full collection clean at 232 tests — the new package does not disturb the
+  existing suites.
+- `scripts/spike_bot_lane.py --help` resolves all imports, exit 0.
+- Not yet run against a real bot or a real mysqld; that is Phase 0's own job
+  on the runner.
+
 ### `ops`: disk-usage trend sampling in ktp-data-server-health (2026-08-02)
 
 Three misconfigured systemd units wrote `/var/log/syslog` at 14.8 GiB/day from
