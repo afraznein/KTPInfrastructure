@@ -2295,19 +2295,7 @@ field counts as pushing rather than failing:</span>
        today. Renders from #awards. -->
 
   <section id="awards" data-ed="philly-2026">
-    <div class="sec-head"><h2>Awards</h2>
-      <span class="meta">proposed · nothing awarded yet</span></div>
-
-    <div class="note-box">
-      <b>These are candidates, not winners.</b> The category names come from the
-      community's own list — the Asani, Calebsod, Milo and PDX awards were
-      coined for the league and are adapted here for a LAN. Each category is
-      split by whether the numbers can settle it: where they can, the current
-      leader is shown; where they can't, it goes to a vote, and every vote
-      carries the rule that built its shortlist so the rule can be argued with
-      rather than the names. <b>Staff pick the categories and hand out the
-      awards</b> — this is the shortlist to argue over.
-    </div>
+    <div class="sec-head"><h2>Awards</h2></div>
 
     <h3 class="staffsub">The numbers decide these</h3>
     <div class="awardgrid" id="awards-decided"></div>
@@ -3594,8 +3582,7 @@ if (el25) {
   document.querySelectorAll(".teamgrid.podium-lead").forEach(centreTeamTail);
   window.centreTeamTail = centreTeamTail;   // the edition module renders 2025's grid later
 
-  // Awards. Every card says "proposed" because none have been given — the
-  // leader on a decided card is whoever tops that number, not a winner.
+  // Awards. The leader on a decided card is whoever tops that number, not a winner.
   var aw = readJSON('awards-data');   // NOT 'awards' -- the section owns that id
   var shortName = window.shortName || function (n) { return n; };
 
