@@ -78,6 +78,37 @@ class EphemeralTree:
     # -- construction ------------------------------------------------------
 
     @classmethod
+    def in_place(cls, root: Path) -> "EphemeralTree":
+        """Treat an already-disposable tree as the working tree — no copy.
+
+        For the containerised lane (`build/lane-b/`), where the whole
+        filesystem is thrown away when the container exits. Copying 2 GB inside
+        a container that is itself ephemeral buys nothing and costs a couple of
+        gigabytes and a minute per run.
+
+        Writes go straight to `root`. The shadow-hash integrity check is
+        therefore meaningless here and is disabled: there is no pristine source
+        to protect, and recording hashes of files we are about to overwrite
+        would guarantee a spurious `TreeIntegrityError` on teardown.
+
+        Do NOT point this at `/opt/ktp-tier2-runner/serverfiles` or any other
+        fleet-matching tree. `build()` exists for that case and is the default
+        everywhere outside the container.
+        """
+        root = Path(root).resolve()
+        if not (root / "hlds_linux").exists():
+            raise FileNotFoundError(
+                f"{root} has no hlds_linux — refusing to treat it as a serverfiles tree"
+            )
+        # source == path is the marker for "in place"; `_prepare` records no
+        # shadow hashes because `self.source / rel` IS the target.
+        return cls(path=root, source=root, copy_mode="in-place", _keep=True)
+
+    @property
+    def is_in_place(self) -> bool:
+        return self.copy_mode == "in-place"
+
+    @classmethod
     def build(
         cls,
         source: Path,
@@ -142,9 +173,13 @@ class EphemeralTree:
         if self.path not in target.parents and target != self.path:
             raise ValueError(f"refusing to write outside the ephemeral tree: {rel}")
 
-        src_equivalent = self.source / rel
-        if src_equivalent.is_file() and rel not in self._shadow_hashes:
-            self._shadow_hashes[rel] = _sha256(src_equivalent)
+        # In-place mode has no pristine source, so there is nothing to hash and
+        # nothing to protect — recording a hash of the file we are about to
+        # overwrite would guarantee a false TreeIntegrityError on teardown.
+        if not self.is_in_place:
+            src_equivalent = self.source / rel
+            if src_equivalent.is_file() and rel not in self._shadow_hashes:
+                self._shadow_hashes[rel] = _sha256(src_equivalent)
 
         target.parent.mkdir(parents=True, exist_ok=True)
         # THE load-bearing line. Without it, a hardlinked path is the source
@@ -180,9 +215,10 @@ class EphemeralTree:
         target = (self.path / rel).resolve()
         if self.path not in target.parents:
             raise ValueError(f"refusing to write outside the ephemeral tree: {rel}")
-        # Record hashes for any source files this will shadow.
+        # Record hashes for any source files this will shadow (see _prepare for
+        # why in-place mode skips it).
         src_equivalent = self.source / rel
-        if src_equivalent.is_dir():
+        if not self.is_in_place and src_equivalent.is_dir():
             for f in src_equivalent.rglob("*"):
                 if f.is_file():
                     key = str(f.relative_to(self.source)).replace(os.sep, "/")

@@ -108,6 +108,66 @@ Unverified and flagged in code: whether stdin mode wants the engine's
 the command line. Both are config switches with a documented default, settled
 by Phase 0.
 
+#### Containerised, on a GitHub-hosted runner (same series)
+
+The operator asked whether the stack already runs as a Docker image and whether
+the lane could just live there. Largely yes, and it supersedes much of the
+host-based design above.
+
+What the stack actually is: Docker is the **build system** plus the Tier 1 test
+runtime (`ktp-runtime-test-base`, a complete ~2 GB image rebuilt nightly by
+`publish-base-image.yml`); the **production fleet is bare metal**, artifacts
+staged as `.new` and swapped at the 03:00 ET restart (`docs/DEPLOYING.md`).
+
+- **`build/lane-b/Dockerfile`** — `FROM ktp-runtime-test-base` plus MariaDB, the
+  Perl DBI stack, and the 32-bit bot runtime. Four things it fixes: `amxxpc` is
+  **already in the base image** and `smoke-callable.yml:324` already compiles
+  plugins by `docker run`-ing it (the toolchain blocker was self-inflicted); the
+  container filesystem is ephemeral so there is no fleet-matching tree to
+  contaminate; glibc is pinned to Ubuntu 22.04's **2.35**, below the 2.41
+  threshold where the loader rejects shared objects needing an executable stack
+  — the likeliest failure mode for a 20-year-old bot `.so`; and it runs nowhere
+  near the data server, which hosts production HLStatsX and is deliberately
+  Docker-free.
+- **`EphemeralTree.in_place()`** — writes to `/opt/hlds` directly, no copy.
+  Copying 2 GB inside a container that is itself thrown away buys nothing. The
+  shadow-hash integrity check is disabled in this mode (there is no pristine
+  source, and recording hashes of files about to be overwritten would guarantee
+  a spurious `TreeIntegrityError`), and it refuses a tree without `hlds_linux`.
+  `build()` remains the default outside the container.
+- **`.github/workflows/lane-b-stats-e2e.yml`** — `ubuntu-latest`,
+  `workflow_dispatch` + 06:00 UTC nightly, deliberately slotted between the
+  base-image rebuild (04:30) and Tier 2's nightly (09:00) so two hlds-booting
+  suites never overlap. **No `pull_request` trigger and not a required check** —
+  bot AI is non-deterministic and a flakeable lane must not gate merges.
+- **Bug fixed before it could bite:** `mysqld`/`mariadbd` refuse to start as uid
+  0 without `--user=root`, and containers run as root by default, so the whole
+  image path would have died at startup. Both the initialiser and the server
+  invocation now pass it when euid is 0.
+- **The bot is not baked into the image** — third-party, not ours to
+  redistribute, and a GHCR push would publish it. Mounted at run time; CI fetches
+  it from a secret-held private URL. If that secret is missing on a `full` run
+  the workflow **fails with an explanatory error** rather than skipping, because
+  a skip is indistinguishable from coverage.
+
+Recorded in both the design doc and the README: the image is a
+**reconstruction** of the fleet built from repo refs, so green here means "this
+branch works against this branch's stack", not "works against what is deployed".
+That second question still belongs to the Tier 2 runner's fleet-matching tree
+and its drift tripwire; neither is retired by this.
+
+#### Verification (container path)
+
+- `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite
+  **202 passed, 70 skipped, 0 failed**.
+- Both new YAML files parse; the workflow resolves to 1 job / 10 steps with
+  `workflow_dispatch` + `schedule` triggers only (no `pull_request`, as intended).
+- **The image has NOT been built.** There is no Docker on the authoring machine,
+  so `build/lane-b/Dockerfile` and the compose file are unbuilt and unrun — the
+  package list, the MariaDB-as-root path and the in-container amxxpc invocation
+  are all reasoned from the existing Dockerfiles and `smoke-callable.yml`, not
+  observed. First `docker build` is expected to need iteration.
+
 #### Verification (build + daemon)
 
 - `pytest tests/e2e_stats/` — **35 passed, 1 skipped**.

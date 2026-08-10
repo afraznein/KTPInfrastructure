@@ -49,6 +49,11 @@ def _free_tcp_port() -> int:
     return port
 
 
+def _is_root() -> bool:
+    """True when running as uid 0 — the normal case inside the Lane B image."""
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
 def _which(*names: str) -> str | None:
     for n in names:
         p = shutil.which(n)
@@ -123,16 +128,21 @@ class EphemeralMysql:
     def _initialise(self) -> None:
         """Create an empty datadir. MySQL and MariaDB disagree on how."""
         self.datadir.mkdir(parents=True, exist_ok=True)
+        # Both initialisers refuse to run as uid 0 without --user, same as the
+        # server itself.
+        as_root = ["--user=root"] if _is_root() else []
         attempts = [
             # MySQL 5.7+/8.x
             [self.mysqld, f"--datadir={self.datadir}", "--initialize-insecure",
-             f"--basedir=/usr", "--log-error-verbosity=1"],
+             "--basedir=/usr", "--log-error-verbosity=1", *as_root],
         ]
         install_db = _which("mariadb-install-db", "mysql_install_db")
         if install_db:
-            # MariaDB
-            attempts.append([install_db, f"--datadir={self.datadir}", "--auth-root-authentication-method=normal"])
-            attempts.append([install_db, f"--datadir={self.datadir}"])
+            # MariaDB — the Lane B image's database. Try the explicit
+            # auth-method form first; older packages don't accept the flag.
+            attempts.append([install_db, f"--datadir={self.datadir}",
+                             "--auth-root-authentication-method=normal", *as_root])
+            attempts.append([install_db, f"--datadir={self.datadir}", *as_root])
 
         errors = []
         for argv in attempts:
@@ -163,6 +173,11 @@ class EphemeralMysql:
             "--no-defaults",
             "--skip-grant-tables",
         ]
+        # mysqld/mariadbd refuse to start as uid 0 unless told to. Containers
+        # run as root by default, so without this the whole Lane B image path
+        # dies at "Please consult the Knowledge Base ... running as root".
+        if _is_root():
+            argv.append("--user=root")
         self._proc = subprocess.Popen(
             argv, stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,

@@ -72,6 +72,57 @@ needing an executable stack unless the main binary does too, fixed with
 `execstack -c` on `amxmodx_mm_i386.so`. Whether the runner needs this is a
 Phase 0 question.
 
+### 1b. Revised: the lane is containerised, and runs on a GitHub-hosted runner
+
+**This supersedes much of §2 and §3 below.** The original design assumed Lane B
+had to run on the Docker-free Tier 2 runner, and worked around the absent AMXX
+toolchain and the fleet-matching-tree hazard on the host. Both problems mostly
+dissolve in a container, and the operator's question — "doesn't the stack run on
+a docker image?" — was the right one.
+
+What the stack actually looks like: Docker is the **build system** (`build/*/Dockerfile`,
+`build/docker-compose.yml`) and the **Tier 1 test runtime** (`ktp-runtime-test-base`,
+a complete ~2 GB HLDS+KTP image rebuilt nightly by `publish-base-image.yml`).
+The **production fleet is bare metal** — 5 hosts, artifacts staged as `.new` and
+swapped at the 03:00 ET restart (`docs/DEPLOYING.md`).
+
+So `build/lane-b/Dockerfile` builds `FROM ktp-runtime-test-base`, adding MariaDB,
+the Perl DBI stack and the 32-bit bot runtime. Four things this fixes:
+
+1. **`amxxpc` is already in the base image** at
+   `/opt/hlds/dod/addons/ktpamx/scripting/amxxpc`; `smoke-callable.yml:324-330`
+   already compiles plugins by `docker run`-ing it. The toolchain blocker was
+   self-inflicted.
+2. **No tree to contaminate.** The container filesystem is ephemeral and
+   isolated, so `EphemeralTree.in_place()` writes to `/opt/hlds` directly — no
+   copy, no hardlink write-through hazard, no integrity guard needed.
+3. **glibc is pinned to Ubuntu 22.04's 2.35**, below the 2.41 threshold where
+   the loader rejects shared objects needing an executable stack. That is the
+   likeliest failure mode for a 20-year-old bot binary, so controlling glibc is
+   a genuine advantage.
+4. **It runs nowhere near production.** GH-hosted has Docker, no production
+   HLStatsX, and no route to the fleet. `publish-base-image.yml` already builds
+   this image there and `smoke-callable.yml` already boots the runtime container
+   there, so the shape is proven rather than speculative.
+
+Two caveats that do **not** go away:
+
+- **The image is a reconstruction, not the fleet.** Built from repo refs, so it
+  mirrors the repos rather than what is deployed — which is exactly why
+  `stage-manifest.json` and the drift tripwire exist, and why the runner
+  deliberately does not auto-follow a plugin bump. Green in Lane B means "this
+  branch works against this branch's stack", not "works against production".
+  The Tier 2 runner's fleet-matching tree keeps that job.
+- **The bot is still third-party and still quarantined.** It is not baked into
+  the image (not ours to redistribute; a GHCR push would publish it) and comes
+  from a mounted `bot-kit/`, fetched in CI from a secret-held private URL. If
+  that secret is absent on a `full` run the workflow **fails** rather than
+  skipping — a skip would be indistinguishable from coverage, which is the trap
+  the five skip-marked `addbot` tests fell into.
+
+The host-based design below remains valid and tested for running without
+Docker; `EphemeralTree.build()` is still the default outside the container.
+
 ### 2. The runner is deliberately Docker-free, so "ephemeral MySQL" is not a container
 
 The operator asked for ephemeral MySQL per run. But `TEST_INFRASTRUCTURE_PLAN.md`
