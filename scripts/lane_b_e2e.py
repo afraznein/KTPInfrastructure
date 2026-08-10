@@ -75,16 +75,43 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
 
 
 def drive_bots(handle, *, per_team: int, play_seconds: int, log_path: Path,
-               progress_every: int = 30) -> None:
+               flag_priority: int = 100, wait_for_cap: int = 100,
+               bot_skill: int = 5, progress_every: int = 30) -> None:
     """Fill both teams and let them play.
 
-    `flag_priority_percent 100` / `wait_for_cap_percent 100` push new_bot at
-    the flags rather than into deathmatch, which is what produces cap_breaks —
-    a break needs a capper killed mid-capture, and bots that ignore objectives
-    generate kills all day and never one of those.
+    `flag_priority_percent 100` points new_bot at the flags rather than into
+    deathmatch. Bots that ignore objectives generate kills all day and never a
+    single cap_break.
+
+    ## cap_break happens about half the time, and no knob here changes that
+
+    A break needs a capper killed *mid-capture*, which is genuinely rare next
+    to an assist. Assists arrive every run (4, 5, 7, 12); cap_break appeared in
+    two runs of four:
+
+        240s  wait_for_cap 100  ->  1 break
+        240s  wait_for_cap 100  ->  0
+        420s  wait_for_cap 100  ->  0
+        300s  wait_for_cap   0  ->  1 break
+
+    That is not enough to say the knob does anything, in either direction, so
+    the default is left where the fleet-realistic value is. Longer runs did not
+    help either, which argues against it being a simple matter of exposure.
+
+    Capture-type ratio was checked and does not explain it: a run with a break
+    had 19 `dod_capture_area` (timed, breakable) to 7 `dod_control_point`
+    (instant); a run without had 16 to 12. Both had plenty of the interruptible
+    kind.
+
+    So it is ordinary rarity. `check_carried` reports a run that produced none
+    as `not_exercised` rather than as a pass or a defect, and the path itself
+    is separately verified by `replay_daemon.py` against a captured log. If
+    this needs to be deterministic, drive the scenario — put a bot in a zone
+    and kill it — rather than tuning bot behaviour and hoping.
     """
-    for cmd in ("flag_priority_percent 100", "wait_for_cap_percent 100",
-                "bot_skill 5", "balance teams on"):
+    for cmd in (f"flag_priority_percent {flag_priority}",
+                f"wait_for_cap_percent {wait_for_cap}",
+                f"bot_skill {bot_skill}", "balance teams on"):
         handle.rcon(cmd)
     for _ in range(per_team):
         for team in ("allies", "axis"):
@@ -119,6 +146,11 @@ def main() -> int:
     ap.add_argument("--map", default="dod_anzio")
     ap.add_argument("--per-team", type=int, default=8)
     ap.add_argument("--play-seconds", type=int, default=240)
+    ap.add_argument("--wait-for-cap", type=int, default=100,
+                    help="new_bot wait_for_cap_percent. Lowering it should mean "
+                         "more lone cappers and so more cap_breaks — untested; "
+                         "see drive_bots for what is and is not known")
+    ap.add_argument("--flag-priority", type=int, default=100)
     ap.add_argument("--port", type=int, default=27015)
     ap.add_argument("--log", type=Path, default=Path("/work/build/lane-b-e2e.log"))
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
@@ -173,7 +205,9 @@ def main() -> int:
                     report["boot_attempts"] = attempt
                     booted = True
                     drive_bots(handle, per_team=args.per_team,
-                               play_seconds=args.play_seconds, log_path=args.log)
+                               play_seconds=args.play_seconds, log_path=args.log,
+                               flag_priority=args.flag_priority,
+                               wait_for_cap=args.wait_for_cap)
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
