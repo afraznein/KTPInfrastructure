@@ -234,31 +234,71 @@ reasoned:
 - **Artifact md5s are identical on Windows and Linux**, so the manifest is
   meaningful provenance rather than decoration.
 
-### Still blocked: there is no base schema
-
-`sql/ktp_schema.sql` in KTPHLStatsX is an **overlay, not a schema** — 8
-`ALTER TABLE`, 3 `CREATE TABLE IF NOT EXISTS`, 4 indexes, all assuming the stock
-HLStatsX tables already exist. Applying it to an empty database fails at the
-first statement:
+### The database half now passes end to end
 
 ```
-ERROR 1146 (42S02) at line 22: Table 'hlstatsx_test.hlstats_Events_Frags' doesn't exist
+[PASS] mysqld-private-instance: up (MySQL 8.0.46 — same version string as production)
+[PASS] schema-load: applied 1 schema + 2 seed file(s) to an empty database
+[PASS] schema-tables: 64 tables present
+[PASS] seed-assist:    for_PlayerActions=0 for_PlayerPlayerActions=1, reward 0
+[PASS] seed-cap_break: for_PlayerActions=1 for_PlayerPlayerActions=0, reward 0
 ```
 
-That is the file working as designed — its own header warns that a fresh
-install is the hazard case — but it means **Lane B cannot build a database from
-this repo alone**. It needs a base schema from one of:
+Those last two are the deployment plan's most dangerous check — flags the wrong
+way round record every event twice and double-apply the reward — now verified
+automatically instead of by hand.
 
-1. `mysqldump --no-data` of the production/data-server database — highest
-   fidelity, and the only option that also answers "does this migration apply
-   to what production actually looks like".
-2. The upstream HLStatsX `install/sql` schema, vendored.
-3. A hand-written minimal subset covering only the tables Lane B asserts on —
-   cheapest, and drifts from production silently, which is the failure mode
-   this whole lane exists to catch.
+### MySQL, not MariaDB — this is load-bearing
 
-Drop the result at `$LANE_B_OUT/base-schema.sql` and `scripts/lane_b_local.sh`
-picks it up automatically.
+The image installs `mysql-server`, matching production's MySQL 8.0.46. That is
+not a preference:
+
+`sql/ktp_schema.sql` uses `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT
+EXISTS`, which is **MariaDB-only syntax**. On MySQL it fails outright:
+
+```
+ERROR 1064 (42000) at line 22: ... near 'IF NOT EXISTS match_id VARCHAR(64) ...'
+```
+
+aborting before every later statement. The file's own header documents this and
+warns the hazard is a *fresh* install — LAN data-server provisioning — where it
+"silently applies almost nothing". The lane reproduced that on its first real
+run against MySQL. **On the MariaDB build the same run passed**, which is
+exactly the false confidence this lane exists to prevent.
+
+Consequence for the project, not just the tests: `ktp_schema.sql` still needs
+porting to plain `ALTER`s before any fresh MySQL install relies on it. Its own
+header says so.
+
+### Getting the base schema
+
+`sql/ktp_schema.sql` is an **overlay, not a schema** — 8 `ALTER TABLE`, 3
+conditional `CREATE TABLE`, 4 indexes, all assuming stock HLStatsX tables
+already exist. There is no base schema in any repo, so Lane B takes one from
+production:
+
+```bash
+scripts/fetch_base_schema.sh              # run on the data server, READ-ONLY
+# → ~/base-schema.sql : 64 tables, 0 INSERTs, no credentials
+```
+
+Copy it to `$LANE_B_OUT/base-schema.sql` and `scripts/lane_b_local.sh` picks it
+up automatically.
+
+Two grant limitations, both legitimate and handled rather than routed around:
+
+- **`hlstats_Servers` is denied** to the read-only account, because HLStatsX
+  keeps per-server rcon configuration there. The script reconstructs the table
+  from `information_schema` metadata — types, nullability, defaults, indexes —
+  reading no values.
+- **Views are denied** (`SHOW VIEW`), and mysqldump aborts the moment it walks
+  into one, so the table list is enumerated explicitly instead of left to
+  mysqldump's discovery.
+
+A production-derived base already carries `match_id`, `half` and `pos_x/y/z` on
+the event tables, so `ktp_schema.sql` is redundant on top of it and is **not**
+applied by default. Set `LANE_B_APPLY_KTP_SCHEMA=1` to reproduce its MySQL
+failure deliberately.
 
 ## Phase 0: run the spike first
 

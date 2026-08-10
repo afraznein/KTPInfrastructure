@@ -86,14 +86,31 @@ build-artifacts)
     ;;
 
 spike-db)
-    # Needs a BASE schema in $OUT/base-schema.sql — sql/ktp_schema.sql in
-    # KTPHLStatsX is an ALTER-only overlay and cannot create an empty database
-    # on its own. See tests/e2e_stats/README.md.
-    BASE=""
-    [ -f "$OUT/base-schema.sql" ] && BASE="/work/build/base-schema.sql"
+    # $OUT/base-schema.sql is a `mysqldump --no-data` of production. It is
+    # required: sql/ktp_schema.sql is an ALTER-only overlay and cannot create a
+    # database on its own.
+    #
+    # ktp_schema.sql is deliberately NOT applied by default. Two reasons, and
+    # the second is the interesting one:
+    #   1. Redundant — a production-derived base already has match_id, half and
+    #      pos_x/y/z on the event tables.
+    #   2. It does not run on MySQL at all. It uses `ADD COLUMN IF NOT EXISTS`
+    #      (MariaDB-only); production is MySQL 8.0.46 and rejects it with
+    #      ERROR 1064, aborting before every later statement. Its own header
+    #      documents this. Set LANE_B_APPLY_KTP_SCHEMA=1 to reproduce the
+    #      failure on purpose.
+    if [ ! -f "$OUT/base-schema.sql" ]; then
+        echo "missing $OUT/base-schema.sql — take one with:" >&2
+        echo "  mysqldump --no-data --single-transaction --skip-lock-tables \\" >&2
+        echo "      --no-tablespaces --set-gtid-purged=OFF hlstatsx > base-schema.sql" >&2
+        exit 1
+    fi
+    SCHEMA="/work/build/base-schema.sql"
+    [ "${LANE_B_APPLY_KTP_SCHEMA:-0}" = "1" ] && \
+        SCHEMA="$SCHEMA /work/build/artifacts/sql/ktp_schema.sql"
     in_image "
         python3 scripts/spike_bot_lane.py --skip-server \
-            --schema $BASE /work/build/artifacts/sql/ktp_schema.sql \
+            --schema $SCHEMA \
             --seed   /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
             --out /work/build/spike-db.json
