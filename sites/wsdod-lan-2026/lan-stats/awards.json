@@ -590,38 +590,38 @@
    {
     "role": "Rifle #1",
     "who": "vertex",
-    "value": "1.133 KTPR",
-    "where": "icyHOT"
+    "value": "1.254 KTPR",
+    "where": "Sun · icyHOT"
    },
    {
     "role": "Heavy #1",
-    "who": "jules",
-    "value": "1.149 KTPR",
-    "where": "onLAN thunder"
+    "who": "piff",
+    "value": "1.241 KTPR",
+    "where": "Sat · Best Buds"
    },
    {
     "role": "3rd",
-    "who": "Seanality",
-    "value": "1.289 KTPR",
-    "where": "icyHOT"
+    "who": "bR0M",
+    "value": "1.365 KTPR",
+    "where": "Sun · Best Buds"
    },
    {
     "role": "Rifle #2",
-    "who": "TillJim",
-    "value": "1.094 KTPR",
-    "where": "Arrested Development"
+    "who": "nicholson",
+    "value": "1.195 KTPR",
+    "where": "Sat · Arrested Development"
    },
    {
     "role": "Heavy #2",
-    "who": "piff",
-    "value": "1.148 KTPR",
-    "where": "Best Buds"
+    "who": "jules",
+    "value": "1.217 KTPR",
+    "where": "Sat · onLAN thunder"
    },
    {
     "role": "Sniper",
     "who": "hildebrand?",
-    "value": "1.329 KTPR",
-    "where": "icyHOT"
+    "value": "1.440 KTPR",
+    "where": "Sat · icyHOT"
    }
   ],
   "status": "proposed"
