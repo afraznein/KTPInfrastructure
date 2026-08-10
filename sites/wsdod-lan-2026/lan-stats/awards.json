@@ -570,6 +570,57 @@
     "value": "17:44",
     "where": "Uncle Rico's Time Machine"
    }
+  },
+  {
+   "slug": "restraining",
+   "title": "Restraining Order",
+   "blurb": "Most kills on one specific opponent, all weekend. piff and kroD killed each other 130 times.",
+   "status": "proposed",
+   "top": [
+    {
+     "who": "NoName^",
+     "value": "69",
+     "where": "North Atlantic Treaty Org · v warchyld[dd]",
+     "rank": 1
+    },
+    {
+     "who": "piff",
+     "value": "68",
+     "where": "Best Buds · v kroD",
+     "rank": 2
+    },
+    {
+     "who": "warchyld[dd]",
+     "value": "66",
+     "where": "dicE · v Khoi",
+     "rank": 3
+    },
+    {
+     "who": "player",
+     "value": "66",
+     "where": "dicE · v Hub",
+     "rank": 3
+    },
+    {
+     "who": "kroD",
+     "value": "62",
+     "where": "Arrested Development · v piff",
+     "rank": 5
+    },
+    {
+     "who": "Hub",
+     "value": "62",
+     "where": "North Atlantic Treaty Org · v player",
+     "rank": 5
+    }
+   ],
+   "leader": {
+    "rank": 1,
+    "who": "NoName^",
+    "value": "69",
+    "where": "North Atlantic Treaty Org · v warchyld[dd]"
+   },
+   "tied": null
   }
  ],
  "positions": {
@@ -748,6 +799,12 @@
      "who": "warchyld[dd]",
      "value": "5",
      "where": "anzio · Sat · v icyHOT",
+     "rank": 2
+    },
+    {
+     "who": "Gorilla[bc]",
+     "value": "5",
+     "where": "harrington · Sun · v NoSoul",
      "rank": 2
     }
    ],
@@ -1023,60 +1080,36 @@
      "value": "6",
      "where": "lennon5_b1 · Sun · v onLAN thunder",
      "rank": 4
+    },
+    {
+     "who": "LaNGoNdd",
+     "value": "6",
+     "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 4
+    },
+    {
+     "who": "NoName^",
+     "value": "6",
+     "where": "thunder2 · Sun · v dicE",
+     "rank": 4
+    },
+    {
+     "who": "vertex",
+     "value": "6",
+     "where": "armory_b6 · Sun · v Arrested Development",
+     "rank": 4
+    },
+    {
+     "who": "ian",
+     "value": "6",
+     "where": "lennon5_b1 · Sun · v North Atlantic Treaty Org",
+     "rank": 4
     }
    ],
    "leader": {
     "who": "patten",
     "value": "10",
     "where": "harrington · Sat · v b Team",
-    "ties": 1
-   },
-   "tied": null
-  },
-  {
-   "slug": "own-worst",
-   "title": "Own Worst Enemy",
-   "blurb": "Most suicides in a single match. HUD.",
-   "status": "proposed",
-   "top": [
-    {
-     "who": "Kevs Dolmetscher",
-     "value": "4",
-     "where": "saints2_b3e · Sat · v b Team",
-     "rank": 1
-    },
-    {
-     "who": "nein",
-     "value": "3",
-     "where": "thunder2 · Sat · v Best Buds",
-     "as": "nein_",
-     "rank": 2
-    },
-    {
-     "who": "Khoi",
-     "value": "3",
-     "where": "anzio · Sat · v Uncle Rico's Time Machine",
-     "rank": 2
-    },
-    {
-     "who": "omenayr",
-     "value": "2",
-     "where": "armory_b6 · Sat · v b Team",
-     "as": "1337$k337",
-     "rank": 4
-    },
-    {
-     "who": "hey hi",
-     "value": "2",
-     "where": "thunder2 · Sat · v icyHOT",
-     "as": "hey hi <3 dustbin",
-     "rank": 4
-    }
-   ],
-   "leader": {
-    "who": "Kevs Dolmetscher",
-    "value": "4",
-    "where": "saints2_b3e · Sat · v b Team",
     "ties": 1
    },
    "tied": null

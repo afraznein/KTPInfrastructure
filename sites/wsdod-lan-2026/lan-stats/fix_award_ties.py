@@ -33,6 +33,11 @@ BOARD = os.path.join(HERE, "season-board.json")
 # Awards deliberately re-based onto a new metric, so the reproduce-the-published
 # -list guard does not apply to them. Empty this once they have shipped.
 REFORMULATED = {"mvp-sat", "mvp-sun"}
+
+# Awards whose inputs are NOT in this repo (hud_kills lives on the data server),
+# so they cannot be recomputed here. Their rows and ranks are authored in
+# apply_award_decisions.py and passed through untouched.
+EXTERNAL = {"restraining"}
 PAGE = os.path.normpath(os.path.join(HERE, "..", "design", "prototype.html"))
 
 MIN_HALVES_RATE = 20   # the K/D and flags-per-half floors, as the export applied them
@@ -243,7 +248,8 @@ def build(awards):
     agg, per_day = weekend_rows()
     sid_row, alias = names_and_aliases(awards)
     out = dict(awards)
-    out["decided"] = [rebuild_decided(a, agg, per_day, sid_row, alias)
+    out["decided"] = [a if a["slug"] in EXTERNAL
+                      else rebuild_decided(a, agg, per_day, sid_row, alias)
                       for a in awards["decided"]]
     out["single_match"] = [rebuild_single(a) for a in awards["single_match"]]
     return out
@@ -251,10 +257,15 @@ def build(awards):
 
 def main() -> int:
     awards = json.load(open(AWARDS, encoding="utf-8"))
-    # rebuild from rank-less lists so a re-run reproduces itself
+    # rebuild from rank-less lists so a re-run reproduces itself. EXTERNAL
+    # awards are exempt: their ranks are authored, not derived, so stripping
+    # them here would delete the only copy — build() passes them through
+    # untouched and has nothing to regenerate them from.
     stripped = json.loads(json.dumps(awards))
     for section in ("decided", "single_match"):
         for a in stripped[section]:
+            if a["slug"] in EXTERNAL:
+                continue
             for e in a["top"]:
                 e.pop("rank", None)
     new = build(stripped)
