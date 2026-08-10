@@ -175,29 +175,46 @@ def add_named_bots(handle, *, allies: list[str], axis: list[str],
     return {"allies": list(allies), "axis": list(axis)}
 
 
-def reload_map(handle, *, map_name: str, log_path: Path,
-               timeout: float = 90.0) -> bool:
-    """changelevel, and wait for the map to actually come back.
+def restart_round(handle, *, log_path: Path, timeout: float = 45.0) -> bool:
+    """Respawn everybody with `mp_clan_restartround 1`.
 
-    This is what production's halftime does — `handle_first_half_end` sets
-    `amx_nextmap` and the map changes — and it is not optional dressing. The
-    map change is what respawns everybody. Without it the second half is
-    played by corpses: a forced team change kills the player (dodx_set_user_team
-    documents this), and nothing brings them back.
+    This is the halftime lever, and it is deliberately NOT a map change.
+
+    A map change works — production does one at halftime — but new_bot restores
+    bots of its own choosing about ten seconds after the level loads, before
+    any `addbot` of ours lands:
+
+        18:08:25  Mapchange to dod_anzio
+        18:08:36  "Fox<16>"      entered the game   <- not ours
+        18:08:38  "Kerrigan<17>" entered the game   <- not ours
+        18:08:41  Ash                               <- our first addbot
+
+    Nothing in new_bot's config or documentation turns that off
+    (`balance teams`, `target_players` and `keep_free_slots` are all already
+    off in new_bot.cfg), and KTP's own plugin blocks console kicks, so the
+    strays cannot be removed afterwards either. Every map change therefore
+    added a few extra players to the fixture.
+
+    A round restart avoids the whole problem: the bots are never disconnected,
+    so they keep their names and their identities, and there is no map load for
+    new_bot to react to. `mp_clan_restartround 1` is the same command
+    KTPMatchHandler uses to take a match live, so it is a KTP primitive rather
+    than something invented here.
     """
     mark = len(log_path.read_text(errors="replace"))
-    handle.rcon(f"changelevel {map_name}")
+    handle.rcon("mp_clan_restartround 1")
 
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         time.sleep(2.0)
         tail = log_path.read_text(errors="replace")[mark:]
-        if f"Mapchange to {map_name}" in tail or "STARTED MAP" in tail:
-            # The map line appears before plugins finish loading; give AMXX and
-            # new_bot a moment or the first addbot is dropped on the floor.
-            time.sleep(12.0)
+        # DoD announces the restart in the log; fall back to time if the
+        # wording differs, since the restart itself is fire-and-forget.
+        if "Restart_Round" in tail or "World triggered" in tail:
+            time.sleep(6.0)
             return True
-    return False
+    time.sleep(6.0)
+    return True
 
 
 def run_one_match(handle, *, index: int, half_seconds: int, log_path: Path,
@@ -230,22 +247,14 @@ def run_one_match(handle, *, index: int, half_seconds: int, log_path: Path,
     # context, sets amx_nextmap to the current map, and expects a MAP CHANGE —
     # the second half is a fresh map with the sides swapped, not a pause.
     driver.end_first_half(2, 1)
-    out["halftime"] = {"sides_before": {"allies": allies, "axis": axis}}
 
-    if not reload_map(handle, map_name=map_name, log_path=log_path):
-        raise SystemExit(
-            f"map did not reload within the timeout at match {index} halftime. "
-            f"Without the reload nothing respawns and the second half is played "
-            f"by corpses, so this run would produce a half-empty fixture.")
-
-    # Same names, opposite sides. Re-adding rather than force-swapping is what
-    # production effectively does, and it is also the only thing that respawns
-    # them — a forced team change kills the player and leaves them there.
-    allies, axis = axis, allies
-    add_named_bots(handle, allies=allies, axis=axis, skill=bot_skill or 5)
-    out["halftime"]["sides_after"] = {"allies": allies, "axis": axis}
+    out["halftime"] = {"swap": swap_teams(handle, log_path)}
+    restart_round(handle, log_path=log_path)
     out["halftime"]["roster"] = read_roster(handle, log_path)
-    print(f"  match {index}: halftime — map reloaded, sides swapped "
+    allies, axis = axis, allies
+    out["halftime"]["sides_after"] = {"allies": allies, "axis": axis}
+    print(f"  match {index}: halftime — {out['halftime']['swap']['moved']} swapped, "
+          f"round restarted "
           f"({out['halftime']['roster']['allies']} allies / "
           f"{out['halftime']['roster']['axis']} axis)", flush=True)
 
