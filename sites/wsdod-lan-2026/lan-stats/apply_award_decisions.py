@@ -265,7 +265,7 @@ ADD_AWARD = [
     # (a melee suicide is not a kill), resolved by SteamID rather than name.
     ("decided", {
         "slug": "melee",
-        "title": "Bring A Gun Next Time",
+        "title": "Welcome to Philly",
         "blurb": "Most melee kills all weekend — spade, knife, bayonet and "
                  "rifle butt. The whole event produced 68 of them.",
         "status": "proposed",
@@ -368,7 +368,20 @@ def apply(awards, dry=False):
             awards[section] = keep
 
     for section, award in ADD_AWARD:
-        if any(a.get("slug") == award["slug"] for a in awards.get(section, [])):
+        live = next((a for a in awards.get(section, [])
+                     if a.get("slug") == award["slug"]), None)
+        if live is not None:
+            # An award authored here stays authored: editing its title above has
+            # to reach awards.json, or the two disagree and --check still passes.
+            # Title and blurb only — rows gain ranks from fix_award_ties.py, so
+            # reconciling `top` would make the two scripts overwrite each other.
+            for field in ("title", "blurb"):
+                if live.get(field) != award[field]:
+                    changed.append(("retitle" if field == "title" else "reblurb",
+                                    award["slug"],
+                                    f'{live.get(field)!r} -> {award[field]!r}'))
+                    if not dry:
+                        live[field] = award[field]
             continue
         changed.append(("new", award["slug"], award["title"]))
         if not dry:

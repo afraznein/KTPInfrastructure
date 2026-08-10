@@ -53,6 +53,15 @@ def main() -> int:
     if unknown:
         sys.exit(f"rename targets not in awards.json: {sorted(unknown)}")
 
+    # Awards created in apply_award_decisions.py carry their title there and it
+    # reconciles them on every run, so a rename written here would be undone on
+    # the next apply — rename it at its source instead.
+    from apply_award_decisions import ADD_AWARD
+    authored = {a["slug"] for _, a in ADD_AWARD} & set(RENAMES)
+    if authored:
+        sys.exit(f"{sorted(authored)} are authored in apply_award_decisions.py — "
+                 "rename them there, not here")
+
     if "--check" in sys.argv:
         pending = apply(awards, dry=True)
         if pending:
