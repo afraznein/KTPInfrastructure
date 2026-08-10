@@ -1,0 +1,68 @@
+{
+  "match-skill3.log.gz": {
+    "carried": {
+      "assist": "ok",
+      "cap_break": "ok",
+      "headshot": "ok",
+      "suicide": "ok"
+    },
+    "emitted": {
+      "assist": 37,
+      "cap_break": 3,
+      "headshot": 47,
+      "kills": 401,
+      "suicide": 13
+    },
+    "rows": {
+      "frags": 401,
+      "pa_rows_total": 3,
+      "players": 16,
+      "ppa_rows_total": 37,
+      "suicides": 13
+    }
+  },
+  "match-skill5.log.gz": {
+    "carried": {
+      "assist": "ok",
+      "cap_break": "ok",
+      "headshot": "ok",
+      "suicide": "ok"
+    },
+    "emitted": {
+      "assist": 42,
+      "cap_break": 10,
+      "headshot": 48,
+      "kills": 373,
+      "suicide": 28
+    },
+    "rows": {
+      "frags": 373,
+      "pa_rows_total": 10,
+      "players": 17,
+      "ppa_rows_total": 42,
+      "suicides": 28
+    }
+  },
+  "match-skill7.log.gz": {
+    "carried": {
+      "assist": "ok",
+      "cap_break": "ok",
+      "headshot": "ok",
+      "suicide": "ok"
+    },
+    "emitted": {
+      "assist": 48,
+      "cap_break": 4,
+      "headshot": 45,
+      "kills": 424,
+      "suicide": 26
+    },
+    "rows": {
+      "frags": 424,
+      "pa_rows_total": 4,
+      "players": 17,
+      "ppa_rows_total": 48,
+      "suicides": 26
+    }
+  }
+}

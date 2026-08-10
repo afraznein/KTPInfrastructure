@@ -133,3 +133,27 @@ def test_abort_reason_is_surfaced():
 
 def test_no_abort_reads_as_none():
     assert bs.BreakDriver._abort_reason("[BD] scan done flags=5") is None
+
+
+# -- the deaths-nearby helper is now shared -------------------------------
+
+
+def test_deaths_helper_anchors_on_the_marker_it_is_given():
+    """`_capping_deaths_near` is used by both the walk-off and the clean-cap
+    scenarios, which anchor on different log lines. Hardcoding the walk-off
+    marker would make the clean-cap check anchor on nothing and silently find
+    no deaths — i.e. report every window as clean."""
+    log = "\n".join([
+        REAL_KILL,
+        "L 08/10/2026 - 13:18:47: [KTPBreakDrive.amxx] [BD] scan done flags=5",
+    ])
+    assert bs.BreakDriver._capping_deaths_near(
+        log, bs.TEAM_AXIS, marker="ktp_bd_scan") == [], "no marker line present"
+    found = bs.BreakDriver._capping_deaths_near(
+        log, bs.TEAM_AXIS, marker="[BD] scan done")
+    assert len(found) == 1 and "Andross" in found[0]
+
+
+def test_deaths_helper_still_defaults_to_the_walkoff_marker():
+    log = "\n".join([REAL_KILL, REAL_WALKOFF])
+    assert len(bs.BreakDriver._capping_deaths_near(log, bs.TEAM_AXIS)) == 1

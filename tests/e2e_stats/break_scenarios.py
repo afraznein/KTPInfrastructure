@@ -311,6 +311,127 @@ class BreakDriver:
                         f"that team and no break, as required")
         return s
 
+    def negative_clean_capture(self, *, timeout: float = 240.0) -> Scenario:
+        """A cap completes with nobody killed; the cappers then walk off.
+
+        Deployment plan Unit 3 step 2, and it exercises the `CA_owning_team`
+        clear: when ownership flips the detector drops its queued candidates,
+        so cappers leaving a point they just took are not credited to whoever
+        last got a kill there. If that clear is not firing, **every successful
+        capture produces a phantom break** — which is the highest-volume way
+        this feature could be wrong.
+
+        Observed rather than staged. Caps complete constantly under bots, and
+        forcing one adds machinery without adding truth. The scenario is only
+        scored when a completed capture is found whose window is clean of
+        capping-team deaths — otherwise a break in that window could be
+        perfectly legitimate and would be blamed on the clear.
+        """
+        s = Scenario("negative_clean_capture")
+        before = {f["flag"]: f["owner"] for f in self.scan()}
+        deadline = time.monotonic() + timeout
+
+        while time.monotonic() < deadline:
+            time.sleep(6.0)
+            mark = len(self._read())
+            now = self.scan()
+            flipped = [f for f in now
+                       if f["flag"] in before and f["owner"] != before[f["flag"]]
+                       and f["owner"] in (TEAM_ALLIES, TEAM_AXIS)]
+            if not flipped:
+                before = {f["flag"]: f["owner"] for f in now}
+                continue
+
+            flag = flipped[0]
+            # The team that just took the point is the team whose players might
+            # now be leaving it, so theirs are the deaths that matter.
+            capper_team = flag["owner"]
+            time.sleep(self.SETTLE)
+            full = self._read()
+            tail = _tail(full, mark)
+
+            deaths = self._capping_deaths_near(full, capper_team,
+                                               marker="ktp_bd_scan")
+            breakers = _BREAK_RE.findall(tail)
+            s.breaks_seen = len(breakers)
+            s.extra = {"flag": flag["flag"], "new_owner": capper_team,
+                       "breakers": breakers, "deaths_in_window": len(deaths)}
+
+            if deaths:
+                before = {f["flag"]: f["owner"] for f in now}
+                s.detail = (f"flag {flag['flag']} changed hands but "
+                            f"{len(deaths)} capping-team death(s) were nearby, "
+                            f"so a break here could be legitimate — retrying")
+                continue
+
+            if breakers:
+                s.status = "violation"
+                s.detail = (f"flag {flag['flag']} was captured cleanly with no "
+                            f"death on the capturing team, and {breakers} were "
+                            f"credited with a cap_break. FALSE POSITIVE — the "
+                            f"CA_owning_team clear is not firing, so every "
+                            f"successful capture produces a phantom break.")
+            else:
+                s.status = "ok"
+                s.detail = (f"flag {flag['flag']} captured cleanly (owner -> "
+                            f"{capper_team}), no deaths on that team, no break")
+            return s
+
+        s.detail = "no capture completed cleanly within the wait"
+        return s
+
+    def negative_round_restart(self) -> Scenario:
+        """A round restart must not produce a burst of phantom breaks.
+
+        Deployment plan Unit 3 step 5. A restart zeroes every zone count at
+        once, which is the largest possible drop the detector will ever see —
+        so if its queue is not cleared, this is where it empties itself into
+        the database.
+
+        A candidate is deliberately queued first. Restarting with nothing
+        pending would prove only that an empty queue emits nothing, which is
+        not in doubt.
+
+        Runs LAST: it restarts the round out from under everything else.
+        """
+        s = Scenario("negative_round_restart")
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_kill auto far")
+        time.sleep(2.0)
+        staged = _KILL_RE.search(_tail(self._read(), mark))
+        if not staged:
+            s.detail = (self._abort_reason(_tail(self._read(), mark))
+                        or "could not queue a candidate to restart against")
+            return s
+
+        killer = staged.group(7)
+        restart_mark = len(self._read())
+        self.handle.rcon("mp_clan_restartround 1")
+        time.sleep(self.SETTLE + 4.0)
+        tail = _tail(self._read(), restart_mark)
+
+        breakers = _BREAK_RE.findall(tail)
+        s.breaks_seen = len(breakers)
+        s.extra = {"killer": killer, "breakers": breakers}
+
+        if killer in breakers:
+            s.status = "violation"
+            s.detail = (f"a round restart credited {killer} with a cap_break "
+                        f"from a candidate queued beforehand. FALSE POSITIVE — "
+                        f"the restart zeroes every zone count and the queue is "
+                        f"emptying into it.")
+        elif len(breakers) > 1:
+            s.status = "violation"
+            s.detail = (f"{len(breakers)} cap_breaks in the restart window "
+                        f"({breakers}) — a burst, which is what a restart "
+                        f"should never produce.")
+        else:
+            s.status = "ok"
+            s.detail = (f"round restart produced no break for {killer}"
+                        + (f" (one unrelated break by {breakers} ignored)"
+                           if breakers else ""))
+        return s
+
     # -- helpers -----------------------------------------------------------
 
     @staticmethod
@@ -327,7 +448,8 @@ class BreakDriver:
 
     @staticmethod
     def _capping_deaths_near(full_log: str, capteam: int,
-                            window: int = 10) -> list[str]:
+                            window: int = 10,
+                            marker: str = "[BD] walkoff") -> list[str]:
         """Deaths of capping-team players around the staged walk-off.
 
         Anchored on real timestamps rather than file offsets, and symmetric:
@@ -340,7 +462,7 @@ class BreakDriver:
         lines = full_log.splitlines()
         anchor = None
         for line in lines:
-            if "[BD] walkoff" in line:
+            if marker in line:
                 anchor = _line_seconds(line) or anchor
         if anchor is None:
             return []
@@ -378,9 +500,14 @@ def run_all(handle, log_path, *, attempts: int = 8) -> list[dict]:
     """
     d = BreakDriver(handle, log_path)
     out = []
+    # negative_round_restart is LAST on purpose: it restarts the round out
+    # from under everything else, so anything after it would be measuring a
+    # server it did not set up.
     for fn in (d.negative_off_point_kill,
                d.negative_voluntary_walkoff,
-               d.positive_kill_on_point):
+               d.negative_clean_capture,
+               d.positive_kill_on_point,
+               d.negative_round_restart):
         s = None
         for attempt in range(1, attempts + 1):
             s = fn()
