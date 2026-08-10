@@ -31,6 +31,7 @@ differences trains people to ignore it.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 
 # `amxx modules` / `amxx plugins` are fixed-column. tests/smoke/parse.py already
@@ -87,15 +88,32 @@ class Fingerprint:
         }
 
 
-def capture(handle, topology: str) -> Fingerprint:
-    """Read the stack's self-report over rcon."""
-    mods = handle.rcon("amxx modules")
-    plugs = handle.rcon("amxx plugins")
+def capture(handle, topology: str, *, timeout: float = 45.0,
+            poll_interval: float = 2.0) -> Fingerprint:
+    """Read the stack's self-report over rcon, waiting for it to be populated.
+
+    `wait_ready` returns as soon as the engine answers rcon, but AMXX in
+    extension mode **defers plugin_init to server activate** — it logs
+    "Loaded N plugin(s) during precache (plugin_init deferred)". Reading
+    immediately therefore returns empty lists, and empty lists are the one
+    result that must never be trusted here: two empty stacks compare equal, so
+    the differential would report perfect non-interference having measured
+    nothing.
+
+    So poll until something shows up, and let the caller's absolute
+    required-module check catch the case where it never does.
+    """
     fp = Fingerprint(topology=topology)
-    fp.modules = _extract(mods)
-    fp.plugins = _extract(plugs)
-    fp.raw = {"amxx modules": mods.strip(), "amxx plugins": plugs.strip()}
-    return fp
+    deadline = time.monotonic() + timeout
+    while True:
+        mods = handle.rcon("amxx modules")
+        plugs = handle.rcon("amxx plugins")
+        fp.modules = _extract(mods)
+        fp.plugins = _extract(plugs)
+        fp.raw = {"amxx modules": mods.strip(), "amxx plugins": plugs.strip()}
+        if fp.modules or time.monotonic() >= deadline:
+            return fp
+        time.sleep(poll_interval)
 
 
 # The three modules production runs. Named explicitly: "the sets are equal" is

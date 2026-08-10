@@ -151,6 +151,10 @@ def main() -> int:
     ap.add_argument("--config-profile", type=Path,
                     default=_REPO_ROOT / "config" / "local",
                     help="KTPAMXX config profile supplying modules.ini + plugins.ini + the rest")
+    ap.add_argument("--split-layers", action="store_true",
+                    help="Metamod hosts ONLY the bot; ktpamx keeps loading via "
+                         "extensions.ini as production does. Each loads once, at "
+                         "its own hook point.")
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
 
@@ -201,10 +205,14 @@ def main() -> int:
 
         # ---- Boot B: Metamod + bot --------------------------------------
         spec = SPECS[args.bot]
-        topo_b = metamod.enable_metamod(tree, bot_spec=spec)
+        topo_b = metamod.enable_metamod(tree, bot_spec=spec,
+                                        host_ktpamx=not args.split_layers)
         step("topology-B", True,
-             f"gamedll_linux={topo_b.gamedll_linux}, plugins={topo_b.plugins}, "
-             "extensions.ini disabled (prevents ktpamx loading twice)",
+             f"[{topo_b.name}] gamedll_linux={topo_b.gamedll_linux}, "
+             f"plugins={topo_b.plugins}, extensions.ini "
+             + ("ENABLED (ktpamx loads at its own layer)"
+                if topo_b.extensions_enabled
+                else "disabled (prevents ktpamx loading twice)"),
              config=metamod.describe(tree))
 
         fp_b, log_b, tries_b = boot_and_fingerprint(
@@ -221,8 +229,12 @@ def main() -> int:
         d = diff(fp_a, fp_b)
         report["diff"] = d
         if d["missing_required_modules"]:
+            # Non-zero: an empty stack makes the non-interference check
+            # vacuously true, so this must not exit 0 on the strength of it.
+            rc = 1
             step("required-modules", False,
-                 "; ".join(d["missing_required_modules"]))
+                 "; ".join(d["missing_required_modules"])
+                 + " — the non-interference result below is VACUOUS")
         else:
             step("required-modules", True,
                  "amxxcurl + reapi + dodx present under BOTH topologies")
