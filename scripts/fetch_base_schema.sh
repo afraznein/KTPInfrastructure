@@ -59,6 +59,18 @@ if [ $rc -ne 0 ]; then
     exit $rc
 fi
 
+# Collation for the reconstruction: production's own, falling back to the
+# majority collation across the schema if this table's own metadata is hidden
+# along with its DDL.
+SERVERS_COLLATION=$(mysql -N -B -e "
+    SELECT COALESCE(
+      (SELECT table_collation FROM information_schema.tables
+       WHERE table_schema='$DB' AND table_name='$DENIED_TABLE'),
+      (SELECT table_collation FROM information_schema.tables
+       WHERE table_schema='$DB' AND table_collation IS NOT NULL
+       GROUP BY table_collation ORDER BY COUNT(*) DESC LIMIT 1))" 2>/dev/null)
+SERVERS_COLLATION="${SERVERS_COLLATION:-utf8mb4_unicode_ci}"
+
 # Reconstruct the one denied table from metadata.
 {
   echo ""
@@ -88,9 +100,27 @@ fi
     FROM information_schema.columns
     WHERE table_schema='$DB' AND table_name='$DENIED_TABLE'
     ORDER BY ordinal_position" 2>/dev/null
+  # MySQL hides from information_schema.columns any column the account has no
+  # privilege on. A grant that withholds the rcon secret therefore produces a
+  # column list that is faithful to what this account can see and still missing
+  # `rcon_password`, which hlstats.pl SELECTs at its very first server lookup:
+  #
+  #   DBD::mysql::st execute failed: Unknown column 'a.rcon_password'
+  #
+  # Emitted unconditionally rather than conditionally, because the whole point
+  # is that we cannot see whether it is there. If the account ever does gain
+  # visibility, the duplicate shows up as a loud CREATE TABLE error rather than
+  # as a silent wrong answer. No value is ever stored in it.
+  echo "  \`rcon_password\` varchar(128) NOT NULL DEFAULT '',  -- re-added: hidden by grant, required by hlstats.pl"
   echo "  PRIMARY KEY (\`serverId\`),"
   echo "  UNIQUE KEY \`addressport\` (\`address\`,\`port\`)"
-  echo ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;"
+  # Collation is read from production rather than defaulted. Omitting it takes
+  # the *loading* server's default (utf8mb4_0900_ai_ci on MySQL 8) while every
+  # genuinely-dumped table carries production's own, and the first join between
+  # them — hlstats_Servers.game = hlstats_Games.code — dies with "Illegal mix
+  # of collations". That reads like a schema bug and is really an artifact of
+  # this reconstruction.
+  echo ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=$SERVERS_COLLATION;"
 } >> "$OUT"
 
 rm -f "$OUT.err"

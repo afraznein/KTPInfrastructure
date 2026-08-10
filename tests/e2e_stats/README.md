@@ -6,8 +6,27 @@ by putting bots on a throwaway server and querying a throwaway database.
 Design and rationale: [`../integration/STATS_CAPTURE_E2E_DESIGN.md`](../integration/STATS_CAPTURE_E2E_DESIGN.md).
 What it verifies: [`../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`](../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md).
 
-**Status: Phase 0 (spike) only.** The modules here are built; no assertions are
-written yet, deliberately. Run the spike first — see below.
+**Status: end to end.** Bots play, the daemon writes, the assertions hold. A
+live 240s run landed 7 assists and 50 frags in MySQL with varied positions; a
+replay landed 5 assists and 1 cap_break. What each leg cost to get there is in
+[`PHASE0_FINDINGS.md`](PHASE0_FINDINGS.md) — read it before debugging anything
+here.
+
+Two entry points:
+
+| Script | What it proves | Cost |
+|---|---|---|
+| `scripts/replay_daemon.py` | daemon → MySQL, from a captured log | seconds, deterministic |
+| `scripts/lane_b_e2e.py` | the whole chain, bots included | ~5 min, bot-dependent |
+
+Use the replay while iterating. It is deterministic because the input is a file
+someone already captured, so a red result is always a real change — and it can
+reproduce a nightly failure from its artifact without re-rolling the dice on
+bot AI.
+
+Both need a daemon tree assembled first (`scripts/assemble_daemon_tree.sh`):
+KTPHLStatsX is a delta-only fork of three files, and `hlstats.pl` requires
+seven more that only exist on production or upstream.
 
 ## Why this lane exists
 
@@ -460,23 +479,48 @@ anything else. If bots connect but never move or fight, suspect **waypoint
 coverage for that map** first — the spike reports whether any waypoint file
 mentions it.
 
-## Assertion posture, once we get there
+## Assertion posture, as built
 
-Existence and plausibility, never exact counts — bot AI decides how many kills
-happen, and the test's job is to prove the pipeline carries them.
+The original plan here said "existence and plausibility, never exact counts",
+on the grounds that bot AI decides how many kills happen. Half of that turned
+out to be wrong, and the correction is `assertions.check_carried`.
 
-- assists: `≥1` row in `hlstats_Events_PlayerPlayerActions`, and **exactly 0**
-  in `hlstats_Events_PlayerActions` for the same action. That second one *is*
-  exact: it is a flag-correctness invariant, and getting it wrong
-  double-records every assist and double-applies the reward.
-- breaks: `≥1` row, `match_id` non-NULL for rows from live play
-- positions: non-NULL, **varied**, within map world bounds. Assert against
-  all-zero explicitly — `ksc_origin_str` omits the property on a failed read
-  specifically so a failure shows up as NULL rather than a plausible-looking
-  map origin, and "every row is `0 0 0`" is the signature of that guard being
-  bypassed.
-- regression: frags and weaponstats still non-zero
-- buffer: no `[KTP-STATS] dropped N capture line(s)`
+Bot AI decides how many events are *emitted*. It does not get a say in how many
+of them reach the database — that should be all of them. Once the log-side
+count is in hand, the assertion is **exact**: `rows == emitted`. A minimum-count
+check waves through partial loss, and partial loss is the failure mode that
+actually happened (39 rows for 47 events, from a flush cut short at shutdown).
+
+So each action gets one of three verdicts, not pass/fail:
+
+| Verdict | Meaning | Gates? |
+|---|---|---|
+| `ok` | `rows == emitted` | — |
+| `not_exercised` | nothing emitted; the pipeline was not tested | no, but the run is **not** green either |
+| `pipeline` | emitted but not carried, or rows in the wrong table | yes |
+
+`not_exercised` exists because a 240s run produced one cap_break and the next
+produced none. Calling that a defect teaches people to ignore the lane;
+calling it a pass is a lie. It is reported separately and the run is labelled
+INCOMPLETE.
+
+The flag invariant — rows in the *opposite* event table — is checked in every
+case, including `not_exercised`. It is about configuration rather than volume:
+both flags set records every assist twice and applies the reward twice, a
+silent rating corruption with no error anywhere, and no amount of bot behaviour
+produces or hides it.
+
+Also asserted:
+
+- positions: non-NULL, **varied**, within GoldSrc's ±16384. All-zero is called
+  out explicitly — `ksc_origin_str` omits the property on a failed read
+  specifically so a failure shows up as NULL rather than as a plausible-looking
+  map origin, so a table of `0 0 0` means that guard was bypassed.
+- regression: frags and players non-zero, checked **players first** — when both
+  are zero, no players is the cause and no frags is the symptom.
+- buffer: no `[KTP-STATS] dropped N capture line(s)`. A drop turns every other
+  count into a lower bound on an unknown quantity, so the run becomes
+  uninterpretable even though the pipeline "worked".
 
 **A configured-but-broken lane fails; it does not skip.** `conftest.py`
 already applies this rule to an unreachable `KTP_HLDS_HOST`, for the same
@@ -490,14 +534,36 @@ lost every objective capture at the Philly LAN. `EphemeralMysql.prepare()`
 therefore runs before the daemon starts, as fixture order rather than as a note
 someone has to remember.
 
+## Ordering trap #2, also enforced in code
+
+`hlstats.pl` reads its **per-server config** at startup too, from
+`hlstats_Servers_Config`. Three defaults are fatal to a bot lane, and all three
+fail identically — the line parses, the daemon says `(IGNORED) ...`, nothing is
+written:
+
+| Parameter | Default | Effect here |
+|---|---|---|
+| `IgnoreBots` | **1** | every Lane B player is a bot; every event dropped |
+| `MinPlayers` | **6** | a small debug run records nothing |
+| `BonusRoundIgnore` | 0 | fine, but set explicitly so a stray end-of-round window cannot eat the tail |
+
+`HlstatsDaemon.ensure_server_row()` writes all three, before the daemon starts.
+
 ## Not yet built
 
 - `match_driver.py` — drive a real match via the existing test-mode rcons
-  (`amx_ktp_test_*`), so rows carry a `match_id` and a `half`
-- `assertions.py` + the tests themselves
+  (`amx_ktp_test_*`), so rows carry a `match_id` and a `half`. Nothing here
+  exercises match tagging yet: every row Lane B has produced has
+  `match_id NULL`, which is correct for warmup and untested for a live match.
 - CI wiring (nightly, non-gating, inheriting the 7pm–midnight ET match embargo,
   and not sharing the nightly Tier 2 slot — two hlds processes on the box that
-  also runs production HLStatsX is not a good trade)
-
-The assertions are downstream of the spike answering yes. The match driver is
-not, and is the next thing to build regardless.
+  also runs production HLStatsX is not a good trade). The workflow file exists
+  and has never run on GitHub.
+- **A production-sourced daemon tree.** `assemble_daemon_tree.sh` currently
+  falls back to pinned upstream, which is a *reconstruction*: the fork does not
+  modify those seven files, so they are almost certainly identical, but
+  "almost certainly" is not verified. `--from-production` needs SSH to the data
+  server. Until then every run's PROVENANCE says RECONSTRUCTION, which is the
+  honest label.
+- **Getting a cap_break reliably.** One in a 240s run, none in the next. Either
+  lengthen the run or drive the scenario deliberately rather than hoping for it.
