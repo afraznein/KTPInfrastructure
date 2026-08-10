@@ -1,4 +1,23 @@
-# Lane B — next two phases
+# Lane B — next phases
+
+## Backlog: waypoints for the KTP competitive maps
+
+Lane B can only run `dod_anzio` as a KTP match. The image ships 22 stock DoD
+maps that have new_bot waypoints, but **none of the KTP competitive rotation**
+— `dod_armory_b6`, `dod_harrington`, `dod_railroad2_s9a`, `dod_railyard_b6`,
+`dod_lennon5_b1` (see `KTPMatchHandler/ktp_maps.ini`) — are among them. They
+are custom maps, so they have neither a BSP in the image nor a `.wpt`.
+
+Until that is fixed, every fixture and every staged scenario is anzio-shaped.
+That is a real limitation for anything position-aware: the cap-break detector,
+`pos_x/y/z`, and later the last-flag-defense and ninja-cap work in Phase 7 all
+behave per map layout.
+
+Two pieces of work, in order: get the KTP map BSPs into the Lane B image, then
+generate waypoints for them (new_bot has an in-game waypoint editor; the
+alternative is sourcing community `.wpt` files where they exist).
+
+
 
 Written after Phase B closed. Two pieces of work, in this order:
 
