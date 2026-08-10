@@ -11,6 +11,9 @@ apply_award_decisions.py.
 rating, so ranking (player, day) pairs alone can hand one person both Rifle
 slots. It does not happen on this dataset, but it is one good day away from
 happening and a correct-by-luck award is not correct.
+The dedupe keys on steam_id, NOT name: 18 of 61 players played the two days
+under different names, so a name-keyed guard reads them as two people and the
+protection above silently does not apply to them.
 
 ⚠️ The award compares a Saturday number against a Sunday one. Per-day baselines
 make those formally non-comparable — a caveat inherited from the old award, and
@@ -48,17 +51,17 @@ def build(existing):
     for key, face in DAYS:
         for r in board["views"][key]["players"]:
             ranked.setdefault(r["position"], []).append(
-                (r["ktpr"], r["name"], r["team"], face))
+                (r["ktpr"], r["name"], r["team"], face, r["steam_id"]))
     for pos in ranked:
         ranked[pos].sort(reverse=True)
 
     taken, rows = set(), []
     for label, pos in SLOTS:
-        pick = next((x for x in ranked.get(pos, []) if x[1] not in taken), None)
+        pick = next((x for x in ranked.get(pos, []) if x[4] not in taken), None)
         if pick is None:
             sys.exit(f"no candidate left for {label}")
-        val, full, team, face = pick
-        taken.add(full)
+        val, full, team, face, sid = pick
+        taken.add(sid)
         rows.append({"role": label, "who": dn.get(full, full),
                      "value": f"{val:.3f} KTPR", "where": f"{face} · {team}"})
     return dict(existing, rows=rows)
