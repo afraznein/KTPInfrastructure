@@ -108,10 +108,65 @@ Marine Bot is primary (maintained modern Linux build). `new_bot` is the
 fallback, and can convert Sturmbot waypoints if Marine Bot's per-map coverage
 turns out thin. Swapping between them is one `--bot` flag; see `bot_driver.py`.
 
-⚠️ The console command names in `bot_driver.BotSpec` are **candidates, not
-verified facts** — nothing here has been run against either mod yet.
-`probe_add_command` tries them in order and reports which works. Turning those
-candidates into known-good values is Phase 0's job.
+### new_bot 0.2.2 is installed by the image
+
+`build/lane-b/Dockerfile` downloads and installs it at build time from
+[the installer page](https://dayofdefeat.home.blog/installer-2/), **pinned by
+SHA-256** (`8f659fe1…`) so a changed or replaced upstream artifact fails the
+build instead of silently swapping the bot under a lane whose job is trusting
+what it ran. Override with `--build-arg NEW_BOT_URL=file:///vendor/...` when the
+Drive link rots or the build host is offline.
+
+Installed and verified in the image: `dod/new_bot/new_bot_mm.so` (442 KB, 0755)
+and **93 waypoint files**, covering the real KTP pool — `dod_anzio`,
+`dod_avalanche`, `dod_jagd`, `dod_donner`, `dod_flash`, `dod_kalt`, `dod_caen`,
+`dod_merderet`, `dod_charlie`, `dod_sturm`. Upstream changelog is dated
+**13-07-2026**, so this is maintained software, not abandonware.
+
+Because the image now contains a third-party binary that is not ours to
+redistribute, **it must not be pushed to a public registry.** It is a local/CI
+artifact. The fleet consumes no images at all, so nothing here can reach
+production by accident.
+
+`BotSpec.NEW_BOT` now carries **facts read from the shipped `_README.txt` /
+`_COMMANDS.txt`**, not guesses — `addbot {team} {class} {skill} {name}` (team
+accepts `allies`/`axis`), `target_players {0-32}` to fill, and the objective
+knobs `flag_priority_percent` / `wait_for_cap_percent` (defaults 70/75, raised
+to 100 so bots go to flags and stay on them, which is what cap-break capture
+needs). Two earlier guesses were wrong: the binary is `new_bot_mm.so`, not
+`new_bot.so`, and it lives at `dod/new_bot/`, not under `dod/addons/`.
+
+`MARINEBOT`'s command names remain **candidates**; `probe_add_command` tries
+them in order and reports which works.
+
+### ⛔ Blocker: new_bot needs Metamod, and the KTP stack has none
+
+new_bot's `_mm` suffix is literal. Its README: *"new_bot is a metamod plugin, so
+you need to add it to the plugins.ini file in your metamod install and not
+config.ini or it will crash."*
+
+The KTP stack is **Metamod-free**. Verified inside the image:
+
+```
+/opt/hlds/dod/addons/  →  extensions.ini, ktpamx
+extensions.ini         →  addons/ktpamx/dlls/ktpamx_i386.so
+liblist.gam            →  gamedll_linux "dlls/dod.so"
+find /opt/hlds -iname "*metamod*"  →  (nothing)
+```
+
+AMXX loads through ReHLDS's **extension** mechanism, not Metamod — which is
+also why `CreateFakeClient` is unavailable and why the DODX tests needed
+dispatch primitives. There is no plugin loader for new_bot to register with.
+
+So the files are installed but **deliberately not activated**.
+`BotKit.activation_blocker()` reports this as a fact rather than crashing, so a
+Phase 0 run says why instead of timing out.
+
+Making it work requires Metamod installed and inserted between the engine and
+`dlls/dod.so`, with `ktpamx` still loading via `extensions.ini`. Whether those
+two coexist is **unverified** — and it means the bot lane would run a different
+loader topology than production. That is a deliberate decision about the stack
+under test, not a build detail, so it is not made here.
 
 Possible extra step on newer distros: glibc 2.41+ refuses shared libraries
 needing an executable stack unless the main binary does too. Fix is

@@ -266,6 +266,49 @@ verified automatically rather than by hand.
   so `ktp_schema.sql` is redundant on top of it and is no longer applied by
   default; `LANE_B_APPLY_KTP_SCHEMA=1` reproduces its MySQL failure on purpose.
 
+#### new_bot installed by the image — and a Metamod blocker found (same series)
+
+The Lane B image now downloads and installs **new_bot 0.2.2** at build time
+from the installer page, **SHA-256 pinned** (`8f659fe1…`) so a replaced upstream
+artifact fails the build rather than silently swapping the bot under a lane
+whose whole job is trusting what it ran. `NEW_BOT_URL` is overridable for a
+vendored copy when the Google Drive link rots or the host is offline.
+
+Verified in the built image: `dod/new_bot/new_bot_mm.so` (442 KB, chmod 0755)
+plus **93 waypoint files** covering the real KTP pool — anzio, avalanche, jagd,
+donner, flash, kalt, caen, merderet, charlie, sturm. Upstream changelog dated
+13-07-2026; this is maintained software.
+
+**`BotSpec.NEW_BOT` now holds facts, not guesses**, read from the shipped
+`_README.txt` / `_COMMANDS.txt`: `addbot {team} {class} {skill} {name}` (team
+accepts allies/axis), `target_players {0-32}` to fill, and the objective knobs
+`flag_priority_percent` / `wait_for_cap_percent` (defaults 70/75, raised to 100
+so bots go to flags and stay on them — which is what cap-break capture needs).
+Two prior guesses were wrong: the binary is `new_bot_mm.so`, not `new_bot.so`,
+and it lives at `dod/new_bot/`, not `dod/addons/`.
+
+**⛔ It cannot be activated.** new_bot's `_mm` suffix is literal — its README
+says it is a Metamod plugin and "will crash" if loaded any other way. The KTP
+stack is **Metamod-free**, confirmed inside the image: `dod/addons/` holds only
+`extensions.ini` + `ktpamx`, `extensions.ini` points at
+`addons/ktpamx/dlls/ktpamx_i386.so`, `liblist.gam` still has
+`gamedll_linux "dlls/dod.so"`, and `find -iname "*metamod*"` returns nothing.
+AMXX loads through ReHLDS's extension mechanism — the same reason
+`CreateFakeClient` is unavailable and the DODX tests needed dispatch
+primitives. There is no plugin loader for new_bot to register with.
+
+Files are therefore installed but **deliberately not activated**, and
+`BotKit.activation_blocker()` reports the reason as a fact so a Phase 0 run
+explains itself instead of timing out. Activating it means installing Metamod
+between the engine and `dlls/dod.so` while `ktpamx` still loads via
+`extensions.ini`; whether those coexist is unverified, and it would give the bot
+lane a different loader topology than production. That is a decision about the
+stack under test, not a build detail, so it is not taken here.
+
+Note: the image now contains a third-party binary that is not ours to
+redistribute, so **it must not be pushed to a public registry**. It is a
+local/CI artifact; the fleet consumes no images at all.
+
 #### Verification (container path)
 
 - `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite
