@@ -35,6 +35,7 @@ import json
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
 
 import pytest
@@ -48,8 +49,14 @@ if str(_SMOKE_DIR.parent) not in sys.path:
 from smoke import ServerHandle  # noqa: E402
 from smoke.boot_subprocess import booted_subprocess  # noqa: E402
 
+from ._timing import scaled
 from .fake_ingest import FakeIngest
 from .fake_relay import FakeRelay
+
+# How long the pre-test reset waits for a frozen engine to start answering rcon
+# again. Comfortably clears the observed ~45s recovery after the tech-pause
+# xfail; scaled by KTP_TEST_TIMEOUT_MULTIPLIER like every other timeout here.
+_RESET_SETTLE_SECONDS = 60.0
 
 
 def _from_env() -> ServerHandle | None:
@@ -429,13 +436,39 @@ def _reset_match_state(request):
         return
     # Pre-test reset — handle the case where a prior test left the state
     # machine partway through.
-    try:
-        hlds = request.getfixturevalue("hlds")
-        hlds.rcon("amx_ktp_test_reset")
-    except Exception:
-        # Best-effort: if rcon is briefly unresponsive, the test itself
-        # will surface the problem rather than the fixture silently failing.
-        pass
+    #
+    # RETRY rather than best-effort-once. A prior test can leave the ENGINE
+    # frozen — tech-pause whose unpause rcon the paused engine cannot service
+    # (the accepted xfail in test_match_flow_logs) — and a frozen engine answers
+    # no rcon at all, so this reset times out and the swallowed exception hands
+    # the NEXT test an unresponsive server. That is not hypothetical: it is
+    # deterministic, and it was showing up as three separately-filed "flaky"
+    # tests (12man/draft/ktp_ot "got 0 POSTs" — a frozen engine posts nothing)
+    # plus a setup TimeoutError, none of which name the pause.
+    #
+    # Waiting here keeps the cost inside the reset instead of spreading it
+    # across whatever runs next.
+    hlds = request.getfixturevalue("hlds")
+    deadline = time.monotonic() + scaled(_RESET_SETTLE_SECONDS)
+    while True:
+        try:
+            hlds.rcon("amx_ktp_test_reset")
+            break
+        except Exception:
+            if time.monotonic() >= deadline:
+                # Still deliberately non-fatal: the test itself gives a better
+                # error than a fixture abort. But say so — silence here is what
+                # made the pause side effect look like unrelated flakes.
+                warnings.warn(
+                    f"server did not answer amx_ktp_test_reset within "
+                    f"{scaled(_RESET_SETTLE_SECONDS):.0f}s before "
+                    f"{request.node.nodeid} — it is most likely still frozen "
+                    f"from a prior tech-pause; results below are suspect.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                break
+            time.sleep(0.5)
     yield
     # Post-test reset is intentionally omitted — leaves state visible to
     # an operator inspecting a failed-test server. Pre-test reset on the
