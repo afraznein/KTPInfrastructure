@@ -161,7 +161,70 @@ RUN set -eux; \
 # change to the stack under test and belongs to the harness, at run time, where
 # it is visible in a report rather than baked into a layer.
 LABEL ktp.new_bot.version="${NEW_BOT_VERSION}"
-LABEL ktp.new_bot.activated="false — needs Metamod, which the KTP stack does not use"
+LABEL ktp.new_bot.activated="false — activated at run time by tests/e2e_stats/metamod.py"
+
+# ---------------------------------------------------------------------------
+# Metamod-R — the plugin loader new_bot needs.
+#
+# Metamod-R rather than stock Metamod or metamod-p, because it is the ReHLDS
+# fork and KTP runs KTP-ReHLDS. (Its own README is blunt the other way round:
+# "Metamod-r is incompatible with original HLDS. It's necessary to have
+# installed ReHLDS (API 3.1+)".)
+#
+# ## Why this is not as invasive as it first looks
+#
+# `ktpamx_i386.so` already contains Meta_Attach / Meta_Query / Meta_Detach — it
+# IS a Metamod plugin binary, which AMX Mod X normally is. KTP just loads it
+# through ReHLDS's `extensions.ini` instead. So the bot topology is the
+# ordinary, well-travelled one (Metamod as gamedll, ktpamx + new_bot both in
+# plugins.ini) rather than an exotic hybrid of two loaders.
+#
+# ## Why it is still not free
+#
+# It is a different loader topology than production, and the difference is
+# behavioural, not just structural: under Metamod, `fakemeta` becomes
+# available, and several of this stack's constraints (no CreateFakeClient, the
+# DODX dispatch primitives) exist precisely BECAUSE extension mode lacks it. So
+# a Lane B pass means "works under Metamod", and the A/B differential in
+# scripts/spike_metamod_ab.py is what bounds the distance from production.
+#
+# Installed but NOT activated: nothing here edits liblist.gam, plugins.ini or
+# extensions.ini. The harness does that at run time, in the ephemeral tree,
+# where it is visible in a report.
+# ---------------------------------------------------------------------------
+ARG METAMOD_VERSION=1.3.0.149
+ARG METAMOD_URL=https://github.com/rehlds/Metamod-R/releases/download/1.3.0.149/metamod-bin-1.3.0.149.zip
+ARG METAMOD_SHA256=ede7f59c4e0220afe8c02aa348a130cce527f87d36ffdb674e37a501ce57be94
+
+RUN set -eux; \
+    curl -fsSL "$METAMOD_URL" -o /tmp/metamod.zip; \
+    echo "${METAMOD_SHA256}  /tmp/metamod.zip" | sha256sum -c -; \
+    # Archive is rooted at `addons/`, so extract into the game dir.
+    unzip -q -o /tmp/metamod.zip 'addons/*' -d /opt/hlds/dod; \
+    rm -f /tmp/metamod.zip /opt/hlds/dod/addons/metamod/metamod.dll; \
+    test -f /opt/hlds/dod/addons/metamod/metamod_i386.so; \
+    chmod 0755 /opt/hlds/dod/addons/metamod/metamod_i386.so; \
+    # Keep a pristine copy of the production loader config. The harness swaps
+    # topologies in place, and boot A has to be able to get back to exactly
+    # what production runs, byte for byte, or the A/B diff means nothing.
+    cp /opt/hlds/dod/liblist.gam        /opt/hlds/dod/liblist.gam.production; \
+    cp /opt/hlds/dod/addons/extensions.ini /opt/hlds/dod/addons/extensions.ini.production
+
+LABEL ktp.metamod.version="${METAMOD_VERSION}"
+LABEL ktp.metamod.activated="false — run-time only, see tests/e2e_stats/metamod.py"
+
+# Steam client stub. The engine dlopen()s `steamclient.so` by bare name and
+# also probes ~/.steam/sdk32; the runtime image has the library at /opt/hlds but
+# no sdk32 directory, so SteamAPI_Init() fails. Usually that is survivable
+# (`sv_lan 1` → "VAC secure mode disabled") but it is a RACE: observed booting
+# fine three times and dying with
+#   [S_API FAIL] SteamAPI_Init() failed ... FATAL ERROR: Unable to initialize Steam
+# on a fourth with identical arguments, sometimes taking a SIGSEGV with it.
+# An intermittent boot failure in a nightly lane is indistinguishable from a
+# real regression, so fix the lookup rather than retry around it.
+RUN mkdir -p /root/.steam/sdk32 /root/.steam/sdk64 \
+ && ln -sf /opt/hlds/steamclient.so /root/.steam/sdk32/steamclient.so \
+ && ln -sf /opt/hlds/linux64/steamclient.so /root/.steam/sdk64/steamclient.so
 
 # Repos are bind-mounted from the host and owned by the host user, while the
 # container runs as root, so git refuses them with "detected dubious ownership"
