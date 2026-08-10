@@ -245,3 +245,46 @@ def test_drain_returns_immediately_when_nothing_is_feeding(tmp_path):
     d = _daemon(tmp_path)
     got = d.drain(quiet_for=0.5, timeout=10.0)
     assert got == 0
+
+
+# -- SQL error classification ----------------------------------------------
+
+
+def _with_stdout(tmp_path, body):
+    d = _daemon(tmp_path)
+    d.stdout_path.write_text(body, encoding="utf-8")
+    return d
+
+
+def test_a_bot_steam_id_overflow_is_classified_benign(tmp_path):
+    """ktp_match_players.steam_id is VARCHAR(32) and a bot's synthetic id is 36
+    characters. Real Steam IDs are ~19, so production never hits it — failing
+    every nightly on it would be a red that means nothing."""
+    d = _with_stdout(tmp_path,
+                     "DBD::mysql::db do failed: Data too long for column "
+                     "'steam_id' at row 1 at .//HLstats.plib line 202.\n")
+    real, benign = d.classify_sql_errors()
+    assert real == []
+    assert len(benign) == 1
+    assert "VARCHAR(32)" in benign[0], "the reason must travel with the error"
+
+
+def test_an_unknown_sql_error_stays_real(tmp_path):
+    """The classifier must not become a way to make failures invisible."""
+    d = _with_stdout(tmp_path,
+                     "DBD::mysql::st execute failed: Unknown column 'x'\n")
+    real, benign = d.classify_sql_errors()
+    assert len(real) == 1 and benign == []
+
+
+def test_both_kinds_are_separated(tmp_path):
+    d = _with_stdout(tmp_path,
+                     "DBD::mysql::db do failed: Data too long for column 'steam_id'\n"
+                     "DBD::mysql::st execute failed: Table 'x' doesn't exist\n")
+    real, benign = d.classify_sql_errors()
+    assert len(real) == 1 and len(benign) == 1
+
+
+def test_a_clean_run_classifies_to_nothing(tmp_path):
+    d = _with_stdout(tmp_path, "127.0.0.1:27015 - IMPORT: Start importing\n")
+    assert d.classify_sql_errors() == ([], [])

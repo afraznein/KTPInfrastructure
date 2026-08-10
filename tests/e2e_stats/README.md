@@ -542,6 +542,74 @@ lost every objective capture at the Philly LAN. `EphemeralMysql.prepare()`
 therefore runs before the daemon starts, as fixture order rather than as a note
 someone has to remember.
 
+## The synthetic match
+
+Lane B drives a **real** match through the real state machine — the same
+forwards fire, the same log lines are emitted — using KTPMatchHandler's
+`amx_ktp_test_*` rcons. `lane_b_e2e.py` compiles that plugin with
+`KTP_TEST_MODE=1` at run time; the image ships the production build, in which
+the whole test block is zero bytes.
+
+This is what makes rows carry `match_id` and `half`. `recordEvent` injects
+`match_id` server-side and gates it on `round_live`, so before this every row
+Lane B produced was `match_id NULL` — correct for warmup, and zero coverage of
+the feature the KTPHLStatsX fork exists for.
+
+Verified on a live run:
+
+```
+match_frags_tagged     ok   38 of 84 frag row(s) tagged 1786377797-TEST
+match_half_set         ok   half values on tagged frags: ['1']
+match_context_cleared  ok   38 tagged against 38 in-match kills;
+                            33 post-match kills stayed untagged
+```
+
+### Containment: it must not reach anything real
+
+Because the match is real, the Discord and HLTV code paths are genuinely
+entered. The only thing making that harmless is that their URLs are empty —
+and until now nothing checked. `containment.py` turns that into a precondition
+that fails before a server boots:
+
+- every `discord_*_url` / `hltv_api_*` in the lane's config must be blank, and
+  a config where **none of those keys exist** also fails, because a check that
+  matched nothing proves nothing
+- `KTPHudObserver` is dropped from the plugin list — it POSTs on a timer and
+  buried the log in `[HUD] POST failed (code 7)`
+- the driven `match_id` must end in `-TEST`, so if these rows ever reach a real
+  database they are recognisable rather than silently joining the season
+
+It does **not** stub or disable the integrations. They load and run against an
+empty URL and no-op, which is production's own behaviour for an unconfigured
+server — so the lane keeps testing the real path.
+
+### Two things this got wrong before it got them right
+
+**The match window.** Bounding the match by sampling a kill counter around the
+play window reported "the context is not being cleared" on a run where nothing
+had leaked: 37 rows were tagged and the sampled bound said 36, because kills
+land between the state machine going live and the sample being taken.
+`log_invariants.match_window` counts between the log's own
+`KTP_MATCH_START`/`KTP_MATCH_END` markers instead — no sampling race.
+
+**Statsme.** It was predicted that ending a match would populate
+`hlstats_Events_Statsme` via `dodx_flush_all_stats()`, closing Unit 2's one
+gap. It does not. `stats_logging.sma`'s handler opens with
+`if ( is_user_bot(id) || ... ) return` — **weaponstats are never logged for
+bots**, so the table is structurally unreachable on an all-bot lane. The check
+now keys off the log rather than the table and reports `not_exercised` with
+that reason.
+
+### Known all-bot artifact
+
+`ktp_match_players.steam_id` is `VARCHAR(32)`; the daemon gives bots a
+synthetic `BOT:` + 32-char md5 uniqueid, which is 36. Every insert fails with
+`Data too long`. Real Steam IDs are ~19 characters so production never hits it,
+but `ktp_match_players` stays empty here and per-match player tracking cannot
+be asserted. Classified as benign in `classify_sql_errors` and reported as a
+coverage gap — never silently dropped, because those rows genuinely did not get
+written.
+
 ## Staged cap-break scenarios
 
 `diagnostics/KTPBreakDrive.sma` + `break_scenarios.py` drive Unit 3's positive

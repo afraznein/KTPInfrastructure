@@ -313,7 +313,7 @@ log). Across five live runs and two replays:
 | 4 killer not credited on their own kill | yes | **one violation found — see below** |
 | 5 teammate not credited | yes | same check, teams read off the log line — 0 violations |
 | 6 headshots unaffected | yes | 3/3 markers → `headshot=1` frag rows |
-| 6 weaponstats unaffected | **no** | Lane B's config loads no statsme module, so `hlstats_Events_Statsme` is 0 by construction. **Check this by hand.** |
+| 6 weaponstats unaffected | **no, and it cannot be** | `stats_logging.sma`'s `dod_stats_flush` handler opens with `if ( is_user_bot(id) \|\| ... ) return` — weaponstats are **never logged for bots**. Every Lane B player is a bot, so no `weaponstats` line is emitted and `hlstats_Events_Statsme` is structurally unreachable. Driving a real match was expected to fix this and did not. **Check this by hand, on a server with real clients.** |
 | 7 no dropped lines | yes | `assert_no_dropped_lines`, every run |
 | 8 kill switch | yes | 10 kills during `ktp_stats_capture 0` produced 0 assists; 5 once re-enabled |
 

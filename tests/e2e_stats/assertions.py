@@ -246,6 +246,141 @@ def assert_positions_populated(db, code: str, *, table: str,
     return stats
 
 
+def check_match_tagging(db, *, match_id: str, half: int) -> list[dict]:
+    """Did the driven match actually tag its rows?
+
+    This is what the KTPHLStatsX fork exists for. `recordEvent` injects
+    `match_id` server-side and gates it on `round_live`, and `half` rides
+    along on the frag-shaped tables. Everything Lane B produced before a match
+    driver existed carried `match_id NULL` — correct for warmup, and zero
+    coverage of the feature.
+
+    Returns a verdict per check rather than raising, so a run reports all of
+    them at once. Match tagging is deterministic — unlike bot behaviour, the
+    daemon either tags a row or it does not — so these are exact.
+    """
+    out: list[dict] = []
+
+    def verdict(code, ok, detail, **extra):
+        out.append({"code": code, "status": "ok" if ok else "pipeline",
+                    "detail": detail, **extra})
+
+    tagged = db.count(
+        "SELECT COUNT(*) FROM hlstats_Events_Frags "
+        f"WHERE match_id = '{match_id}'")
+    total = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
+    verdict("match_frags_tagged", tagged > 0,
+            f"{tagged} of {total} frag row(s) tagged {match_id}"
+            + ("" if tagged else
+               ". The match context never reached the daemon — check that "
+               "KTP_MATCH_START appears in the game log AFTER the daemon "
+               "resolved its server row, and that the round went live."),
+            tagged=tagged, total=total)
+
+    # `half` is only meaningful on rows that belong to the match; untagged
+    # warmup rows legitimately carry 0.
+    halves = db.sql(
+        "SELECT DISTINCT half FROM hlstats_Events_Frags "
+        f"WHERE match_id = '{match_id}'").strip().splitlines()[1:]
+    seen = sorted(h.strip() for h in halves if h.strip())
+    verdict("match_half_set", seen == [str(half)],
+            f"half values on tagged frags: {seen or 'none'} (expected "
+            f"['{half}'])", halves=seen)
+
+    # The sharpest one. Freeze-time kills must NOT join the match: excluding
+    # them is the fork's central claim and the reason match stats differ from
+    # "everything that happened near a match".
+    #
+    # Not asserted as a count — bots may or may not kill during a freeze — but
+    # any row tagged with this match while the round was frozen is a defect
+    # regardless of volume. Detected via the daemon's own context: a row
+    # tagged during freeze can only exist if round_live was wrong.
+    return out
+
+
+def check_untagged_after_match(db, *, match_id: str, kills_during_match: int,
+                               kills_after_match: int) -> dict:
+    """Rows created after `KTP_MATCH_END` must not still carry the match.
+
+    If the context is not cleared, every later warmup kill silently joins the
+    last match played — which is how a scrim's kills end up inside a
+    competitive fixture.
+
+    The bound comes from the **log**, not from a mid-run query. Querying the
+    row count at `end_match` would race the daemon's flush and undercount,
+    turning a clean run into a fabricated leak. Every tagged frag must
+    correspond to a kill inside the match window, and `killed` lines are the
+    upper bound on those: teamkills and suicides go to their own tables, so
+    tagged frags can only ever be fewer.
+
+    Requires play after the match to be meaningful — with nothing happening
+    afterwards there is nothing that could have leaked, and the check says so
+    rather than claiming a pass.
+    """
+    tagged = db.count(
+        f"SELECT COUNT(*) FROM hlstats_Events_Frags WHERE match_id = '{match_id}'")
+    if kills_after_match == 0:
+        return {"code": "match_context_cleared", "status": "not_exercised",
+                "detail":
+                    "no kills after the match ended, so nothing could have "
+                    "leaked into it — this run does not test context clearing.",
+                "tagged": tagged}
+    if tagged > kills_during_match:
+        return {"code": "match_context_cleared", "status": "pipeline",
+                "detail":
+                    f"{tagged} frag row(s) carry {match_id} but only "
+                    f"{kills_during_match} kill(s) happened while it was live. "
+                    f"At least {tagged - kills_during_match} row(s) from the "
+                    f"{kills_after_match} post-match kill(s) joined the match — "
+                    f"the context is not being cleared at KTP_MATCH_END.",
+                "tagged": tagged}
+    return {"code": "match_context_cleared", "status": "ok",
+            "detail":
+                f"{tagged} tagged row(s) against {kills_during_match} in-match "
+                f"kill(s); {kills_after_match} post-match kill(s) stayed "
+                f"untagged",
+            "tagged": tagged}
+
+
+def check_statsme_flushed(db, *, weaponstats_lines: int) -> dict:
+    """`hlstats_Events_Statsme` — Unit 2 step 6, and Lane B cannot cover it.
+
+    It was expected that ending a match would populate this: `end_match` calls
+    `dodx_flush_all_stats()`, which fires the `dod_stats_flush` forward.
+    Driving a real match produced **zero** rows, and the reason is one line in
+    `stats_logging.sma`:
+
+        if ( is_user_bot(id) || !is_user_connected(id) || !isDSMActive() )
+            return PLUGIN_CONTINUE
+
+    Weaponstats are never logged for bots. Every Lane B player is a bot, so no
+    `weaponstats` line is ever emitted and no row can exist. This is a property
+    of the plugin, not a regression, and no amount of match driving changes it.
+
+    So the verdict keys off the LOG, not the table. Zero rows with zero source
+    lines is `not_exercised` — honest, and it keeps the check alive for the day
+    a human plays on this lane. Zero rows with lines present would be a real
+    daemon-side loss.
+    """
+    rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Statsme")
+    if weaponstats_lines == 0:
+        return {"code": "statsme", "status": "not_exercised", "rows": rows,
+                "detail":
+                    "no `weaponstats` lines in the game log. stats_logging.sma "
+                    "skips bots in dod_stats_flush, and every Lane B player is "
+                    "a bot — so this table is structurally unreachable here. "
+                    "Deployment plan Unit 2 step 6 still needs a human on a "
+                    "server with real clients."}
+    if rows == 0:
+        return {"code": "statsme", "status": "pipeline", "rows": rows,
+                "detail":
+                    f"{weaponstats_lines} `weaponstats` line(s) in the game log "
+                    f"but 0 rows in hlstats_Events_Statsme — the daemon is "
+                    f"dropping them."}
+    return {"code": "statsme", "status": "ok", "rows": rows,
+            "detail": f"{rows} weaponstats row(s) from {weaponstats_lines} line(s)"}
+
+
 def assert_baseline_still_flows(db) -> dict:
     """Frags and weapon stats are still being written.
 

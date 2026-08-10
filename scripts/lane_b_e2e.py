@@ -38,11 +38,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.e2e_stats import (assertions, break_scenarios,  # noqa: E402
-                             log_invariants, metamod)
+                             containment, log_invariants, metamod)
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
 from tests.e2e_stats.hlstats_daemon import HlstatsDaemon  # noqa: E402
+from tests.integration.match_flow import (MatchDriver,  # noqa: E402
+                                         MatchDriverError, MatchType)
 from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 
 # The first hlds boot in a fresh container dies inside SteamAPI_Init and the
@@ -51,32 +53,73 @@ from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 BOOT_ATTEMPTS = 3
 
 
-def compile_sma(src: Path, out: Path, *, scripting: Path) -> Path:
-    """Compile a diagnostic .sma.
+def compile_sma(src: Path, out: Path, *, scripting: Path,
+                extra_sources: tuple[Path, ...] = (),
+                defines: tuple[str, ...] = ()) -> Path:
+    """Compile a .sma against the image's own amxxpc.
 
     amxxpc must run from its own directory or it cannot find amxxpc32.so, and
     it reports that as a missing source file rather than a missing loader.
     Line endings are normalised first: the repo is edited on Windows and a
     stray CR ends up inside a token.
+
+    `extra_sources` are copied next to the main file so sibling `#include`s
+    resolve — KTPMatchHandler needs `ktp_matchhandler_discord.inc` this way.
+
+    `defines` are passed as trailing `NAME=VALUE` arguments, which is how the
+    Pawn compiler takes command-line `#define`s. That is the mechanism behind
+    `KTP_TEST_MODE=1`, and it is why a test-mode build is a compile-time
+    decision that cannot leak into a production binary.
     """
     # read_text() applies universal newlines, so a CRLF source lands as LF.
-    work = Path("/tmp") / src.name
+    work_dir = Path("/tmp/sma")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    work = work_dir / src.name
     work.write_text(src.read_text(encoding="utf-8", errors="replace"))
-    r = subprocess.run([str(scripting / "amxxpc"), str(work),
-                        f"-i{scripting}/include", f"-o{out}"],
-                       cwd=str(scripting), capture_output=True, text=True,
-                       timeout=180)
+    for extra in extra_sources:
+        (work_dir / extra.name).write_text(
+            extra.read_text(encoding="utf-8", errors="replace"))
+
+    argv = [str(scripting / "amxxpc"), str(work),
+            f"-i{scripting}/include", f"-i{work_dir}", f"-o{out}"]
+    argv += list(defines)
+    r = subprocess.run(argv, cwd=str(scripting), capture_output=True,
+                       text=True, timeout=300)
     if not out.is_file():
         raise SystemExit(f"{src.name} failed to compile: {r.stdout} {r.stderr}")
     return out
 
 
+def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
+                                 scripting: Path) -> Path:
+    """Compile KTPMatchHandler with the `amx_ktp_test_*` rcons enabled.
+
+    The image ships the PRODUCTION build, in which the whole test block
+    compiles to zero bytes, so none of the rcons exist. Without them a match
+    cannot be driven and every row Lane B produces carries `match_id NULL` —
+    which is correct for warmup and useless for testing match attribution.
+
+    Mirrors `KTPMatchHandler/compile.sh KTP_TEST_MODE=1`, deliberately: if that
+    script's flags change, this should follow rather than drift.
+    """
+    sma = src_dir / "KTPMatchHandler.sma"
+    inc = src_dir / "ktp_matchhandler_discord.inc"
+    if not sma.is_file():
+        raise SystemExit(f"KTPMatchHandler.sma not found under {src_dir}")
+    return compile_sma(sma, out, scripting=scripting,
+                       extra_sources=(inc,) if inc.is_file() else (),
+                       defines=("KTP_TEST_MODE=1",))
+
+
 def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
-               server_cfg_fixture: Path, break_drive: Path | None = None) -> EphemeralTree:
+               server_cfg_fixture: Path, break_drive: Path | None = None,
+               matchhandler: Path | None = None) -> tuple[EphemeralTree, list[str]]:
     """Lay the branch's artifacts over the image's server tree.
 
     `in_place` rather than a copy: the container is the isolation boundary, so
     a second one buys nothing and costs a full tree copy per run.
+
+    Returns the tree and the list of plugins removed for containment.
     """
     tree = EphemeralTree.in_place(hlds)
     dll = "dod/addons/ktpamx/dlls/ktpamx_i386.so"
@@ -89,21 +132,31 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
         tree.overlay_file(ini, f"dod/addons/ktpamx/configs/{ini.name}")
     tree.overlay_file(plugin, "dod/addons/ktpamx/plugins/stats_logging.amxx")
 
+    if matchhandler is not None:
+        # Replaces the image's PRODUCTION build, in which the whole
+        # amx_ktp_test_* block is zero bytes. Same filename and same position
+        # in plugins.ini, so load order is unchanged.
+        tree.overlay_file(matchhandler,
+                          "dod/addons/ktpamx/plugins/KTPMatchHandler.amxx")
+
+    plugins_rel = "dod/addons/ktpamx/configs/plugins.ini"
+    plugins_txt = (tree.path / plugins_rel).read_text()
+    plugins_txt, dropped = containment.strip_outbound_plugins(plugins_txt)
+
     if break_drive is not None:
-        # Appended to plugins.ini rather than replacing it, so the stack under
-        # test stays production's plugin set plus one diagnostic.
+        # Appended rather than replacing the list, so the stack under test
+        # stays production's plugin set plus one diagnostic.
         tree.overlay_file(break_drive,
                           "dod/addons/ktpamx/plugins/KTPBreakDrive.amxx")
-        ini = tree.path / "dod/addons/ktpamx/configs/plugins.ini"
-        tree.write_text(
-            "dod/addons/ktpamx/configs/plugins.ini",
-            os.linesep.join([ini.read_text().rstrip(), "KTPBreakDrive.amxx", ""]))
+        plugins_txt = plugins_txt.rstrip() + "\nKTPBreakDrive.amxx\n"
+
+    tree.write_text(plugins_rel, plugins_txt)
 
     tree.write_text(
         "dod/lane_b_server.cfg",
         server_cfg_fixture.read_text()
         + "\nmp_timelimit 0\nmp_limitteams 0\nktp_stats_capture 1\n")
-    return tree
+    return tree, dropped
 
 
 def add_bots(handle, *, per_team: int, flag_priority: int = 100,
@@ -164,6 +217,47 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
               f"assist={body.count('triggered ' + chr(34) + 'assist' + chr(34)):<3} "
               f"cap_break={body.count('triggered ' + chr(34) + 'cap_break' + chr(34)):<3}",
               flush=True)
+
+
+def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
+              map_name: str = "") -> dict:
+    """Take the state machine LIVE, play, and end the match.
+
+    This is what makes rows carry `match_id` and `half`. `recordEvent` injects
+    `match_id` server-side and gates it on `round_live`, so everything emitted
+    outside a live match is tagged NULL — correct behaviour, and useless for
+    asserting the thing KTPR actually reads.
+
+    Two steps are load-bearing rather than tidy:
+
+    - `fire_match_start_log` — production emits `KTP_MATCH_START` from a task
+      gated on the engine's `RoundState=1`, which never fires without a real
+      round. The rcon drives the emission directly.
+    - `end_match` — calls `dodx_flush_all_stats()`, which is what pushes
+      weaponstats out to `hlstats_Events_Statsme`. Skipping it does not just
+      leave the match open; it means the Statsme regression check cannot pass.
+    """
+    out = {"half": half}
+    out["match_id"] = containment.assert_test_match_id(
+        driver.setup_match(MatchType.COMPETITIVE, map_name))
+    driver.advance_pending()
+    driver.advance_live(half)
+    driver.fire_match_start_log()
+    print(f"  match {out['match_id']} live, half {half}", flush=True)
+
+    # Let the state change settle before the play window: the zone poll runs on
+    # a 0.5s task and the capture buffer flushes on a 5s one, so starting the
+    # clock immediately attributes pre-live time to the match.
+    time.sleep(5.0)
+    out["live_from"] = _count(log_path, chr(34) + " killed " + chr(34))
+
+    play(play_seconds=play_seconds, log_path=log_path)
+
+    out["live_to"] = _count(log_path, chr(34) + " killed " + chr(34))
+    driver.end_match(1, 0)
+    out["kills_during_match"] = out["live_to"] - out["live_from"]
+    print(f"  match ended after {out['kills_during_match']} kills", flush=True)
+    return out
 
 
 def _count(log_path: Path, needle: str) -> int:
@@ -257,6 +351,14 @@ def main() -> int:
     ap.add_argument("--break-drive-sma", type=Path,
                     default=Path("/work/tests/e2e_stats/diagnostics/KTPBreakDrive.sma"),
                     help="diagnostic that stages the Unit 3 cap-break scenarios")
+    ap.add_argument("--matchhandler-src", type=Path,
+                    default=Path("/src/KTPMatchHandler"),
+                    help="KTPMatchHandler checkout; compiled with "
+                         "KTP_TEST_MODE=1 so a match can be driven")
+    ap.add_argument("--no-match", action="store_true",
+                    help="run without driving a match. Every row is then "
+                         "match_id NULL, which is correct for warmup and "
+                         "proves nothing about match attribution")
     ap.add_argument("--no-break-scenarios", action="store_true",
                     help="skip the staged scenarios (they kill bots on command)")
     ap.add_argument("--kill-switch-seconds", type=int, default=60,
@@ -287,6 +389,30 @@ def main() -> int:
         HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=args.port,
                                         min_players=2)
 
+        # Containment, before anything boots. This lane drives a REAL match
+        # through the real state machine, so the Discord and HLTV code paths
+        # are genuinely entered — the only thing keeping them harmless is that
+        # their URLs are empty. Check rather than assume.
+        report["containment"] = {
+            "config_keys_checked": containment.assert_no_outbound_config(
+                args.config_dir)}
+        print(f"containment: {len(report['containment']['config_keys_checked'])} "
+              f"outbound key(s) confirmed empty", flush=True)
+
+        mh_amxx = None
+        if not args.no_match and args.matchhandler_src.is_dir():
+            mh_amxx = build_test_mode_matchhandler(
+                args.matchhandler_src, Path("/tmp/KTPMatchHandler.amxx"),
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+            print(f"compiled test-mode KTPMatchHandler "
+                  f"({mh_amxx.stat().st_size} bytes)", flush=True)
+        elif not args.no_match:
+            raise SystemExit(
+                f"--matchhandler-src {args.matchhandler_src} is not a directory. "
+                f"Without a test-mode build there are no amx_ktp_test_* rcons, "
+                f"no match can be driven, and every row would be match_id NULL. "
+                f"Pass --no-match to run the untagged lane deliberately.")
+
         drive_amxx = None
         if not args.no_break_scenarios and args.break_drive_sma.is_file():
             drive_amxx = compile_sma(
@@ -294,10 +420,13 @@ def main() -> int:
                 scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
             print(f"compiled {drive_amxx.name}", flush=True)
 
-        tree = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
-                          plugin=args.plugin, config_dir=args.config_dir,
-                          server_cfg_fixture=args.server_cfg,
-                          break_drive=drive_amxx)
+        tree, dropped = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
+                                   plugin=args.plugin, config_dir=args.config_dir,
+                                   server_cfg_fixture=args.server_cfg,
+                                   break_drive=drive_amxx, matchhandler=mh_amxx)
+        report["containment"]["plugins_dropped"] = dropped
+        if dropped:
+            print(f"containment: dropped {dropped} from the plugin list", flush=True)
         topo = metamod.enable_metamod(tree, bot_spec=NEW_BOT, host_ktpamx=False)
         print(f"topology: {topo}", flush=True)
 
@@ -339,7 +468,13 @@ def main() -> int:
                             seconds=args.kill_switch_seconds)
                         report["assists_before_match"] = _count(
                             args.log, 'triggered "assist"')
-                    play(play_seconds=args.play_seconds, log_path=args.log)
+                    if mh_amxx is not None:
+                        report["match"] = run_match(
+                            MatchDriver(handle), half=1,
+                            play_seconds=args.play_seconds, log_path=args.log,
+                            map_name=args.map)
+                    else:
+                        play(play_seconds=args.play_seconds, log_path=args.log)
                     if drive_amxx is not None:
                         # After the match: the scenarios need caps actually in
                         # progress, and bots take a while to start contesting.
@@ -370,7 +505,9 @@ def main() -> int:
             "headshot": log_text.count('triggered "headshot_kill"'),
         }
         report["lines_fed"] = daemon.lines_fed
-        report["sql_errors"] = daemon.sql_errors()[:20]
+        real_sql, benign_sql = daemon.classify_sql_errors()
+        report["sql_errors"] = real_sql[:20]
+        report["sql_errors_benign"] = benign_sql[:5]
         report["rows"] = assertions.summarise(db)
 
         # Attribution negatives, from the log rather than the database: the log
@@ -400,6 +537,24 @@ def main() -> int:
             elif sc["status"] == "not_staged":
                 gaps_extra.append(f"{sc['name']}: {sc['detail']}")
 
+        if report.get("match"):
+            m = report["match"]
+            carried += assertions.check_match_tagging(
+                db, match_id=m["match_id"], half=m["half"])
+            carried.append(assertions.check_statsme_flushed(
+                db, weaponstats_lines=log_text.count(chr(34) + "weaponstats" + chr(34))))
+            # The window comes from the log's own KTP_MATCH_START/END markers,
+            # not from sampling a counter around the play window. Sampling is
+            # off by whatever lands between the state machine going live and
+            # the sample being taken, which reported a context leak that did
+            # not exist.
+            win = log_invariants.match_window(log_text)
+            report["match"]["window"] = win
+            carried.append(assertions.check_untagged_after_match(
+                db, match_id=m["match_id"],
+                kills_during_match=win["during"],
+                kills_after_match=win["after"]))
+
         if report.get("kill_switch"):
             carried.append(check_kill_switch(
                 report["kill_switch"],
@@ -423,6 +578,12 @@ def main() -> int:
         if report["sql_errors"]:
             failures.append(f"{len(report['sql_errors'])} SQL error(s) from the "
                             "daemon:\n  " + "\n  ".join(report["sql_errors"][:5]))
+        if benign_sql:
+            # Known all-bot artifacts. Reported, never silent: those rows really
+            # did not get written, so anything downstream of them is untested.
+            gaps_extra.append(
+                f"{len(benign_sql)} known all-bot SQL artifact(s):\n  "
+                + "\n  ".join(benign_sql[:3]))
 
     report["failures"] = failures
     print("\n=== emitted in log vs recorded in db ===")

@@ -93,9 +93,17 @@ already says why:
 
 - `fire_match_start_log` — production emits `KTP_MATCH_START` from a task gated
   on the engine's `RoundState=1`, which never fires without a real round.
-- `end_match` — calls `dodx_flush_all_stats()`, which is what pushes weaponstats
-  out. **This closes the one Unit 2 gap**: `hlstats_Events_Statsme` is currently
-  0 by construction, and a match that ends should populate it.
+- `end_match` — calls `dodx_flush_all_stats()`, which fires the
+  `dod_stats_flush` forward.
+
+  > **Correction.** This was predicted to close the one Unit 2 gap by
+  > populating `hlstats_Events_Statsme`. It does not, and driving a real match
+  > proved it: zero rows, and zero `weaponstats` lines in the game log to
+  > produce them from. `stats_logging.sma`'s handler opens with
+  > `if ( is_user_bot(id) || ... ) return PLUGIN_CONTINUE` — **weaponstats are
+  > never logged for bots**. Every Lane B player is a bot, so the table is
+  > structurally unreachable here and no amount of match driving changes that.
+  > Unit 2 step 6 still needs a human on a server with real clients.
 
 Keep the kill-switch window and the staged break scenarios; they slot in around
 the play windows.
@@ -112,7 +120,7 @@ unlike bot behaviour, the daemon either tags a row or it does not.
 | **Kills during `KTP_ROUND_FREEZE` carry `match_id NULL`** | the fork's central claim — freeze-time kills excluded by design |
 | Assists and cap-breaks during live play carry non-NULL `match_id` | the new stats are not match-attributable, which is what KTPR needs |
 | Rows after `KTP_MATCH_END` are untagged again | context not cleared; every later warmup kill would join the last match |
-| `hlstats_Events_Statsme` non-zero after `end_match` | Unit 2 step 6, currently uncovered |
+| `weaponstats` lines, if any, become `Statsme` rows | Unit 2 step 6 — **cannot fire on an all-bot lane**; reported `not_exercised` with the reason rather than passed |
 | `match_id` ends in `-TEST` | containment |
 
 The freeze-time one is the sharpest: it is the difference between "match stats"

@@ -142,6 +142,47 @@ def check_break_attribution(log_text: str) -> list[str]:
     return violations
 
 
+def match_window(log_text: str) -> dict:
+    """Kills inside the driven match, taken from the log's own markers.
+
+    The obvious way to bound a match — sample a counter before the play window
+    and after it — is off by however many kills land between the state machine
+    going live and the sample being taken. That produced a confident
+    "context is not being cleared" report on a run where nothing had leaked:
+    37 rows were tagged and the sampled bound said 36.
+
+    `KTP_MATCH_START` and `KTP_MATCH_END` are written by the plugin into the
+    same stream as the kills, so counting between them has no sampling race at
+    all. `during` is then an exact upper bound on how many frag rows may carry
+    the match id.
+
+    Returns zeros when no match was driven, which the caller must treat as
+    "not exercised" rather than "nothing leaked".
+    """
+    lines = log_text.splitlines()
+    start = end = None
+    for i, line in enumerate(lines):
+        # The plugin also emits a `[test-mode mirror]` copy; take the first of
+        # each so the window is the real one.
+        if start is None and "KTP_MATCH_START" in line:
+            start = i
+        elif start is not None and end is None and "KTP_MATCH_END" in line:
+            end = i
+
+    if start is None:
+        return {"found": False, "during": 0, "after": 0, "before": 0}
+    stop = end if end is not None else len(lines)
+
+    def kills(seq):
+        return sum(1 for ln in seq if _KILL_RE.search(ln))
+
+    return {"found": True,
+            "before": kills(lines[:start]),
+            "during": kills(lines[start:stop]),
+            "after": kills(lines[stop:]),
+            "ended": end is not None}
+
+
 def summarise(log_text: str) -> dict:
     """Counts plus violations, for the run report."""
     return {
