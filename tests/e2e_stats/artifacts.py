@@ -201,10 +201,17 @@ class ArtifactSet:
         if inc is not None:
             inc.write_bytes(inc.read_bytes().replace(b"\r\n", b"\n"))
 
+        # amxxpc must run FROM ITS OWN DIRECTORY. It dlopen()s `amxxpc32.so` by
+        # bare name, so the loader searches the CWD — run it from anywhere else
+        # and it dies with "compiler failed to instantiate: amxxpc32.so: cannot
+        # open shared object file". Both existing build paths already do this:
+        # build/plugins/Dockerfile does `cd /compiler && ./amxxpc`, and
+        # smoke-callable.yml does `cd .../scripting && ./amxxpc /work/<src>`.
+        # Hence the absolute source path and the relative `./amxxpc`.
         r = subprocess.run(
-            [str(amxxpc), norm.name,
+            [f"./{amxxpc.name}", str(norm),
              f"-i{include_dir}", f"-i{src_dir}", f"-o{out}"],
-            cwd=str(src_dir), capture_output=True, text=True, timeout=timeout,
+            cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
         )
         combined = (r.stdout or "") + (r.stderr or "")
         # amxxpc exits 0 on warnings, non-zero on errors — but it has also been

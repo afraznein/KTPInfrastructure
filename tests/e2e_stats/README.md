@@ -214,6 +214,52 @@ passed. `strip_prefix` and `timestamp_flag` make the answer a config change;
 the default feeds lines exactly as the engine wrote them, which is what a UDP
 forward would have delivered. Phase 0 settles it.
 
+## Verified so far (2026-08-09, real runs)
+
+The image was built and exercised for real. What is now proven rather than
+reasoned:
+
+- **The Lane B image builds** on `ghcr.io/afraznein/ktp-runtime-test-base:latest`
+  (which is **public** — no GHCR auth needed). Base is **Ubuntu 24.04.4,
+  glibc 2.39** — note that is *not* `build/base/Dockerfile`'s Ubuntu 22.04; the
+  runtime image is built separately.
+- **`stats_logging.amxx` compiles** from `feat/stats-positions` with the capture
+  include — **0 warnings**, md5 `018b17442ef4ef352623428eebe93200`, 9353 bytes.
+  This retires open verification debt #2 in `CONTINUATION_NOTES.md`
+  ("Nothing is compiled").
+- **The private `mysqld` starts** as root inside the container and accepts
+  connections.
+- **Unit suite passes inside the image**: 40 passed (Linux path, including the
+  symlink case that skips on Windows).
+- **Artifact md5s are identical on Windows and Linux**, so the manifest is
+  meaningful provenance rather than decoration.
+
+### Still blocked: there is no base schema
+
+`sql/ktp_schema.sql` in KTPHLStatsX is an **overlay, not a schema** — 8
+`ALTER TABLE`, 3 `CREATE TABLE IF NOT EXISTS`, 4 indexes, all assuming the stock
+HLStatsX tables already exist. Applying it to an empty database fails at the
+first statement:
+
+```
+ERROR 1146 (42S02) at line 22: Table 'hlstatsx_test.hlstats_Events_Frags' doesn't exist
+```
+
+That is the file working as designed — its own header warns that a fresh
+install is the hazard case — but it means **Lane B cannot build a database from
+this repo alone**. It needs a base schema from one of:
+
+1. `mysqldump --no-data` of the production/data-server database — highest
+   fidelity, and the only option that also answers "does this migration apply
+   to what production actually looks like".
+2. The upstream HLStatsX `install/sql` schema, vendored.
+3. A hand-written minimal subset covering only the tables Lane B asserts on —
+   cheapest, and drifts from production silently, which is the failure mode
+   this whole lane exists to catch.
+
+Drop the result at `$LANE_B_OUT/base-schema.sql` and `scripts/lane_b_local.sh`
+picks it up automatically.
+
 ## Phase 0: run the spike first
 
 Do not write assertions before this passes. The reason is on the record: three

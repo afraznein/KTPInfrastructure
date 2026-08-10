@@ -36,6 +36,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Sentinel distinguishing "caller said nothing, use self.database" from
+# "caller explicitly wants no schema selected".
+_DEFAULT_DB = object()
+
+
 class MysqlUnavailable(RuntimeError):
     """No usable mysqld, or it refused to start. An error, never a skip —
     a stats lane that silently runs without a database asserts nothing."""
@@ -158,6 +163,15 @@ class EphemeralMysql:
         log = self.base_dir / "mysqld.err"
         argv = [
             self.mysqld,
+            # MUST BE FIRST. --no-defaults is a "pre-option": the option parser
+            # consumes it before anything else, and anywhere later in argv
+            # MariaDB aborts with `unknown option '--no-defaults'` *after* a
+            # full InnoDB startup, so it reads as a mysterious late crash.
+            #
+            # It is load-bearing rather than hygiene: without it the server
+            # reads /etc/mysql/* and ~/.my.cnf, and on the data server
+            # ~/.my.cnf is configured to reach the LIVE database.
+            "--no-defaults",
             f"--datadir={self.datadir}",
             f"--socket={self.socket_path}",
             f"--port={self.port}",
@@ -167,10 +181,6 @@ class EphemeralMysql:
             # instance must not be reachable from anywhere else.
             "--bind-address=127.0.0.1",
             "--skip-name-resolve",
-            # No shared memory / no system-wide config: read nothing from
-            # /etc/my.cnf or ~/.my.cnf, or we inherit production settings
-            # (and ~/.my.cnf on this box is set up to reach the LIVE server).
-            "--no-defaults",
             "--skip-grant-tables",
         ]
         # mysqld/mariadbd refuse to start as uid 0 unless told to. Containers
@@ -210,16 +220,23 @@ class EphemeralMysql:
 
     def _create_database(self) -> None:
         self.sql(f"CREATE DATABASE IF NOT EXISTS `{self.database}` "
-                 "DEFAULT CHARACTER SET utf8mb4")
+                 "DEFAULT CHARACTER SET utf8mb4", database=None)
 
     # -- querying ----------------------------------------------------------
 
-    def sql(self, statement: str, *, database: str | None = None) -> str:
-        """Run one statement. Raises on non-zero exit with stderr attached."""
+    def sql(self, statement: str, *, database: str | None = _DEFAULT_DB) -> str:
+        """Run one statement. Raises on non-zero exit with stderr attached.
+
+        `database=None` connects WITHOUT selecting a schema. That distinction
+        matters: `CREATE DATABASE hlstatsx_test` cannot run with
+        `hlstatsx_test` already selected, and the client fails first with
+        `ERROR 1049 Unknown database` before the statement is ever sent.
+        """
         argv = [self.client, "--no-defaults", f"--socket={self.socket_path}",
                 "-u", "root", "--batch", "--raw"]
-        if database or self.database:
-            argv += [database or self.database]
+        target = self.database if database is _DEFAULT_DB else database
+        if target:
+            argv += [target]
         argv += ["-e", statement]
         r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode != 0:
