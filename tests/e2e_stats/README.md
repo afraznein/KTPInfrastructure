@@ -542,6 +542,81 @@ lost every objective capture at the Philly LAN. `EphemeralMysql.prepare()`
 therefore runs before the daemon starts, as fixture order rather than as a note
 someone has to remember.
 
+## Staged cap-break scenarios
+
+`diagnostics/KTPBreakDrive.sma` + `break_scenarios.py` drive Unit 3's positive
+and negatives on demand, instead of waiting for bots to happen to produce them.
+
+The detector's claim, as something checkable:
+
+> a break is emitted for a flag **iff** a player of the capping team died
+> while inside that flag's zone, causing the in-zone count to drop.
+
+| Scenario | Staged by | Must |
+|---|---|---|
+| `positive_kill_on_point` | kill the capper nearest the flag | emit a break naming that killer |
+| `negative_off_point_kill` | kill a capping-team player ≥900 units away | emit no break for that killer |
+| `negative_voluntary_walkoff` | teleport a capper off the point, no death | emit no break at all |
+
+### Why it stages rather than simulates
+
+The trigger is a **real** drop in `CA_num_allies`/`CA_num_axis` read from the
+game's own capture-area data, so a synthetic forward cannot produce it — the
+body has to leave the zone. Only the attribution is injected:
+
+```
+dodx_test_dispatch_client_death(killer, victim, ...)   <- queues the candidate
+dod_user_kill(victim)                                  <- drops the count
+```
+
+Order is load-bearing and mirrors production. The detector reads its baseline
+when the candidate is queued, so the dispatch has to happen while the victim is
+still standing in the zone. Kill first and the baseline is already the
+post-death value, no drop is ever seen, and the scenario silently tests
+nothing. `dod_user_kill` alone will not do: it is a self-kill, and
+`killer == victim` is rejected — correctly, since a suicide on a point is not
+somebody else breaking the cap.
+
+### Attribute, do not count — this cost a false bug report
+
+The first version counted `cap_break` lines in a time window and reported a
+confident detector defect. It was wrong: a bot had killed a capper one second
+before the staged walk-off, so the break in that window was entirely
+legitimate. Two rules came out of it, both tested in
+`test_break_scenarios.py` against the exact lines that caused it:
+
+1. **Match the breaker by name.** A staged kill logs the killer it injected,
+   and only a break naming that player counts. Unrelated breaks are ignored
+   explicitly rather than swept into a count.
+2. **Reject contaminated windows.** The walk-off injects no killer and so has
+   nothing to match on; instead the window is discarded unless the count
+   dropped by exactly the one player moved *and* nobody on the capping team
+   died nearby. The lookback is symmetric — the detector holds a candidate for
+   ~2.5s, so a kill just **before** the walk-off is precisely what produces a
+   legitimate break during it, and a forward-only window would have missed the
+   real confound.
+
+## Open finding: a killer credited an assist on their own kill
+
+`check_assist_attribution` fired for real, once in 225 kills across four
+captures:
+
+```
+14:38:43  "Claire<9><0><Allies>" killed "Pyramid<2><0><Axis>" with "bazooka"
+14:38:45  "Claire<9><BOT><Allies>" triggered "assist" against "Pyramid<2><BOT><Axis>"
+```
+
+`ksc_on_death` does exclude the killer (`if (a == killer || a == victim)
+continue`), and the one sample is an **explosive**, which suggests DODX's
+`client_death` may report a different index for splash damage than the engine
+credits in the log line. That is a hypothesis from one sample, not a root
+cause. Details and a suggested next step are in `KTPR_DEPLOYMENT_PLAN.md` under
+Unit 2.
+
+Worth noting as validation of this file: the check found it unprompted, which
+is the thing the deployment plan asks a human to spot by eye during a live
+match.
+
 ## Ordering trap #2, also enforced in code
 
 `hlstats.pl` reads its **per-server config** at startup too, from
@@ -573,18 +648,14 @@ written:
   "almost certainly" is not verified. `--from-production` needs SSH to the data
   server. Until then every run's PROVENANCE says RECONSTRUCTION, which is the
   honest label.
-- **Getting a cap_break reliably in a live run.** Assists arrive every time
-  (4, 5, 7, 12 across four runs); cap_break appeared in two of the four. It is
-  genuinely rare — a capper has to die inside the window.
-
-  Two hypotheses checked and **eliminated**: it is not a shortage of
-  interruptible captures (a run with a break had 19 `dod_capture_area` to 7
+- **A cap_break in every live run, without staging one.** Assists arrive every
+  time (2, 4, 5, 7, 12); cap_break appears in about half of runs by luck. Two
+  hypotheses were checked and eliminated: it is not a shortage of interruptible
+  captures (a run with a break had 19 `dod_capture_area` to 7
   `dod_control_point`; one without had 16 to 12), and it is not bots capping in
-  packs (`wait_for_cap_percent 0` did not change the rate either way). Longer
-  runs did not help.
+  packs (`wait_for_cap_percent 0` changed nothing either way). Longer runs did
+  not help.
 
-  This is handled rather than unsolved: a run without one is reported
-  `not_exercised`, and the path is separately verified by `replay_daemon.py`
-  against a captured log. If it needs to be deterministic, drive the
-  scenario — put a bot in a zone and kill it — rather than tuning bot
-  behaviour and hoping.
+  This is now handled rather than unsolved — `break_scenarios.py` stages the
+  scenario deterministically (below), and an unstaged run reports
+  `not_exercised` rather than a pass or a defect.

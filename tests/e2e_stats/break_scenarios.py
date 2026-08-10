@@ -1,0 +1,396 @@
+"""Drive cap-break scenarios and judge them, using KTPBreakDrive.
+
+The deployment plan's Unit 3 lists one positive and four negatives, and says
+plainly that the negatives matter more: a false-positive break silently
+inflates a player's objective rating and nothing ever contradicts it. Bots
+produce the positive by luck about half the time and the negatives never, so
+this stages them.
+
+## The invariant being tested
+
+The detector's claim, stated as something checkable:
+
+    a break is emitted for a flag **iff** a player of the capping team died
+    while inside that flag's zone, causing the in-zone count to drop.
+
+Each scenario makes one side of that true and asserts the other follows.
+
+## Attribution, not counting — this file's main lesson
+
+The first version counted `cap_break` lines inside a time window. That is
+wrong, and it produced a confident report of a detector defect that did not
+exist: a bot had killed a capper one second before the staged walk-off, so the
+break in the window was entirely legitimate.
+
+Two rules follow, and both are load-bearing:
+
+1. **Match the breaker by name.** The staged kill logs the killer it injected;
+   a break only counts as ours if it names that player. Unrelated breaks by
+   other bots are noise and are ignored explicitly.
+2. **Reject contaminated windows.** For the walk-off, which injects no killer
+   at all and so has nothing to match on, the window is discarded unless the
+   count dropped by exactly the one player moved AND nobody on the capping team
+   died nearby. The lookback reaches backwards as well as forwards, because the
+   detector holds a candidate for ~2.5s and a kill just *before* the walk-off is
+   precisely what produces a legitimate break during it.
+
+## Why scenarios report their own preconditions
+
+A `near` kill that did not drop the in-zone count means the victim was not
+really in the zone, so no break was owed and scoring it as missing would blame
+the detector for a setup that never happened. Those are `not_staged` — neither
+pass nor fail. Bot-driven setups fail to materialise often enough that treating
+them as failures would drown the signal.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+from dataclasses import dataclass, field
+
+_KILL_RE = re.compile(
+    r"\[BD\] kill flag=(\d+) capteam=(-?\d+) mode=(\w+) victim=(\d+) "
+    r"vname=(\S+) killer=(\d+) kname=(\S+) dist=(-?\d+) count_before=(-?\d+) "
+    r"owner_before=(-?\d+)")
+_WALKOFF_RE = re.compile(
+    r"\[BD\] walkoff flag=(\d+) mover=(\d+) mname=(\S+) anchor=(\d+) "
+    r"capteam=(-?\d+) count_before=(-?\d+)")
+_AFTER_RE = re.compile(
+    r"\[BD\] after flag=(\d+) allies=(-?\d+) axis=(-?\d+) capping=(-?\d+) "
+    r"owner=(-?\d+)")
+_ABORT_RE = re.compile(r"\[BD\] (\w+) ABORT flag=(-?\d+) (.*)")
+_SCAN_RE = re.compile(
+    r"\[BD\] flag (\d+) name=(\S+) owner=(-?\d+) capping=(-?\d+) "
+    r"capteam=(-?\d+) allies=(-?\d+) axis=(-?\d+)")
+
+# Breaker NAME, so a break can be attributed to the kill that caused it.
+_BREAK_RE = re.compile(r'"([^"<]*)<\d+><[^<>]*><[^<>]*>" triggered "cap_break"')
+# victim name and victim team, for the contamination check.
+_KILLED_RE = re.compile(
+    r'^L \S+ - (\d\d):(\d\d):(\d\d): "[^"<]*<\d+><[^<>]*><[^<>]*>" killed '
+    r'"([^"<]*)<\d+><[^<>]*><([^<>]*)>"')
+_TS_RE = re.compile(r"^L \S+ - (\d\d):(\d\d):(\d\d):")
+
+TEAM_ALLIES, TEAM_AXIS = 1, 2
+_TEAM_NAME = {TEAM_ALLIES: "Allies", TEAM_AXIS: "Axis"}
+
+
+@dataclass
+class Scenario:
+    """One staged attempt and what came of it."""
+
+    name: str
+    status: str = "not_staged"      # ok | violation | not_staged
+    detail: str = ""
+    breaks_seen: int = 0
+    extra: dict = field(default_factory=dict)
+
+
+def _tail(log_text: str, since: int) -> str:
+    return log_text[since:]
+
+
+def _line_seconds(line: str) -> int | None:
+    """Wall-clock seconds from the engine timestamp prefix."""
+    m = _TS_RE.match(line)
+    if not m:
+        return None
+    h, mi, sec = (int(v) for v in m.groups())
+    return h * 3600 + mi * 60 + sec
+
+
+class BreakDriver:
+    """Stages scenarios over rcon and reads the verdict out of the game log."""
+
+    # The detector ages a candidate out after KSC_BREAK_WINDOW polls
+    # (5 x 0.5s = ~2.5s) and emits on the poll after a count drop. 6s covers
+    # both with room; a scenario needing longer would itself be a finding
+    # rather than something to paper over with a bigger sleep.
+    SETTLE = 6.0
+
+    def __init__(self, handle, log_path):
+        self.handle = handle
+        self.log_path = log_path
+
+    def _read(self) -> str:
+        return self.log_path.read_text(errors="replace")
+
+    def scan(self) -> list[dict]:
+        """Current flag state, as the plugin sees it."""
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_scan")
+        time.sleep(1.0)
+        out = []
+        for m in _SCAN_RE.finditer(_tail(self._read(), mark)):
+            f, name, owner, capping, capteam, allies, axis = m.groups()
+            out.append({"flag": int(f), "name": name, "owner": int(owner),
+                        "capping": int(capping), "capteam": int(capteam),
+                        "allies": int(allies), "axis": int(axis)})
+        return out
+
+    def find_capturing_flag(self, *, timeout: float = 120.0,
+                            poll: float = 4.0) -> dict | None:
+        """Wait for a flag with a cap actually in progress.
+
+        Kept for diagnostics; the scenarios no longer use it. Selecting a flag
+        here and passing it to the plugin lost every race — caps last seconds,
+        and the flag was routinely finished by the time the rcon landed. The
+        plugin resolves `auto` at command time instead, which removes the gap
+        rather than polling around it, and a miss is just a fast retry.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for flag in self.scan():
+                if flag["capping"] and flag["capteam"] in (TEAM_ALLIES, TEAM_AXIS):
+                    occupants = (flag["allies"] if flag["capteam"] == TEAM_ALLIES
+                                 else flag["axis"])
+                    if occupants >= 1:
+                        return flag
+            time.sleep(poll)
+        return None
+
+    # -- scenarios ---------------------------------------------------------
+
+    def positive_kill_on_point(self) -> Scenario:
+        """A capper on the point is killed. A break must be emitted, and must
+        name the killer we injected."""
+        s = Scenario("positive_kill_on_point")
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_kill auto near")
+        time.sleep(self.SETTLE)
+        tail = _tail(self._read(), mark)
+
+        staged = _KILL_RE.search(tail)
+        if not staged:
+            s.detail = self._abort_reason(tail) or "no kill was staged"
+            return s
+
+        capteam = int(staged.group(2))
+        killer = staged.group(7)
+        before = int(staged.group(9))
+        owner_before = int(staged.group(10))
+        after = self._count_after(tail, capteam)
+        owner_after = self._owner_after(tail)
+        breakers = _BREAK_RE.findall(tail)
+        s.breaks_seen = len(breakers)
+        s.extra = {"count_before": before, "count_after": after,
+                   "owner_before": owner_before, "owner_after": owner_after,
+                   "dist": int(staged.group(8)), "killer": killer,
+                   "breakers": breakers}
+
+        if after is None or after >= before:
+            s.detail = (f"in-zone count did not drop ({before} -> {after}), so "
+                        f"no break was owed - scenario did not stage")
+            return s
+        if owner_after is not None and owner_after != owner_before:
+            # A completed capture deliberately suppresses the break: the
+            # detector clears its queue on an owner flip so cappers leaving a
+            # point they just took are not credited to whoever last got a kill
+            # there. No break here is correct, not missing.
+            s.detail = (f"the flag changed owner ({owner_before} -> "
+                        f"{owner_after}) during the window, so the cap completed "
+                        f"and the break is suppressed by design - scenario "
+                        f"did not stage")
+            return s
+        if before - after != 1:
+            # More than our victim left. The extra departures have unknown
+            # causes, so neither a break nor its absence can be attributed.
+            s.detail = (f"count dropped by {before - after} but only one player "
+                        f"was killed, so others left for reasons this cannot "
+                        f"account for - scenario contaminated")
+            return s
+
+        if killer in breakers:
+            s.status = "ok"
+            s.detail = (f"count {before} -> {after}; break credited to the "
+                        f"injected killer {killer}")
+        else:
+            s.status = "violation"
+            s.detail = (f"{killer} killed a capper on the point and the in-zone "
+                        f"count dropped {before} -> {after}, but no cap_break "
+                        f"names {killer}. MISSED break. Breaks this window: "
+                        f"{breakers or 'none'}")
+        return s
+
+    def negative_off_point_kill(self) -> Scenario:
+        """A capping-team player far from the point is killed.
+
+        A candidate is queued and must age out. A break naming our killer would
+        mean any kill during any cap is credited as a break.
+        """
+        s = Scenario("negative_off_point_kill")
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_kill auto far")
+        time.sleep(self.SETTLE)
+        tail = _tail(self._read(), mark)
+
+        staged = _KILL_RE.search(tail)
+        if not staged:
+            s.detail = self._abort_reason(tail) or "no distant player to kill"
+            return s
+
+        capteam = int(staged.group(2))
+        killer = staged.group(7)
+        dist = int(staged.group(8))
+        breakers = _BREAK_RE.findall(tail)
+        s.breaks_seen = len(breakers)
+        s.extra = {"dist": dist, "count_before": int(staged.group(9)),
+                   "killer": killer, "breakers": breakers}
+
+        if killer in breakers:
+            s.status = "violation"
+            s.detail = (f"killing a capping-team player {dist} units from the "
+                        f"point credited {killer} with a cap_break. FALSE "
+                        f"POSITIVE - the candidate is not ageing out, so any "
+                        f"kill during any cap counts as a break.")
+        else:
+            s.status = "ok"
+            s.detail = (f"kill {dist} units off the point produced no break for "
+                        f"{killer}"
+                        + (f"; unrelated breaks by {breakers} ignored"
+                           if breakers else ""))
+        return s
+
+    def negative_voluntary_walkoff(self) -> Scenario:
+        """A capper leaves the point alive. The count drops with no death.
+
+        The plan calls this the hardest case, and it is also the easiest to
+        mis-judge: there is no injected killer to attribute against, so the
+        window has to be proven clean instead. See the module docstring.
+        """
+        s = Scenario("negative_voluntary_walkoff")
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_walkoff auto")
+        time.sleep(self.SETTLE)
+        full = self._read()
+        tail = _tail(full, mark)
+
+        staged = _WALKOFF_RE.search(tail)
+        if not staged:
+            s.detail = self._abort_reason(tail) or "nobody could be moved"
+            return s
+
+        capteam = int(staged.group(5))
+        before = int(staged.group(6))
+        after = self._count_after(tail, capteam)
+        breakers = _BREAK_RE.findall(tail)
+        s.breaks_seen = len(breakers)
+        s.extra = {"count_before": before, "count_after": after,
+                   "mover": staged.group(3), "breakers": breakers}
+
+        if after is None or after >= before:
+            s.detail = (f"the mover did not leave the zone ({before} -> "
+                        f"{after}) - scenario did not stage")
+            return s
+        if before - after != 1:
+            s.detail = (f"count dropped by {before - after} but only one player "
+                        f"was moved, so the others left for reasons this cannot "
+                        f"account for - scenario contaminated")
+            return s
+
+        deaths = self._capping_deaths_near(full, capteam)
+        if deaths:
+            s.extra["contaminating_deaths"] = deaths
+            s.detail = (f"{len(deaths)} player(s) on the capping team "
+                        f"({_TEAM_NAME.get(capteam, capteam)}) died within the "
+                        f"window ({'; '.join(deaths)}), so a break here could "
+                        f"be legitimate - scenario contaminated")
+            return s
+
+        if breakers:
+            s.status = "violation"
+            s.detail = (f"a capper walked off the point, nobody on that team "
+                        f"died, the count dropped {before} -> {after}, and "
+                        f"{breakers} were credited with a cap_break. FALSE "
+                        f"POSITIVE - a count drop with no death behind it is "
+                        f"being credited.")
+        else:
+            s.status = "ok"
+            s.detail = (f"count dropped {before} -> {after} with no death on "
+                        f"that team and no break, as required")
+        return s
+
+    # -- helpers -----------------------------------------------------------
+
+    @staticmethod
+    def _count_after(tail: str, capteam: int) -> int | None:
+        m = _AFTER_RE.search(tail)
+        if not m:
+            return None
+        return int(m.group(2)) if capteam == TEAM_ALLIES else int(m.group(3))
+
+    @staticmethod
+    def _owner_after(tail: str) -> int | None:
+        m = _AFTER_RE.search(tail)
+        return int(m.group(5)) if m else None
+
+    @staticmethod
+    def _capping_deaths_near(full_log: str, capteam: int,
+                            window: int = 10) -> list[str]:
+        """Deaths of capping-team players around the staged walk-off.
+
+        Anchored on real timestamps rather than file offsets, and symmetric:
+        the detector holds a candidate for ~2.5s, so a kill shortly *before*
+        the walk-off is exactly what produces a legitimate break during it.
+        """
+        team = _TEAM_NAME.get(capteam)
+        if not team:
+            return []
+        lines = full_log.splitlines()
+        anchor = None
+        for line in lines:
+            if "[BD] walkoff" in line:
+                anchor = _line_seconds(line) or anchor
+        if anchor is None:
+            return []
+
+        out = []
+        for line in lines:
+            m = _KILLED_RE.match(line)
+            if not m:
+                continue
+            t = _line_seconds(line)
+            if t is None or abs(t - anchor) > window:
+                continue
+            if m.group(5) == team:
+                out.append(f"{m.group(4)} at {m.group(1)}:{m.group(2)}:{m.group(3)}")
+        return out
+
+    @staticmethod
+    def _abort_reason(tail: str) -> str | None:
+        m = _ABORT_RE.search(tail)
+        return f"plugin aborted: {m.group(3)}" if m else None
+
+
+def run_all(handle, log_path, *, attempts: int = 8) -> list[dict]:
+    """Every scenario, negatives first, retried until each one stages.
+
+    Negatives first because a false positive is the failure that matters, and
+    running the positive first would leave its break sitting in the window the
+    negatives read.
+
+    Retries because `not_staged` is common and cheap to fix by trying again:
+    caps on a 16-bot server last seconds, and a walk-off window is contaminated
+    whenever a capper happens to die nearby. Neither says anything about the
+    code. A verdict of ok or violation is final and stops the loop immediately —
+    retrying past a violation would be shopping for a green run.
+    """
+    d = BreakDriver(handle, log_path)
+    out = []
+    for fn in (d.negative_off_point_kill,
+               d.negative_voluntary_walkoff,
+               d.positive_kill_on_point):
+        s = None
+        for attempt in range(1, attempts + 1):
+            s = fn()
+            if s.status != "not_staged":
+                break
+            print(f"  scenario {s.name:<28} attempt {attempt}/{attempts} "
+                  f"did not stage: {s.detail}", flush=True)
+            time.sleep(4.0)
+        s.extra["attempts"] = attempt
+        print(f"  scenario {s.name:<28} {s.status:<12} {s.detail}", flush=True)
+        out.append({"name": s.name, "status": s.status, "detail": s.detail,
+                    "breaks_seen": s.breaks_seen, **s.extra})
+    return out
