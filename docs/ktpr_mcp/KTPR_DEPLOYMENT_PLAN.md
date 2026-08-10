@@ -22,7 +22,7 @@ checklists below are a **shorter** job than they look. Each unit carries a
 |---|---|
 | 1 — suicides | **gate cleared, verified with a control.** The unconfirmed verb string is confirmed against real DoD logs; without the fix the same log produces 0 rows, with it 3/3. |
 | 2 — assists | **all steps covered but one, and one open finding.** Every emitted assist carried exactly; headshots unaffected. A killer was credited an assist on their own kill once in 225 kills, on an explosive — see Unit 2. **`hlstats_Events_Statsme` is not covered** — check by hand. |
-| 3 — cap breaks | **positive plus two of four negatives, staged deliberately.** Off-point kill and voluntary walk-off are now driven and asserted. Clean-cap and round-restart still need a human. |
+| 3 — cap breaks | **positive plus all four negatives, staged deliberately.** No step is manual any more; off-point kill and voluntary walk-off do not stage on every run, which is expected — see Unit 3. |
 | 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
 
 Two caveats worth reading before treating any of this as sign-off:
@@ -449,24 +449,31 @@ those, so `diagnostics/KTPBreakDrive.sma` stages them directly.
 | Step | Lane B | Result |
 |---|---|---|
 | 1 real breaks recorded | yes | carried into `PlayerActions`, 0 in `PlayerPlayerActions`, every run that produced one |
-| 2 clean cap, nobody killed | **no** | needs a cap allowed to complete with no candidate queued; not staged |
-| 3 off-point kill | **yes, staged** | a capping-team player killed ~2800 units from the point produced no break for that killer |
-| 4 voluntary walk-off | **yes, staged** | a capper teleported off the point, no death on that team, count dropped by exactly one |
-| 5 round restart | **no** | not staged |
+| 2 clean cap, nobody killed | **yes, staged** | a flag captured cleanly (owner flip), no death on the capturing team, no break — the `CA_owning_team` clear holds |
+| 3 off-point kill | **usually** | a capping-team player killed ~2800 units from the point produced no break for that killer; occasionally does not stage — see below |
+| 4 voluntary walk-off | **usually** | a capper teleported off the point, no death on that team, count dropped by exactly one; occasionally does not stage — see below |
+| 5 round restart | **yes, staged** | a candidate queued, then `mp_clan_restartround 1` — produced no break for the queued killer |
 | 6 count sanity | partial | breaks never arrive in bursts, which is consistent with no false positives — but that is inference |
 | 7 regression / buffer / kill switch | yes | as Unit 2 |
 
-Steps 2 and 5 remain manual. Both are about the `CA_owning_team` clear rather
-than the candidate queue, and staging them needs control over when a cap
-completes, which the current driver does not have.
+All five negatives are now staged by `diagnostics/KTPBreakDrive.sma` — no step
+is manual by design any more. Steps 3 and 4 do not stage on every single run,
+which is expected rather than a gap: DoD's active-capture window turned out to
+be only a few seconds long, so the harness watches for a capture to actually
+start (`_fire_when_capturing`, polling every 1.5s) rather than firing on a
+fixed schedule, and a run can still finish its retry budget between captures.
+`negative_voluntary_walkoff`'s most common non-staging reason is not a miss at
+all — it is the contamination guard correctly declining a window where a real
+death happened nearby, which is judgment working as intended, not judgment
+withheld.
 
-**One warning for whoever runs the manual steps.** Judging these by "was there
-a cap_break in the log around then" does not work. Bots break caps constantly,
-and the first automated version of step 4 reported a confident false positive
-that turned out to be a bot legitimately killing a capper one second before the
-staged walk-off. Either attribute the break to a specific killer by name, or
-confirm nobody on the capping team died in the surrounding ~10 seconds. The
-harness now does both; a human doing it by eye should too.
+**One warning for anyone reading these results by eye instead of trusting the
+harness.** Judging by "was there a cap_break in the log around then" does not
+work. Bots break caps constantly, and the first automated version of step 4
+reported a confident false positive that turned out to be a bot legitimately
+killing a capper one second before the staged walk-off. Either attribute the
+break to a specific killer by name, or confirm nobody on the capping team died
+in the surrounding ~10 seconds. The harness does both.
 
 ### Tuning knobs if it misbehaves
 
