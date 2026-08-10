@@ -40,16 +40,17 @@ from pathlib import Path
 
 import pytest
 
+from . import _stage_manifest
 from ._timing import WITNESS_TIMEOUT, scaled
 from .log_tail import current_log_size, wait_for_log_substring
 
-# Literal tracks the FLEET; bump only after a wave's post-activation verify.
-# Env override exists for the pre-activation gate (runner deliberately leading
-# the fleet with a reviewed build). `or`, not a get() default — the workflow
-# always sets the var, to '' on scheduled and PR runs, and get(k, default)
-# returns '' for a set-but-empty var. Mirrors the MatchHandler pin.
-EXPECTED_KTPPRACTICEMODE_VERSION = (
-    os.environ.get("KTP_EXPECTED_PRACTICEMODE_VERSION") or "1.4.6"
+# Resolution is env override -> stage manifest -> literal floor; see
+# _stage_manifest.py. Staging IS the bump, so there is no literal to remember.
+# The floor stays at the fleet-live build so a runner with no manifest still
+# asserts something. There is no `practicemode_version` workflow input, so the
+# manifest is the only way a pre-activation gate can pass here.
+EXPECTED_KTPPRACTICEMODE_VERSION = _stage_manifest.expected_version(
+    "KTPPracticeMode.amxx", "KTP_EXPECTED_PRACTICEMODE_VERSION", "1.4.6"
 )
 
 # Grenade ids from KTPPracticeMode.sma / dodx weapon table
