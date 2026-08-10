@@ -54,9 +54,14 @@ class BotSpec:
     # value passed to +localinfo mm_gamedll (engine resolves it relative to
     # the game dir).
     so_rel_path: str
+    # For bots loaded as the Metamod game DLL (`+localinfo mm_gamedll <x>`).
+    # Empty when the bot loads some other way.
     gamedll_localinfo: str
+    # For bots that are Metamod PLUGINS: the line to add to metamod's
+    # plugins.ini. Mutually exclusive with gamedll_localinfo in practice.
+    metamod_plugin_line: str = ""
     # Where waypoints live inside the tree, if the mod uses them.
-    waypoint_rel_dir: str | None
+    waypoint_rel_dir: str | None = None
     # Ordered candidates for "add one bot". `{team}` is substituted when the
     # command takes a team argument; a candidate with no placeholder is tried
     # as-is.
@@ -78,14 +83,38 @@ MARINEBOT = BotSpec(
     objective_commands=("mb_objective 1", "mb_skill 3"),
 )
 
+# new_bot 0.2.2. These values are FACTS, read out of the shipped
+# `_README.txt` / `_COMMANDS.txt`, not candidates — unlike MARINEBOT above.
+#
+# Two corrections to earlier guesses worth keeping visible:
+#   * the binary is `new_bot_mm.so`, not `new_bot.so`, and it lives at
+#     `dod/new_bot/`, not under `dod/addons/`.
+#   * the `_mm` suffix is literal: it is a **Metamod plugin**, loaded from
+#     metamod's `plugins.ini`, NOT via `+localinfo mm_gamedll`. Its README:
+#     "new_bot is a metamod plugin, so you need to add it to the plugins.ini
+#     file in your metamod install and not config.ini or it will crash".
 NEW_BOT = BotSpec(
     name="new_bot",
-    so_rel_path="dod/addons/new_bot/new_bot.so",
-    gamedll_localinfo="new_bot/new_bot.so",
-    waypoint_rel_dir="dod/addons/new_bot/waypoints",
-    add_commands=("nb_addbot", "nb_add {team}", "addbot", "bot_add"),
-    fill_commands=("nb_minbots {n}", "nb_quota {n}"),
-    objective_commands=("nb_objective 1",),
+    so_rel_path="dod/new_bot/new_bot_mm.so",
+    # Empty: this bot is not loaded through mm_gamedll. See metamod_plugin_line.
+    gamedll_localinfo="",
+    metamod_plugin_line="linux new_bot/new_bot_mm.so",
+    waypoint_rel_dir="dod/new_bot/waypoints",
+    # `addbot {team} {class} {skill} {name}`; team accepts allies/axis or 1-2,
+    # skill 1-5. Listed team-first because a bare `addbot` picks a random team
+    # and we want both sides populated deterministically.
+    add_commands=("addbot {team}", "addbot"),
+    # `target_players {0-32}` — "Will add/remove bots to try reach this number".
+    fill_commands=("target_players {n}",),
+    # Objective play, which is what cap-break capture needs. Defaults are
+    # flag_priority 70 / wait_for_cap 75; pushed up so bots go to flags and
+    # stay on them rather than wandering to guard points.
+    objective_commands=(
+        "flag_priority_percent 100",
+        "wait_for_cap_percent 100",
+        "balance teams on",
+        "bot_skill 3",
+    ),
 )
 
 SPECS = {s.name: s for s in (MARINEBOT, NEW_BOT)}
@@ -156,11 +185,44 @@ class BotKit:
             tree.overlay_dir(wps, self.spec.waypoint_rel_dir)
 
     def hlds_extra_args(self) -> list[str]:
-        """The bot loads from the COMMAND LINE, not plugins.ini — nothing
-        persisted in the tree enables it, so a copy of the tree booted
-        normally has no bot. That is a quarantine property, not an
-        implementation detail; don't move this into a cfg file."""
+        """Command-line arguments that activate this bot, if any.
+
+        For an mm_gamedll-style bot the activation is entirely on the command
+        line, so nothing persisted in the tree enables it and a copy of that
+        tree booted normally has no bot. That is a quarantine property worth
+        preserving; don't move it into a cfg file.
+
+        Metamod-*plugin* bots (new_bot) return nothing here — they activate via
+        metamod's plugins.ini instead, which is a file in the tree. The
+        quarantine then rests on the tree being ephemeral rather than on the
+        activation being transient.
+        """
+        if not self.spec.gamedll_localinfo:
+            return []
         return ["+localinfo", "mm_gamedll", self.spec.gamedll_localinfo]
+
+    def activation_blocker(self) -> str | None:
+        """Why this bot cannot be activated in the KTP stack, or None.
+
+        The KTP stack runs **Metamod-free**: `dod/addons/extensions.ini` loads
+        `ktpamx_i386.so` through ReHLDS's extension mechanism, and
+        `liblist.gam` still points `gamedll_linux` at the stock `dlls/dod.so`.
+        There is no metamod directory and no plugins.ini anywhere in the image.
+
+        A Metamod-plugin bot therefore has nothing to load it. Returning the
+        reason (rather than raising here) lets the spike report it as a fact
+        instead of a crash, which is what a Phase 0 run is for.
+        """
+        if self.spec.metamod_plugin_line and not self.spec.gamedll_localinfo:
+            return (
+                f"{self.spec.name} is a Metamod plugin, but the KTP stack is "
+                "Metamod-free (ReHLDS extension mode: addons/extensions.ini "
+                "loads ktpamx directly, liblist.gam keeps gamedll_linux at "
+                "dlls/dod.so). Loading it needs Metamod installed and inserted "
+                "between the engine and dod.so, which changes the stack under "
+                "test and is an explicit decision, not a build detail."
+            )
+        return None
 
     def waypoints_for_map(self, map_name: str) -> bool:
         """Whether any waypoint file mentions this map. Coverage per map is a

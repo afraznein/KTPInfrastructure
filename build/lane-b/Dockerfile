@@ -100,7 +100,68 @@ RUN dpkg --add-architecture i386 && \
       # glibc 2.39 does not enforce the 2.41 restriction, so this is here for
       # diagnosis rather than routine use.
       execstack \
+      # new_bot ships as a .zip
+      unzip \
+      ca-certificates \
+      curl \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# new_bot — the DoD 1.3 bot AI, downloaded and installed at build time.
+#
+# Source: https://dayofdefeat.home.blog/installer-2/ (0.2.2, changelog dated
+# 13-07-2026 — actively maintained, not abandonware).
+#
+# ## Checksum-pinned on purpose
+#
+# The upstream link is a Google Drive share, which has no version in the URL,
+# no published checksum, and no guarantee of stability. Pinning SHA-256 means a
+# changed or replaced artifact FAILS THE BUILD instead of silently swapping the
+# bot under a test lane whose whole job is trusting what it ran. If upstream
+# publishes 0.2.3, this build breaks loudly and someone updates both values
+# deliberately — which is the correct amount of friction for a third-party
+# binary in a test rig.
+#
+# Vendored override, for when the Drive link rots or the build host has no
+# outbound internet:
+#   docker build --build-arg NEW_BOT_URL=file:///vendor/new_bot-0.2.2.zip ...
+#
+# ## Redistribution
+#
+# This image now CONTAINS a third-party binary that is not ours to redistribute,
+# so it must not be pushed to a public registry. It is a local/CI build
+# artifact. The fleet consumes no images at all, so nothing here can reach
+# production by accident.
+# ---------------------------------------------------------------------------
+ARG NEW_BOT_VERSION=0.2.2
+ARG NEW_BOT_URL=https://drive.google.com/uc?export=download&id=1KWxlqTNOe_yTXPZ3CLL13qTiz-cL-WYu
+ARG NEW_BOT_SHA256=8f659fe14af21377c61e8c4645e2f0380d70cb33e4caf6f1f5caf4ed2d594f49
+
+RUN set -eux; \
+    curl -fsSL "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    echo "${NEW_BOT_SHA256}  /tmp/new_bot.zip" | sha256sum -c -; \
+    # The archive is rooted at `dod/`, and the game tree is /opt/hlds/dod, so
+    # extracting at /opt/hlds lands every file exactly where it belongs.
+    unzip -q -o /tmp/new_bot.zip -d /opt/hlds; \
+    rm -f /tmp/new_bot.zip; \
+    # Drop the Windows DLL: dead weight in a Linux image, and shipping a second
+    # platform's binary invites someone to think this image is portable.
+    rm -f /opt/hlds/dod/new_bot/new_bot_mm.dll; \
+    test -f /opt/hlds/dod/new_bot/new_bot_mm.so; \
+    # Ships 0644. dlopen does not require +x, but some HL plugin loaders check
+    # it, and a missing exec bit is an annoying thing to debug through an
+    # engine that just says "couldn't load".
+    chmod 0755 /opt/hlds/dod/new_bot/new_bot_mm.so; \
+    echo "new_bot ${NEW_BOT_VERSION}: $(ls /opt/hlds/dod/new_bot/waypoints | wc -l) waypoint files"
+
+# Deliberately NOT activated here. new_bot is a Metamod plugin and the KTP
+# stack runs Metamod-free (ReHLDS extension mode — addons/extensions.ini loads
+# ktpamx directly, and liblist.gam still points gamedll_linux at dlls/dod.so).
+# Installing the files is safe and inert; wiring it into a plugin loader is a
+# change to the stack under test and belongs to the harness, at run time, where
+# it is visible in a report rather than baked into a layer.
+LABEL ktp.new_bot.version="${NEW_BOT_VERSION}"
+LABEL ktp.new_bot.activated="false — needs Metamod, which the KTP stack does not use"
 
 # Repos are bind-mounted from the host and owned by the host user, while the
 # container runs as root, so git refuses them with "detected dubious ownership"
