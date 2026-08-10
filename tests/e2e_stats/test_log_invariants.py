@@ -156,3 +156,53 @@ def test_a_clean_capture_produces_no_violations():
     assert s["assist_violations"] == []
     assert s["break_violations"] == []
     assert (s["kills"], s["assists"]) == (3, 2)
+
+
+# -- match window ----------------------------------------------------------
+#
+# The bound for "how many rows may carry this match id". Sampling a counter
+# around the play window reported a context leak that did not exist: 37 rows
+# were tagged and the sampled bound said 36, because kills land between the
+# state machine going live and the sample being taken.
+
+MATCH_START = ('L 08/10/2026 - 15:35:49: KTP_MATCH_START (matchid '
+               '"1786376148-TEST") (map "dod_anzio") (half "1st")')
+MATCH_MIRROR = ('L 08/10/2026 - 15:35:49: [KTPMatchHandler.amxx] KTP_MATCH_START '
+                '(matchid "1786376148-TEST") (map "dod_anzio") (half "1st") '
+                '[test-mode mirror]')
+MATCH_END = ('L 08/10/2026 - 15:48:29: KTP_MATCH_END (matchid "1786376148-TEST") '
+             '(map "dod_anzio") (status "test")')
+
+
+def _k(at="15:40:00"):
+    return _kill("A", 1, "Allies", "B", 2, "Axis", at=at)
+
+
+def test_kills_are_split_around_the_markers():
+    log = "\n".join([_k(), MATCH_START, _k(), _k(), MATCH_END, _k()])
+    w = li.match_window(log)
+    assert (w["before"], w["during"], w["after"]) == (1, 2, 1)
+    assert w["found"] and w["ended"]
+
+
+def test_the_test_mode_mirror_does_not_open_a_second_window():
+    """The plugin logs KTP_MATCH_START twice — once real, once mirrored. Taking
+    the later one would drop every kill in between from the bound."""
+    log = "\n".join([MATCH_START, MATCH_MIRROR, _k(), _k(), MATCH_END])
+    assert li.match_window(log)["during"] == 2
+
+
+def test_no_match_reports_not_found_rather_than_zero_leak():
+    """A run with no match must not read as 'nothing leaked' — there was
+    nothing to leak into."""
+    w = li.match_window("\n".join([_k(), _k()]))
+    assert w["found"] is False
+    assert w["during"] == 0
+
+
+def test_an_unended_match_runs_to_the_end_of_the_log():
+    """If end_match never fired, everything after the start is still inside the
+    match as far as the daemon is concerned."""
+    log = "\n".join([MATCH_START, _k(), _k()])
+    w = li.match_window(log)
+    assert w["during"] == 2 and w["after"] == 0 and w["ended"] is False

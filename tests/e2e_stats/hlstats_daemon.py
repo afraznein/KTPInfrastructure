@@ -451,6 +451,40 @@ class HlstatsDaemon:
     def _tail_stdout(self, n: int) -> str:
         return "\n".join(self._read_stdout().splitlines()[-n:])
 
+    # SQL errors that are artifacts of running an all-bot lane rather than
+    # defects. Each entry is (substring, why it is benign) and each one is a
+    # claim that has to be justified — an unexplained entry here is a way to
+    # make a real failure invisible.
+    _BENIGN_SQL = (
+        (
+            "Data too long for column 'steam_id'",
+            "ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a "
+            "synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam "
+            "IDs are ~19 characters, so production never hits this. Consequence "
+            "for the lane: ktp_match_players stays empty, so per-match player "
+            "tracking cannot be asserted here.",
+        ),
+    )
+
+    def classify_sql_errors(self) -> tuple[list[str], list[str]]:
+        """Split daemon SQL errors into real failures and known lane artifacts.
+
+        Returns (real, benign). Benign ones are reported as coverage gaps, not
+        as passes — the row genuinely did not get written, and pretending
+        otherwise would be the same mistake as calling an unexercised scenario
+        green. But failing every run on a known, understood, production-safe
+        artifact produces a red that means nothing, which is worse.
+        """
+        real, benign = [], []
+        for line in self.sql_errors():
+            for needle, why in self._BENIGN_SQL:
+                if needle in line:
+                    benign.append(f"{line.strip()[:160]}\n      {why}")
+                    break
+            else:
+                real.append(line)
+        return real, benign
+
     def sql_errors(self) -> list[str]:
         """SQL_ERROR / error lines from the daemon's own output.
 
