@@ -220,7 +220,7 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
 
 
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
-              map_name: str = "") -> dict:
+              map_name: str = "", during_play=None) -> dict:
     """Take the state machine LIVE, play, and end the match.
 
     This is what makes rows carry `match_id` and `half`. `recordEvent` injects
@@ -252,6 +252,14 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     out["live_from"] = _count(log_path, chr(34) + " killed " + chr(34))
 
     play(play_seconds=play_seconds, log_path=log_path)
+
+    if during_play is not None:
+        # Anything that needs the game actually running has to happen HERE,
+        # before end_match. Once the match ends the round is no longer live and
+        # the bots stop contesting points, so scenarios that need a cap in
+        # progress simply never stage — three of five aborted with "no flag is
+        # capturing right now" when they ran afterwards.
+        during_play()
 
     out["live_to"] = _count(log_path, chr(34) + " killed " + chr(34))
     driver.end_match(1, 0)
@@ -468,19 +476,21 @@ def main() -> int:
                             seconds=args.kill_switch_seconds)
                         report["assists_before_match"] = _count(
                             args.log, 'triggered "assist"')
+                    def _stage_scenarios():
+                        if drive_amxx is None:
+                            return
+                        print("staging cap-break scenarios", flush=True)
+                        report["break_scenarios"] = break_scenarios.run_all(
+                            handle, args.log)
+
                     if mh_amxx is not None:
                         report["match"] = run_match(
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
-                            map_name=args.map)
+                            map_name=args.map, during_play=_stage_scenarios)
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
-                    if drive_amxx is not None:
-                        # After the match: the scenarios need caps actually in
-                        # progress, and bots take a while to start contesting.
-                        print("staging cap-break scenarios", flush=True)
-                        report["break_scenarios"] = break_scenarios.run_all(
-                            handle, args.log)
+                        _stage_scenarios()
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
