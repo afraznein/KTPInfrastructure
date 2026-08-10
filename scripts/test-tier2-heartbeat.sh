@@ -27,8 +27,27 @@ chmod +x "$T/bin/py"
 : > "$T/agg.env"
 
 # jq stub — the script uses exactly two shapes, and Git Bash ships no jq.
-cat > "$T/bin/jq" <<'EOF'
-#!/usr/bin/env python
+#
+# Only installed where jq is genuinely missing. It goes on the front of PATH, so
+# installing it unconditionally SHADOWS a real jq — and its `python` shebang does
+# not resolve on the data server, which has python3 only. That combination made
+# every case fail there, including the control, on the one box whose whole
+# purpose is validating the DEPLOYED copy (see the invocation note at the top).
+if command -v jq >/dev/null 2>&1; then
+    : # real jq on PATH — use it
+else
+# Pick an interpreter that RUNS, not merely one that resolves: `command -v
+# python3` on Windows hits the Microsoft Store shim, which exists, exits 0 for
+# `command -v`, and then prints "Python was not found" for every real call.
+_PYBIN=""
+for _cand in python3 python; do
+    if command -v "$_cand" >/dev/null 2>&1 && "$_cand" -c 'import json,sys' >/dev/null 2>&1; then
+        _PYBIN="$(command -v "$_cand")"; break
+    fi
+done
+[ -n "$_PYBIN" ] || { echo "no working python for the jq stub, and no real jq"; exit 2; }
+printf '#!%s\n' "$_PYBIN" > "$T/bin/jq"
+cat >> "$T/bin/jq" <<'EOF'
 import json, sys
 a = sys.argv[1:]
 if "-n" in a:                                   # build: -n --arg k v ... '<shape>'
@@ -54,6 +73,7 @@ except Exception:
     print(dflt)
 EOF
 chmod +x "$T/bin/jq"
+fi
 
 mk_checker() {  # $1 = exit code, $2 = message
     cat > "$T/checker" <<EOF
