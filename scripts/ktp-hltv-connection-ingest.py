@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Ingest HLTV viewer-session LOG lines into hlstatsx.ktp_hltv_viewer_hits.
+"""Ingest HLTV connection LOG lines into hlstatsx.ktp_hltv_connections.
 
 The ufw rule (see /etc/ufw/before.rules) logs one line per (source IP, proxy
-port) per hour for flows that exceeded 200 packets -- i.e. genuine viewing
-sessions, not the server-browser scrapes that sweep all 24 ports.
+port) per hour for every new connection reaching the proxies. It deliberately
+does NOT filter to "real viewers" -- that judgement lives in
+ktp-hltv-correlate.py, because two attempts to make the kernel decide were both
+structurally wrong in production. So these rows are connection ATTEMPTS.
 
 Re-reads the whole (small) log every run and relies on INSERT IGNORE against a
 unique key rather than tracking a file offset: an offset file is one more thing
@@ -15,10 +17,10 @@ skip the tail of the previous week.
 import glob, gzip, re, subprocess, sys
 from datetime import datetime
 
-LOG_GLOB = "/var/log/ktp-hltv-viewers.log*"
+LOG_GLOB = "/var/log/ktp-hltv-connections.log*"
 LINE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2})\s+.*?"
-    r"KTP_HLTV_VIEW.*?\bSRC=(?P<src>\d+\.\d+\.\d+\.\d+).*?\bDPT=(?P<dpt>\d+)"
+    r"KTP_HLTV_CONN.*?\bSRC=(?P<src>\d+\.\d+\.\d+\.\d+).*?\bDPT=(?P<dpt>\d+)"
 )
 
 
@@ -62,7 +64,7 @@ def main():
                   % LOG_GLOB)
             return 1
         if stats["read"]:
-            print("%d line(s) read, 0 matched the KTP_HLTV_VIEW pattern -- "
+            print("%d line(s) read, 0 matched the KTP_HLTV_CONN pattern -- "
                   "check the rsyslog template still emits RFC3339 + the LOG prefix"
                   % stats["read"])
             return 1
@@ -72,7 +74,7 @@ def main():
         "('%s','%s',%d)" % (t.strftime("%Y-%m-%d %H:%M:%S"), ip, port)
         for t, ip, port in batch
     )
-    sql = ("INSERT IGNORE INTO ktp_hltv_viewer_hits (hit_time, src_ip, dst_port) "
+    sql = ("INSERT IGNORE INTO ktp_hltv_connections (hit_time, src_ip, dst_port) "
            "VALUES %s; SELECT ROW_COUNT();" % values)
     out = subprocess.run(["mysql", "-N", "-B", "hlstatsx"], input=sql,
                          capture_output=True, text=True)

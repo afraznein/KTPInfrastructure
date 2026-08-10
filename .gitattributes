@@ -24,3 +24,5 @@
 # CRLF crontab makes cron run a command with a trailing backslash-r and fail obscurely.
 scripts/cron.d/* text eol=lf
 ops/cron-inventory/**/cron.d/* text eol=lf
+# sql/ deploys verbatim to a Linux host the same way scripts/ does.
+*.sql text eol=lf

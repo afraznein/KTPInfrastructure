@@ -1,0 +1,3 @@
+# Ingest HLTV connection log lines into hlstatsx.ktp_hltv_connections.
+# Idempotent (INSERT IGNORE on a unique key), so a missed or doubled run is fine.
+*/15 * * * *  root  /usr/local/bin/ktp-hltv-connection-ingest.py >> /var/log/ktp-hltv-connection-ingest.log 2>&1
