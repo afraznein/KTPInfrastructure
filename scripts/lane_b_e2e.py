@@ -36,7 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.e2e_stats import assertions, metamod  # noqa: E402
+from tests.e2e_stats import assertions, log_invariants, metamod  # noqa: E402
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
@@ -74,10 +74,10 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
     return tree
 
 
-def drive_bots(handle, *, per_team: int, play_seconds: int, log_path: Path,
-               flag_priority: int = 100, wait_for_cap: int = 100,
-               bot_skill: int = 5, progress_every: int = 30) -> None:
-    """Fill both teams and let them play.
+def add_bots(handle, *, per_team: int, flag_priority: int = 100,
+             wait_for_cap: int = 100, bot_skill: int = 5,
+             settle: float = 15.0) -> None:
+    """Fill both teams and wait for them to spawn and engage.
 
     `flag_priority_percent 100` points new_bot at the flags rather than into
     deathmatch. Bots that ignore objectives generate kills all day and never a
@@ -117,8 +117,14 @@ def drive_bots(handle, *, per_team: int, play_seconds: int, log_path: Path,
         for team in ("allies", "axis"):
             handle.rcon(f"addbot {team}")
             time.sleep(0.8)
-    time.sleep(15)
+    # Bots need to spawn, pick a class and find each other. Starting a measured
+    # window before that gives an opening stretch with no kills in it, which
+    # would make the kill-switch check look inconclusive for the wrong reason.
+    time.sleep(settle)
 
+
+def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None:
+    """Let the match run, reporting what the log has accumulated."""
     for elapsed in range(progress_every, play_seconds + 1, progress_every):
         time.sleep(progress_every)
         body = log_path.read_text(errors="replace")
@@ -126,6 +132,71 @@ def drive_bots(handle, *, per_team: int, play_seconds: int, log_path: Path,
               f"assist={body.count('triggered ' + chr(34) + 'assist' + chr(34)):<3} "
               f"cap_break={body.count('triggered ' + chr(34) + 'cap_break' + chr(34)):<3}",
               flush=True)
+
+
+def _count(log_path: Path, needle: str) -> int:
+    return log_path.read_text(errors="replace").count(needle)
+
+
+def kill_switch_off_window(handle, *, log_path: Path, seconds: int) -> dict:
+    """Play with `ktp_stats_capture 0`, then turn it back on.
+
+    Unit 2 step 8, and worth more than its position on the list suggests: it is
+    the documented first move if anything looks wrong in production, ahead of
+    any redeploy. A rollback lever nobody has pulled is not a rollback lever.
+
+    Measured against kills rather than wall-clock, because "no assists in 60s"
+    proves nothing if the bots also stopped fighting.
+
+    This runs **before** the main match on purpose. Proving the switch turns
+    capture back ON needs enough play to produce an assist, and assists arrive
+    at roughly one a minute — a 60s window after re-enabling came back with 12
+    kills and 0 assists, which is entirely normal and proves nothing. Putting
+    the off-window first makes the whole match the evidence for re-enabling,
+    at no extra wall-clock cost.
+    """
+    handle.rcon("ktp_stats_capture 0")
+    before = {"assist": _count(log_path, 'triggered "assist"'),
+              "kills": _count(log_path, '" killed "')}
+    time.sleep(seconds)
+    off = {"assist": _count(log_path, 'triggered "assist"'),
+           "kills": _count(log_path, '" killed "')}
+    handle.rcon("ktp_stats_capture 1")
+
+    result = {"kills_while_off": off["kills"] - before["kills"],
+              "assists_while_off": off["assist"] - before["assist"]}
+    print(f"  kill switch off for {seconds}s: {result['kills_while_off']} kills, "
+          f"{result['assists_while_off']} assists (want 0)", flush=True)
+    return result
+
+
+def check_kill_switch(result: dict, *, assists_after_on: int) -> dict:
+    """Verdict on the kill switch. Same three-way shape as the rest.
+
+    `assists_after_on` is the whole match that followed the off-window, which
+    is what makes "it turned back on" provable at all.
+    """
+    if result["kills_while_off"] == 0:
+        return {"code": "kill_switch", "status": "not_exercised",
+                "detail": "no kills at all while capture was off, so silence "
+                          "proves nothing — the bots simply stopped fighting."}
+    if result["assists_while_off"] != 0:
+        return {"code": "kill_switch", "status": "pipeline",
+                "detail":
+                f"{result['assists_while_off']} assist(s) emitted during "
+                f"`ktp_stats_capture 0`. The documented rollback lever does "
+                f"not stop capture, so there is no way to turn this off in "
+                f"production short of a redeploy."}
+    if assists_after_on == 0:
+        return {"code": "kill_switch", "status": "not_exercised",
+                "detail":
+                f"capture correctly emitted nothing across "
+                f"{result['kills_while_off']} kills while off, but the match "
+                f"after re-enabling produced no assists either, so turning it "
+                f"back on is unproven this run."}
+    return {"code": "kill_switch", "status": "ok",
+            "detail": f"{result['kills_while_off']} kills produced 0 assists "
+                      f"while off; {assists_after_on} once re-enabled"}
 
 
 def main() -> int:
@@ -149,8 +220,11 @@ def main() -> int:
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
                          "more lone cappers and so more cap_breaks — untested; "
-                         "see drive_bots for what is and is not known")
+                         "see add_bots for what is and is not known")
     ap.add_argument("--flag-priority", type=int, default=100)
+    ap.add_argument("--kill-switch-seconds", type=int, default=60,
+                    help="seconds to play with ktp_stats_capture 0, then 1. "
+                         "0 skips the check (deployment plan Unit 2 step 8)")
     ap.add_argument("--port", type=int, default=27015)
     ap.add_argument("--log", type=Path, default=Path("/work/build/lane-b-e2e.log"))
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
@@ -204,10 +278,19 @@ def main() -> int:
                     print(f"server up (attempt {attempt})", flush=True)
                     report["boot_attempts"] = attempt
                     booted = True
-                    drive_bots(handle, per_team=args.per_team,
-                               play_seconds=args.play_seconds, log_path=args.log,
-                               flag_priority=args.flag_priority,
-                               wait_for_cap=args.wait_for_cap)
+                    add_bots(handle, per_team=args.per_team,
+                             flag_priority=args.flag_priority,
+                             wait_for_cap=args.wait_for_cap)
+                    if args.kill_switch_seconds:
+                        # Before the match, not after: proving capture came
+                        # back on needs enough play to produce an assist, and
+                        # the match itself is that evidence.
+                        report["kill_switch"] = kill_switch_off_window(
+                            handle, log_path=args.log,
+                            seconds=args.kill_switch_seconds)
+                        report["assists_before_match"] = _count(
+                            args.log, 'triggered "assist"')
+                    play(play_seconds=args.play_seconds, log_path=args.log)
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
@@ -228,10 +311,20 @@ def main() -> int:
             "kills": log_text.count('" killed "'),
             "assist": log_text.count('triggered "assist"'),
             "cap_break": log_text.count('triggered "cap_break"'),
+            "suicide": log_text.count('committed suicide with'),
+            "headshot": log_text.count('triggered "headshot_kill"'),
         }
         report["lines_fed"] = daemon.lines_fed
         report["sql_errors"] = daemon.sql_errors()[:20]
         report["rows"] = assertions.summarise(db)
+
+        # Attribution negatives, from the log rather than the database: the log
+        # is what capture emitted, so a violation here is a plugin bug and not
+        # something the daemon did. Deployment plan Unit 2 steps 4-5 and Unit 3.
+        report["log_invariants"] = log_invariants.summarise(log_text)
+        for kind in ("assist_violations", "break_violations"):
+            for v in report["log_invariants"][kind]:
+                failures.append(v)
 
         # Two separate verdicts. `failures` are defects; `gaps` are scenarios
         # the bots never produced, which say nothing either way and must not be
@@ -243,7 +336,14 @@ def main() -> int:
             assertions.check_carried(db, "cap_break", emitted=report["emitted"]["cap_break"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions"),
+            assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
+            assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
         ]
+        if report.get("kill_switch"):
+            carried.append(check_kill_switch(
+                report["kill_switch"],
+                assists_after_on=report["emitted"]["assist"]
+                - report.get("assists_before_match", 0)))
         report["carried"] = carried
         failures += [f"{c['code']}: {c['detail']}" for c in carried
                      if c["status"] == "pipeline"]
@@ -270,6 +370,8 @@ def main() -> int:
         r = rows[code]
         print(f"  {code:<12} log={e[code]:<4} ppa={r['ppa']:<4} pa={r['pa']}")
     print(f"  {'kills':<12} log={e['kills']:<4} frags={rows['frags']}")
+    print(f"  {'suicide':<12} log={e['suicide']:<4} suicides={rows['suicides']}"
+          f"  {rows['suicide_weapons'].splitlines()[1:] if rows['suicide_weapons'] else ''}")
     print(f"  players {rows['players']} ({rows['bots']} bot)")
     print(f"  assist positions: {rows['assist_positions']}")
     print(f"  break positions:  {rows['break_positions']}")

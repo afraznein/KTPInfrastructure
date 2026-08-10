@@ -6,9 +6,17 @@ by putting bots on a throwaway server and querying a throwaway database.
 Design and rationale: [`../integration/STATS_CAPTURE_E2E_DESIGN.md`](../integration/STATS_CAPTURE_E2E_DESIGN.md).
 What it verifies: [`../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`](../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md).
 
-**Status: end to end, green.** Bots play, the daemon writes, the assertions
-hold. A live run landed 4 assists, 1 cap_break and 57 frags in MySQL — every
-emitted line carried, none in the wrong table, positions varied and in-bounds. What each leg cost to get there is in
+**Status: end to end, green, and covering all four deployment units.** One live
+run:
+
+```
+  assist       ok   5/5 carried          kills 66 -> 66 frags
+  cap_break    ok   1/1 carried          players 16 (16 bot)
+  suicide      ok   2/2 carried          assist positions: 5 rows, 5 distinct
+  headshot     ok   13/13 carried        break  positions: 1 row, max_abs 1207
+  kill_switch  ok   10 kills produced 0 assists while off; 5 once re-enabled
+  attribution  0 violations
+``` What each leg cost to get there is in
 [`PHASE0_FINDINGS.md`](PHASE0_FINDINGS.md) — read it before debugging anything
 here.
 
