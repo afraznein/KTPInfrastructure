@@ -25,19 +25,26 @@ AMXX now sees every bot — `connected=1`, correct teams (`team=1` allies,
 
 ## ✅ RESOLVED — the whole chain reaches MySQL
 
-A live run — bots playing, daemon tailing, ephemeral MySQL — now lands rows:
+A live run — bots playing, daemon tailing, ephemeral MySQL — lands every row
+it should, with nothing in the wrong table:
 
 ```
                 log   ppa    pa
-  assist          7     7     0
-  kills          50    50   (frags)
+  assist          4     4     0
+  cap_break       1     0     1
+  kills          57    57   (frags)
   players 16 (16 bot)
-  assist positions: rows 7, null 0, all_zero 0, distinct 7, max_abs 1309
+  assist positions: rows 4, null 0, all_zero 0, distinct 4, max_abs 1664
+  break  positions: rows 1, null 0, all_zero 0, distinct 1, max_abs 1749
 ```
 
-and a replay of the earlier capture (`scripts/replay_daemon.py`) lands
-`5 assists → 5 PPA rows` and `1 cap_break → 1 PA row`, with the opposite table
-empty in both cases.
+Four live runs so far: 57/57, 95/95, 50/50 and 55/55 kills to frags, and every
+emitted assist carried (4/4, 12/12, 7/7, 5/5). A replay of the earlier capture
+(`scripts/replay_daemon.py`) lands 5/5 assists and 1/1 cap_break.
+
+cap_break appeared in two of the four live runs — see the README; it is
+ordinary rarity, and a run without one is reported `not_exercised` rather than
+green or broken.
 
 ### The `<BOT>` authid question: answered, and it was the wrong question
 
@@ -282,7 +289,8 @@ completely blind AMXX.
 | DODX forwards under bots | all fire |
 | **Capture code emitting** | **yes — 5 assists + 1 cap_break with positions** |
 | Daemon tree (upstream libs + fork delta) | assembles, boots, PROVENANCE recorded |
-| `hlstats.pl` → MySQL rows | **yes — 7/7 assists, 5/5 on replay, 1/1 cap_break, 50/50 frags** |
+| `hlstats.pl` → MySQL rows | **yes — every emitted line carried, across 4 live runs + replay** |
+| Full green live run | **yes — 4/4 assists, 1/1 cap_break, 57/57 frags** |
 | Assertions | written and unit-tested (78 passed) |
 
 ## Assertion posture, as built

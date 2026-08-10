@@ -6,9 +6,9 @@ by putting bots on a throwaway server and querying a throwaway database.
 Design and rationale: [`../integration/STATS_CAPTURE_E2E_DESIGN.md`](../integration/STATS_CAPTURE_E2E_DESIGN.md).
 What it verifies: [`../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`](../../docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md).
 
-**Status: end to end.** Bots play, the daemon writes, the assertions hold. A
-live 240s run landed 7 assists and 50 frags in MySQL with varied positions; a
-replay landed 5 assists and 1 cap_break. What each leg cost to get there is in
+**Status: end to end, green.** Bots play, the daemon writes, the assertions
+hold. A live run landed 4 assists, 1 cap_break and 57 frags in MySQL — every
+emitted line carried, none in the wrong table, positions varied and in-bounds. What each leg cost to get there is in
 [`PHASE0_FINDINGS.md`](PHASE0_FINDINGS.md) — read it before debugging anything
 here.
 
@@ -565,5 +565,18 @@ written:
   "almost certainly" is not verified. `--from-production` needs SSH to the data
   server. Until then every run's PROVENANCE says RECONSTRUCTION, which is the
   honest label.
-- **Getting a cap_break reliably.** One in a 240s run, none in the next. Either
-  lengthen the run or drive the scenario deliberately rather than hoping for it.
+- **Getting a cap_break reliably in a live run.** Assists arrive every time
+  (4, 5, 7, 12 across four runs); cap_break appeared in two of the four. It is
+  genuinely rare — a capper has to die inside the window.
+
+  Two hypotheses checked and **eliminated**: it is not a shortage of
+  interruptible captures (a run with a break had 19 `dod_capture_area` to 7
+  `dod_control_point`; one without had 16 to 12), and it is not bots capping in
+  packs (`wait_for_cap_percent 0` did not change the rate either way). Longer
+  runs did not help.
+
+  This is handled rather than unsolved: a run without one is reported
+  `not_exercised`, and the path is separately verified by `replay_daemon.py`
+  against a captured log. If it needs to be deterministic, drive the
+  scenario — put a bot in a zone and kill it — rather than tuning bot
+  behaviour and hoping.
