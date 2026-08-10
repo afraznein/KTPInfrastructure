@@ -60,11 +60,19 @@ ENV LANG=C.UTF-8
 RUN dpkg --add-architecture i386 && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-      # Database for the ephemeral instance. MariaDB rather than MySQL: it is
-      # the Ubuntu default, initialises without a root password ceremony, and
-      # hlstats.pl talks to it through DBD::mysql either way.
-      mariadb-server \
-      mariadb-client \
+      # Database for the ephemeral instance. MySQL, NOT MariaDB — this must
+      # match production, which is MySQL 8.0.46 on the data server.
+      #
+      # This is not a preference. `sql/ktp_schema.sql` in KTPHLStatsX uses
+      # `ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`, which is
+      # MariaDB-only syntax that MySQL rejects at every version — the file's own
+      # header documents this and warns that a FRESH install (LAN data-server
+      # provisioning) is where it silently applies almost nothing. On MariaDB
+      # those statements succeed, so a MariaDB-backed lane would go green on
+      # exactly the migration hazard it exists to catch, and would keep doing so
+      # right up until someone provisioned a real server.
+      mysql-server \
+      mysql-client \
       # hlstats.pl's DB layer. `perl -c hlstats.pl` aborts at `use DBI`
       # without these, so their absence would surface as a daemon that dies
       # three steps into a run rather than as a clear message.

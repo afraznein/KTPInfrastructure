@@ -216,6 +216,56 @@ are in `tests/e2e_stats/README.md`.
   on exit — a green-looking run that produced nothing; and WSL shuts the distro
   down between commands, taking `dockerd` with it.
 
+#### Database half green, and it caught a real MySQL incompatibility (same series)
+
+With ssh access to the data server, Lane B took a schema-only dump of
+production and the database half now passes 5/5:
+
+```
+[PASS] mysqld-private-instance  (MySQL 8.0.46 — same version string as production)
+[PASS] schema-load              1 schema + 2 seed files onto an empty database
+[PASS] schema-tables            64 tables
+[PASS] seed-assist              for_PlayerActions=0 for_PlayerPlayerActions=1, reward 0
+[PASS] seed-cap_break           for_PlayerActions=1 for_PlayerPlayerActions=0, reward 0
+```
+
+The last two are `KTPR_DEPLOYMENT_PLAN.md`'s most dangerous check — flags the
+wrong way round record every event twice and double-apply the reward — now
+verified automatically rather than by hand.
+
+- **Switched the image from MariaDB to MySQL**, and this is load-bearing rather
+  than tidiness. `sql/ktp_schema.sql` uses `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, which is MariaDB-only; production is MySQL
+  8.0.46 and rejects it with `ERROR 1064`, aborting before every later
+  statement. The file's own header documents exactly this and warns that a
+  *fresh* install — LAN data-server provisioning — is where it "silently
+  applies almost nothing". **On the MariaDB build the run passed.** A
+  MariaDB-backed lane would have gone green on the one migration hazard already
+  written down in the repo. Standing item for the project: `ktp_schema.sql`
+  still needs porting to plain `ALTER`s before a fresh MySQL install relies on
+  it.
+- **`scripts/fetch_base_schema.sh`** — read-only, repeatable production schema
+  dump (`--no-data --single-transaction --skip-lock-tables --no-tablespaces`).
+  Verified against production: **64 tables, 0 INSERTs**. Needed because no repo
+  contains a base schema — `ktp_schema.sql` is an ALTER-only overlay, so an
+  empty database cannot be built from source, which is the same reason a fresh
+  LAN provision is the documented hazard.
+- Two grant limitations, handled rather than routed around: **`hlstats_Servers`
+  is denied** to the read-only account (HLStatsX keeps per-server rcon
+  configuration there), so the table is reconstructed from `information_schema`
+  metadata — types, nullability, defaults, indexes — reading no values; and
+  **views are denied** (`SHOW VIEW`), which aborts mysqldump mid-run, so the
+  table list is enumerated explicitly rather than left to its own discovery.
+- **`--no-defaults` also has to be first on the *initialiser*.** Without it
+  MySQL reads Ubuntu's `mysqld.cnf`, drops to the `mysql` user, and then cannot
+  read a root-owned `0700` datadir — surfacing as
+  `[MY-013276] Failed to set datadir … (OS errno: 13)`, which reads as a
+  filesystem permissions problem rather than as "it read a config we did not
+  want".
+- A production-derived base already carries `match_id`, `half` and `pos_x/y/z`,
+  so `ktp_schema.sql` is redundant on top of it and is no longer applied by
+  default; `LANE_B_APPLY_KTP_SCHEMA=1` reproduces its MySQL failure on purpose.
+
 #### Verification (container path)
 
 - `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite

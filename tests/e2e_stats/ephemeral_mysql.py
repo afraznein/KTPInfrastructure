@@ -137,9 +137,17 @@ class EphemeralMysql:
         # server itself.
         as_root = ["--user=root"] if _is_root() else []
         attempts = [
-            # MySQL 5.7+/8.x
-            [self.mysqld, f"--datadir={self.datadir}", "--initialize-insecure",
-             "--basedir=/usr", "--log-error-verbosity=1", *as_root],
+            # MySQL 5.7+/8.x. --no-defaults FIRST, same as the server launch and
+            # for a sharper reason here: Ubuntu's /etc/mysql/mysql.conf.d/
+            # mysqld.cnf sets `user = mysql`, so without it the initialiser
+            # drops privileges to the mysql user and then cannot read a
+            # root-owned 0700 datadir. That surfaces as
+            #   [ERROR] [MY-013276] Failed to set datadir ... (OS errno: 13)
+            # which reads as a filesystem permissions problem rather than as
+            # "it read a config file we did not want it to read".
+            [self.mysqld, "--no-defaults", f"--datadir={self.datadir}",
+             "--initialize-insecure", "--basedir=/usr",
+             "--log-error-verbosity=1", *as_root],
         ]
         install_db = _which("mariadb-install-db", "mysql_install_db")
         if install_db:
