@@ -55,7 +55,7 @@ from tests.integration.match_flow import MatchDriver, MatchType  # noqa: E402
 from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from lane_b_e2e import (BOOT_ATTEMPTS, add_bots, build_test_mode_matchhandler,  # noqa: E402
+from lane_b_e2e import (BOOT_ATTEMPTS, build_test_mode_matchhandler,  # noqa: E402
                         compile_sma, stage_tree)
 
 _ROSTER_RE = re.compile(r"\[MD\] roster allies=(\d+) axis=(\d+) total=(\d+)")
@@ -121,8 +121,88 @@ def play_half(*, seconds: int, log_path: Path, label: str,
             "kills": body.count('" killed "') - start_kills}
 
 
+# A fixed roster, so the fixture has stable identities. The daemon derives a
+# bot's uniqueid from md5(name + server address), so re-adding the SAME names
+# after a map change brings the SAME players back — which is what lets a
+# halftime side swap happen without inventing twelve new people.
+ROSTER_ALLIES = ["Bishop", "Cutter", "Dallas", "Hicks", "Kane", "Ripley"]
+ROSTER_AXIS = ["Ash", "Burke", "Ferro", "Hudson", "Lambert", "Parker"]
+
+# new_bot's classes, cycled so a team is not six snipers. `addbot` needs a
+# class before it will accept a name.
+_CLASSES = ["rifle", "assault", "support", "sniper", "mg", "rocket"]
+
+
+def add_named_bots(handle, *, allies: list[str], axis: list[str],
+                   skill: int = 5, settle: float = 20.0) -> dict:
+    """Fill both teams with named bots.
+
+    `addbot {team} {class} {skill} {name}` is the only form that takes a name,
+    and the name is the whole point: it is what the daemon hashes into a
+    player identity, so controlling it is what makes a roster persist across a
+    map change.
+    """
+    # Manage the roster here, not in new_bot. `balance teams on` plus a server
+    # that is exactly full made new_bot try to remove a bot on a loop — 78
+    # blocked kick attempts in one half — because KTP's own plugin refuses
+    # console kicks. With an explicit roster there is nothing to balance.
+    for cmd in ("balance teams off", "target_players 0",
+                "flag_priority_percent 100", "wait_for_cap_percent 100"):
+        handle.rcon(cmd)
+
+    # Interleaved rather than team-by-team, so the sides never differ by more
+    # than one while filling.
+    #
+    # NOTE: this was tried as a fix for new_bot adding bots of its own choosing
+    # alongside the named roster, on the theory that a 6-0 gap triggered an
+    # auto-fill. It is NOT the cause — interleaving changed nothing, and the
+    # strays still appear (~5 of them, e.g. Gruntilda, SHODAN, Snake). The
+    # interleaving is kept because it is harmless and marginally tidier, not
+    # because it solves anything.
+    #
+    # Consequence for the fixture: the 12 named bots are stable and DO persist
+    # across halves and matches, which is what identity depends on, but the
+    # player count is ~17 rather than 12. Anything asserting an exact roster
+    # size will fail; anything keyed on the named players is fine.
+    for i in range(max(len(allies), len(axis))):
+        for team, names in (("allies", allies), ("axis", axis)):
+            if i >= len(names):
+                continue
+            handle.rcon(
+                f"addbot {team} {_CLASSES[i % len(_CLASSES)]} {skill} {names[i]}")
+            time.sleep(0.8)
+    time.sleep(settle)
+    return {"allies": list(allies), "axis": list(axis)}
+
+
+def reload_map(handle, *, map_name: str, log_path: Path,
+               timeout: float = 90.0) -> bool:
+    """changelevel, and wait for the map to actually come back.
+
+    This is what production's halftime does — `handle_first_half_end` sets
+    `amx_nextmap` and the map changes — and it is not optional dressing. The
+    map change is what respawns everybody. Without it the second half is
+    played by corpses: a forced team change kills the player (dodx_set_user_team
+    documents this), and nothing brings them back.
+    """
+    mark = len(log_path.read_text(errors="replace"))
+    handle.rcon(f"changelevel {map_name}")
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(2.0)
+        tail = log_path.read_text(errors="replace")[mark:]
+        if f"Mapchange to {map_name}" in tail or "STARTED MAP" in tail:
+            # The map line appears before plugins finish loading; give AMXX and
+            # new_bot a moment or the first addbot is dropped on the floor.
+            time.sleep(12.0)
+            return True
+    return False
+
+
 def run_one_match(handle, *, index: int, half_seconds: int, log_path: Path,
-                  map_name: str, bot_skill: int | None = None) -> dict:
+                  map_name: str, allies: list, axis: list,
+                  bot_skill: int | None = None) -> dict:
     """One match: two halves, sides swapped between them, one match_id."""
     driver = MatchDriver(handle)
     out: dict = {"index": index, "map": map_name}
@@ -146,15 +226,34 @@ def run_one_match(handle, *, index: int, half_seconds: int, log_path: Path,
     out["half1"] = play_half(seconds=half_seconds, log_path=log_path,
                              label=f"m{index}h1")
 
-    # Halftime. end_first_half carries the half-1 scores into the plugin's own
-    # state, which is what makes the second half a continuation rather than a
-    # fresh match.
+    # Halftime, production-shaped. `handle_first_half_end` clears the match
+    # context, sets amx_nextmap to the current map, and expects a MAP CHANGE —
+    # the second half is a fresh map with the sides swapped, not a pause.
     driver.end_first_half(2, 1)
-    out["swap"] = swap_teams(handle, log_path)
-    print(f"  match {index}: halftime — {out['swap']['moved']} swapped, "
-          f"{out['swap']['stayed']} stayed", flush=True)
+    out["halftime"] = {"sides_before": {"allies": allies, "axis": axis}}
+
+    if not reload_map(handle, map_name=map_name, log_path=log_path):
+        raise SystemExit(
+            f"map did not reload within the timeout at match {index} halftime. "
+            f"Without the reload nothing respawns and the second half is played "
+            f"by corpses, so this run would produce a half-empty fixture.")
+
+    # Same names, opposite sides. Re-adding rather than force-swapping is what
+    # production effectively does, and it is also the only thing that respawns
+    # them — a forced team change kills the player and leaves them there.
+    allies, axis = axis, allies
+    add_named_bots(handle, allies=allies, axis=axis, skill=bot_skill or 5)
+    out["halftime"]["sides_after"] = {"allies": allies, "axis": axis}
+    out["halftime"]["roster"] = read_roster(handle, log_path)
+    print(f"  match {index}: halftime — map reloaded, sides swapped "
+          f"({out['halftime']['roster']['allies']} allies / "
+          f"{out['halftime']['roster']['axis']} axis)", flush=True)
 
     driver.advance_live(2)
+    # advance_live only flips plugin state; fire_match_start_log is what emits
+    # KTP_MATCH_START, and that log line is what re-establishes the daemon's
+    # match context. Without it half two records but is not tagged.
+    driver.fire_match_start_log()
     print(f"  match {index}: half 2 live", flush=True)
     time.sleep(5.0)
     out["half2"] = play_half(seconds=half_seconds, log_path=log_path,
@@ -163,6 +262,7 @@ def run_one_match(handle, *, index: int, half_seconds: int, log_path: Path,
     driver.end_match(2, 3)
     print(f"  match {index}: ended "
           f"({out['half1']['kills']} + {out['half2']['kills']} kills)", flush=True)
+    out["sides_at_end"] = {"allies": allies, "axis": axis}
     return out
 
 
@@ -290,28 +390,37 @@ def main() -> int:
             try:
                 with booted_subprocess(args.serverfiles, map_name=args.map,
                                        port=args.port,
-                                       maxplayers=args.per_team * 2,
+                                       # Slack above the roster size: with the server exactly full,
+                                       # new_bot decides it is over capacity.
+                                       maxplayers=args.per_team * 2 + 4,
                                        rcon_password="smoketest",
                                        server_cfg="lane_b_server.cfg",
                                        log_file=args.log, boot_timeout=90.0,
                                        extra_args=topo.extra_args) as handle:
                     booted = True
                     print(f"server up (attempt {attempt})", flush=True)
-                    add_bots(handle, per_team=args.per_team)
+                    allies = ROSTER_ALLIES[:args.per_team]
+                    axis = ROSTER_AXIS[:args.per_team]
+                    add_named_bots(handle, allies=allies, axis=axis)
                     report["initial_roster"] = read_roster(handle, args.log)
                     print(f"roster: {report['initial_roster']['allies']} allies / "
                           f"{report['initial_roster']['axis']} axis", flush=True)
 
                     skills = [int(x) for x in args.skills.split(",") if x.strip()]
                     for i in range(1, args.matches + 1):
-                        report["matches"].append(run_one_match(
+                        m = run_one_match(
                             handle, index=i, half_seconds=args.half_seconds,
                             log_path=args.log, map_name=args.map,
-                            bot_skill=skills[(i - 1) % len(skills)] if skills else None))
-                        # Between matches too, so a player's side is not
-                        # correlated with match number across the fixture.
-                        if i < args.matches:
-                            swap_teams(handle, args.log)
+                            allies=allies, axis=axis,
+                            bot_skill=skills[(i - 1) % len(skills)] if skills else None)
+                        report["matches"].append(m)
+                        # Carry the sides forward: after a halftime swap the
+                        # teams are already inverted, so the next match starts
+                        # from there rather than resetting. Over three matches a
+                        # player therefore appears on both sides repeatedly,
+                        # which is the point of keeping one roster.
+                        allies = m["sides_at_end"]["allies"]
+                        axis = m["sides_at_end"]["axis"]
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
