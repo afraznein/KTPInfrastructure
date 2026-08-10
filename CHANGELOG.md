@@ -309,6 +309,48 @@ Note: the image now contains a third-party binary that is not ours to
 redistribute, so **it must not be pushed to a public registry**. It is a
 local/CI artifact; the fleet consumes no images at all.
 
+#### Bots run. Phase 0's premise is verified. (same series)
+
+The question that has gated this work since the beginning — *can we get real
+players into the world?* — is answered yes.
+
+`scripts/spike_metamod_ab.py --split-layers` returns **8/8, exit 0**: both
+topologies show 3 modules and the same plugin count, `amxxcurl + reapi + dodx`
+present under both, and **zero differences**. And in ~60s of bot play on
+`dod_anzio`: 12 bots entered / joined a team / picked a role, **10 kills** with
+real weapons (thompson, luger, mp40, k43), **10 `triggered` events including
+`dod_control_point` captures** on HILL / LAUNDRY / STREET / PLAZA, and 692
+waypoints loaded.
+
+Bots fight *and* capture flags — the two inputs the capture code needs: kills
+drive assist attribution and cap-break candidacy, flag contention drives the
+`dodx_area_get_data` zone poll. This retires the "24-player synthetic load —
+requires bot tooling" non-goal in `TEST_INFRASTRUCTURE_PLAN.md` and the
+`BOT_AI_REQUIRED_REASON` skips from 1.5.25.
+
+- **The topology that works is `--split-layers`**: ktpamx keeps loading via
+  `extensions.ini` exactly as production does, and Metamod hosts **only** the
+  bot. Each loads once, at its own hook point, and ktpamx still logs "Running
+  without Metamod - using ReHLDS hookchains". The obvious topology — Metamod
+  hosting both — **segfaults 3 of 3**, because ktpamx reports "ReHLDS extension
+  mode detected" even when Metamod loads it and so installs ReHLDS hookchains
+  from inside Metamod's chain.
+- **The bot cannot live inside KTPAMXX**, which is worth recording because it
+  looks plausible. AMX Mod X is not a fork of Metamod, it is a Metamod *plugin*
+  — hence `Meta_Attach` in `ktpamx_i386.so`. `CModule::queryModule()` checks
+  modules for `Meta_Attach` only to label them `"amxx&mm"`; it still requires
+  `AMXX_Query`. `new_bot_mm.so` has 0 of the former and 1 of the latter, and the
+  engine says `[AMXX] Couldn't find "AMXX_Query"`.
+- **The fingerprint now reads the server log, not rcon.** `amxx modules` /
+  `amxx plugins` return *nothing* over rcon in extension mode — verified
+  directly: with the server fully up, `status` returned 230 characters while
+  `amxx version` and `amxx modules` both returned 0, and the log meanwhile
+  showed "Completed initialization" and "SV_ActivateServer". AMXX is fine; its
+  console commands just do not emit into rcon's redirect buffer when it is
+  loaded as a ReHLDS extension. The log carries the same facts and does not
+  depend on command registration, so it is now the primary source with rcon
+  supplementary.
+
 #### Verification (container path)
 
 - `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite

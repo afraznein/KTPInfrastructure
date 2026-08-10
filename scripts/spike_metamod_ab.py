@@ -47,7 +47,8 @@ if str(_REPO_ROOT) not in sys.path:
 from tests.e2e_stats import metamod  # noqa: E402
 from tests.e2e_stats.bot_driver import SPECS  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
-from tests.e2e_stats.fingerprint import capture, diff  # noqa: E402
+from tests.e2e_stats.fingerprint import (capture, capture_from_log, diff,  # noqa: E402
+                                         merge)
 from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 
 
@@ -119,7 +120,12 @@ def boot_and_fingerprint(tree, *, label, map_name, extra_args, cfg_name,
                 boot_timeout=boot_timeout,
                 extra_args=extra_args,
             ) as handle:
-                fp = capture(handle, label)
+                # Log first: `amxx modules` returns nothing over rcon in
+                # extension mode (verified — `status` answers, `amxx *` does
+                # not), so the log is the source of truth and rcon only adds
+                # whatever it can.
+                rcon_fp = capture(handle, label, timeout=10.0)
+            fp = merge(capture_from_log(log_file, label), rcon_fp)
             return fp, log_file, attempt
         except Exception as e:  # noqa: BLE001 — retry the known race, then give up
             last = e

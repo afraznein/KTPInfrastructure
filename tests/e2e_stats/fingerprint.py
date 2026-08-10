@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # `amxx modules` / `amxx plugins` are fixed-column. tests/smoke/parse.py already
 # has truncation-aware parsers keyed off KTPAMXX's srvcmd.cpp format strings;
@@ -114,6 +115,74 @@ def capture(handle, topology: str, *, timeout: float = 45.0,
         if fp.modules or time.monotonic() >= deadline:
             return fp
         time.sleep(poll_interval)
+
+
+# ---------------------------------------------------------------------------
+# Log-derived fingerprint — the primary source
+# ---------------------------------------------------------------------------
+#
+# `amxx modules` / `amxx plugins` return NOTHING over rcon in extension mode.
+# Verified directly: with the server fully up, `status` returns 230 characters
+# while `amxx version` and `amxx modules` both return 0, and the log meanwhile
+# shows "Completed initialization" and "SV_ActivateServer". So AMXX is running
+# fine — its console commands simply do not emit into rcon's redirect buffer
+# when it is loaded as a ReHLDS extension rather than a Metamod plugin.
+#
+# The server log carries the same facts and does not depend on command
+# registration, so it is the primary source and rcon is supplementary. It is
+# arguably the better signal anyway: module *initialisation* lines say more
+# about whether a loader change broke something than a status table does.
+
+_MODULE_SIGNATURES = {
+    # module -> substrings that prove it initialised
+    "reapi":    ("[ReAPI] Extension mode initialized", "[ReAPI] Registered"),
+    "dodx":     ("[DODX] Running in ReHLDS extension mode", "[DODX] Using default pdata"),
+    "amxxcurl": ("[CURL] Module loaded",),
+}
+
+_PLUGIN_COUNT = re.compile(r"Loaded (\d+) plugin\(s\)")
+_FAILURE_MARKERS = (
+    "bad load", "failed to load", "is not a valid library",
+    "Couldn't find \"AMXX_Query\"", "MODULE_NOQUERY", "Module is not a valid",
+)
+
+
+def capture_from_log(log_path, topology: str) -> Fingerprint:
+    """Build a fingerprint from the server log rather than rcon."""
+    fp = Fingerprint(topology=topology)
+    try:
+        body = Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return fp
+
+    for name, sigs in _MODULE_SIGNATURES.items():
+        if any(s in body for s in sigs):
+            fp.modules[name] = "running"
+
+    counts = [int(m) for m in _PLUGIN_COUNT.findall(body)]
+    if counts:
+        # Plugins are listed by count, not by name, so synthesise a single
+        # entry. The count is what a loader change would move.
+        fp.plugins[f"<{max(counts)} plugins>"] = "running"
+
+    for marker in _FAILURE_MARKERS:
+        if marker.lower() in body.lower():
+            fp.modules[f"<failure: {marker}>"] = "bad load"
+
+    fp.raw["log_markers"] = "; ".join(
+        f"{k}={body.count(k)}" for k in
+        ("Completed initialization", "SV_ActivateServer", "plugin_init deferred")
+    )
+    return fp
+
+
+def merge(primary: Fingerprint, secondary: Fingerprint) -> Fingerprint:
+    """Prefer the log-derived facts, fold in anything rcon managed to add."""
+    out = Fingerprint(topology=primary.topology)
+    out.modules = {**secondary.modules, **primary.modules}
+    out.plugins = {**secondary.plugins, **primary.plugins}
+    out.raw = {**secondary.raw, **primary.raw}
+    return out
 
 
 # The three modules production runs. Named explicitly: "the sets are equal" is
