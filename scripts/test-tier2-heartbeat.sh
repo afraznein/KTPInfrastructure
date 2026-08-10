@@ -169,6 +169,22 @@ mk_marker success 3600; mk_checker 0 "in sync"
 printf 'failed|%s' "$(date +%s)" > "$T/state"
 out="$(run_hb)"; check "recovered embed" "recovered" "$(cat "$T/last-payload.json")"
 
+echo "== 10. a non-success outcome that is not the literal 'failure' =="
+# The 2026-08-09/10 blind spot. The suite wedged in teardown, GitHub killed the
+# job at its 30m ceiling, and the workflow wrote outcome="cancelled". The old
+# `= "failure"` test matched none of it, so the heartbeat reported OK on two
+# consecutive mornings while the suite had not completed once. Every case above
+# uses success/failure only, which is exactly why nothing caught this.
+for bad in cancelled timed_out unknown ""; do
+    mk_marker "$bad" 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+    out="$(run_hb)"
+    check "outcome '${bad:-<empty>}' is unhealthy" "failed" "$(cat "$T/state")"
+done
+# Control: the allowlist must still let a real success through, or "everything
+# is unhealthy" would pass this block for the wrong reason.
+mk_marker success 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+out="$(run_hb)"; check "control: success is still ok" "ok|" "$(cat "$T/state")"
+
 echo
 echo "passed $pass, failed $fail"
 [ "$fail" -eq 0 ]
