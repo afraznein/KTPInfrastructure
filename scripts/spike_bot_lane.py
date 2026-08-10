@@ -324,6 +324,11 @@ def main() -> int:
     ap.add_argument("--per-team", type=int, default=3)
     ap.add_argument("--play-seconds", type=int, default=180)
     ap.add_argument("--copy-mode", default="hardlink", choices=("hardlink", "full"))
+    ap.add_argument("--in-place", action="store_true",
+                    help="Use --serverfiles directly with NO copy. Only for the "
+                         "containerised lane (build/lane-b/), where the whole "
+                         "filesystem is thrown away on exit. Never point this at "
+                         "a fleet-matching tree.")
     ap.add_argument("--tree-parent", type=Path, default=None,
                     help="Where to build the ephemeral tree; must share a "
                          "filesystem with --serverfiles for hardlinks to work.")
@@ -350,15 +355,20 @@ def main() -> int:
             kit = check_bot_kit(report, args.bot_kit, args.bot, args.map)
 
             base_cfg = (_REPO_ROOT / "tests" / "smoke" / "fixtures" / "test_server.cfg").read_text()
-            with EphemeralTree.build(
-                args.serverfiles,
-                copy_mode=args.copy_mode,
-                parent=args.tree_parent,
-                keep=args.keep,
-            ) as tree:
+            if args.in_place:
+                tree_cm = EphemeralTree.in_place(args.serverfiles)
+            else:
+                tree_cm = EphemeralTree.build(
+                    args.serverfiles,
+                    copy_mode=args.copy_mode,
+                    parent=args.tree_parent,
+                    keep=args.keep,
+                )
+            with tree_cm as tree:
                 report.step("ephemeral-tree", True,
-                            f"{tree.path} ({args.copy_mode} from {tree.source})",
-                            tree=str(tree.path))
+                            f"{tree.path} ({tree.copy_mode}"
+                            + ("" if tree.is_in_place else f" from {tree.source}") + ")",
+                            tree=str(tree.path), copy_mode=tree.copy_mode)
                 kit.stage_into(tree)
                 tree.write_text("dod/spike_server.cfg", _spike_cfg(base_cfg, play=True))
 

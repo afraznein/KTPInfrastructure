@@ -21,6 +21,51 @@ that way would pass while proving nothing.
 Real bodies in real zones are the only way. That is what this lane buys, and
 it is why it is separate from — not a replacement for — Tier 2.
 
+## The containerised path is the primary one
+
+`build/lane-b/` builds an image `FROM ghcr.io/<owner>/ktp-runtime-test-base`
+adding MariaDB, the Perl DBI stack, and the 32-bit runtime a bot `.so` needs.
+Run it on a GitHub-hosted runner via
+[`.github/workflows/lane-b-stats-e2e.yml`](../../.github/workflows/lane-b-stats-e2e.yml),
+or locally with `build/lane-b/docker-compose.lane-b.yml`.
+
+This supersedes most of the original host-based design, for four concrete
+reasons:
+
+1. **`amxxpc` is already in the base image** at
+   `/opt/hlds/dod/addons/ktpamx/scripting/amxxpc`, and `smoke-callable.yml:324`
+   already compiles plugins by `docker run`-ing it. The "no AMXX toolchain"
+   problem was self-inflicted.
+2. **The container filesystem is ephemeral and isolated by construction**, so
+   there is no fleet-matching tree to contaminate — hence `EphemeralTree.in_place()`,
+   which skips the copy entirely. Copying 2 GB inside a container that is itself
+   thrown away buys nothing.
+3. **It pins glibc to Ubuntu 22.04's 2.35**, below the 2.41 threshold where the
+   loader refuses shared libraries needing an executable stack. That is the most
+   likely reason a 20-year-old DoD bot `.so` fails on a modern host, so
+   controlling glibc is a real advantage rather than a side effect.
+4. **It runs nowhere near production.** The Tier 2 runner is on the data server,
+   which also runs production HLStatsX and is deliberately Docker-free.
+   GH-hosted has Docker, no production anything, and no route to the fleet.
+
+⚠️ **What the image does not give you.** It is a *reconstruction* of the fleet
+built from repo refs. The real fleet is bare metal — 5 hosts, artifacts staged
+as `.new` and swapped at the 03:00 ET restart (`docs/DEPLOYING.md`). So green in
+Lane B means "this branch's code works against this branch's stack", which is
+what you want when testing a branch. It does **not** mean "works against what is
+currently deployed". That question still belongs to the Tier 2 runner's
+fleet-matching tree and its drift tripwire, and nothing here retires either.
+
+The bot is **not baked into the image** — Marine Bot / new_bot are third-party
+and not ours to redistribute, and an image pushed to GHCR would publish them. It
+is mounted at run time (`-v ./bot-kit:/opt/bot-kit:ro`), which also keeps the
+image publishable and bot-free.
+
+The host-based modules below still work and are still tested; use them when
+running without Docker. `EphemeralTree.build()` (copy + integrity guard) is the
+default everywhere outside the container, and `in_place()` must never be pointed
+at a fleet-matching tree.
+
 ## Three hard constraints, and how they are met
 
 **1. Do not contaminate the fleet-matching tree.** `help.md` requires

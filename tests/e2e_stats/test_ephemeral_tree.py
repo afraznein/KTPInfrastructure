@@ -147,6 +147,47 @@ def test_excluded_patterns_are_not_copied(source, tmp_path):
         assert not (tree.path / "stack-bak-20260101").exists()
 
 
+def test_in_place_writes_directly_and_makes_no_copy(source):
+    """The containerised lane's mode: /opt/hlds IS the working tree."""
+    tree = EphemeralTree.in_place(source)
+    assert tree.path == source
+    assert tree.is_in_place
+    tree.write_text("dod/test_server.cfg", "hostname in-place\n")
+    assert (source / "dod" / "test_server.cfg").read_text() == "hostname in-place\n"
+
+
+def test_in_place_teardown_does_not_report_integrity_failure(source):
+    """In-place writes intentionally change 'the source', so the shadow-hash
+    check must be disabled — otherwise every containerised run would end in a
+    spurious TreeIntegrityError."""
+    with EphemeralTree.in_place(source) as tree:
+        tree.write_text("dod/test_server.cfg", "hostname in-place\n")
+        tree.overlay_file(_fake_bot(source.parent), "dod/addons/marinebot/marinebot.so")
+    # Exiting the context ran verify_source_untouched(); no exception is the
+    # assertion. And the tree must still exist — deleting /opt/hlds would be
+    # a spectacular own goal.
+    assert (source / "hlds_linux").exists()
+
+
+def _fake_bot(where):
+    p = where / "marinebot.so"
+    p.write_bytes(b"\x7fELF fake bot")
+    return p
+
+
+def test_in_place_refuses_a_tree_without_hlds(tmp_path):
+    empty = tmp_path / "nope"
+    empty.mkdir()
+    with pytest.raises(FileNotFoundError, match="hlds_linux"):
+        EphemeralTree.in_place(empty)
+
+
+def test_in_place_still_refuses_writes_outside_the_tree(source):
+    tree = EphemeralTree.in_place(source)
+    with pytest.raises(ValueError, match="outside the ephemeral tree"):
+        tree.write_text("../escaped.cfg", "nope")
+
+
 def test_symlinks_are_preserved_not_dereferenced(source, tmp_path):
     """serverfiles trees carry symlinks (steam sdk paths). Dereferencing them
     would inflate the copy and can break dlopen resolution."""

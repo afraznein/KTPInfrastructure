@@ -1,0 +1,70 @@
+# Lane B — stats-capture e2e, containerised.
+#
+# One service. The Python driver inside the container brings up mariadbd, hlds
+# (with the bot), and hlstats.pl itself, so there is nothing to orchestrate
+# between containers — no service-dependency ordering, no shared network, and
+# the seeds-before-daemon ordering stays expressed as fixture order in one
+# process rather than as compose healthchecks.
+#
+# Usage:
+#   # bot kit must exist locally; it is NOT in the image and NOT in this repo
+#   docker compose -f build/lane-b/docker-compose.lane-b.yml build
+#   docker compose -f build/lane-b/docker-compose.lane-b.yml run --rm lane-b
+#
+#   # Phase 0 spike instead of the (not yet written) assertions:
+#   docker compose -f build/lane-b/docker-compose.lane-b.yml run --rm lane-b \
+#       python3 scripts/spike_bot_lane.py --serverfiles /opt/hlds \
+#           --bot-kit /opt/bot-kit --bot marinebot --play-seconds 180 \
+#           --copy-mode full --tree-parent /tmp \
+#           --schema /work/build/lane-b-artifacts/sql/ktp_schema.sql \
+#           --seed   /work/build/lane-b-artifacts/sql/migrate_003_assist_action.sql \
+#                    /work/build/lane-b-artifacts/sql/migrate_004_cap_break_action.sql \
+#           --out /work/build/spike-report.json
+
+services:
+  lane-b:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Override to test against a pinned base rather than :latest — worth
+        # doing when chasing a result you need to reproduce, since :latest is
+        # rebuilt nightly and moves under you.
+        BASE_IMAGE: ${LANE_B_BASE_IMAGE:-ghcr.io/afraznein/ktp-runtime-test-base:latest}
+    image: ktp-lane-b:${VERSION:-latest}
+
+    volumes:
+      # Harness + scripts, read-only: edit on the host, rerun without a rebuild.
+      - ../../tests:/work/tests:ro
+      - ../../scripts:/work/scripts:ro
+      # Build outputs and reports come back out to the host.
+      - ../../build/lane-b-artifacts:/work/build
+      # The bot. Not in the image (third-party, not ours to redistribute) and
+      # not in this repo (.gitignore'd). Read-only so a run cannot mutate the
+      # only copy of a waypoint set.
+      - ${LANE_B_BOT_KIT:-../../bot-kit}:/opt/bot-kit:ro
+
+    # hlds wants a real tty for its console in some configurations, and an
+    # interactive run is much easier to debug.
+    tty: true
+
+    # The engine binds 127.0.0.1 in the harness, and the daemon reads a unix
+    # socket, so nothing needs to be published. Keeping the network internal
+    # means a misconfigured test cannot reach the production data server or a
+    # live game server.
+    network_mode: none
+
+    environment:
+      # Consumed by tests/integration/conftest.py's external/subprocess mode
+      # selection. Left unset here on purpose: Lane B boots its own server.
+      KTP_HLDS_SERVERFILES: ""
+      # Report path, mirroring the Tier 2 convention so the same post-run
+      # Discord step can consume it.
+      KTP_TIER2_REPORT_PATH: /work/build/lane-b-report.json
+
+    # The bot .so may need an executable stack on some builds. Ubuntu 22.04's
+    # glibc 2.35 does not enforce the 2.41 restriction, so this is normally
+    # unnecessary — uncomment only if the loader complains, and note it in the
+    # spike report rather than leaving it on silently.
+    # security_opt:
+    #   - seccomp:unconfined
