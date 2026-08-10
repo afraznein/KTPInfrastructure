@@ -17,6 +17,12 @@ reproduces the published Difficulty: Tourist row exactly (hildebrand 67-13);
 weapon-scoped counts are `hlstats_Events_Frags` filtered by weapon, which
 agrees with `ktp_match_stats.kills` on all 55 match totals.
 
+⚠️ The melee award added later that day is scoped to `match-teams.json` (56),
+not to those 55. The two sets are not the same question: 55 is "matches that
+logged a ktp_match_end", 56 is the curated tournament set, which also holds
+`1785715972-KTP1` — real play, 12 players, 263 kills, whose logging died before
+the match could close. Anything counted off the frag log should use the 56.
+
     python apply_award_decisions.py           # apply
     python apply_award_decisions.py --check   # exit 1 if any decision is unapplied
 """
@@ -40,6 +46,20 @@ DROP = {
         "single_match as a single-match record (operator decision 2026-08-09): "
         "the weekend total already lives on the stats board, and the move "
         "rebalances the two sections to 12 cards each."
+    ),
+    ("single_match", "sidearm"): (
+        "Sidearm Specialist — most pistol kills in a single match. NINE players "
+        "tie on 5 for 4th (see the CONVERT list below, kept here as the record "
+        "of what it looked like). Pistol kills per match do not discriminate: "
+        "the whole list spans 9 down to 5. Operator decision 2026-08-09, same "
+        "reasoning as Own Worst Enemy and No Cap For You."
+    ),
+    ("decided", "streak"): (
+        "On A Tear — longest kill streak. NOT retired: re-created in "
+        "single_match below (operator decision 2026-08-09). A streak cannot "
+        "span matches, so it was always a single-match record wearing a "
+        "weekend card; the move only adds the match it happened in. Same seven "
+        "players, same figures, same placings."
     ),
 }
 
@@ -236,6 +256,64 @@ ADD_AWARD = [
         ],
         "leader": {"rank": 1, "who": "NoName^", "value": "69",
                    "where": "North Atlantic Treaty Org · v warchyld[dd]"},
+        "tied": None,
+    }),
+    # Bring A Gun Next Time — the replacement for Sidearm Specialist. Melee is
+    # not in lan-stats.json (it has gun_kills and nade_kills, nothing else), so
+    # like restraining this is EXTERNAL in fix_award_ties.py and its ranks are
+    # authored here. Scoped to the 56 curated matches, half > 0, killer != victim
+    # (a melee suicide is not a kill), resolved by SteamID rather than name.
+    ("decided", {
+        "slug": "melee",
+        "title": "Bring A Gun Next Time",
+        "blurb": "Most melee kills all weekend — spade, knife, bayonet and "
+                 "rifle butt. The whole event produced 68 of them.",
+        "status": "proposed",
+        "top": [
+            {"rank": 1, "who": "hey hi", "value": "10", "where": "b Team",
+             "as": "hey hi <3 dustbin"},
+            {"rank": 2, "who": "reppoĦ", "value": "9", "where": "Best Buds"},
+            {"rank": 3, "who": "Khoi", "value": "6", "where": "NoSoul"},
+            {"rank": 4, "who": "m00cat :D", "value": "5", "where": "dicE"},
+            {"rank": 5, "who": "ian", "value": "3", "where": "onLAN thunder",
+             "as": "bonchon"},
+            {"rank": 5, "who": "Ke:>^1.de", "value": "3",
+             "where": "Uncle Rico's Time Machine"},
+            {"rank": 5, "who": "warchyld[dd]", "value": "3", "where": "dicE"},
+        ],
+        "leader": {"rank": 1, "who": "hey hi", "value": "10", "where": "b Team",
+                   "as": "hey hi <3 dustbin"},
+        "tied": None,
+    }),
+    # On A Tear, moved from decided. lan-stats.json already carries the match a
+    # player's best streak happened in (`streak_detail`), so the move is the
+    # published list plus that context — no figure changes. Rank-less: the
+    # values are sorted, so fix_award_ties.py derives 1,2,2,4,5,5,5.
+    ("single_match", {
+        "slug": "streak",
+        "title": "On A Tear",
+        "blurb": "Longest kill streak in a single match. Match record — "
+                 "rebuilt from the frag log, not read off the HUD.",
+        "status": "proposed",
+        "top": [
+            {"who": "Seanality", "value": "14",
+             "where": "thunder2 · Sat · v b Team"},
+            {"who": "hildebrand?", "value": "13",
+             "where": "armory_b6 · Sat · v Uncle Rico's Time Machine"},
+            {"who": "jules", "value": "13",
+             "where": "thunder2 · Sat · v Uncle Rico's Time Machine"},
+            {"who": "Polak", "value": "12",
+             "where": "anzio · Sat · v b Team"},
+            {"who": "ddorito", "value": "11",
+             "where": "railroad2_s9a · Sun · v Best Buds"},
+            {"who": "ian", "value": "11",
+             "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+             "as": "bonchon"},
+            {"who": "LaNGoNdd", "value": "11",
+             "where": "railroad2_s9a · Sun · v NoSoul"},
+        ],
+        "leader": {"who": "Seanality", "value": "14",
+                   "where": "thunder2 · Sat · v b Team", "ties": 1},
         "tied": None,
     }),
     # Heavy Hitter, moved from decided (weekend total) to a single-match

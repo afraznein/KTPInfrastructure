@@ -292,62 +292,6 @@
    }
   },
   {
-   "slug": "streak",
-   "title": "On A Tear",
-   "blurb": "Longest single kill streak, from the match record.",
-   "status": "proposed",
-   "top": [
-    {
-     "who": "Seanality",
-     "value": "14",
-     "where": "icyHOT",
-     "rank": 1
-    },
-    {
-     "who": "hildebrand?",
-     "value": "13",
-     "where": "icyHOT",
-     "rank": 2
-    },
-    {
-     "who": "jules",
-     "value": "13",
-     "where": "onLAN thunder",
-     "rank": 2
-    },
-    {
-     "who": "Polak",
-     "value": "12",
-     "where": "Best Buds",
-     "rank": 4
-    },
-    {
-     "who": "ddorito",
-     "value": "11",
-     "where": "onLAN thunder",
-     "rank": 5
-    },
-    {
-     "who": "ian",
-     "value": "11",
-     "where": "onLAN thunder",
-     "as": "bonchon",
-     "rank": 5
-    },
-    {
-     "who": "LaNGoNdd",
-     "value": "11",
-     "where": "onLAN thunder",
-     "rank": 5
-    }
-   ],
-   "leader": {
-    "who": "Seanality",
-    "value": "14",
-    "where": "icyHOT"
-   }
-  },
-  {
    "slug": "breaks",
    "title": "Party Pooper",
    "blurb": "Most enemy captures broken up.",
@@ -575,6 +519,66 @@
     "who": "NoName^",
     "value": "69",
     "where": "North Atlantic Treaty Org · v warchyld[dd]"
+   },
+   "tied": null
+  },
+  {
+   "slug": "melee",
+   "title": "Bring A Gun Next Time",
+   "blurb": "Most melee kills all weekend — spade, knife, bayonet and rifle butt. The whole event produced 68 of them.",
+   "status": "proposed",
+   "top": [
+    {
+     "rank": 1,
+     "who": "hey hi",
+     "value": "10",
+     "where": "b Team",
+     "as": "hey hi <3 dustbin"
+    },
+    {
+     "rank": 2,
+     "who": "reppoĦ",
+     "value": "9",
+     "where": "Best Buds"
+    },
+    {
+     "rank": 3,
+     "who": "Khoi",
+     "value": "6",
+     "where": "NoSoul"
+    },
+    {
+     "rank": 4,
+     "who": "m00cat :D",
+     "value": "5",
+     "where": "dicE"
+    },
+    {
+     "rank": 5,
+     "who": "ian",
+     "value": "3",
+     "where": "onLAN thunder",
+     "as": "bonchon"
+    },
+    {
+     "rank": 5,
+     "who": "Ke:>^1.de",
+     "value": "3",
+     "where": "Uncle Rico's Time Machine"
+    },
+    {
+     "rank": 5,
+     "who": "warchyld[dd]",
+     "value": "3",
+     "where": "dicE"
+    }
+   ],
+   "leader": {
+    "rank": 1,
+    "who": "hey hi",
+    "value": "10",
+    "where": "b Team",
+    "as": "hey hi <3 dustbin"
    },
    "tied": null
   }
@@ -1027,89 +1031,6 @@
    "tied": null
   },
   {
-   "slug": "sidearm",
-   "title": "Sidearm Specialist",
-   "blurb": "Most pistol kills in a single match. Match record.",
-   "status": "proposed",
-   "top": [
-    {
-     "who": "patten",
-     "value": "9",
-     "where": "harrington · Sat · v b Team",
-     "rank": 1
-    },
-    {
-     "who": "nomistizzle",
-     "value": "6",
-     "where": "lennon5_b1 · Sun · v Best Buds",
-     "rank": 2
-    },
-    {
-     "who": "LaNGoNdd",
-     "value": "6",
-     "where": "railroad2_s9a · Sun · v Best Buds",
-     "rank": 2
-    },
-    {
-     "who": "arachnid",
-     "value": "5",
-     "where": "lennon5_b1 · Sat · v dicE",
-     "rank": 4
-    },
-    {
-     "who": "hey hi",
-     "value": "5",
-     "where": "harrington · Sat · v Arrested Development",
-     "as": "hey hi <3 dustbin",
-     "rank": 4
-    },
-    {
-     "who": "stealthlol",
-     "value": "5",
-     "where": "anzio · Sat · v icyHOT",
-     "as": "stealthlol＃kingCOOP",
-     "rank": 4
-    },
-    {
-     "who": "Ho0liii",
-     "value": "5",
-     "where": "lennon5_b1 · Sun · v onLAN thunder",
-     "rank": 4
-    },
-    {
-     "who": "ian",
-     "value": "5",
-     "where": "lennon5_b1 · Sun · v North Atlantic Treaty Org",
-     "rank": 4
-    },
-    {
-     "who": "Sq =)))",
-     "value": "5",
-     "where": "saints2_b3e · Sun · v onLAN thunder",
-     "rank": 4
-    },
-    {
-     "who": "NoName^",
-     "value": "5",
-     "where": "thunder2 · Sun · v dicE",
-     "rank": 4
-    },
-    {
-     "who": "vertex",
-     "value": "5",
-     "where": "armory_b6 · Sun · v Arrested Development",
-     "rank": 4
-    }
-   ],
-   "leader": {
-    "who": "patten",
-    "value": "9",
-    "where": "harrington · Sat · v b Team",
-    "ties": 1
-   },
-   "tied": null
-  },
-  {
    "slug": "sponge",
    "title": "Human Shield",
    "blurb": "Most damage taken in a single match. HUD — the match record logs damage dealt only.",
@@ -1258,6 +1179,64 @@
     "who": "vertex",
     "value": "14,038",
     "where": "railroad2_s9a · Sun · v Price is Right",
+    "ties": 1
+   },
+   "tied": null
+  },
+  {
+   "slug": "streak",
+   "title": "On A Tear",
+   "blurb": "Longest kill streak in a single match. Match record — rebuilt from the frag log, not read off the HUD.",
+   "status": "proposed",
+   "top": [
+    {
+     "who": "Seanality",
+     "value": "14",
+     "where": "thunder2 · Sat · v b Team",
+     "rank": 1
+    },
+    {
+     "who": "hildebrand?",
+     "value": "13",
+     "where": "armory_b6 · Sat · v Uncle Rico's Time Machine",
+     "rank": 2
+    },
+    {
+     "who": "jules",
+     "value": "13",
+     "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+     "rank": 2
+    },
+    {
+     "who": "Polak",
+     "value": "12",
+     "where": "anzio · Sat · v b Team",
+     "rank": 4
+    },
+    {
+     "who": "ddorito",
+     "value": "11",
+     "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 5
+    },
+    {
+     "who": "ian",
+     "value": "11",
+     "where": "thunder2 · Sat · v Uncle Rico's Time Machine",
+     "as": "bonchon",
+     "rank": 5
+    },
+    {
+     "who": "LaNGoNdd",
+     "value": "11",
+     "where": "railroad2_s9a · Sun · v NoSoul",
+     "rank": 5
+    }
+   ],
+   "leader": {
+    "who": "Seanality",
+    "value": "14",
+    "where": "thunder2 · Sat · v b Team",
     "ties": 1
    },
    "tied": null

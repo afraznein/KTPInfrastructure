@@ -35,10 +35,11 @@ BOARD = os.path.join(HERE, "season-board.json")
 # -list guard does not apply to them. Empty this once they have shipped.
 REFORMULATED = {"mvp-sat", "mvp-sun"}
 
-# Awards whose inputs are NOT in this repo (hud_kills lives on the data server),
-# so they cannot be recomputed here. Their rows and ranks are authored in
+# Awards whose inputs are NOT in this repo, so they cannot be recomputed here:
+# restraining needs hud_kills, melee needs the frag log by weapon, and both live
+# only on the data server. Their rows and ranks are authored in
 # apply_award_decisions.py and passed through untouched.
-EXTERNAL = {"restraining"}
+EXTERNAL = {"restraining", "melee"}
 PAGE = os.path.normpath(os.path.join(HERE, "..", "design", "prototype.html"))
 
 MIN_HALVES_RATE = 20   # the K/D and flags-per-half floors, as the export applied them
@@ -74,7 +75,6 @@ def weekend_rows():
                       "assists", "cap_breaks"):
                 a[f] += p.get(f) or 0
             a["prone"] += p.get("prone_seconds") or 0
-            a["best_streak"] = max(a["best_streak"], p.get("best_streak") or 0)
             per_day.setdefault(dkey, {})[p["steam_id"]] = p.get("ktpr")
     return agg, per_day
 
@@ -90,7 +90,7 @@ def decided_metric(slug, agg, per_day):
         board = json.load(open(BOARD, encoding="utf-8"))
         return [(r["steam_id"], r["ktpr"], f'{r["ktpr"]:.3f} KTPR')
                 for r in board["views"][day]["players"]]
-    counters = {"fragger": "kills", "flagger": "flags", "streak": "best_streak",
+    counters = {"fragger": "kills", "flagger": "flags",
                 "breaks": "cap_breaks", "assists": "assists",
                 "headshots": "headshots"}
     if slug in counters:

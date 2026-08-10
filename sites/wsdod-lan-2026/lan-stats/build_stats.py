@@ -106,15 +106,37 @@ def roster_roles() -> dict[str, str]:
 
 
 def ktp_matches() -> dict[str, dict]:
-    """The .ktp matches only, with their day and map, from the match index."""
+    """The tournament matches, with their day and map, from the match index.
+
+    Cross-checked against match-teams.json, which is the curated tournament set
+    and the only list of the three in play that is right. The index's `type=ktp`
+    filter alone yields 58 and includes two ABORTED starts — 19 and 12 seconds
+    long, one kill and zero players between them, both `(no close)` in the index.
+    Scoring them as matches is what made the stats board disagree with the awards.
+
+    The awards used a third definition (a `ktp_match_end` event with match_type 0)
+    which yields 55: correct about the two aborted ones, wrong about
+    1785715972-KTP1 — icyHOT v NATO, a genuinely played half with 12 players and
+    263 kills whose logging died before the close event fired. Real play with no
+    result is still real play, and it is in the curated set.
+    """
     import csv
+    import json
+    curated = set(json.load(open(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "match-teams.json"),
+        encoding="utf-8")))
     out = {}
     with open(MATCH_INDEX, encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
             if r["type"].strip().lower() != "ktp":
                 continue
+            if r["match_id"] not in curated:
+                continue
             day = r["start"][:5]                     # MM-DD
             out[r["match_id"]] = {"map": r["map"], "day": day}
+    if len(out) != len(curated):
+        raise SystemExit("match index is missing %d curated match(es): %s"
+                         % (len(curated) - len(out), sorted(curated - set(out))))
     return out
 
 
