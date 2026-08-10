@@ -116,6 +116,37 @@ def check_carried(db, code: str, *, emitted: int, table: str,
             "detail": f"{here}/{emitted} carried"}
 
 
+def check_suicides_carried(db, *, emitted: int) -> dict:
+    """Did every `committed suicide with` line become a row?
+
+    Suicides do not go through `hlstats_Actions` — they have their own table
+    and their own dispatch branch — so they need their own check rather than
+    `check_carried`.
+
+    This is Unit 1 of the deployment plan. `hlstats_Events_Suicides` was empty
+    fleet-wide because the only call site sat behind a regex requiring CS:GO's
+    bracketed `[x y z]` block, which DoD never emits. The handler, schema and
+    aggregation were always correct, so the fix is one `elsif` — and the risk
+    the plan flags is that a wrong verb string compiles, deploys, and silently
+    does nothing. That is exactly what this catches.
+    """
+    rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Suicides")
+    if emitted == 0:
+        return {"code": "suicide", "status": "not_exercised", "emitted": 0,
+                "rows": rows, "detail":
+                "no `committed suicide with` lines in the game log. Bots do "
+                "suicide (grenade, grenade2, world) but not on every run."}
+    if rows != emitted:
+        return {"code": "suicide", "status": "pipeline", "emitted": emitted,
+                "rows": rows, "detail":
+                f"{emitted} suicide line(s) in the game log but {rows} row(s) "
+                f"in hlstats_Events_Suicides. If rows is 0, the dispatch branch "
+                f"is not matching — check the verb string in hlstats.pl against "
+                f"the actual line, which is the failure mode Unit 1 warns about."}
+    return {"code": "suicide", "status": "ok", "emitted": emitted, "rows": rows,
+            "detail": f"{rows}/{emitted} carried"}
+
+
 def assert_assists_recorded(db, *, minimum: int = 1) -> ActionRows:
     """Assists reached PlayerPlayerActions, and only PlayerPlayerActions."""
     rows = count_action(db, "assist")
@@ -243,6 +274,38 @@ def assert_baseline_still_flows(db) -> dict:
     return {"frags": frags, "players": players}
 
 
+def check_headshots_carried(db, *, emitted: int) -> dict:
+    """Did the `headshot_kill` markers reach `hlstats_Events_Frags.headshot`?
+
+    Unit 2's regression check, and the sharp one. That unit edits a file
+    carrying load-bearing stock stats, and the headshot marker rides the same
+    generic player-vs-player dispatch path the new assist action does — so a
+    change that breaks attribution there takes headshots with it.
+
+    The marker is not an ordinary event: it is emitted *after* the kill line
+    and makes the daemon flush the frag queue and UPDATE the most recent
+    matching frag. That means a mismatch here can also mean the UPDATE failed
+    to find its row, which is a different bug from the marker not arriving —
+    hence reporting both numbers rather than a bare pass/fail.
+    """
+    rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags WHERE headshot = 1")
+    if emitted == 0:
+        return {"code": "headshot", "status": "not_exercised", "emitted": 0,
+                "rows": rows, "detail":
+                "no `headshot_kill` markers in the game log, so the marker "
+                "path was not exercised this run."}
+    if rows != emitted:
+        return {"code": "headshot", "status": "pipeline", "emitted": emitted,
+                "rows": rows, "detail":
+                f"{emitted} headshot marker(s) in the game log but {rows} frag "
+                f"row(s) with headshot=1. The marker makes the daemon flush "
+                f"the frag queue and UPDATE the most recent matching frag, so "
+                f"a shortfall is either the marker not arriving or the UPDATE "
+                f"matching no row (killer/victim/weapon mismatch)."}
+    return {"code": "headshot", "status": "ok", "emitted": emitted,
+            "rows": rows, "detail": f"{rows}/{emitted} carried"}
+
+
 def assert_no_dropped_lines(log_text: str) -> None:
     """The plugin's ring buffer never overflowed.
 
@@ -275,6 +338,10 @@ def summarise(db) -> dict:
         # without both numbers that is indistinguishable from nothing arriving.
         "ppa_rows_total": db.count(f"SELECT COUNT(*) FROM {_PPA}"),
         "pa_rows_total": db.count(f"SELECT COUNT(*) FROM {_PA}"),
+        "suicides": db.count("SELECT COUNT(*) FROM hlstats_Events_Suicides"),
+        "suicide_weapons": db.sql(
+            "SELECT weapon, COUNT(*) FROM hlstats_Events_Suicides "
+            "GROUP BY weapon").strip(),
         "actions_seeded": db.sql(
             "SELECT id, code, for_PlayerActions, for_PlayerPlayerActions "
             "FROM hlstats_Actions WHERE game='dod'").strip(),

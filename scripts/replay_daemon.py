@@ -29,7 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.e2e_stats import assertions  # noqa: E402
+from tests.e2e_stats import assertions, log_invariants  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.hlstats_daemon import HlstatsDaemon  # noqa: E402
 
@@ -46,6 +46,10 @@ def _emitted(log_text: str) -> dict[str, int]:
         "kills": log_text.count('" killed "'),
         "assist": log_text.count('triggered "assist"'),
         "cap_break": log_text.count('triggered "cap_break"'),
+        # Unit 1. The verb string is confirmed against real DoD logs:
+        #   "Kazooie<10><0><Allies>" committed suicide with "grenade"
+        "suicide": log_text.count('committed suicide with'),
+        "headshot": log_text.count('triggered "headshot_kill"'),
     }
 
 
@@ -80,7 +84,8 @@ def main() -> int:
           f"{emitted['kills']} kills / {emitted['assist']} assist / "
           f"{emitted['cap_break']} cap_break")
 
-    report: dict = {"log": str(args.log), "emitted": emitted}
+    report: dict = {"log": str(args.log), "emitted": emitted,
+                    "asserted": not args.no_assert}
     failures: list[str] = []
 
     with EphemeralMysql.start(keep=args.keep) as db:
@@ -144,6 +149,14 @@ def main() -> int:
         report["ignored"] = _ignored_reasons(stdout_path)
         report["rows"] = assertions.summarise(db)
 
+        # Attribution negatives, from the log rather than the database: the log
+        # is what capture emitted, so a violation here is a plugin bug and not
+        # something the daemon did. Deployment plan Unit 2 steps 4-5 and Unit 3.
+        report["log_invariants"] = log_invariants.summarise(log_text)
+        for kind in ("assist_violations", "break_violations"):
+            for v in report["log_invariants"][kind]:
+                failures.append(v)
+
         # Two separate verdicts. `failures` are defects; coverage gaps are
         # scenarios the captured log never contained, which say nothing either
         # way and must not be dressed up as a pass or a defect.
@@ -154,6 +167,8 @@ def main() -> int:
             assertions.check_carried(db, "cap_break", emitted=emitted["cap_break"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions"),
+            assertions.check_suicides_carried(db, emitted=emitted["suicide"]),
+            assertions.check_headshots_carried(db, emitted=emitted["headshot"]),
         ]
         report["carried"] = carried
         report["coverage_gaps"] = [f"{c['code']}: {c['detail']}" for c in carried
@@ -209,6 +224,7 @@ def _print_report(report: dict) -> None:
         r = rows[code]
         print(f"  {code:<12} {e[code]:>6} {r['ppa']:>6} {r['pa']:>6}")
     print(f"  {'kills':<12} {e['kills']:>6} {rows['frags']:>6} (frags)")
+    print(f"  {'suicide':<12} {e['suicide']:>6} {rows['suicides']:>6} (suicides)")
     print(f"  players {rows['players']} ({rows['bots']} bot)")
 
     for label, key in (("assist positions", "assist_positions"),
@@ -229,6 +245,10 @@ def _print_report(report: dict) -> None:
         print(f"\n=== {len(report['failures'])} FAILURE(S) ===")
         for f in report["failures"]:
             print("  - " + f.replace("\n", "\n    "))
+    elif report.get("asserted") is False:
+        # Without this the probe mode prints "all assertions passed" having run
+        # none of them, which is the most misleading thing a test tool can say.
+        print("\nassertions SKIPPED (--no-assert) — counts above are unjudged")
     elif gaps:
         print("\nno defects found, but this replay is INCOMPLETE — see above")
     else:

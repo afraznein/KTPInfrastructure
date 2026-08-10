@@ -289,8 +289,9 @@ completely blind AMXX.
 | DODX forwards under bots | all fire |
 | **Capture code emitting** | **yes — 5 assists + 1 cap_break with positions** |
 | Daemon tree (upstream libs + fork delta) | assembles, boots, PROVENANCE recorded |
-| `hlstats.pl` → MySQL rows | **yes — every emitted line carried, across 4 live runs + replay** |
-| Full green live run | **yes — 4/4 assists, 1/1 cap_break, 57/57 frags** |
+| `hlstats.pl` → MySQL rows | **yes — every emitted line carried, across 6 live runs + replays** |
+| Full green live run | **yes — 5/5 assists, 1/1 cap_break, 2/2 suicides, 13/13 headshots, 66/66 frags, kill switch ok, 0 attribution violations** |
+| Deployment plan Units 1-4 | see `docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md` — every step covered but weaponstats, the four cap_break negatives, and cross-flag position clustering |
 | Assertions | written and unit-tested (78 passed) |
 
 ## Assertion posture, as built

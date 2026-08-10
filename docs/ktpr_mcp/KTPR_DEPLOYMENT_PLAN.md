@@ -10,6 +10,33 @@ fleet — if something is wrong, you want one suspect, not two.
 
 ---
 
+## What Lane B has already proved
+
+This plan was written before any of it could be tested. Most of it now runs
+automatically against real bots and a real daemon
+([`tests/e2e_stats/`](../../tests/e2e_stats/README.md)), so the manual
+checklists below are a **shorter** job than they look. Each unit carries a
+"Lane B pre-verification" table saying exactly which of its steps are covered.
+
+| Unit | Status |
+|---|---|
+| 1 — suicides | **gate cleared, verified with a control.** The unconfirmed verb string is confirmed against real DoD logs; without the fix the same log produces 0 rows, with it 3/3. |
+| 2 — assists | **all steps covered but one.** Every emitted assist carried exactly; both attribution negatives checked from the log; headshots unaffected. **`hlstats_Events_Statsme` is not covered** — check by hand. |
+| 3 — cap breaks | **positive covered, the four negatives are not.** Bots cannot be told to stage a clean cap or a voluntary walk-off. These still need a human. |
+| 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
+
+Two caveats worth reading before treating any of this as sign-off:
+
+- Lane B runs `sv_lan 1` with bots in a container. It does not exercise Steam
+  auth, the fleet's own configs, or real network conditions. It proves the
+  code path, not the deployment.
+- The daemon it tests is assembled from pinned upstream plus KTP's delta,
+  because KTPHLStatsX is a delta-only fork. Every run records this in a
+  `PROVENANCE` file as `RECONSTRUCTION`. Pointing it at production's actual
+  `/opt/hlstatsx/scripts` needs SSH and has not been done.
+
+---
+
 ## Branch / commit reference
 
 Every branch is **stacked** on the one above it within its repo, so the branches
@@ -118,17 +145,51 @@ always correct; only the dispatch branch was missing.
 
 Nothing else depends on this, and it depends on nothing. Good first unit.
 
-### ⚠️ Do this before merging
+### ✅ Pre-merge gate: CLEARED
 
-The verb string in the fix (`"committed suicide with"`) was taken from the
-daemon's existing CS:GO branch, **not from an observed DoD log line** — no
-sample existed in any repo. If DoD words it differently, the fix compiles,
-deploys, and silently does nothing.
+The verb string was taken from the daemon's CS:GO branch, not from an observed
+DoD line, and the worry was that a wrong string compiles, deploys, and silently
+does nothing.
 
-Confirm first: on any DoD server, have a player type `kill` in console, then
-grep the raw HLDS log for that player's name around that timestamp and read the
-actual line. If it is not `"Name<uid><STEAM_x><Team>" committed suicide with "weapon"`,
-adjust the string in `hlstats.pl` before merging.
+**Confirmed against real DoD 1.3 logs.** Lane B bot runs produced suicides
+unprompted, in three weapon variants:
+
+```
+"Kazooie<10><0><Allies>" committed suicide with "grenade"
+"Bowser<12><0><Axis>"    committed suicide with "grenade2"
+"Fox<1><0><Allies>"      committed suicide with "world"
+```
+
+Exactly `"Name<uid><authid><Team>" committed suicide with "weapon"`. No change
+needed. The line has no bracketed coordinates, which is precisely why it fell
+past the CS:GO branch.
+
+### ✅ Verified end to end, with a control
+
+Rather than only match the string, Lane B replayed a captured log through the
+daemon twice — once at `main`, once with the fix — against identical ephemeral
+databases:
+
+| Daemon | suicide lines in log | rows in `hlstats_Events_Suicides` |
+|---|---|---|
+| `main` (no fix) | 3 | **0** |
+| `fix/suicide-dispatch-goldsrc` | 3 | **3** |
+
+Assists (5) and frags (47) were identical across both, which is the plan's
+step-4 regression check: the change is purely additive and does not disturb
+the shared dispatcher.
+
+Reproduce:
+
+```
+scripts/assemble_daemon_tree.sh <fork-repo> <out>/daemon
+scripts/replay_daemon.py --log <captured>.log --hlstats <out>/daemon/hlstats.pl \
+    --schema base-schema.sql --seed migrate_003_*.sql migrate_004_*.sql
+```
+
+The live smoke test below is still worth doing on a real server — Lane B runs
+`sv_lan 1` with bots, so it does not exercise Steam auth or the fleet's own
+config. But the failure the gate was written to catch cannot happen now.
 
 ### Deploy
 
@@ -239,6 +300,31 @@ victim for >= 50, **B** lands the kill.
 **Pass =** assists recorded once each with victim attribution, zero rows in
 `PlayerActions`, weaponstats and headshots unaffected, no dropped-line warnings.
 
+### Lane B pre-verification
+
+Most of the above is now checked automatically before anything is deployed —
+`scripts/lane_b_e2e.py` (live bots) and `scripts/replay_daemon.py` (a captured
+log). Across five live runs and two replays:
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1-2 assists recorded with victim attribution | yes | every emitted assist carried, exactly: 4/4, 5/5, 7/7, 12/12 |
+| 3 not double-recorded | yes | 0 rows in `PlayerActions` for `assist`, every run |
+| 4 killer not credited on their own kill | yes | `log_invariants.check_assist_attribution` — 0 violations |
+| 5 teammate not credited | yes | same check, teams read off the log line — 0 violations |
+| 6 headshots unaffected | yes | 3/3 markers → `headshot=1` frag rows |
+| 6 weaponstats unaffected | **no** | Lane B's config loads no statsme module, so `hlstats_Events_Statsme` is 0 by construction. **Check this by hand.** |
+| 7 no dropped lines | yes | `assert_no_dropped_lines`, every run |
+| 8 kill switch | yes | 10 kills during `ktp_stats_capture 0` produced 0 assists; 5 once re-enabled |
+
+Steps 4 and 5 are decided from the **log** rather than the database on
+purpose: the log is what capture emitted, so a violation there is a plugin
+attribution bug and not something the daemon did. Both checks are unit-tested
+in both directions — a negative check that cannot fire reports "0 violations"
+forever and reads like evidence.
+
+The one gap is weaponstats. Everything else on this list has been exercised.
+
 ### Rollback
 
 `ktp_stats_capture 0` disables all new capture instantly with no redeploy —
@@ -309,6 +395,33 @@ player's objective rating.
 7. Regression + buffer + kill-switch checks: same as Unit 2 steps 6-8.
 
 **Pass =** real breaks recorded, all four negatives clean, no regression.
+
+### Lane B pre-verification — partial, and the gap is the interesting half
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1 real breaks recorded | yes | 1/1 carried into `PlayerActions`, 0 in `PlayerPlayerActions`, twice |
+| 2-5 the four negatives | **no** | see below |
+| 6 count sanity | partial | breaks appear in ~half of runs, never a burst — consistent with no false positives, but that is inference |
+| 7 regression / buffer / kill switch | yes | as Unit 2 |
+
+**The negatives are the ones that matter here** — the unit's own note says a
+false-positive break is worse than a missed one, because it silently inflates
+objective rating and nothing ever contradicts it. Lane B cannot stage them:
+each requires a specific arranged scenario (a clean cap with nobody killed, an
+off-point kill during a cap elsewhere, a voluntary walk-off, a round restart)
+and bots cannot be told to do that.
+
+What Lane B *can* say is that no break was credited to a player with no team
+or on Spectator, which would mean the detector fired on someone who could not
+have been contesting. That check exists and is clean.
+
+Two things follow. First, **steps 2-5 still need a human on a real server** —
+this is the one place in Units 1-4 where automation has not replaced the
+checklist. Second, the negatives are the strongest argument for the driven
+cap_break scenario noted in `tests/e2e_stats/README.md`: put a bot on a point,
+kill it or don't, and assert. That would convert four manual checks into four
+deterministic ones.
 
 ### Tuning knobs if it misbehaves
 
@@ -381,6 +494,23 @@ Run after Units 2 and 3 are already passing, so any new failure is this unit.
    here would point at buffer sizing.
 
 **Pass =** positions present, varied, plausible; no regression on Units 2/3.
+
+### Lane B pre-verification
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1 non-NULL | yes | 0 NULL across every assist and break row produced |
+| 2 varied, in-bounds, not `0 0 0` | yes | `assert_positions_populated` — all-NULL, all-zero, single-repeated-value and out-of-world each fail explicitly, and each is unit-tested in both directions |
+| 3 breaks cluster per flag | **no** | only ever one break per run, so there is nothing to cluster |
+| 4 no regression, no dropped lines | yes | assists/breaks/headshots all still carried; `assert_no_dropped_lines` clean at the 384-byte line length |
+
+Representative live figures: 4 assist rows, 4 distinct positions, max
+magnitude 1664; 1 break row at magnitude 1749. GoldSrc's world bound is
+±16384, so these sit comfortably inside it rather than merely non-zero.
+
+Step 3 needs several breaks on different flags in one run, which follows from
+the same cap_break rarity described in Unit 3 — it is blocked on the same
+driven-scenario work, not on anything about positions.
 
 ### Rollback
 
