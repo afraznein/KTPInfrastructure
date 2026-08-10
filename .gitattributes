@@ -20,3 +20,7 @@
 *.j2         text eol=lf
 *.cron       text eol=lf
 *.logrotate       text eol=lf
+# cron.d payloads have no extension, so none of the rules above reach them. A
+# CRLF crontab makes cron run a command with a trailing backslash-r and fail obscurely.
+scripts/cron.d/* text eol=lf
+ops/cron-inventory/**/cron.d/* text eol=lf
