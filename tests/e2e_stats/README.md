@@ -139,7 +139,69 @@ needs). Two earlier guesses were wrong: the binary is `new_bot_mm.so`, not
 `MARINEBOT`'s command names remain **candidates**; `probe_add_command` tries
 them in order and reports which works.
 
-### ⛔ Blocker: new_bot needs Metamod, and the KTP stack has none
+### ✅ RESOLVED: bots run, in a split-layer topology
+
+Phase 0's core premise is verified. Run
+`scripts/spike_metamod_ab.py --split-layers`:
+
+```
+[PASS] boot-A: 3 modules, 1 plugins          (production topology)
+[PASS] boot-B: 3 modules, 1 plugins          (metamod-split)
+[PASS] required-modules: amxxcurl + reapi + dodx present under BOTH
+[PASS] non-interference: module and plugin sets/statuses identical
+8/8 steps ok, exit 0
+```
+
+and in ~60s of bot play on `dod_anzio`:
+
+| Evidence | Count |
+|---|---|
+| `entered the game` / `joined team` / `changed role to` | 12 / 12 / 12 |
+| `" killed "` (thompson, luger, mp40, k43) | 10 |
+| `triggered a "dod_control_point"` / `"dod_capture_area"` | 10 |
+| `Waypoints loaded` | 692 |
+
+**Bots fight and capture flags.** Those are precisely the two inputs the capture
+code needs: kills drive assist attribution and cap-break candidacy, and flag
+contention drives the `dodx_area_get_data` zone poll.
+
+`[KTP-STATS] 0` is expected — the image still carries the *stock*
+`stats_logging.amxx` from the base image, not the branch build. Staging the
+compiled one (md5 `018b17442ef4ef352623428eebe93200`) is the next step.
+
+#### The topology that works: split layers
+
+    engine  →  addons/extensions.ini  →  ktpamx_i386.so       (unchanged from production)
+    engine  →  liblist.gam            →  metamod_i386.so
+    metamod →  plugins.ini            →  new_bot_mm.so        (bot only)
+    metamod →  +localinfo mm_gamedll  →  dlls/dod.so
+
+Each loads **once, at its own hook point**. ktpamx still logs "Running without
+Metamod - using ReHLDS hookchains", exactly as production.
+
+The obvious topology — Metamod hosting *both* ktpamx and new_bot — **segfaults**,
+3 attempts of 3. ktpamx reports "ReHLDS extension mode detected" even when
+Metamod loads it, so it installs ReHLDS hookchains from inside Metamod's chain
+and hooks at two layers at once. Use `--split-layers`; it is the default for
+`enable_metamod(host_ktpamx=False)`.
+
+### Why the bot cannot live inside KTPAMXX
+
+Worth recording, because it looks plausible: AMX Mod X is **not** a fork of
+Metamod, it is a Metamod *plugin* (hence `ktpamx_i386.so` exporting
+`Meta_Attach`). Its module system is a separate API.
+`CModule::queryModule()` does check modules for `Meta_Attach`, but only to label
+them `"amxx&mm"` — it still requires `AMXX_Query` and rejects anything else as
+`MODULE_NOQUERY`. `new_bot_mm.so` has **0** occurrences of `AMXX_Query` and
+**1** of `Meta_Attach`, and the engine says so directly:
+
+```
+[AMXX] Couldn't find "AMXX_Query" (file ".../new_bot_mm_ktp_i386.so")
+```
+
+So Metamod is required. The split-layer topology is how it coexists.
+
+### Historic blocker (resolved above): new_bot needs Metamod
 
 new_bot's `_mm` suffix is literal. Its README: *"new_bot is a metamod plugin, so
 you need to add it to the plugins.ini file in your metamod install and not
