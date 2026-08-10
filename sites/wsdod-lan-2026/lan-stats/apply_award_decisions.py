@@ -2,16 +2,20 @@
 """Operator decisions on award membership, applied over awards.json.
 
 The single-match awards came from a MySQL-backed script that never landed in
-this repo, and their tie groups cannot be recomputed from anything tracked here
-— assists, prone, grenade kills, team kills and damage taken are per-match HUD
-figures that live only on the data server. So corrections that need the DB are
-recorded here as decisions, with the query result that justified each one, and
-applied idempotently.
+this repo, and their figures cannot be recomputed from anything tracked here —
+the per-match numbers live only on the data server. So corrections that need
+the DB are recorded here as decisions, with the query result that justified
+each one, and applied idempotently.
 
 Facts below were measured 2026-08-09 against the live `hlstatsx_lan` DB,
-read-only, scoped to the 55 tournament matches (Sat/Sun `match_type=0`) and
-deduped to one entry per player, which is the convention the published lists
-already follow.
+read-only, scoped to the 55 tournament matches (`hud_events` ktp_match_end
+rows with match_type 0 falling on Aug 1-2 — exactly 55) and deduped to one
+entry per player (their best match), which is the convention the published
+lists already follow. Match-record figures are `ktp_match_stats` summed over
+halves 1 and 2 (half 0 is the match total and would double everything), which
+reproduces the published Difficulty: Tourist row exactly (hildebrand 67-13);
+weapon-scoped counts are `hlstats_Events_Frags` filtered by weapon, which
+agrees with `ktp_match_stats.kills` on all 55 match totals.
 
     python apply_award_decisions.py           # apply
     python apply_award_decisions.py --check   # exit 1 if any decision is unapplied
@@ -23,40 +27,192 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 AWARDS = os.path.join(HERE, "awards.json")
 
-# Awards removed entirely. Not a tie to extend — a stat with no resolution at
-# match granularity, so there is no winner to find.
+# Awards removed from a section entirely, keyed (section, slug).
 DROP = {
-    "own-worst": (
+    ("single_match", "own-worst"): (
         "Own Worst Enemy — most suicides in a single match. TWENTY-EIGHT players "
         "tie on 2 for 4th place; the published list showed two of them. Suicides "
         "do not discriminate per match. Same shape as No Cap For You, which was "
         "dropped for the same reason on 2026-08-09."
     ),
+    ("decided", "damage"): (
+        "Heavy Hitter — most damage dealt across the weekend. Re-created in "
+        "single_match as a single-match record (operator decision 2026-08-09): "
+        "the weekend total already lives on the stats board, and the move "
+        "rebalances the two sections to 12 cards each."
+    ),
+}
+
+# single_match awards re-sourced from the match record instead of the HUD
+# (operator decision 2026-08-09). Rows are rank-less — fix_award_ties.py derives
+# the shared placings. Where the same player+match already appeared on the
+# published list, its `as`/match choice is carried; where a player's best is
+# shared across matches, the published match is kept if it is in the tie, else
+# the earliest.
+#
+# Validation against the HUD lists they replace (every leader/membership move):
+#   one-man     leader holds (sTarK_ 86). cK 82→84 passes vertex 83; the 79
+#               mark is shared three ways, pulling in jules and Savage¬.
+#   hurt-me     LEADER CHANGES: Ke:>^1.de 72→77 overtakes tokih 77→76.
+#               o[bb]y (75 HUD, 70 record) drops out; Jee enters on 72.
+#   headhunter  leader holds (bR0M 20). e p y o n 19→18 falls to a new 4-way
+#               5th; m00cat :D enters there.
+#   benedict    identical list — HUD and match record agree row for row.
+#   sidearm     leader holds, patten 10→9. Sq =))) 7→5 and Ho0liii/ian/
+#               NoName^/vertex 6→5 slide into a NINE-way 4th; element (6 HUD,
+#               4 record) drops out; arachnid, hey hi, stealthlol enter.
+#   amazon      leader holds (cK 29→30). TillJim enters sharing 5th on 19.
+CONVERT = {
+    "one-man": {
+        "blurb": "Most kills in a single match. Match record.",
+        "top": [
+            {"who": "sTarK_ x_0", "value": "86",
+             "where": "saints2_b3e · Sun · v Uncle Rico's Time Machine",
+             "as": "sTarK_ x_0 <3＃77"},
+            {"who": "cK", "value": "84",
+             "where": "harrington · Sun · v Price is Right",
+             "as": "cK- ＃phillylan2026"},
+            {"who": "vertex", "value": "83",
+             "where": "railroad2_s9a · Sun · v Price is Right"},
+            {"who": "nomistizzle", "value": "80",
+             "where": "harrington · Sat · v Uncle Rico's Time Machine"},
+            {"who": "piff", "value": "79",
+             "where": "lennon5_b1 · Sun · v Price is Right",
+             "as": "piff ＃4Monty"},
+            {"who": "jules", "value": "79",
+             "where": "railroad2_s9a · Sun · v Best Buds"},
+            {"who": "Savage¬", "value": "79",
+             "where": "armory_b6 · Sun · v Price is Right"},
+        ],
+    },
+    "hurt-me": {
+        "blurb": "Most deaths in a single match. Match record.",
+        "top": [
+            {"who": "Ke:>^1.de", "value": "77",
+             "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org"},
+            {"who": "tokih", "value": "76",
+             "where": "harrington · Sun · v Best Buds"},
+            {"who": "billbsod", "value": "74",
+             "where": "harrington · Sun · v icyHOT"},
+            {"who": "nomistizzle", "value": "73",
+             "where": "lennon5_b1 · Sun · v Best Buds"},
+            {"who": "Jee", "value": "72",
+             "where": "saints2_b3e · Sun · v b Team",
+             "as": "Jee ＃22e＃minou"},
+        ],
+    },
+    "headhunter": {
+        "blurb": "Most headshot kills in a single match. Match record.",
+        "top": [
+            {"who": "bR0M", "value": "20",
+             "where": "anzio · Sat · v b Team", "as": "bR0M ＃wetya"},
+            {"who": "nein", "value": "19",
+             "where": "railroad2_s9a · Sun · v b Team", "as": "nein_"},
+            {"who": "Ke:>^1.de", "value": "19",
+             "where": "armory_b6 · Sun · v NoSoul"},
+            {"who": "element", "value": "19",
+             "where": "armory_b6 · Sun · v Arrested Development"},
+            {"who": "jules", "value": "18",
+             "where": "armory_b6 · Sat · v b Team"},
+            {"who": "billbsod", "value": "18",
+             "where": "armory_b6 · Sat · v dicE"},
+            {"who": "e p y o n", "value": "18",
+             "where": "thunder2 · Sat · v icyHOT"},
+            {"who": "m00cat :D", "value": "18",
+             "where": "harrington · Sun · v NoSoul"},
+        ],
+    },
+    "benedict": {
+        "blurb": "Most team kills in a single match. Match record.",
+        "top": [
+            {"who": "Ke:>^1.de", "value": "6",
+             "where": "armory_b6 · Sat · v icyHOT"},
+            {"who": "element", "value": "5",
+             "where": "lennon5_b1 · Sat · v NoSoul"},
+            {"who": "Hub", "value": "5",
+             "where": "harrington · Sat · v dicE"},
+            {"who": "cK", "value": "5",
+             "where": "harrington · Sat · v NoSoul",
+             "as": "cK- ＃phillylan2026"},
+            {"who": "warchyld[dd]", "value": "5",
+             "where": "anzio · Sat · v icyHOT"},
+            {"who": "Gorilla[bc]", "value": "5",
+             "where": "harrington · Sun · v NoSoul"},
+        ],
+    },
+    "sidearm": {
+        "blurb": "Most pistol kills in a single match. Match record.",
+        "top": [
+            {"who": "patten", "value": "9",
+             "where": "harrington · Sat · v b Team"},
+            {"who": "nomistizzle", "value": "6",
+             "where": "lennon5_b1 · Sun · v Best Buds"},
+            {"who": "LaNGoNdd", "value": "6",
+             "where": "railroad2_s9a · Sun · v Best Buds"},
+            {"who": "arachnid", "value": "5",
+             "where": "lennon5_b1 · Sat · v dicE"},
+            {"who": "hey hi", "value": "5",
+             "where": "harrington · Sat · v Arrested Development",
+             "as": "hey hi <3 dustbin"},
+            {"who": "stealthlol", "value": "5",
+             "where": "anzio · Sat · v icyHOT",
+             "as": "stealthlol＃kingCOOP"},
+            {"who": "Ho0liii", "value": "5",
+             "where": "lennon5_b1 · Sun · v onLAN thunder"},
+            {"who": "ian", "value": "5",
+             "where": "lennon5_b1 · Sun · v North Atlantic Treaty Org"},
+            {"who": "Sq =)))", "value": "5",
+             "where": "saints2_b3e · Sun · v onLAN thunder"},
+            {"who": "NoName^", "value": "5",
+             "where": "thunder2 · Sun · v dicE"},
+            {"who": "vertex", "value": "5",
+             "where": "armory_b6 · Sun · v Arrested Development"},
+        ],
+    },
+    "amazon": {
+        "blurb": "Most grenade kills in a single match. Match record.",
+        "top": [
+            {"who": "cK", "value": "30",
+             "where": "lennon5_b1 · Sun · v Price is Right",
+             "as": "cK- ＃phillylan2026"},
+            {"who": "s i k", "value": "26",
+             "where": "lennon5_b1 · Sat · v Arrested Development",
+             "as": "s i k <3 n a t"},
+            {"who": "vertex", "value": "23",
+             "where": "harrington · Sun · v Price is Right"},
+            {"who": "LaNGoNdd", "value": "21",
+             "where": "armory_b6 · Sat · v b Team"},
+            {"who": "warchyld[dd]", "value": "19",
+             "where": "harrington · Sat · v North Atlantic Treaty Org"},
+            {"who": "TillJim", "value": "19",
+             "where": "harrington · Sat · v b Team"},
+        ],
+    },
+}
+
+# The four single-match awards that STAY on the HUD, each saying why — the
+# match record has no assists, no prone, and no damage-taken figure at all.
+REBLURB = {
+    "helping-hand": "Most assists in a single match. HUD — the match record "
+                    "has no assists at all.",
+    "horizontal": "Most time prone in a single match. HUD — nothing else "
+                  "measured prone.",
+    "dont-touch": "Least damage taken in a full match. HUD — the match record "
+                  "logs damage dealt only.",
+    "sponge": "Most damage taken in a single match. HUD — the match record "
+              "logs damage dealt only.",
 }
 
 # Players cut by the five-row export while sharing a mark with players who were
-# kept. Each entry is (slug, who, value, where) inserted after the last row
-# holding the same value.
-ADD_TIED = [
-    # Benedict Arnold, most team kills in a match: FIVE players tie on 5
-    # (cK, warchyld[dd], Gorilla[bc], element, Hub); four were published.
-    # Context derived, not guessed: match 1785689244-KTP4, dod_harrington,
-    # 2026-08-02 (Sunday), dicE vs NoSoul, and "Gorilla[bc]" is the display
-    # name the leaderboard block already renders for that SteamID.
-    ("benedict", "Gorilla[bc]", "5", "harrington · Sun · v NoSoul"),
-    # Sidearm Specialist, most pistol kills in a match: SIX players tie on 6
-    # (LaNGoNdd, element, NoName^, Ho0liii, vertex, ian); two were published.
-    # The four below were cut. Ho0liii was only findable by SteamID — the export
-    # recorded him under the alias "findus", so a name-based check misses him.
-    ("sidearm", "LaNGoNdd", "6", "railroad2_s9a · Sun · v Best Buds"),
-    ("sidearm", "NoName^", "6", "thunder2 · Sun · v dicE"),
-    ("sidearm", "vertex", "6", "armory_b6 · Sun · v Arrested Development"),
-    ("sidearm", "ian", "6", "lennon5_b1 · Sun · v North Atlantic Treaty Org"),
-]
+# kept. Empty since 2026-08-09: the five entries recorded here (benedict ×1,
+# sidearm ×4) corrected the HUD lists and are superseded by the match-record
+# conversion above, whose lists carry whole tie groups to begin with.
+ADD_TIED = []
 
-# Wholly new awards. These cannot live in fix_award_ties.py's recompute path,
-# because their inputs are not in this repo — hud_kills is on the data server —
-# so the ranks are baked here and that script skips them by slug.
+# Wholly new awards. The restraining ranks are authored (hud_kills is on the
+# data server, so fix_award_ties.py lists it EXTERNAL and passes it through);
+# the damage rows are rank-less like the CONVERT lists and get their placings
+# from fix_award_ties.py.
 ADD_AWARD = [
     ("decided", {
         "slug": "restraining",
@@ -82,6 +238,32 @@ ADD_AWARD = [
                    "where": "North Atlantic Treaty Org · v warchyld[dd]"},
         "tied": None,
     }),
+    # Heavy Hitter, moved from decided (weekend total) to a single-match
+    # record. Same measurement as the CONVERT lists: ktp_match_stats.damage,
+    # halves 1+2, best match per player.
+    ("single_match", {
+        "slug": "damage",
+        "title": "Heavy Hitter",
+        "blurb": "Most damage dealt in a single match. Match record.",
+        "status": "proposed",
+        "top": [
+            {"who": "vertex", "value": "14,038",
+             "where": "railroad2_s9a · Sun · v Price is Right"},
+            {"who": "cK", "value": "13,930",
+             "where": "lennon5_b1 · Sun · v Price is Right",
+             "as": "cK- ＃phillylan2026"},
+            {"who": "NoName^", "value": "13,816",
+             "where": "saints2_b3e · Sun · v dicE"},
+            {"who": "Savage¬", "value": "13,580",
+             "where": "armory_b6 · Sun · v Price is Right"},
+            {"who": "element", "value": "13,430",
+             "where": "railroad2_s9a · Sun · v NoSoul"},
+        ],
+        "leader": {"who": "vertex", "value": "14,038",
+                   "where": "railroad2_s9a · Sun · v Price is Right",
+                   "ties": 1},
+        "tied": None,
+    }),
 ]
 
 
@@ -89,12 +271,16 @@ def _rows(a):
     return a.get("top") or []
 
 
+def _bare(rows):
+    return [{k: v for k, v in e.items() if k != "rank"} for e in rows]
+
+
 def apply(awards, dry=False):
     changed = []
     for section in ("decided", "single_match"):
         keep = []
         for a in awards.get(section, []):
-            if a.get("slug") in DROP:
+            if (section, a.get("slug")) in DROP:
                 changed.append(("drop", a.get("slug"), a.get("title")))
                 if dry:
                     keep.append(a)
@@ -109,6 +295,27 @@ def apply(awards, dry=False):
         changed.append(("new", award["slug"], award["title"]))
         if not dry:
             awards.setdefault(section, []).append(award)
+
+    for a in awards.get("single_match", []):
+        slug = a.get("slug")
+        conv = CONVERT.get(slug)
+        if conv is not None:
+            leader = dict(_bare([conv["top"][0]])[0], ties=1)
+            same = (a.get("blurb") == conv["blurb"]
+                    and _bare(_rows(a)) == conv["top"]
+                    and {k: v for k, v in (a.get("leader") or {}).items()
+                         if k != "rank"} == leader)
+            if not same:
+                changed.append(("convert", slug, a.get("title")))
+                if not dry:
+                    a["blurb"] = conv["blurb"]
+                    a["top"] = [dict(e) for e in conv["top"]]
+                    a["leader"] = leader
+                    a["tied"] = None
+        elif slug in REBLURB and a.get("blurb") != REBLURB[slug]:
+            changed.append(("reblurb", slug, a.get("title")))
+            if not dry:
+                a["blurb"] = REBLURB[slug]
 
     by_slug = {a["slug"]: a for s in ("decided", "single_match")
                for a in awards.get(s, [])}
@@ -155,7 +362,7 @@ def main() -> int:
         return 0
     json.dump(awards, open(AWARDS, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     for kind, slug, what in changed:
-        print(f"  {kind:<5} {slug:<10} {what}")
+        print(f"  {kind:<7} {slug:<12} {what}")
     print("\nnow: re-run the shared-rank pass, then "
           "PYTHONHASHSEED=0 python build_ballots.py")
     return 0

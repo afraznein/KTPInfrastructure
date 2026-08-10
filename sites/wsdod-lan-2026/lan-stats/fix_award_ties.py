@@ -9,12 +9,13 @@ where the boundary falls inside one, every member of the group is included.
 
 Decided awards are recomputed in full from lan-stats.json, so a tie group the
 MySQL export truncated is restored here — that is how a list can gain a name.
-Single-match awards cannot be recomputed from this repo (assists, prone,
-grenade kills and damage taken are HUD-only, per match), so their five rows
-only gain ranks; the leader-level `ties`/`tied` fields are the one place the
-export recorded a group past the cut, and "No Cap For You" rebuilds its list
-from them. A tie AT the last shown mark of any other single-match award may
-extend beyond the export, and nothing local can prove it either way.
+Single-match awards cannot be recomputed from this repo (their per-match
+figures live only on the data server — the LAN match record for most, the HUD
+tables for the four awards the match record cannot express), so their rows
+only gain ranks. The match-record lists carry whole tie groups by
+construction (apply_award_decisions.py); a tie AT the last shown mark of a
+HUD-sourced award may extend beyond the export, and nothing local can prove
+it either way.
 
     python fix_award_ties.py           # rewrite the ranks
     python fix_award_ties.py --check   # exit 1 if they are stale
@@ -70,7 +71,7 @@ def weekend_rows():
         for p in stats["days"][dkey]["players"]:
             a = agg.setdefault(p["steam_id"], collections.Counter())
             for f in ("kills", "deaths", "flags", "halves", "headshots",
-                      "assists", "cap_breaks", "damage_hlstatsx"):
+                      "assists", "cap_breaks"):
                 a[f] += p.get(f) or 0
             a["prone"] += p.get("prone_seconds") or 0
             a["best_streak"] = max(a["best_streak"], p.get("best_streak") or 0)
@@ -102,9 +103,6 @@ def decided_metric(slug, agg, per_day):
         return [(s, a["kills"] / a["deaths"], f'{a["kills"] / a["deaths"]:.2f} K/D')
                 for s, a in agg.items()
                 if a["halves"] >= MIN_HALVES_RATE and a["deaths"]]
-    if slug == "damage":
-        return [(s, a["damage_hlstatsx"], f'{a["damage_hlstatsx"]:,}')
-                for s, a in agg.items()]
     if slug == "prone":
         return [(s, a["prone"], mmss(a["prone"])) for s, a in agg.items()]
     sys.exit(f"no metric for decided award {slug!r}")
@@ -129,7 +127,7 @@ def names_and_aliases(awards):
     if not m:
         sys.exit("lanboard-data block not found — run inject_season_board.py first")
     # display name + team from the board block, the same rule as every other
-    # name on the page (fix_damage_award.py resolves names the same way)
+    # name on the page (fix_positions_award.py resolves names the same way)
     by_full = {p["n"]: p
                for p in json.loads(m.group(1))["views"]["weekend"]["players"]}
     sid_row = {}

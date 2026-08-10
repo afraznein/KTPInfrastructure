@@ -438,50 +438,6 @@
    }
   },
   {
-   "slug": "damage",
-   "title": "Heavy Hitter",
-   "blurb": "Most damage dealt.",
-   "status": "proposed",
-   "top": [
-    {
-     "who": "element",
-     "value": "124,520",
-     "where": "dicE",
-     "rank": 1
-    },
-    {
-     "who": "Savage¬",
-     "value": "112,059",
-     "where": "NoSoul",
-     "rank": 2
-    },
-    {
-     "who": "vertex",
-     "value": "111,593",
-     "where": "icyHOT",
-     "rank": 3
-    },
-    {
-     "who": "nomistizzle",
-     "value": "109,822",
-     "where": "Price is Right",
-     "rank": 4
-    },
-    {
-     "who": "cory?",
-     "value": "109,104",
-     "where": "Price is Right",
-     "as": "cory <3 liah,jkimbro,rdk",
-     "rank": 5
-    }
-   ],
-   "leader": {
-    "who": "element",
-    "value": "124,520",
-    "where": "dicE"
-   }
-  },
-  {
    "slug": "headshots",
    "title": "Straight Between The Eyes",
    "blurb": "Most headshot kills.",
@@ -670,7 +626,7 @@
   {
    "slug": "helping-hand",
    "title": "Helping Hand",
-   "blurb": "Most assists in a single match. HUD.",
+   "blurb": "Most assists in a single match. HUD — the match record has no assists at all.",
    "status": "proposed",
    "top": [
     {
@@ -719,12 +675,12 @@
   {
    "slug": "amazon",
    "title": "Amazon Delivery",
-   "blurb": "Most grenade kills in a single match. HUD.",
+   "blurb": "Most grenade kills in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
      "who": "cK",
-     "value": "29",
+     "value": "30",
      "where": "lennon5_b1 · Sun · v Price is Right",
      "as": "cK- ＃phillylan2026",
      "rank": 1
@@ -753,11 +709,17 @@
      "value": "19",
      "where": "harrington · Sat · v North Atlantic Treaty Org",
      "rank": 5
+    },
+    {
+     "who": "TillJim",
+     "value": "19",
+     "where": "harrington · Sat · v b Team",
+     "rank": 5
     }
    ],
    "leader": {
     "who": "cK",
-    "value": "29",
+    "value": "30",
     "where": "lennon5_b1 · Sun · v Price is Right",
     "as": "cK- ＃phillylan2026",
     "ties": 1
@@ -767,7 +729,7 @@
   {
    "slug": "benedict",
    "title": "Benedict Arnold",
-   "blurb": "Most team kills in a single match. HUD.",
+   "blurb": "Most team kills in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
@@ -819,7 +781,7 @@
   {
    "slug": "dont-touch",
    "title": "Don't Touch Me",
-   "blurb": "Least damage taken in a full match. HUD.",
+   "blurb": "Least damage taken in a full match. HUD — the match record logs damage dealt only.",
    "status": "proposed",
    "top": [
     {
@@ -865,19 +827,19 @@
   {
    "slug": "hurt-me",
    "title": "Hurt Me Daddy",
-   "blurb": "Most deaths in a single match. HUD.",
+   "blurb": "Most deaths in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
-     "who": "tokih",
+     "who": "Ke:>^1.de",
      "value": "77",
-     "where": "harrington · Sun · v Best Buds",
+     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org",
      "rank": 1
     },
     {
-     "who": "o[bb]y",
-     "value": "75",
-     "where": "thunder2 · Sat · v icyHOT",
+     "who": "tokih",
+     "value": "76",
+     "where": "harrington · Sun · v Best Buds",
      "rank": 2
     },
     {
@@ -893,16 +855,17 @@
      "rank": 4
     },
     {
-     "who": "Ke:>^1.de",
+     "who": "Jee",
      "value": "72",
-     "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org",
+     "where": "saints2_b3e · Sun · v b Team",
+     "as": "Jee ＃22e＃minou",
      "rank": 5
     }
    ],
    "leader": {
-    "who": "tokih",
+    "who": "Ke:>^1.de",
     "value": "77",
-    "where": "harrington · Sun · v Best Buds",
+    "where": "lennon5_b1 · Sat · v North Atlantic Treaty Org",
     "ties": 1
    },
    "tied": null
@@ -954,7 +917,7 @@
   {
    "slug": "horizontal",
    "title": "Professional Horizontal",
-   "blurb": "Most time prone in a single match. HUD.",
+   "blurb": "Most time prone in a single match. HUD — nothing else measured prone.",
    "status": "proposed",
    "top": [
     {
@@ -1000,7 +963,7 @@
   {
    "slug": "headhunter",
    "title": "Headhunter",
-   "blurb": "Most headshot kills in a single match. HUD.",
+   "blurb": "Most headshot kills in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
@@ -1009,12 +972,6 @@
      "where": "anzio · Sat · v b Team",
      "as": "bR0M ＃wetya",
      "rank": 1
-    },
-    {
-     "who": "e p y o n",
-     "value": "19",
-     "where": "thunder2 · Sat · v icyHOT",
-     "rank": 2
     },
     {
      "who": "nein",
@@ -1034,6 +991,30 @@
      "value": "19",
      "where": "armory_b6 · Sun · v Arrested Development",
      "rank": 2
+    },
+    {
+     "who": "jules",
+     "value": "18",
+     "where": "armory_b6 · Sat · v b Team",
+     "rank": 5
+    },
+    {
+     "who": "billbsod",
+     "value": "18",
+     "where": "armory_b6 · Sat · v dicE",
+     "rank": 5
+    },
+    {
+     "who": "e p y o n",
+     "value": "18",
+     "where": "thunder2 · Sat · v icyHOT",
+     "rank": 5
+    },
+    {
+     "who": "m00cat :D",
+     "value": "18",
+     "where": "harrington · Sun · v NoSoul",
+     "rank": 5
     }
    ],
    "leader": {
@@ -1048,67 +1029,81 @@
   {
    "slug": "sidearm",
    "title": "Sidearm Specialist",
-   "blurb": "Most pistol kills in a single match. HUD.",
+   "blurb": "Most pistol kills in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
      "who": "patten",
-     "value": "10",
+     "value": "9",
      "where": "harrington · Sat · v b Team",
      "rank": 1
     },
     {
      "who": "nomistizzle",
-     "value": "7",
-     "where": "harrington · Sat · v Uncle Rico's Time Machine",
-     "rank": 2
-    },
-    {
-     "who": "Sq =)))",
-     "value": "7",
-     "where": "saints2_b3e · Sun · v onLAN thunder",
-     "rank": 2
-    },
-    {
-     "who": "element",
      "value": "6",
-     "where": "armory_b6 · Sat · v Price is Right",
-     "rank": 4
-    },
-    {
-     "who": "Ho0liii",
-     "value": "6",
-     "where": "lennon5_b1 · Sun · v onLAN thunder",
-     "rank": 4
+     "where": "lennon5_b1 · Sun · v Best Buds",
+     "rank": 2
     },
     {
      "who": "LaNGoNdd",
      "value": "6",
      "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 2
+    },
+    {
+     "who": "arachnid",
+     "value": "5",
+     "where": "lennon5_b1 · Sat · v dicE",
+     "rank": 4
+    },
+    {
+     "who": "hey hi",
+     "value": "5",
+     "where": "harrington · Sat · v Arrested Development",
+     "as": "hey hi <3 dustbin",
+     "rank": 4
+    },
+    {
+     "who": "stealthlol",
+     "value": "5",
+     "where": "anzio · Sat · v icyHOT",
+     "as": "stealthlol＃kingCOOP",
+     "rank": 4
+    },
+    {
+     "who": "Ho0liii",
+     "value": "5",
+     "where": "lennon5_b1 · Sun · v onLAN thunder",
+     "rank": 4
+    },
+    {
+     "who": "ian",
+     "value": "5",
+     "where": "lennon5_b1 · Sun · v North Atlantic Treaty Org",
+     "rank": 4
+    },
+    {
+     "who": "Sq =)))",
+     "value": "5",
+     "where": "saints2_b3e · Sun · v onLAN thunder",
      "rank": 4
     },
     {
      "who": "NoName^",
-     "value": "6",
+     "value": "5",
      "where": "thunder2 · Sun · v dicE",
      "rank": 4
     },
     {
      "who": "vertex",
-     "value": "6",
+     "value": "5",
      "where": "armory_b6 · Sun · v Arrested Development",
-     "rank": 4
-    },
-    {
-     "who": "ian",
-     "value": "6",
-     "where": "lennon5_b1 · Sun · v North Atlantic Treaty Org",
      "rank": 4
     }
    ],
    "leader": {
     "who": "patten",
-    "value": "10",
+    "value": "9",
     "where": "harrington · Sat · v b Team",
     "ties": 1
    },
@@ -1117,7 +1112,7 @@
   {
    "slug": "sponge",
    "title": "Human Shield",
-   "blurb": "Most damage taken in a single match. HUD.",
+   "blurb": "Most damage taken in a single match. HUD — the match record logs damage dealt only.",
    "status": "proposed",
    "top": [
     {
@@ -1163,7 +1158,7 @@
   {
    "slug": "one-man",
    "title": "One Man Army",
-   "blurb": "Most kills in a single match. HUD.",
+   "blurb": "Most kills in a single match. Match record.",
    "status": "proposed",
    "top": [
     {
@@ -1174,16 +1169,16 @@
      "rank": 1
     },
     {
-     "who": "vertex",
-     "value": "83",
-     "where": "railroad2_s9a · Sun · v Price is Right",
+     "who": "cK",
+     "value": "84",
+     "where": "harrington · Sun · v Price is Right",
+     "as": "cK- ＃phillylan2026",
      "rank": 2
     },
     {
-     "who": "cK",
-     "value": "82",
-     "where": "harrington · Sun · v Price is Right",
-     "as": "cK- ＃phillylan2026",
+     "who": "vertex",
+     "value": "83",
+     "where": "railroad2_s9a · Sun · v Price is Right",
      "rank": 3
     },
     {
@@ -1198,6 +1193,18 @@
      "where": "lennon5_b1 · Sun · v Price is Right",
      "as": "piff ＃4Monty",
      "rank": 5
+    },
+    {
+     "who": "jules",
+     "value": "79",
+     "where": "railroad2_s9a · Sun · v Best Buds",
+     "rank": 5
+    },
+    {
+     "who": "Savage¬",
+     "value": "79",
+     "where": "armory_b6 · Sun · v Price is Right",
+     "rank": 5
     }
    ],
    "leader": {
@@ -1205,6 +1212,52 @@
     "value": "86",
     "where": "saints2_b3e · Sun · v Uncle Rico's Time Machine",
     "as": "sTarK_ x_0 <3＃77",
+    "ties": 1
+   },
+   "tied": null
+  },
+  {
+   "slug": "damage",
+   "title": "Heavy Hitter",
+   "blurb": "Most damage dealt in a single match. Match record.",
+   "status": "proposed",
+   "top": [
+    {
+     "who": "vertex",
+     "value": "14,038",
+     "where": "railroad2_s9a · Sun · v Price is Right",
+     "rank": 1
+    },
+    {
+     "who": "cK",
+     "value": "13,930",
+     "where": "lennon5_b1 · Sun · v Price is Right",
+     "as": "cK- ＃phillylan2026",
+     "rank": 2
+    },
+    {
+     "who": "NoName^",
+     "value": "13,816",
+     "where": "saints2_b3e · Sun · v dicE",
+     "rank": 3
+    },
+    {
+     "who": "Savage¬",
+     "value": "13,580",
+     "where": "armory_b6 · Sun · v Price is Right",
+     "rank": 4
+    },
+    {
+     "who": "element",
+     "value": "13,430",
+     "where": "railroad2_s9a · Sun · v NoSoul",
+     "rank": 5
+    }
+   ],
+   "leader": {
+    "who": "vertex",
+    "value": "14,038",
+    "where": "railroad2_s9a · Sun · v Price is Right",
     "ties": 1
    },
    "tied": null

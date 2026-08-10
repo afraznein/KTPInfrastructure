@@ -3,7 +3,9 @@
 
 The decided awards came from a MySQL-backed script that never landed in the
 repo, and this one quoted the legacy additive KTPR the day boards used before
-2026-08-09. Same shape as fix_damage_award.py, for the same reason.
+2026-08-09. Recomputed here because its inputs ARE tracked (season-board.json),
+unlike the single-match awards, whose corrections live in
+apply_award_decisions.py.
 
 ⚠️ Each slot must go to a DIFFERENT player. A player has a Saturday and a Sunday
 rating, so ranking (player, day) pairs alone can hand one person both Rifle
