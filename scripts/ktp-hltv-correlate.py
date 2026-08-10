@@ -38,6 +38,10 @@ import ipaddress
 import subprocess
 import sys
 
+# Default only. At the measured ~22,300 captured rows/day a blanket 500 covers
+# roughly the last 30 MINUTES, so `--days 30` cannot structurally surface an old
+# match no matter how the window is written. Raise it, or scope with --ip, which
+# is the query this tool actually exists to answer.
 ROW_LIMIT = 500
 
 # ktp_ac_sessions is utf8mb4_0900_ai_ci while this table and hlstats_* are
@@ -59,14 +63,21 @@ WITH matches AS (
   LEFT JOIN hlstats_PlayerUniqueIds u ON u.playerId = c.playerId
   WHERE {where}
 )
+-- ports_swept and days_active were correlated subqueries in the SELECT list, so
+-- they re-scanned ktp_hltv_connections once PER OUTPUT ROW against a non-covering
+-- index -- cost quadratic in retention, on a 128 MB buffer pool and a spinning
+-- disk. At the measured ~22,300 rows/day that stops returning long before the
+-- retention window is full. Both are now single grouped passes, joined by IP.
+--
+-- days_active keeps its whole-table meaning (that is the point of the column:
+-- "is this IP present every day"). ports_swept keeps its +/-1h meaning by
+-- grouping on the hour bucket rather than per row, which is the same question
+-- asked at coarser resolution -- stated here because it IS a semantic change:
+-- a sweep straddling a bucket boundary now scores lower than it used to.
 SELECT m.hit_time, m.src_ip, m.dst_port,
        COALESCE(s.players_behind_ip, 0) AS players_behind_ip,
-       (SELECT COUNT(DISTINCT h2.dst_port) FROM ktp_hltv_connections h2
-         WHERE h2.src_ip = m.src_ip
-           AND h2.hit_time BETWEEN m.hit_time - INTERVAL 1 HOUR
-                               AND m.hit_time + INTERVAL 1 HOUR) AS ports_swept,
-       (SELECT COUNT(DISTINCT DATE(h3.hit_time)) FROM ktp_hltv_connections h3
-         WHERE h3.src_ip = m.src_ip) AS days_active,
+       COALESCE(ps.ports_swept, 1) AS ports_swept,
+       COALESCE(da.days_active, 1) AS days_active,
        COALESCE(m.candidate, '(no player on this IP within +/-24h)') AS candidate,
        COALESCE(m.steam_id, '') AS steam_id,
        m.eventTime AS nearest_connect
@@ -74,6 +85,14 @@ FROM matches m
 LEFT JOIN (SELECT ipAddress AS ip, COUNT(DISTINCT playerId) AS players_behind_ip
              FROM hlstats_Events_Connects GROUP BY ipAddress) s
        ON s.ip = m.src_ip
+LEFT JOIN (SELECT src_ip, DATE_FORMAT(hit_time, '%Y-%m-%d %H') AS hr,
+                  COUNT(DISTINCT dst_port) AS ports_swept
+             FROM ktp_hltv_connections GROUP BY src_ip, hr) ps
+       ON ps.src_ip = m.src_ip
+      AND ps.hr = DATE_FORMAT(m.hit_time, '%Y-%m-%d %H')
+LEFT JOIN (SELECT src_ip, COUNT(DISTINCT DATE(hit_time)) AS days_active
+             FROM ktp_hltv_connections GROUP BY src_ip) da
+       ON da.src_ip = m.src_ip
 WHERE m.rn = 1
 ORDER BY m.hit_time DESC, candidate
 LIMIT {limit};
@@ -111,6 +130,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--ip")
+    ap.add_argument("--limit", type=int, default=ROW_LIMIT,
+                    help="max rows (default %d); a blanket listing at this "
+                         "volume covers well under an hour" % ROW_LIMIT)
     a = ap.parse_args()
 
     # Validate rather than sanitise. An unrecognised argument that silently
@@ -134,7 +156,7 @@ def main():
                      "(the rule lives in before.rules, not before6.rules)" % ip)
         where += " AND h.src_ip = '%s'" % ip
 
-    sql = SQL.format(where=where, limit=ROW_LIMIT)
+    sql = SQL.format(where=where, limit=a.limit)
     out = subprocess.run(["mysql", "-B", "hlstatsx", "-e", sql],
                          capture_output=True, text=True)
     if out.returncode != 0:
@@ -151,10 +173,21 @@ def main():
         return 0
 
     print(out.stdout)
-    if len(lines) - 1 >= ROW_LIMIT:
-        print("WARNING: output truncated at %d rows (ORDER BY hit_time DESC, so "
-              "the OLDEST rows in the window were dropped). Narrow --days."
-              % ROW_LIMIT)
+    if len(lines) - 1 >= a.limit:
+        # Say what the rows actually COVER. "truncated at 500" reads like a
+        # formatting cap; the real consequence is that a --days 30 request
+        # silently answered for the last few minutes.
+        span = ""
+        try:
+            stamps = [ln.split("	")[0] for ln in lines[1:] if ln.strip()]
+            if len(stamps) > 1:
+                span = " -- these rows span %s to %s, NOT the %d day(s) requested" % (
+                    min(stamps), max(stamps), a.days)
+        except (IndexError, ValueError):
+            pass
+        print("WARNING: output truncated at %d rows (ORDER BY hit_time DESC, so the "
+              "OLDEST rows in the window were dropped)%s. Raise --limit, narrow "
+              "--days, or scope with --ip." % (a.limit, span))
     print(CAVEAT)
     return 0
 
