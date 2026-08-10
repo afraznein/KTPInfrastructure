@@ -20,10 +20,14 @@ the only thing that could have caught it was that literal.
 
   3. MANIFEST. Writes {plugin: {version, md5, staged_at, staged_by}} to the
      runner, so the suite can assert loaded == manifest instead of loaded ==
-     literal. Self-maintaining: staging IS the update. The version cannot be
-     read back out of a compiled .amxx (XXMA+zlib -- `strings` returns nothing
-     even for text that is certainly present), which is exactly why the stager
-     has to record it rather than the test discovering it.
+     literal. Self-maintaining: staging IS the update.
+
+  4. DERIVED VERSION. The recorded version is read out of the artifact itself
+     (see amxx_version.py); --version is a cross-check that aborts the stage on
+     disagreement. This corrects a claim that stood here until 2026-08-10 --
+     that the version "cannot be read back out of a compiled .amxx". It cannot
+     be read by `strings`, which is where the belief came from, but inflating
+     the XXMA container and reading cell-form yields it directly.
 
 It does NOT restart anything -- the Tier-2 workflow starts its own hlds per run.
 
@@ -35,7 +39,11 @@ that case pass the version to the workflow (`matchhandler_version`) as well, so
 the env override wins over the manifest for that run.
 
 Usage:
-  # restage MatchHandler's test build and record it
+  # restage MatchHandler's test build; the version comes off the artifact
+  stage-runner.py -f compiled/KTPMatchHandler_testmode.amxx --as KTPMatchHandler.amxx \
+                  --expect 4b3e524579e2b481245fccdaf94565f7
+
+  # same, asserting what you think you are staging -- aborts if they disagree
   stage-runner.py -f compiled/KTPMatchHandler_testmode.amxx --as KTPMatchHandler.amxx \
                   --version 0.10.150 --expect 4b3e524579e2b481245fccdaf94565f7
 
@@ -43,7 +51,7 @@ Usage:
   stage-runner.py --show
 
   # inspect intent without connecting
-  stage-runner.py -f x.amxx --as KTPMatchHandler.amxx --version 0.10.150 --dry-run
+  stage-runner.py -f x.amxx --as KTPMatchHandler.amxx --dry-run
 
 Env: KTP_TIER2_SSH_HOST (required)  KTP_TIER2_SSH_USER (default root)
      KTP_TIER2_SSH_PASSWORD         KTP_TIER2_TREE (default /opt/ktp-tier2-runner/serverfiles)
@@ -66,6 +74,9 @@ try:
 except ImportError:
     print("ERROR: paramiko not installed. Run: pip install paramiko")
     sys.exit(1)
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import amxx_version  # noqa: E402  -- sibling module, path fixed up just above
 
 HOST = os.environ.get("KTP_TIER2_SSH_HOST", "")
 USER = os.environ.get("KTP_TIER2_SSH_USER", "root")
@@ -143,13 +154,43 @@ def show(ssh):
     return man
 
 
+def resolve_version(path, basename, claimed):
+    """What to record in the manifest: read off the artifact, --version as assertion.
+
+    Deriving is what makes the manifest worth trusting. A typed version records a
+    human's belief ABOUT a file rather than a fact OF it, and a wrong one only
+    surfaces later as a "version drift" failure in the suite that reads like a
+    staging fault instead of a typo.
+    """
+    derived = amxx_version.extract_for_basename(path, basename)
+    claimed = (claimed or "").strip()
+
+    if derived and claimed and derived != claimed:
+        sys.exit(f"FATAL: --version disagrees with the artifact:\n"
+                 f"  artifact reports {derived}\n"
+                 f"  --version says   {claimed}\n"
+                 "Aborting (nothing staged). Either the wrong file is being staged or the "
+                 "version was mistyped -- both are worth stopping for.")
+    if derived:
+        return derived, "from the artifact" + (", matches --version" if claimed else "")
+    if claimed:
+        print(f"WARNING: could not read a version from {os.path.basename(path)} -- falling back to "
+              f"--version {claimed}, which nothing has verified.")
+        return claimed, "UNVERIFIED, --version fallback"
+    sys.exit(f"FATAL: no version could be read from {os.path.basename(path)} and no --version given.\n"
+             f"       Known display names: {', '.join(sorted(amxx_version.PLUGIN_DISPLAY_NAMES))}\n"
+             "       Pass --version explicitly if this plugin builds its version at runtime.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-f", "--file", help="Local test-mode .amxx to stage.")
     ap.add_argument("--as", dest="as_name",
                     help="Basename on the runner (test builds are often named differently locally).")
-    ap.add_argument("--version", help="Version this build reports, e.g. 0.10.150. Recorded in the manifest.")
+    ap.add_argument("--version",
+                    help="Cross-check only. Derived from the artifact; pass this to assert what you "
+                         "think you are staging, and staging aborts if the two disagree.")
     ap.add_argument("--expect", metavar="MD5", help="Pin the local md5 to the reviewed build.")
     ap.add_argument("--show", action="store_true", help="Print what the runner holds and exit.")
     ap.add_argument("--dry-run", action="store_true", help="Print intent, do not connect.")
@@ -165,14 +206,15 @@ def main():
             ssh.close()
         return
 
-    if not (args.file and args.as_name and args.version):
-        sys.exit("FATAL: -f, --as and --version are all required (or use --show).\n"
-                 "       --version cannot be derived: the version is not readable from a compiled .amxx.")
+    if not (args.file and args.as_name):
+        sys.exit("FATAL: -f and --as are required (or use --show).")
     if not os.path.isfile(args.file):
         sys.exit(f"FATAL: local file not found: {args.file}")
     if args.as_name not in TESTMODE_PLUGINS and not args.allow_untracked:
         sys.exit(f"FATAL: '{args.as_name}' is not a known test-mode plugin "
                  f"({', '.join(sorted(TESTMODE_PLUGINS))}). Use --allow-untracked if that is deliberate.")
+
+    version, version_src = resolve_version(args.file, args.as_name, args.version)
 
     md5 = local_md5(args.file)
     if args.expect and md5 != args.expect.strip().lower():
@@ -184,7 +226,7 @@ def main():
 
     remote = f"{TREE}/{PLUGIN_DIR}/{args.as_name}"
     print(f"Stage {args.file}\n   -> {USER}@{HOST or '<unset>'}:{remote}")
-    print(f"   version {args.version}  md5 {md5}\n")
+    print(f"   version {version} ({version_src})  md5 {md5}\n")
 
     if args.dry_run:
         print("DRY-RUN: no connection made. Above is what would stage.")
@@ -213,7 +255,7 @@ def main():
         print(f"  uploaded + verified: {got}")
 
         man[args.as_name] = {
-            "version": args.version,
+            "version": version,
             "md5": md5,
             "staged_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "staged_by": f"{getpass.getuser()} via stage-runner.py",
@@ -235,13 +277,13 @@ def main():
         ssh.close()
 
     print("\n" + "=" * 70)
-    print(f"RUNNER STAGED: {args.as_name} {args.version} ({md5})")
+    print(f"RUNNER STAGED: {args.as_name} {version} ({md5})")
     if prev.get("version"):
         print(f"  was: {prev['version']} ({prev.get('md5','?')})")
     print("\nThe suite now reads this version from the manifest -- no literal to bump.")
     print("For a PRE-ACTIVATION gate run, also pass the version to the workflow so the")
     print("env override wins for that run:")
-    print(f"  gh workflow run tier2-integration.yml -f matchhandler_version={args.version}")
+    print(f"  gh workflow run tier2-integration.yml -f matchhandler_version={version}")
     print("\nAnd when you wave the matching PRODUCTION build, gate it on this runner:")
     print(f"  stage-wave.py -f <production .amxx> --expect-runner {args.as_name}={md5}")
     print("=" * 70)
