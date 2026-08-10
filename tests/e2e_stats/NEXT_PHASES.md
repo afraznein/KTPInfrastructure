@@ -1,5 +1,40 @@
 # Lane B — next phases
 
+## Deferred, deliberately
+
+Both of these are real gaps with an owner-less status. They are parked rather
+than forgotten, and each says what would make it worth picking up.
+
+### The bazooka assist mis-attribution
+
+A killer was credited an assist on their own kill, once in 225 kills, on a
+bazooka. Full write-up in `KTPR_DEPLOYMENT_PLAN.md` under Unit 2.
+
+**Why it is parked:** the bazooka is not available on most maps, so the
+exposure in real matches is much smaller than one-in-225 suggests. Three
+subsequent full 20-minute matches produced **zero** attribution violations,
+which is consistent with that.
+
+**When to pick it up:** before Phase 8 has KTPR consume assists. A killer
+collecting both the frag and an assist for the same death is double-credited,
+and a rating that reads assists will inherit it.
+
+**How, in one line:** replay a rocket death through
+`dodx_test_dispatch_client_death` with a known killer index and log what
+`ksc_on_death` actually receives — the hypothesis is that DODX reports a
+different index for splash damage than the engine credits in the log line.
+`log_invariants.check_assist_attribution` already detects the symptom.
+
+### Waypoints for the KTP competitive maps
+
+See the section below. Parked because it is potentially large — waypointing is
+manual, in-game work — and nothing currently blocked depends on it.
+
+**When to pick it up:** before Phase 7 (break context: contester count,
+last-flag defence, ninja caps). That work is position- and layout-aware, and
+validating it only on `dod_anzio` would prove very little about the maps KTP
+actually plays.
+
 ## Backlog: waypoints for the KTP competitive maps
 
 Lane B can only run `dod_anzio` as a KTP match. The image ships 22 stock DoD
