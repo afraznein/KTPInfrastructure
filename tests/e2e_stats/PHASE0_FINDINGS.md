@@ -3,32 +3,58 @@
 What a real run established, in the order it was learned. Everything here was
 observed, not reasoned.
 
-## Summary
+## ✅ RESOLVED — the capture code emits
 
-Bots work. The stack tolerates them. The capture code still emits nothing, and
-the reason is a deliberate early-return in KTPAMXX's extension-mode client path
-that makes AMXX blind to fake clients.
+With `KTPAMXX@feat/lane-b-fakeclient-players` built using
+`KTP_LANE_B_FAKECLIENTS=1`, a 240s bot match produced:
+
+```
+kills 47   assist lines 5   cap_break lines 1   dropped 0
+
+"Claire<3><BOT><Allies>"  triggered "cap_break" (flag "POINT_ANZIO_PLAZA") (position "-83 98 -418")
+"Jill<15><BOT><Allies>"   triggered "assist" against "Wesker<4><BOT><Axis>"
+                          (assister_position "-417 -329 -372") (victim_position "-733 751 -404")
+"GLaDOS<16><BOT><Axis>"   triggered "assist" against "Denton<10><BOT><Allies>"
+                          (assister_position "2565 2983 -500") (victim_position "1287 1670 -252")
+```
+
+AMXX now sees every bot — `connected=1`, correct teams (`team=1` allies,
+`team=2` axis), real names. Positions are **varied and plausible**, not the
+`0 0 0` the deployment plan warns to check for. The line shapes are exactly what
+`doEvent_PlayerAction` / `doEvent_PlayerPlayerAction` parse.
+
+**Remaining unknown:** the authid renders as `BOT`. Whether `hlstats.pl` creates
+players for that, or drops the rows, is the next thing to find out — it is a
+daemon question, not a capture one.
+
+## Summary of how it got there
 
 | Question | Answer |
 |---|---|
 | Can bots connect, fight, capture? | **Yes** — 12–16 bots, 50 kills, 12 CP captures |
 | Do DODX forwards fire for bots? | **Yes** — 107 `client_damage`, 53 `client_death` |
 | Does Metamod perturb the stack? | **No measurable difference** in modules/plugins |
-| Does the capture code emit? | **No** — 0 assists where 7 were owed |
-| Why? | AMXX cannot see bots at all (below) |
+| Did the capture code emit *before* the patch? | **No** — 0 assists where 7 were owed |
+| Why? | AMXX was blind to fake clients (below) |
+| After the patch? | **Yes** — 5 assists, 1 cap_break, positions included |
 
 ## The root cause
 
-`KTPAMXX/amxmodx/meta_api.cpp:1160`, in the ReHLDS extension-mode client path:
+**In ReHLDS extension mode, KTPAMXX has no code path that registers a fake
+client as a player.** `pPlayer->Connect()` / `PutInServer()` / `++g_players_num`
+never run for a bot.
 
-```c
-if (pEntity->v.flags & FL_FAKECLIENT)
-    return;
-```
+Two `FL_FAKECLIENT` early returns look like the culprit. Neither is, and the
+distinction cost real time:
 
-The function returns before `pPlayer->Connect()`, before
-`pPlayer->PutInServer()`, and before `++g_players_num`. So in extension mode
-AMXX never registers a bot as a player.
+| Location | Why it is not the fix |
+|---|---|
+| `meta_api.cpp:1160` in `SV_Spawn_f_RH` | Hooks the client `spawn` **command**. Fake clients never send commands, so this hook never runs for a bot at all — removing the return changes nothing. |
+| `meta_api.cpp:1830` in `SV_ClientUserInfoChanged_RH` | Unreachable for a bot: `if (!pPlayer \|\| !pPlayer->initialized \|\| !pPlayer->ingame) return;` two lines earlier fires first, and a bot is never initialized or ingame. |
+
+The second function *is* the right place — the engine does call it for fake
+clients — but the emulation has to be inserted **above** that guard rather than
+by editing the return below it.
 
 Measured directly with a diagnostic plugin (`KTPTeamProbe`), while six bots were
 demonstrably in the world fighting and capturing:
@@ -88,24 +114,42 @@ mode without a KTPAMXX change.** Anything gated on `is_user_connected`,
 `get_players`, `get_user_team`, `get_user_name` or `dodx_get_user_origin` will
 see an empty server no matter how many bots are playing.
 
-Three ways forward, in the order I would try them:
+### The fix, as shipped
 
-1. **Let fake clients through the extension-mode connect path.** A targeted
-   KTPAMXX change at `meta_api.cpp:1160`, ideally behind a cvar or build flag so
-   production behaviour is untouched. The Metamod path already has the
-   equivalent `else if (pPlayer->IsBot())` Connect-emulation branch — the
-   comment at `:1827` says so explicitly — so the shape of the fix already
-   exists in the same file.
-2. **Run ktpamx under Metamod for Lane B only**, where that bot-connect
-   emulation already exists. Blocked today: the combined topology segfaults
-   during plugin init, because ktpamx detects ReHLDS and installs hookchains
-   even when Metamod is what loaded it, hooking at two layers at once.
-3. **Restrict Lane B to DODX-level assertions.** Forwards fire correctly, so
-   `test_dodx_forward_firing.py`'s five `BOT_AI_REQUIRED_REASON` skips can be
-   un-skipped today. That does not reach the stats-capture code.
+`KTPAMXX@feat/lane-b-fakeclient-players` (`c1408a48`) adds the bot
+Connect-emulation to `SV_ClientUserInfoChanged_RH` — the extension-mode
+counterpart to the Metamod path's `C_ClientUserInfoChanged_Post`, which already
+has an `else if (pPlayer->IsBot())` branch doing exactly this. It mirrors that
+branch: `Connect` → `Authorize` → `PutInServer` → forwards.
 
-Option 1 is the smallest change and the only one that unblocks the original
-goal. It is a KTPAMXX decision, not an infrastructure one.
+**Placement matters more than the change itself.** The obvious target — the
+`if (pEntity->v.flags & FL_FAKECLIENT) return;` at the top of this section — is
+not reachable for a bot. Two lines above it,
+`if (!pPlayer || !pPlayer->initialized || !pPlayer->ingame) return;` fires first,
+and a bot is never either of those. The emulation has to run *above* that guard.
+(The same-looking early return in `SV_Spawn_f_RH` is a red herring too: fake
+clients never send a `spawn` command, so that hook never runs for them at all.)
+
+**Containment.** Compile-time gated and off by default, so an ordinary build —
+including the production Docker build — is byte-for-byte unchanged and the fleet
+cannot inherit it by deploy accident. Same shape as KTPMatchHandler's
+`-DKTP_TEST_MODE`. Opt in at configure time:
+
+```bash
+KTP_LANE_B_FAKECLIENTS=1 python3 configure.py --enable-optimize --no-mysql --no-plugins
+```
+
+The build prints a `*** NOT FOR PRODUCTION ***` banner when it is on.
+`scripts/build_ktpamx_laneb.sh` does the whole build in a container.
+
+### Alternatives not taken
+
+- **Run ktpamx under Metamod for Lane B**, where the emulation already exists.
+  Blocked: the combined topology segfaults during plugin init, because ktpamx
+  detects ReHLDS and installs hookchains even when Metamod loaded it.
+- **Restrict Lane B to DODX-level assertions.** Forwards fire correctly, so
+  `test_dodx_forward_firing.py`'s five `BOT_AI_REQUIRED_REASON` skips can be
+  un-skipped regardless of this work. But it never reaches the capture code.
 
 ## Topology: what works and what does not
 
@@ -162,8 +206,9 @@ completely blind AMXX.
 | Ephemeral MySQL + production schema + seeds | 5/5, flags verified |
 | new_bot 0.2.2 + 93 waypoints | installed, attaches, 692 waypoints on anzio |
 | Metamod-R 1.3.0.149 | installed, split-layer topology boots |
+| Patched ktpamx (`KTP_LANE_B_FAKECLIENTS`) | builds, bots register as players |
 | A/B differential | 8/8, no interference measured |
 | Bots: connect / fight / capture | yes / 50 kills / 12 captures |
 | DODX forwards under bots | all fire |
-| **Capture code emitting** | **blocked — see root cause** |
-| `hlstats.pl` → MySQL rows | not reached |
+| **Capture code emitting** | **yes — 5 assists + 1 cap_break with positions** |
+| `hlstats.pl` → MySQL rows | next — open question is whether the daemon accepts `<BOT>` authids |
