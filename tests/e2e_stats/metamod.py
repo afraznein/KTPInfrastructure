@@ -97,7 +97,8 @@ def _set_gamedll(tree, value: str) -> None:
     tree.write_text(LIBLIST, _GAMEDLL_LINUX.sub(f'gamedll_linux "{value}"', body, count=1))
 
 
-def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = "dlls/dod.so") -> Topology:
+def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = "dlls/dod.so",
+                   host_ktpamx: bool = True) -> Topology:
     """Point the engine at Metamod, list ktpamx (+ the bot) as its plugins, and
     disable extension mode so ktpamx is not loaded twice.
 
@@ -111,7 +112,14 @@ def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = "dlls/dod.so") ->
             "(build/lane-b/Dockerfile installs it)"
         )
 
-    plugins = [KTPAMX_PLUGIN_LINE]
+    # host_ktpamx=False is the "split layers" variant: ktpamx keeps loading via
+    # extensions.ini as production does, and Metamod hosts ONLY the bot. Worth
+    # trying because the combined topology crashed: ktpamx, even when loaded as
+    # a Metamod plugin, still logs "ReHLDS extension mode detected" and installs
+    # ReHLDS hookchains — so it ends up hooking from inside Metamod's chain as
+    # well as at the engine layer. Splitting them means each loads once, at its
+    # own hook point.
+    plugins = [KTPAMX_PLUGIN_LINE] if host_ktpamx else []
     if bot_spec is not None:
         line = getattr(bot_spec, "metamod_plugin_line", "")
         if not line:
@@ -128,21 +136,28 @@ def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = "dlls/dod.so") ->
         + "\n".join(plugins) + "\n",
     )
 
-    # Disable extension mode. Without this ktpamx loads twice — once via the
-    # engine extension list, once via Metamod — in one process.
-    tree.write_text(
-        EXTENSIONS,
-        "; DISABLED by tests/e2e_stats/metamod.py for the Metamod topology.\n"
-        "; ktpamx is loaded via addons/metamod/plugins.ini instead; leaving\n"
-        "; both active would load it TWICE in a single process.\n",
-    )
+    if host_ktpamx:
+        # Disable extension mode. Without this ktpamx loads twice — once via the
+        # engine extension list, once via Metamod — in one process.
+        tree.write_text(
+            EXTENSIONS,
+            "; DISABLED by tests/e2e_stats/metamod.py for the Metamod topology.\n"
+            "; ktpamx is loaded via addons/metamod/plugins.ini instead; leaving\n"
+            "; both active would load it TWICE in a single process.\n",
+        )
+    else:
+        # Split-layer variant: leave extension mode exactly as production has
+        # it, so ktpamx loads once, where it always does.
+        src = tree.path / EXTENSIONS_PRISTINE
+        if src.is_file():
+            tree.write_bytes(EXTENSIONS, src.read_bytes())
 
     _set_gamedll(tree, "addons/metamod/metamod_i386.so")
 
     return Topology(
-        name="metamod",
+        name="metamod" if host_ktpamx else "metamod-split",
         gamedll_linux="addons/metamod/metamod_i386.so",
-        extensions_enabled=False,
+        extensions_enabled=not host_ktpamx,
         plugins=plugins,
         extra_args=["+localinfo", "mm_gamedll", real_gamedll],
     )
