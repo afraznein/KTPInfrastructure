@@ -78,6 +78,8 @@ from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from typing import Any
 
+from ._mock_server import stop_server, warn_if_stalled
+
 
 @dataclass
 class CapturedPost:
@@ -404,14 +406,15 @@ class FakeRelay:
         self._thread = thread
 
     def stop(self, timeout: float = 2.0) -> None:
+        # Bounded: a keep-alive handler blocks in recvfrom until its peer
+        # closes, which wedges both shutdown() and server_close(). See
+        # _mock_server for why daemon_threads does not cover that.
         if self._server is None:
             return
-        self._server.shutdown()
-        self._server.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=timeout)
+        stalled = stop_server(self._server, self._thread, timeout=timeout)
         self._server = None
         self._thread = None
+        warn_if_stalled("FakeRelay", stalled)
 
     def reset(self) -> None:
         """Clear all captured posts + auth failures across every route

@@ -58,9 +58,16 @@ else
     if [ "$ts" -eq 0 ] || [ "$age" -gt "$MAX_AGE_SECONDS" ]; then
         state="stale"
         detail="last Tier 2 run was $((age / 3600))h ago (threshold $((MAX_AGE_SECONDS / 3600))h) — runner offline or schedule broken?"
-    elif [ "$outcome" = "failure" ]; then
+    elif [ "$outcome" != "success" ]; then
+        # Anything that is not an explicit success is unhealthy. This used to
+        # test `= "failure"`, which let every OTHER non-success outcome read as
+        # green: on 2026-08-09 and 08-10 the suite wedged in teardown, GitHub
+        # killed the job at its 30m ceiling, the workflow recorded
+        # outcome="cancelled" — and this heartbeat reported ok both mornings
+        # while the suite had not completed once. An allowlist is the only
+        # shape that cannot be widened by a new outcome string upstream.
         state="failed"
-        detail="last Tier 2 run (\`$run_id\`) FAILED, $((age / 3600))h ago."
+        detail="last Tier 2 run (\`$run_id\`) did not succeed (outcome: \`$outcome\`), $((age / 3600))h ago."
     fi
 fi
 

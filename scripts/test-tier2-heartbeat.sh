@@ -27,8 +27,27 @@ chmod +x "$T/bin/py"
 : > "$T/agg.env"
 
 # jq stub — the script uses exactly two shapes, and Git Bash ships no jq.
-cat > "$T/bin/jq" <<'EOF'
-#!/usr/bin/env python
+#
+# Only installed where jq is genuinely missing. It goes on the front of PATH, so
+# installing it unconditionally SHADOWS a real jq — and its `python` shebang does
+# not resolve on the data server, which has python3 only. That combination made
+# every case fail there, including the control, on the one box whose whole
+# purpose is validating the DEPLOYED copy (see the invocation note at the top).
+if command -v jq >/dev/null 2>&1; then
+    : # real jq on PATH — use it
+else
+# Pick an interpreter that RUNS, not merely one that resolves: `command -v
+# python3` on Windows hits the Microsoft Store shim, which exists, exits 0 for
+# `command -v`, and then prints "Python was not found" for every real call.
+_PYBIN=""
+for _cand in python3 python; do
+    if command -v "$_cand" >/dev/null 2>&1 && "$_cand" -c 'import json,sys' >/dev/null 2>&1; then
+        _PYBIN="$(command -v "$_cand")"; break
+    fi
+done
+[ -n "$_PYBIN" ] || { echo "no working python for the jq stub, and no real jq"; exit 2; }
+printf '#!%s\n' "$_PYBIN" > "$T/bin/jq"
+cat >> "$T/bin/jq" <<'EOF'
 import json, sys
 a = sys.argv[1:]
 if "-n" in a:                                   # build: -n --arg k v ... '<shape>'
@@ -54,6 +73,7 @@ except Exception:
     print(dflt)
 EOF
 chmod +x "$T/bin/jq"
+fi
 
 mk_checker() {  # $1 = exit code, $2 = message
     cat > "$T/checker" <<EOF
@@ -168,6 +188,22 @@ echo "== 9. recovery from red =="
 mk_marker success 3600; mk_checker 0 "in sync"
 printf 'failed|%s' "$(date +%s)" > "$T/state"
 out="$(run_hb)"; check "recovered embed" "recovered" "$(cat "$T/last-payload.json")"
+
+echo "== 10. a non-success outcome that is not the literal 'failure' =="
+# The 2026-08-09/10 blind spot. The suite wedged in teardown, GitHub killed the
+# job at its 30m ceiling, and the workflow wrote outcome="cancelled". The old
+# `= "failure"` test matched none of it, so the heartbeat reported OK on two
+# consecutive mornings while the suite had not completed once. Every case above
+# uses success/failure only, which is exactly why nothing caught this.
+for bad in cancelled timed_out unknown ""; do
+    mk_marker "$bad" 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+    out="$(run_hb)"
+    check "outcome '${bad:-<empty>}' is unhealthy" "failed" "$(cat "$T/state")"
+done
+# Control: the allowlist must still let a real success through, or "everything
+# is unhealthy" would pass this block for the wrong reason.
+mk_marker success 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+out="$(run_hb)"; check "control: success is still ok" "ok|" "$(cat "$T/state")"
 
 echo
 echo "passed $pass, failed $fail"
