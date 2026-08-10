@@ -21,8 +21,8 @@ checklists below are a **shorter** job than they look. Each unit carries a
 | Unit | Status |
 |---|---|
 | 1 — suicides | **gate cleared, verified with a control.** The unconfirmed verb string is confirmed against real DoD logs; without the fix the same log produces 0 rows, with it 3/3. |
-| 2 — assists | **all steps covered but one.** Every emitted assist carried exactly; both attribution negatives checked from the log; headshots unaffected. **`hlstats_Events_Statsme` is not covered** — check by hand. |
-| 3 — cap breaks | **positive covered, the four negatives are not.** Bots cannot be told to stage a clean cap or a voluntary walk-off. These still need a human. |
+| 2 — assists | **all steps covered but one, and one open finding.** Every emitted assist carried exactly; headshots unaffected. A killer was credited an assist on their own kill once in 225 kills, on an explosive — see Unit 2. **`hlstats_Events_Statsme` is not covered** — check by hand. |
+| 3 — cap breaks | **positive plus two of four negatives, staged deliberately.** Off-point kill and voluntary walk-off are now driven and asserted. Clean-cap and round-restart still need a human. |
 | 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
 
 Two caveats worth reading before treating any of this as sign-off:
@@ -310,7 +310,7 @@ log). Across five live runs and two replays:
 |---|---|---|
 | 1-2 assists recorded with victim attribution | yes | every emitted assist carried, exactly: 4/4, 5/5, 7/7, 12/12 |
 | 3 not double-recorded | yes | 0 rows in `PlayerActions` for `assist`, every run |
-| 4 killer not credited on their own kill | yes | `log_invariants.check_assist_attribution` — 0 violations |
+| 4 killer not credited on their own kill | yes | **one violation found — see below** |
 | 5 teammate not credited | yes | same check, teams read off the log line — 0 violations |
 | 6 headshots unaffected | yes | 3/3 markers → `headshot=1` frag rows |
 | 6 weaponstats unaffected | **no** | Lane B's config loads no statsme module, so `hlstats_Events_Statsme` is 0 by construction. **Check this by hand.** |
@@ -323,7 +323,50 @@ attribution bug and not something the daemon did. Both checks are unit-tested
 in both directions — a negative check that cannot fire reports "0 violations"
 forever and reads like evidence.
 
-The one gap is weaponstats. Everything else on this list has been exercised.
+### ⚠️ Open finding: a killer credited an assist on their own kill
+
+Step 4's negative fired for real, once:
+
+```
+14:38:43  "Claire<9><0><Allies>" killed "Pyramid<2><0><Axis>" with "bazooka"
+14:38:45  "Claire<9><BOT><Allies>" triggered "assist" against "Pyramid<2><BOT><Axis>"
+```
+
+Claire killed Pyramid and was also credited an assist against Pyramid. (The 2s
+gap is the capture buffer's 5s flush, not a second death.)
+
+**Frequency:** once in 225 kills and 20 assists across four captures. The other
+three captures are clean.
+
+**What is known.** `ksc_on_death` does have the guard — `if (a == killer || a
+== victim) continue` — so the exclusion is written correctly. It compares
+against the `killer` index that DODX's `client_death` forward supplies, and the
+only sample is an **explosive** kill.
+
+**What is not known,** and needs someone with DODX in front of them: whether
+DODX reports a different index (the inflictor, or 0 for world) as the killer of
+a rocket-splash death, which would make the guard compare against the wrong
+player and let the real killer through as an assister. One sample and a
+plausible mechanism is not a root cause.
+
+**Why it matters more than one row.** An assist is worth rating, so a killer
+collecting both the frag and an assist for the same death is double-credited.
+It is small and it is silent.
+
+**Suggested next step:** replay a bazooka/grenade death through
+`dodx_test_dispatch_client_death` with a known killer index and log what
+`ksc_on_death` actually receives. If DODX is the source, the fix is either in
+DODX's attribution or an additional guard keyed on something more reliable than
+the forward's killer index.
+
+This does not block Unit 2 — the behaviour is a pre-existing property of the
+capture rule, not something these branches introduce, and it is rare. It should
+be understood before the rating consumes assists in Phase 8.
+
+### Remaining gap
+
+`hlstats_Events_Statsme` is the one item on this list Lane B cannot cover.
+Everything else has been exercised.
 
 ### Rollback
 
@@ -396,32 +439,34 @@ player's objective rating.
 
 **Pass =** real breaks recorded, all four negatives clean, no regression.
 
-### Lane B pre-verification — partial, and the gap is the interesting half
+### Lane B pre-verification
+
+The negatives are the ones that matter here — this unit's own note says a
+false-positive break is worse than a missed one, because it silently inflates
+objective rating and nothing ever contradicts it. Bots cannot be told to stage
+those, so `diagnostics/KTPBreakDrive.sma` stages them directly.
 
 | Step | Lane B | Result |
 |---|---|---|
-| 1 real breaks recorded | yes | 1/1 carried into `PlayerActions`, 0 in `PlayerPlayerActions`, twice |
-| 2-5 the four negatives | **no** | see below |
-| 6 count sanity | partial | breaks appear in ~half of runs, never a burst — consistent with no false positives, but that is inference |
+| 1 real breaks recorded | yes | carried into `PlayerActions`, 0 in `PlayerPlayerActions`, every run that produced one |
+| 2 clean cap, nobody killed | **no** | needs a cap allowed to complete with no candidate queued; not staged |
+| 3 off-point kill | **yes, staged** | a capping-team player killed ~2800 units from the point produced no break for that killer |
+| 4 voluntary walk-off | **yes, staged** | a capper teleported off the point, no death on that team, count dropped by exactly one |
+| 5 round restart | **no** | not staged |
+| 6 count sanity | partial | breaks never arrive in bursts, which is consistent with no false positives — but that is inference |
 | 7 regression / buffer / kill switch | yes | as Unit 2 |
 
-**The negatives are the ones that matter here** — the unit's own note says a
-false-positive break is worse than a missed one, because it silently inflates
-objective rating and nothing ever contradicts it. Lane B cannot stage them:
-each requires a specific arranged scenario (a clean cap with nobody killed, an
-off-point kill during a cap elsewhere, a voluntary walk-off, a round restart)
-and bots cannot be told to do that.
+Steps 2 and 5 remain manual. Both are about the `CA_owning_team` clear rather
+than the candidate queue, and staging them needs control over when a cap
+completes, which the current driver does not have.
 
-What Lane B *can* say is that no break was credited to a player with no team
-or on Spectator, which would mean the detector fired on someone who could not
-have been contesting. That check exists and is clean.
-
-Two things follow. First, **steps 2-5 still need a human on a real server** —
-this is the one place in Units 1-4 where automation has not replaced the
-checklist. Second, the negatives are the strongest argument for the driven
-cap_break scenario noted in `tests/e2e_stats/README.md`: put a bot on a point,
-kill it or don't, and assert. That would convert four manual checks into four
-deterministic ones.
+**One warning for whoever runs the manual steps.** Judging these by "was there
+a cap_break in the log around then" does not work. Bots break caps constantly,
+and the first automated version of step 4 reported a confident false positive
+that turned out to be a bot legitimately killing a capper one second before the
+staged walk-off. Either attribute the break to a specific killer by name, or
+confirm nobody on the capping team died in the surrounding ~10 seconds. The
+harness now does both; a human doing it by eye should too.
 
 ### Tuning knobs if it misbehaves
 

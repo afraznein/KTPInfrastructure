@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -36,7 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.e2e_stats import assertions, log_invariants, metamod  # noqa: E402
+from tests.e2e_stats import (assertions, break_scenarios,  # noqa: E402
+                             log_invariants, metamod)
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
@@ -49,8 +51,28 @@ from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 BOOT_ATTEMPTS = 3
 
 
+def compile_sma(src: Path, out: Path, *, scripting: Path) -> Path:
+    """Compile a diagnostic .sma.
+
+    amxxpc must run from its own directory or it cannot find amxxpc32.so, and
+    it reports that as a missing source file rather than a missing loader.
+    Line endings are normalised first: the repo is edited on Windows and a
+    stray CR ends up inside a token.
+    """
+    # read_text() applies universal newlines, so a CRLF source lands as LF.
+    work = Path("/tmp") / src.name
+    work.write_text(src.read_text(encoding="utf-8", errors="replace"))
+    r = subprocess.run([str(scripting / "amxxpc"), str(work),
+                        f"-i{scripting}/include", f"-o{out}"],
+                       cwd=str(scripting), capture_output=True, text=True,
+                       timeout=180)
+    if not out.is_file():
+        raise SystemExit(f"{src.name} failed to compile: {r.stdout} {r.stderr}")
+    return out
+
+
 def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
-               server_cfg_fixture: Path) -> EphemeralTree:
+               server_cfg_fixture: Path, break_drive: Path | None = None) -> EphemeralTree:
     """Lay the branch's artifacts over the image's server tree.
 
     `in_place` rather than a copy: the container is the isolation boundary, so
@@ -66,6 +88,16 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
     for ini in config_dir.glob("*.ini"):
         tree.overlay_file(ini, f"dod/addons/ktpamx/configs/{ini.name}")
     tree.overlay_file(plugin, "dod/addons/ktpamx/plugins/stats_logging.amxx")
+
+    if break_drive is not None:
+        # Appended to plugins.ini rather than replacing it, so the stack under
+        # test stays production's plugin set plus one diagnostic.
+        tree.overlay_file(break_drive,
+                          "dod/addons/ktpamx/plugins/KTPBreakDrive.amxx")
+        ini = tree.path / "dod/addons/ktpamx/configs/plugins.ini"
+        tree.write_text(
+            "dod/addons/ktpamx/configs/plugins.ini",
+            os.linesep.join([ini.read_text().rstrip(), "KTPBreakDrive.amxx", ""]))
 
     tree.write_text(
         "dod/lane_b_server.cfg",
@@ -222,6 +254,11 @@ def main() -> int:
                          "more lone cappers and so more cap_breaks — untested; "
                          "see add_bots for what is and is not known")
     ap.add_argument("--flag-priority", type=int, default=100)
+    ap.add_argument("--break-drive-sma", type=Path,
+                    default=Path("/work/tests/e2e_stats/diagnostics/KTPBreakDrive.sma"),
+                    help="diagnostic that stages the Unit 3 cap-break scenarios")
+    ap.add_argument("--no-break-scenarios", action="store_true",
+                    help="skip the staged scenarios (they kill bots on command)")
     ap.add_argument("--kill-switch-seconds", type=int, default=60,
                     help="seconds to play with ktp_stats_capture 0, then 1. "
                          "0 skips the check (deployment plan Unit 2 step 8)")
@@ -232,6 +269,10 @@ def main() -> int:
 
     report: dict = {"map": args.map, "play_seconds": args.play_seconds}
     failures: list[str] = []
+    # Scenarios that could not be staged. Kept apart from `failures`
+    # for the same reason as the other coverage gaps: a scenario that
+    # never set up says nothing about the code it was aimed at.
+    gaps_extra: list[str] = []
     args.log.parent.mkdir(parents=True, exist_ok=True)
     args.log.unlink(missing_ok=True)
 
@@ -246,9 +287,17 @@ def main() -> int:
         HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=args.port,
                                         min_players=2)
 
+        drive_amxx = None
+        if not args.no_break_scenarios and args.break_drive_sma.is_file():
+            drive_amxx = compile_sma(
+                args.break_drive_sma, Path("/tmp/KTPBreakDrive.amxx"),
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+            print(f"compiled {drive_amxx.name}", flush=True)
+
         tree = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
                           plugin=args.plugin, config_dir=args.config_dir,
-                          server_cfg_fixture=args.server_cfg)
+                          server_cfg_fixture=args.server_cfg,
+                          break_drive=drive_amxx)
         topo = metamod.enable_metamod(tree, bot_spec=NEW_BOT, host_ktpamx=False)
         print(f"topology: {topo}", flush=True)
 
@@ -291,6 +340,12 @@ def main() -> int:
                         report["assists_before_match"] = _count(
                             args.log, 'triggered "assist"')
                     play(play_seconds=args.play_seconds, log_path=args.log)
+                    if drive_amxx is not None:
+                        # After the match: the scenarios need caps actually in
+                        # progress, and bots take a while to start contesting.
+                        print("staging cap-break scenarios", flush=True)
+                        report["break_scenarios"] = break_scenarios.run_all(
+                            handle, args.log)
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
@@ -339,6 +394,12 @@ def main() -> int:
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
         ]
+        for sc in report.get("break_scenarios", []):
+            if sc["status"] == "violation":
+                failures.append(f"{sc['name']}: {sc['detail']}")
+            elif sc["status"] == "not_staged":
+                gaps_extra.append(f"{sc['name']}: {sc['detail']}")
+
         if report.get("kill_switch"):
             carried.append(check_kill_switch(
                 report["kill_switch"],
@@ -349,7 +410,7 @@ def main() -> int:
                      if c["status"] == "pipeline"]
         gaps = [f"{c['code']}: {c['detail']}" for c in carried
                 if c["status"] == "not_exercised"]
-        report["coverage_gaps"] = gaps
+        report["coverage_gaps"] = gaps + gaps_extra
 
         for check in (
             lambda: assertions.assert_baseline_still_flows(db),
