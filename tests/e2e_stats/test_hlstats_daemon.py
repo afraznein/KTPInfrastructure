@@ -17,19 +17,45 @@ from .hlstats_daemon import HlstatsDaemon, strip_log_prefix
 
 
 class FakeDb:
-    """Records SQL instead of running it."""
+    """Records SQL instead of running it.
 
-    def __init__(self, existing=None):
+    `existing` is the serverId a lookup finds — None meaning "no row yet".
+    Because `ensure_server_row` re-reads the id after inserting, the fake has
+    to model that: a lookup after an INSERT returns an id even when the first
+    one did not, or the caller sees None where real MySQL would not.
+    """
+
+    database = "hlstatsx_test"
+
+    def __init__(self, existing=None, *, games=None, columns=None):
         self.statements: list[str] = []
         self._existing = existing
+        self._inserted_server = False
+        self._games = games or []
+        self._columns = columns
 
     def scalar(self, query):
         self.statements.append(query)
+        low = query.lower()
+        if "information_schema.columns" in low:
+            return "rcon_password" if self._columns else None
+        if "hlstats_games" in low:
+            return self._games[0] if self._games else None
+        if "hlstats_servers" in low:
+            if self._existing is not None:
+                return self._existing
+            return "1" if self._inserted_server else None
         return self._existing
 
     def sql(self, statement):
         self.statements.append(statement)
+        if statement.strip().upper().startswith("INSERT INTO HLSTATS_SERVERS "):
+            self._inserted_server = True
         return ""
+
+    def inserts_into(self, table: str) -> list[str]:
+        return [s for s in self.statements
+                if s.strip().upper().startswith("INSERT") and table in s]
 
 
 def _daemon(tmp_path, **kw):
@@ -56,9 +82,8 @@ def test_ensure_server_row_inserts_when_absent():
     row, no attribution — and nothing complains."""
     db = FakeDb(existing=None)
     HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=27015)
-    inserts = [s for s in db.statements if s.strip().upper().startswith("INSERT")]
+    inserts = db.inserts_into("hlstats_Servers ")
     assert len(inserts) == 1
-    assert "hlstats_Servers" in inserts[0]
     assert "127.0.0.1" in inserts[0]
     assert "27015" in inserts[0]
     assert "'dod'" in inserts[0], "game must be dod or the daemon loads the wrong action set"
@@ -69,7 +94,7 @@ def test_ensure_server_row_is_idempotent():
     daemon takes LIMIT 1, so a duplicate silently shadows the other."""
     db = FakeDb(existing="7")
     HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=27015)
-    assert not [s for s in db.statements if s.strip().upper().startswith("INSERT")]
+    assert not db.inserts_into("hlstats_Servers ")
 
 
 def test_ensure_server_row_uses_the_port_it_was_given():
@@ -77,7 +102,73 @@ def test_ensure_server_row_uses_the_port_it_was_given():
     anywhere in this path would mean the daemon never matches the server."""
     db = FakeDb(existing=None)
     HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=41234)
-    assert "41234" in db.statements[-1]
+    assert any("41234" in s for s in db.inserts_into("hlstats_Servers "))
+
+
+# -- the config that makes bot events countable ---------------------------
+
+
+def _config_written(db) -> dict[str, str]:
+    """Parameter -> value, read back out of the recorded INSERTs."""
+    import re
+    out = {}
+    for s in db.inserts_into("hlstats_Servers_Config"):
+        m = re.search(r"VALUES\s*\(\s*\d+\s*,\s*'([^']+)'\s*,\s*'([^']*)'\s*\)", s)
+        if m:
+            out[m.group(1)] = m.group(2)
+    return out
+
+
+def test_ignore_bots_is_turned_off():
+    """The single biggest trap in the daemon leg. `IgnoreBots` defaults to 1
+    (hlstats.pl:2234), every Lane B player is a bot, and the handlers
+    short-circuit to `(IGNORED) BOT:` — parse fine, record nothing."""
+    db = FakeDb(existing=None)
+    HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=27015)
+    assert _config_written(db)["IgnoreBots"] == "0"
+
+
+def test_min_players_is_lowered_from_the_default_six():
+    """Below `MinPlayers` the handlers answer `(IGNORED) NOTMINPLAYERS:`, which
+    is indistinguishable from broken capture in a small debug run."""
+    db = FakeDb(existing=None)
+    HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=27015,
+                                    min_players=2)
+    assert _config_written(db)["MinPlayers"] == "2"
+
+
+def test_server_config_is_replaced_not_appended():
+    """hlstats_Servers_Config has no unique key on (serverId, parameter), and
+    the daemon reads rows into a hash — a stale duplicate would win or lose by
+    row order. Each parameter is deleted before it is inserted."""
+    db = FakeDb(existing="7")
+    HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=27015)
+    deletes = [s for s in db.statements
+               if s.strip().upper().startswith("DELETE")
+               and "hlstats_Servers_Config" in s]
+    assert len(deletes) == len(_config_written(db))
+
+
+# -- reconstruction repairs -----------------------------------------------
+
+
+def test_missing_rcon_password_column_is_added():
+    """`fetch_base_schema.sh` reconstructs hlstats_Servers from
+    information_schema, and MySQL hides columns the account cannot see. The
+    daemon SELECTs a.rcon_password at its first server lookup and dies."""
+    db = FakeDb(columns=None)
+    repairs = HlstatsDaemon.repair_reconstructed_schema(db)
+    assert repairs["columns"] == ["rcon_password"]
+    assert any("ADD COLUMN `rcon_password`" in s for s in db.statements)
+
+
+def test_present_column_is_left_alone():
+    """MySQL has no ADD COLUMN IF NOT EXISTS, so a blind ALTER would error out
+    on a dump that already has it."""
+    db = FakeDb(columns=["rcon_password"])
+    repairs = HlstatsDaemon.repair_reconstructed_schema(db)
+    assert repairs["columns"] == []
+    assert not [s for s in db.statements if "ADD COLUMN" in s]
 
 
 # -- log-line prefix handling ---------------------------------------------

@@ -23,9 +23,79 @@ AMXX now sees every bot — `connected=1`, correct teams (`team=1` allies,
 `0 0 0` the deployment plan warns to check for. The line shapes are exactly what
 `doEvent_PlayerAction` / `doEvent_PlayerPlayerAction` parse.
 
-**Remaining unknown:** the authid renders as `BOT`. Whether `hlstats.pl` creates
-players for that, or drops the rows, is the next thing to find out — it is a
-daemon question, not a capture one.
+## ✅ RESOLVED — the whole chain reaches MySQL
+
+A live run — bots playing, daemon tailing, ephemeral MySQL — now lands rows:
+
+```
+                log   ppa    pa
+  assist          7     7     0
+  kills          50    50   (frags)
+  players 16 (16 bot)
+  assist positions: rows 7, null 0, all_zero 0, distinct 7, max_abs 1309
+```
+
+and a replay of the earlier capture (`scripts/replay_daemon.py`) lands
+`5 assists → 5 PPA rows` and `1 cap_break → 1 PA row`, with the opposite table
+empty in both cases.
+
+### The `<BOT>` authid question: answered, and it was the wrong question
+
+`botidcheck` (hlstats.pl:1415) accepts `BOT`, `0`, and `00000000:N:0`. A bot is
+given a synthetic `BOT:md5(name + server_addr)` uniqueid and created like any
+other player. Both shapes Lane B produces are covered — the unpatched stack
+logs `<0>`, the patched one logs `<BOT>`.
+
+**The real gate was `IgnoreBots`, which defaults to 1.** Every handler
+short-circuits to `(IGNORED) BOT:` when it is set, so the lines parse, nothing
+is recorded, and nothing complains. `MinPlayers` (default 6) is the same shape
+of trap for a small run. Both are written by `ensure_server_row()`.
+
+One caveat worth knowing: the uniqueid is derived from the **name**, so two
+bots sharing a name collapse into one player row. new_bot's roster is unique;
+a bot kit that recycles names would produce quietly-wrong attribution.
+
+### Four things that stopped the daemon, none of them capture-side
+
+| Symptom | Cause |
+|---|---|
+| `Can't locate ConfigReaderSimple.pm` | KTPHLStatsX is a **delta-only fork** — three files. `hlstats.pl` requires seven more by path. Lane B has to reproduce production's composition (`scripts/assemble_daemon_tree.sh`). |
+| Exits before printing anything | `use Syntax::Keyword::Try` in upstream's `.pm` files fails at compile time. Now in the Dockerfile and in `preflight()`. |
+| `Unknown column 'a.rcon_password'` | MySQL hides from `information_schema.columns` any column the account lacks privilege on, so the reconstructed `hlstats_Servers` is faithful to what a read-only account sees and still missing the one the daemon SELECTs first. |
+| `Illegal mix of collations` | The reconstruction takes the *loading* server's default collation; every dumped table carries production's. The first join between them dies. |
+
+Both reconstruction defects are repaired at load (`repair_reconstructed_schema`)
+and fixed at source (`fetch_base_schema.sh`), because the dump is taken rarely
+and by hand.
+
+### The one that looked exactly like broken capture
+
+47 kills → 39 frags, 5 assists → **0** rows, no error anywhere.
+
+`recordEvent` queues rows and flushes a table only when its queue passes
+`$g_event_queue_size`; everything still queued is written by the `flushAll`
+that runs when the daemon reaches EOF on stdin. The harness closed stdin and
+SIGTERMed in the same breath, pre-empting that flush.
+
+The damage was **selective**, which is what made it convincing: `Frags`
+overflowed mid-match and survived, while the low-volume tables — exactly the
+ones Lane B exists to check — were still queued and vanished. `stop()` now
+waits for the daemon to exit on its own, and says so if it has to force it.
+
+### Diagnostics are unreachable in `--stdin` mode
+
+`printEvent` is gated on `((debug > 0) && (stdin == 0)) || ((stdin == 1) &&
+force_output)`. Under `--stdin` — the only mode Lane B uses — `--debug` does
+nothing, so `(IGNORED) BOT:` / `NOTMINPLAYERS:` / `NOPLAYERINFO:` never print
+and a zero row count carries no explanation at all.
+
+`assemble_daemon_tree.sh` forces that gate open in the scratch tree and records
+it in `PROVENANCE`. Print-only, never deployed, `LANE_B_NO_DIAGNOSTICS=1` to
+opt out.
+
+Related trap while reading the output: **the PPA branch's `$ev_status` is
+overwritten by the PA call that follows it**, so a player-vs-player action is
+only ever printed as `E011`. Absence of `E010` proves nothing.
 
 ## Summary of how it got there
 
@@ -211,4 +281,26 @@ completely blind AMXX.
 | Bots: connect / fight / capture | yes / 50 kills / 12 captures |
 | DODX forwards under bots | all fire |
 | **Capture code emitting** | **yes — 5 assists + 1 cap_break with positions** |
-| `hlstats.pl` → MySQL rows | next — open question is whether the daemon accepts `<BOT>` authids |
+| Daemon tree (upstream libs + fork delta) | assembles, boots, PROVENANCE recorded |
+| `hlstats.pl` → MySQL rows | **yes — 7/7 assists, 5/5 on replay, 1/1 cap_break, 50/50 frags** |
+| Assertions | written and unit-tested (78 passed) |
+
+## Assertion posture, as built
+
+`check_carried` returns one of three verdicts rather than pass/fail, because
+pass/fail cannot express what a bot-driven run actually knows:
+
+- **ok** — `rows == emitted`. Exact, not `>= 1`. The daemon should carry every
+  line, so equality is the invariant — and it is what catches *partial* loss.
+  The unflushed-queue bug wrote 39 rows for 47 events; a minimum-count check
+  called that a pass.
+- **not_exercised** — nothing was emitted, so the pipeline was not tested and
+  cannot have passed. A 240s run produced one cap_break; a later 240s run
+  produced none. Reporting that as either green or broken is wrong, and
+  reporting it as broken is worse, because it teaches people to ignore the lane.
+- **pipeline** — lines emitted, rows do not match. The only verdict that should
+  stop anybody.
+
+The flag invariant (rows in the opposite table) is checked in every case: it is
+about configuration rather than volume, so a run that exercised nothing can
+still catch it.

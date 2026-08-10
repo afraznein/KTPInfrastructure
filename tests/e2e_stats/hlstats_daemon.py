@@ -26,6 +26,37 @@ to. `ensure_server_row()` inserts it, and must run **before** the daemon
 starts — same class of ordering trap as the action seeds, and for the same
 reason: getting it wrong loses data quietly rather than loudly.
 
+## The three gates that silently discard bot events
+
+`hlstats.pl` reads its per-server config ONCE, in `readDatabaseConfig`
+(hlstats.pl:1655-1670), from `hlstats_Servers_Config`. Three of its defaults
+are fatal to a bot-driven lane, and all three fail the same way: the line
+parses, the daemon prints `(IGNORED) ...`, and nothing is written.
+
+| Parameter | Default | Why it matters here |
+|---|---|---|
+| `IgnoreBots` | **1** | Every Lane B player is a bot. `doEvent_PlayerPlayerAction` short-circuits to `(IGNORED) BOT:` (HLstats_EventHandlers.plib:1459) and no row is recorded. This is the single biggest trap in the daemon leg. |
+| `MinPlayers` | **6** | Below it, `(IGNORED) NOTMINPLAYERS:` (plib:1454). 12 bots clears it, but a short debug run with 4 does not, and the failure looks identical to broken capture. |
+| `BonusRoundIgnore` | 0 | Off by default, but set it explicitly so a stray end-of-round window cannot eat the tail of a match. |
+
+`ensure_server_row()` writes all three. Note it does NOT need `hlstats_Games`
+to be populated: server lookup LEFT JOINs it with `IFNULL(c.realgame,'hl2mp')`
+(hlstats.pl:811), and DoD takes no `play_game`-specific branch on the action
+path. The row is inserted anyway, for parity with production.
+
+## `<BOT>` authids are accepted, and are not the interesting question
+
+`botidcheck` (hlstats.pl:1415-1424) returns true for `BOT`, `0`, and
+`00000000:N:0`. A bot player is then given a synthetic
+`BOT:md5(name + server_addr)` uniqueid and created like any other player
+(hlstats.pl:1186-1190). Both authid shapes Lane B produces are covered: the
+unpatched stack logs `<0>`, the patched one logs `<BOT>`.
+
+Because the uniqueid is derived from the **name**, two bots sharing a name
+would collapse into one player row. new_bot's roster is unique, but a bot kit
+that recycles names would produce quietly-wrong attribution rather than an
+error.
+
 ## Known-unverified: the log-line prefix
 
 Game-log lines on disk carry an `L 08/09/2026 - 12:00:00: ` prefix, and the
@@ -79,15 +110,17 @@ def preflight() -> dict:
     if not perl:
         raise DaemonError("perl not found on PATH")
     found = {}
-    for mod in ("DBI", "DBD::mysql"):
+    for mod in ("DBI", "DBD::mysql", "Syntax::Keyword::Try"):
         r = subprocess.run([perl, "-e", f"use {mod}; print 'ok'"],
                            capture_output=True, text=True)
         found[mod] = (r.returncode == 0)
     missing = [m for m, ok in found.items() if not ok]
     if missing:
         raise DaemonError(
-            f"perl modules missing: {', '.join(missing)}. The daemon cannot "
-            f"connect to MySQL without them (install libdbd-mysql-perl)."
+            f"perl modules missing: {', '.join(missing)}. Install "
+            f"libdbi-perl / libdbd-mysql-perl / libsyntax-keyword-try-perl. "
+            f"All three fail before the daemon prints anything about itself, "
+            f"so the symptom is an immediate exit rather than a useful error."
         )
     return {"perl": perl, **found}
 
@@ -106,32 +139,154 @@ class HlstatsDaemon:
     stdout_path: Path
     strip_prefix: bool = False
     timestamp_flag: bool = False
+    # `--debug` is repeatable (`debug|d+`). Import mode is otherwise silent per
+    # event, so at 0 a discarded line leaves no trace at all and a zero row
+    # count has no explanation attached. Level 1 prints each event with its
+    # `(IGNORED) <reason>:` prefix, which is the difference between "capture is
+    # broken" and "the action row was missing".
+    debug: int = 0
     _proc: subprocess.Popen | None = None
     _pump: threading.Thread | None = None
     _stop: threading.Event = field(default_factory=threading.Event)
     _fed: int = 0
+    _died: str | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     # -- schema prerequisite ----------------------------------------------
 
+    # Columns hlstats.pl SELECTs that a production-derived base schema can be
+    # missing. Not schema drift — `fetch_base_schema.sh` reconstructs
+    # `hlstats_Servers` from `information_schema` because the read-only
+    # analytics account is denied SHOW CREATE on it, and MySQL hides from
+    # `information_schema.columns` any column the account has no privilege on.
+    # `rcon_password` is exactly the column such a grant would withhold, so the
+    # dump is faithful to what that account can see and still unusable by the
+    # daemon, which fails at its very first server lookup:
+    #
+    #   DBD::mysql::st execute failed: Unknown column 'a.rcon_password'
+    #
+    # Re-added here rather than hand-patched into the dump, so it holds for any
+    # dump anyone takes. The value is never set: --stdin mode sets $g_rcon = 0
+    # and Lane B has nothing to rcon.
+    _REQUIRED_SERVER_COLUMNS = {
+        "rcon_password": "varchar(128) NOT NULL DEFAULT ''",
+    }
+
+    @staticmethod
+    def repair_reconstructed_schema(db) -> dict:
+        """Fix what `fetch_base_schema.sh` could not read off production.
+
+        `hlstats_Servers` is the one table in the dump that is synthesised
+        rather than dumped, so it is the one table that can disagree with the
+        rest. Two ways it does, both of which stop the daemon at its first
+        server lookup and neither of which is visible by reading the SQL:
+
+        1. **A missing column.** MySQL hides from `information_schema.columns`
+           any column the account has no privilege on, so a grant that
+           withholds the rcon secret yields a faithful-but-incomplete list.
+        2. **A different collation.** The synthesised DDL says `DEFAULT CHARSET
+           utf8mb4` with no COLLATE, which takes the server default
+           (`utf8mb4_0900_ai_ci` on MySQL 8). Every dumped table carries
+           production's explicit `utf8mb4_unicode_ci`. Joining the two —
+           `hlstats_Servers.game = hlstats_Games.code` — raises *Illegal mix of
+           collations*, which reads like a schema bug and is really an artifact
+           of how the dump was taken.
+
+        Both are repaired against what the *dumped* tables actually say, rather
+        than against a hardcoded expectation, so this keeps working if
+        production's charset ever changes.
+        """
+        repairs: dict = {"columns": [], "collation": None}
+
+        for column, ddl in HlstatsDaemon._REQUIRED_SERVER_COLUMNS.items():
+            present = db.scalar(
+                "SELECT column_name FROM information_schema.columns "
+                f"WHERE table_schema='{db.database}' "
+                f"AND table_name='hlstats_Servers' AND column_name='{column}'"
+            )
+            if not present:
+                db.sql(f"ALTER TABLE hlstats_Servers ADD COLUMN `{column}` {ddl}")
+                repairs["columns"].append(column)
+
+        # The reference is the most common collation among the genuinely
+        # dumped tables — majority rather than any single table, so one oddity
+        # in the schema cannot drag the reconstruction off with it.
+        rows = db.sql(
+            "SELECT table_collation, COUNT(*) c FROM information_schema.tables "
+            f"WHERE table_schema='{db.database}' AND table_name <> 'hlstats_Servers' "
+            "AND table_collation IS NOT NULL "
+            "GROUP BY table_collation ORDER BY c DESC LIMIT 1"
+        ).strip().splitlines()
+        if len(rows) >= 2:
+            want = rows[1].split("\t")[0]
+            have = db.scalar(
+                "SELECT table_collation FROM information_schema.tables "
+                f"WHERE table_schema='{db.database}' AND table_name='hlstats_Servers'"
+            )
+            if have and want and have != want:
+                charset = want.split("_")[0]
+                db.sql("ALTER TABLE hlstats_Servers CONVERT TO CHARACTER SET "
+                       f"{charset} COLLATE {want}")
+                repairs["collation"] = f"{have} -> {want}"
+        return repairs
+
     @staticmethod
     def ensure_server_row(db, *, address: str, port: int, game: str = "dod",
-                          name: str = "KTP Lane B ephemeral") -> None:
-        """Insert the hlstats_Servers row the daemon resolves lines against.
+                          name: str = "KTP Lane B ephemeral",
+                          min_players: int = 2) -> int:
+        """Insert the hlstats_Servers row and the config that makes bot events
+        countable. Returns the serverId.
 
-        Must run before the daemon starts. Without it the daemon finds no
-        server for the incoming lines.
+        Must run before the daemon starts — both the server list and its config
+        are read once at startup. Everything here is a prerequisite, not a
+        convenience: without the config rows the daemon runs happily and writes
+        nothing. See the module docstring for the three defaults involved.
         """
-        existing = db.scalar(
+        server_id = db.scalar(
             "SELECT serverId FROM hlstats_Servers "
             f"WHERE address='{address}' AND port={int(port)}"
         )
-        if existing:
-            return
-        db.sql(
-            "INSERT INTO hlstats_Servers (address, port, name, game) "
-            f"VALUES ('{address}', {int(port)}, '{name}', '{game}')"
-        )
+        if not server_id:
+            db.sql(
+                "INSERT INTO hlstats_Servers (address, port, name, game) "
+                f"VALUES ('{address}', {int(port)}, '{name}', '{game}')"
+            )
+            server_id = db.scalar(
+                "SELECT serverId FROM hlstats_Servers "
+                f"WHERE address='{address}' AND port={int(port)}"
+            )
+        server_id = int(server_id)
+
+        config = {
+            # The one that matters: every Lane B player is a bot.
+            "IgnoreBots": "0",
+            # Default 6. Lower it so a small debug run is not silently ignored.
+            "MinPlayers": str(int(min_players)),
+            "BonusRoundIgnore": "0",
+            # The daemon rcons servers to broadcast. --stdin already sets
+            # $g_rcon = 0; these keep it off by configuration too.
+            "BroadCastEvents": "0",
+            "PlayerEvents": "0",
+        }
+        for parameter, value in config.items():
+            db.sql(
+                "DELETE FROM hlstats_Servers_Config "
+                f"WHERE serverId={server_id} AND parameter='{parameter}'"
+            )
+            db.sql(
+                "INSERT INTO hlstats_Servers_Config (serverId, parameter, value) "
+                f"VALUES ({server_id}, '{parameter}', '{value}')"
+            )
+
+        # Not required (the lookup IFNULLs a missing row to realgame 'hl2mp',
+        # and no DoD action path branches on it) — inserted for parity with
+        # production so the lane is not quietly running a different shape.
+        if not db.scalar(f"SELECT code FROM hlstats_Games WHERE code='{game}'"):
+            db.sql(
+                "INSERT INTO hlstats_Games (code, name, realgame, hidden) "
+                f"VALUES ('{game}', 'Day of Defeat', '{game}', '0')"
+            )
+        return server_id
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -155,6 +310,7 @@ class HlstatsDaemon:
         ]
         if self.timestamp_flag:
             argv.append("--timestamp")
+        argv += ["--debug"] * self.debug
 
         self.stdout_path.parent.mkdir(parents=True, exist_ok=True)
         out = self.stdout_path.open("wb")
@@ -213,7 +369,19 @@ class HlstatsDaemon:
         if self.strip_prefix:
             line = strip_log_prefix(line)
         proc = self._proc
-        if proc is None or proc.stdin is None or proc.poll() is not None:
+        if proc is None or proc.stdin is None:
+            return
+        if proc.poll() is not None:
+            # A dead daemon used to swallow the rest of the log in silence, and
+            # the run then reported "0 rows" — indistinguishable from capture
+            # never emitting. Record it once so the report can say which.
+            if not self._died:
+                self._died = (
+                    f"hlstats.pl exited (rc={proc.returncode}) after "
+                    f"{self._fed} line(s); the remainder of the log was never "
+                    f"processed. Tail of {self.stdout_path}:\n"
+                    + self._tail_stdout(15)
+                )
             return
         try:
             proc.stdin.write((line + "\n").encode("utf-8", "replace"))
@@ -228,10 +396,30 @@ class HlstatsDaemon:
         reproduce a failure without re-running bots."""
         self._feed(line)
 
+    def stop_pump(self) -> None:
+        """Stop tailing the log without stopping the daemon.
+
+        Replay mode pushes lines in with `feed_line`, so the tailing thread has
+        nothing to do — and if `log_source` happened to point at the file being
+        replayed, it would feed every line a second time. Stopping it makes the
+        two modes mutually exclusive by construction rather than by care.
+        """
+        self._stop.set()
+        if self._pump is not None:
+            self._pump.join(timeout=5.0)
+            self._pump = None
+
     @property
     def lines_fed(self) -> int:
         with self._lock:
             return self._fed
+
+    @property
+    def died_early(self) -> str | None:
+        """Set if the daemon exited while lines were still being fed.
+
+        Always check this before believing a zero row count."""
+        return self._died
 
     def drain(self, *, quiet_for: float = 5.0, timeout: float = 90.0) -> int:
         """Wait until the log stops producing lines, then give the daemon time
@@ -274,7 +462,22 @@ class HlstatsDaemon:
             if "SQL_ERROR" in ln or "DBD::" in ln
         ]
 
-    def stop(self) -> None:
+    def stop(self, *, grace: float = 60.0) -> None:
+        """Close stdin and let the daemon finish, only then escalate.
+
+        The grace period is the whole point, and it is not politeness.
+        `recordEvent` queues rows and flushes a table only when its queue
+        passes `$g_event_queue_size`; everything still queued is written by the
+        `flushAll` that runs when the daemon reaches EOF on stdin. Closing
+        stdin and immediately SIGTERMing pre-empts that flush.
+
+        The failure mode is worse than losing everything, because it is
+        selective: a busy table like `Frags` overflows mid-match and survives,
+        while low-volume tables — exactly the ones Lane B exists to check —
+        are still sitting in their queues and vanish. The run then shows 39
+        frags and 0 assists, which reads precisely like the capture side being
+        broken for the new stats only.
+        """
         self._stop.set()
         if self._pump is not None:
             self._pump.join(timeout=5.0)
@@ -286,7 +489,16 @@ class HlstatsDaemon:
                     proc.stdin.close()
             except Exception:
                 pass
-            if proc.poll() is None:
+            try:
+                proc.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                # It did not act on EOF. Anything still queued is lost, so say
+                # so rather than let it look like the events never arrived.
+                self._died = (
+                    f"hlstats.pl did not exit within {grace:.0f}s of stdin "
+                    "closing; it was killed with queued events unflushed, so "
+                    "low-volume tables may be short."
+                )
                 proc.terminate()
                 try:
                     proc.wait(timeout=15)

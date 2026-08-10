@@ -79,6 +79,15 @@ RUN dpkg --add-architecture i386 && \
       perl \
       libdbi-perl \
       libdbd-mysql-perl \
+      # Required by upstream's HLstats_Server.pm / HLstats_Player.pm, which the
+      # delta-only fork does not vendor. Not optional and not lazily loaded:
+      # `use Syntax::Keyword::Try` fails at compile time, so the daemon exits
+      # before printing anything about itself.
+      libsyntax-keyword-try-perl \
+      # Sys::Hostname and Scalar::Util are core; POSIX and Encode are core.
+      # Geo::IP::PurePerl is NOT installed on purpose — hlstats.pl wraps it in
+      # eval (line 1903) precisely so it can be absent, and geolocating a bot
+      # at 127.0.0.1 is meaningless anyway.
       # Test driver. pytest comes from apt rather than pip: Ubuntu 24.04 marks
       # the system Python as externally-managed (PEP 668), so `pip install`
       # fails outright, and --break-system-packages would be exactly the kind
