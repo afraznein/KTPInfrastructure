@@ -14,11 +14,15 @@
 #   2. The container filesystem is ephemeral and isolated by construction, so
 #      the fleet-matching serverfiles tree cannot be contaminated — no copy, no
 #      hardlink write-through hazard, no integrity guard needed.
-#   3. It pins glibc to Ubuntu 22.04's 2.35. That is BELOW the 2.41 threshold
-#      where the loader refuses shared libraries needing an executable stack,
-#      which is the single most likely reason a 20-year-old DoD bot .so fails
-#      to load on a modern host. Controlling glibc is a real advantage here,
-#      not incidental.
+#   3. It pins glibc. The runtime base image is Ubuntu 24.04.4 (glibc 2.39) —
+#      note that is NOT the same as build/base/Dockerfile's Ubuntu 22.04; the
+#      runtime image is built separately, and 2.39 is what `ldd --version`
+#      reports inside it. Still below the 2.41 threshold where the loader
+#      refuses shared libraries needing an executable stack, which is the
+#      single most likely reason a 20-year-old DoD bot .so fails to load on a
+#      current host. Pinning it is a real advantage, but the margin is one
+#      release — if the base image moves to a glibc >= 2.41 distro, expect the
+#      bot to stop loading and reach for `execstack -c` below.
 #   4. Lane B can then run on a GitHub-hosted runner and never touch the data
 #      server — which also runs production HLStatsX and is deliberately
 #      Docker-free.
@@ -67,22 +71,39 @@ RUN dpkg --add-architecture i386 && \
       perl \
       libdbi-perl \
       libdbd-mysql-perl \
-      # Test driver
+      # Test driver. pytest comes from apt rather than pip: Ubuntu 24.04 marks
+      # the system Python as externally-managed (PEP 668), so `pip install`
+      # fails outright, and --break-system-packages would be exactly the kind
+      # of "make the error go away" fix that bites later. The harness itself is
+      # stdlib-only; pytest is only needed to run the test files.
       python3 \
-      python3-pip \
+      python3-pytest \
+      # The artifact build extracts every file with `git show <ref>:<path>`, so
+      # git is a runtime dependency of the lane, not just a build-host one. The
+      # runtime base image does not carry it.
+      git \
       # 32-bit runtime for a third-party bot .so. hlds itself is 32-bit so most
       # of this is present already; listed explicitly because a missing
       # libstdc++6:i386 shows up as an unhelpful "cannot open shared object".
       libc6:i386 \
       libstdc++6:i386 \
       libgcc-s1:i386 \
-      # Only needed if a bot .so requires an executable stack. Ubuntu 22.04's
-      # glibc 2.35 does not enforce the 2.41 restriction, so this is here for
+      # Only needed if a bot .so requires an executable stack. The base image's
+      # glibc 2.39 does not enforce the 2.41 restriction, so this is here for
       # diagnosis rather than routine use.
       execstack \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir pytest
+# Repos are bind-mounted from the host and owned by the host user, while the
+# container runs as root, so git refuses them with "detected dubious ownership"
+# and the artifact build fails before reading a single file.
+#
+# Waived rather than worked around, deliberately: the alternatives are worse.
+# Running the container as the host uid breaks writes to /opt/hlds and the
+# mysqld-as-root path; adding directories one at a time breaks the moment a
+# repo moves. This is a throwaway test container with read-only repo mounts —
+# the ownership check is protecting against a threat that does not exist here.
+RUN git config --system --add safe.directory '*'
 
 # MariaDB's packaging creates /var/lib/mysql and a system unit we never use —
 # the harness runs mysqld directly on a private datadir under /tmp. Make sure
@@ -100,5 +121,20 @@ LABEL maintainer="KTP Infrastructure"
 LABEL description="Lane B stats-capture e2e runtime: KTP stack + MariaDB + Perl DBI + 32-bit bot runtime"
 LABEL ktp.lane="B"
 LABEL ktp.production="never — test-only image, carries no bot, fleet consumes no images"
+
+# Reset the inherited ENTRYPOINT. The runtime base image sets
+# ENTRYPOINT ["/entrypoint.sh"], which boots hlds_linux — so anything passed to
+# `docker run` lands as ARGUMENTS TO THE GAME SERVER instead of running.
+#
+# This is not hypothetical: the first real run of this image booted a DoD
+# server and silently never executed the build script, and `docker top` showed
+# the whole python command line appended to the hlds_linux argv.
+# smoke-callable.yml sidesteps it per-invocation with `--entrypoint bash`;
+# clearing it here means callers cannot forget.
+#
+# Lane B starts hlds itself, through the harness, when it wants a server —
+# with the bot's `+localinfo mm_gamedll` argument and a test cfg the base
+# entrypoint knows nothing about.
+ENTRYPOINT []
 
 CMD ["bash", "-lc", "python3 -m pytest tests/e2e_stats -q"]

@@ -156,17 +156,80 @@ branch works against this branch's stack", not "works against what is deployed".
 That second question still belongs to the Tier 2 runner's fleet-matching tree
 and its drift tripwire; neither is retired by this.
 
+#### First real run of the image — five bugs, one blocker (same series)
+
+Docker turned out to be installed as a **snap inside WSL** (invisible to
+`dpkg -l`, `/snap/bin` off PATH), so the image finally got built and run. Every
+one of these failed in a way that pointed somewhere other than the cause:
+
+1. **`ENTRYPOINT` inherited from the base image.** The runtime base sets
+   `ENTRYPOINT ["/entrypoint.sh"]`, which boots `hlds_linux` — so
+   `docker run … bash -c "python3 …"` appended the whole command line to the
+   game server's argv and never ran it. `docker top` showed python's arguments
+   hanging off `hlds_linux`. `smoke-callable.yml` sidesteps this per-invocation
+   with `--entrypoint bash`; the Lane B image now clears it with
+   `ENTRYPOINT []` so callers cannot forget.
+2. **`amxxpc` must run from its own directory.** It `dlopen`s `amxxpc32.so` by
+   bare name, so the loader searches the CWD: "compiler failed to instantiate:
+   amxxpc32.so: cannot open shared object file". Both existing build paths
+   already `cd` to the compiler dir; `compile_plugin()` now does too.
+3. **`--no-defaults` must be MariaDB's first argument.** It is a pre-option;
+   anywhere later, the server completes a full InnoDB startup and *then* aborts
+   with `unknown option '--no-defaults'`, which reads as a mysterious late
+   crash. It is load-bearing, not hygiene — without it the server reads
+   `~/.my.cnf`, which on the data server points at the **live** database.
+4. **`sql()` always selected a schema**, including for the `CREATE DATABASE`
+   that creates it — `ERROR 1049 Unknown database` before the statement was
+   ever sent. Now `database=None` connects without selecting one.
+5. **`git` and `pytest` were missing from the image**, and git refused the
+   bind-mounted repos with "detected dubious ownership" (host uid vs container
+   root). Added via apt — `python3-pytest`, not pip, because Ubuntu 24.04
+   enforces PEP 668 — plus a `safe.directory '*'` waiver, justified in the
+   Dockerfile: the alternatives break `/opt/hlds` writes and the
+   mysqld-as-root path, and the mounts are read-only in a throwaway container.
+
+**What is now proven rather than reasoned:** the image builds on a **public**
+base (no GHCR auth needed) that is **Ubuntu 24.04.4 / glibc 2.39** — *not* the
+22.04/2.35 previously claimed here, which is `build/base/Dockerfile`, a
+different image; **`stats_logging.amxx` compiles** from `feat/stats-positions`
+with the capture include, **0 warnings**, md5
+`018b17442ef4ef352623428eebe93200` — retiring open verification debt #2 in
+`CONTINUATION_NOTES.md` ("Nothing is compiled"); the private `mysqld` starts and
+serves; and the unit suite passes **40/40 inside the image** (Linux path).
+Artifact md5s match byte-for-byte between Windows and Linux.
+
+**Blocker found, not a bug:** `sql/ktp_schema.sql` is an **overlay, not a
+schema** — 8 `ALTER TABLE`, 3 `CREATE TABLE IF NOT EXISTS`, 4 indexes, all
+assuming stock HLStatsX tables exist. On an empty database it dies at
+`ERROR 1146 … 'hlstats_Events_Frags' doesn't exist`. That is the file behaving
+as documented (its header warns fresh installs are the hazard), but it means
+**Lane B cannot build a database from this repo alone** — it needs a base
+schema, ideally a `mysqldump --no-data` of production. Options and trade-offs
+are in `tests/e2e_stats/README.md`.
+
+- **`scripts/lane_b_local.sh`** — local driver, and the place three
+  environment traps are written down so they are not rediscovered: Git Bash
+  rewrites POSIX paths in `-v` arguments when invoking `wsl.exe`/`docker.exe`
+  (a mount silently pointed at `G:\GIT\scripts`, so the directory came up empty
+  and python reported a missing file); the docker **snap has a private `/tmp`**,
+  so `-v /tmp/out:…` writes into its own namespace and every artifact vanishes
+  on exit — a green-looking run that produced nothing; and WSL shuts the distro
+  down between commands, taking `dockerd` with it.
+
 #### Verification (container path)
 
 - `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite
   **202 passed, 70 skipped, 0 failed**.
 - Both new YAML files parse; the workflow resolves to 1 job / 10 steps with
   `workflow_dispatch` + `schedule` triggers only (no `pull_request`, as intended).
-- **The image has NOT been built.** There is no Docker on the authoring machine,
-  so `build/lane-b/Dockerfile` and the compose file are unbuilt and unrun — the
-  package list, the MariaDB-as-root path and the in-container amxxpc invocation
-  are all reasoned from the existing Dockerfiles and `smoke-callable.yml`, not
-  observed. First `docker build` is expected to need iteration.
+- ~~The image has NOT been built.~~ **Superseded** — see "First real run of the
+  image" above. It builds, the plugin compiles, mysqld serves, and the unit
+  suite passes inside it. The prediction that the first build would need
+  iteration held: it took five fixes.
+- Still unrun: the bot half (no bot kit yet) and the daemon (`hlstats.pl` needs
+  a populated database, which is blocked on the base-schema question). The
+  `docker-compose.lane-b.yml` path is also still unexercised — all real runs so
+  far went through `scripts/lane_b_local.sh`.
 
 #### Verification (build + daemon)
 
