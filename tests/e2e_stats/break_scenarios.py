@@ -131,14 +131,8 @@ class BreakDriver:
 
     def find_capturing_flag(self, *, timeout: float = 120.0,
                             poll: float = 4.0) -> dict | None:
-        """Wait for a flag with a cap actually in progress.
-
-        Kept for diagnostics; the scenarios no longer use it. Selecting a flag
-        here and passing it to the plugin lost every race — caps last seconds,
-        and the flag was routinely finished by the time the rcon landed. The
-        plugin resolves `auto` at command time instead, which removes the gap
-        rather than polling around it, and a miss is just a fast retry.
-        """
+        """Wait for a flag with a cap actually in progress. Diagnostic only —
+        see `_fire_when_capturing` for what the scenarios actually use."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             for flag in self.scan():
@@ -150,6 +144,36 @@ class BreakDriver:
             time.sleep(poll)
         return None
 
+    def _fire_when_capturing(self, cmd: str, *, timeout: float = 60.0,
+                             poll: float = 1.5) -> bool:
+        """Wait for a capture to start, then fire `cmd` in the same instant.
+
+        `ktp_bd_kill`/`ktp_bd_walkoff` resolve `auto` when the rcon lands, on
+        the theory that selecting a flag ahead of time just moved the race
+        rather than closing it — which was true, but not the whole story.
+        DoD's active-capture window turned out to be short enough that firing
+        blind on a fixed outer schedule (an rcon every ~10s) mostly missed it
+        anyway: a scan caught one flag go from `capping=1` to a flipped owner
+        in under 8 seconds. `find_capturing_flag` already existed to watch for
+        this and went unused, on the reasoning above — reused here as the gate
+        it should have been from the start, immediately followed by the fire.
+
+        There is still a small gap between the poll that sees `capping=1` and
+        the rcon actually landing, but it is one scan's worth (~1s) rather
+        than one retry cycle's worth (~10s), which is most of the fix.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            for flag in self.scan():
+                if flag["capping"] and flag["capteam"] in (TEAM_ALLIES, TEAM_AXIS):
+                    occupants = (flag["allies"] if flag["capteam"] == TEAM_ALLIES
+                                 else flag["axis"])
+                    if occupants >= 1:
+                        self.handle.rcon(cmd)
+                        return True
+            time.sleep(poll)
+        return False
+
     # -- scenarios ---------------------------------------------------------
 
     def positive_kill_on_point(self) -> Scenario:
@@ -157,7 +181,9 @@ class BreakDriver:
         name the killer we injected."""
         s = Scenario("positive_kill_on_point")
         mark = len(self._read())
-        self.handle.rcon("ktp_bd_kill auto near")
+        if not self._fire_when_capturing("ktp_bd_kill auto near"):
+            s.detail = "no cap started within the wait"
+            return s
         time.sleep(self.SETTLE)
         tail = _tail(self._read(), mark)
 
@@ -221,7 +247,9 @@ class BreakDriver:
         """
         s = Scenario("negative_off_point_kill")
         mark = len(self._read())
-        self.handle.rcon("ktp_bd_kill auto far")
+        if not self._fire_when_capturing("ktp_bd_kill auto far"):
+            s.detail = "no cap started within the wait"
+            return s
         time.sleep(self.SETTLE)
         tail = _tail(self._read(), mark)
 
@@ -261,7 +289,9 @@ class BreakDriver:
         """
         s = Scenario("negative_voluntary_walkoff")
         mark = len(self._read())
-        self.handle.rcon("ktp_bd_walkoff auto")
+        if not self._fire_when_capturing("ktp_bd_walkoff auto"):
+            s.detail = "no cap started within the wait"
+            return s
         time.sleep(self.SETTLE)
         full = self._read()
         tail = _tail(full, mark)
@@ -396,7 +426,9 @@ class BreakDriver:
         """
         s = Scenario("negative_round_restart")
         mark = len(self._read())
-        self.handle.rcon("ktp_bd_kill auto far")
+        if not self._fire_when_capturing("ktp_bd_kill auto far"):
+            s.detail = "no cap started within the wait to queue a candidate against"
+            return s
         time.sleep(2.0)
         staged = _KILL_RE.search(_tail(self._read(), mark))
         if not staged:
@@ -485,7 +517,7 @@ class BreakDriver:
         return f"plugin aborted: {m.group(3)}" if m else None
 
 
-def run_all(handle, log_path, *, attempts: int = 8) -> list[dict]:
+def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     """Every scenario, negatives first, retried until each one stages.
 
     Negatives first because a false positive is the failure that matters, and
@@ -497,6 +529,16 @@ def run_all(handle, log_path, *, attempts: int = 8) -> list[dict]:
     whenever a capper happens to die nearby. Neither says anything about the
     code. A verdict of ok or violation is final and stops the loop immediately —
     retrying past a violation would be shopping for a green run.
+
+    `attempts` dropped from 8 to 3 when the scenarios themselves started
+    gating on `_fire_when_capturing`, which already waits up to 60s watching
+    for a capture rather than firing blind. The old 8×~10s outer schedule was
+    doing the waiting badly — DoD's active-capture window turned out to be
+    only a few seconds, so a fixed retry every ~10s mostly landed between
+    captures rather than during one, and all four rcon-firing scenarios came
+    back `not_staged` in a live run despite 38 `dod_capture_area` events in
+    the same log. 3 attempts at up to ~70s each is a similar total budget,
+    spent watching instead of guessing.
     """
     d = BreakDriver(handle, log_path)
     out = []

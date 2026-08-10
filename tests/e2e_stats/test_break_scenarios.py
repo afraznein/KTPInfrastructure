@@ -157,3 +157,69 @@ def test_deaths_helper_anchors_on_the_marker_it_is_given():
 def test_deaths_helper_still_defaults_to_the_walkoff_marker():
     log = "\n".join([REAL_KILL, REAL_WALKOFF])
     assert len(bs.BreakDriver._capping_deaths_near(log, bs.TEAM_AXIS)) == 1
+
+
+# -- the capture gate --------------------------------------------------
+
+
+class _FakeHandle:
+    """Records rcon calls; scan responses are scripted per call."""
+
+    def __init__(self, scan_responses):
+        self._responses = list(scan_responses)
+        self.fired = []
+
+    def rcon(self, cmd):
+        if cmd == "ktp_bd_scan":
+            # BreakDriver.scan() reads the log after issuing this; the fake
+            # short-circuits by handing scan() its next canned answer via a
+            # monkeypatched _read, so this branch just records nothing.
+            return
+        self.fired.append(cmd)
+
+
+def test_fire_when_capturing_waits_then_fires(monkeypatch):
+    """The gate must not fire immediately — it should poll until a capture is
+    actually seen, matching the fix for the bug where blind firing on a fixed
+    schedule mostly missed DoD's short active-capture window."""
+    from . import break_scenarios as bs
+
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, log_path=None)
+
+    # First two scans see nothing capturing; the third sees a live capture.
+    responses = [
+        [],
+        [{"flag": 0, "owner": 0, "capping": 0, "capteam": 0, "allies": 0, "axis": 0}],
+        [{"flag": 3, "owner": 1, "capping": 1, "capteam": 2, "allies": 0, "axis": 2}],
+    ]
+    calls = {"n": 0}
+
+    def fake_scan():
+        i = min(calls["n"], len(responses) - 1)
+        calls["n"] += 1
+        return responses[i]
+
+    monkeypatch.setattr(driver, "scan", fake_scan)
+    monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
+
+    ok = driver._fire_when_capturing("ktp_bd_kill auto near", timeout=5.0, poll=0.01)
+    assert ok is True
+    assert handle.fired == ["ktp_bd_kill auto near"]
+    assert calls["n"] == 3, "must not fire before capping=1 is actually observed"
+
+
+def test_fire_when_capturing_times_out_without_firing(monkeypatch):
+    from . import break_scenarios as bs
+
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, log_path=None)
+    monkeypatch.setattr(driver, "scan", lambda: [])
+
+    t = {"now": 0.0}
+    monkeypatch.setattr(bs.time, "sleep", lambda s: t.__setitem__("now", t["now"] + s))
+    monkeypatch.setattr(bs.time, "monotonic", lambda: t["now"])
+
+    ok = driver._fire_when_capturing("ktp_bd_kill auto near", timeout=0.05, poll=0.02)
+    assert ok is False
+    assert handle.fired == []
