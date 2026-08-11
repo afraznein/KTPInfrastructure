@@ -1,4 +1,4 @@
-"""Shared template context helpers."""
+"""Shared request and template-context helpers."""
 from __future__ import annotations
 
 import datetime
@@ -21,6 +21,24 @@ def client_ip(request: Request) -> str | None:
         if v:
             return v.split(",")[0].strip()[:45]
     return request.client.host if request.client else None
+
+
+def wants_json(request: Request) -> bool:
+    """An ordinary form post gets its 303; a fetch() that asked for JSON gets JSON."""
+    return "application/json" in (request.headers.get("accept") or "")
+
+
+def safe_next(raw: str | None) -> str | None:
+    """A caller-supplied return path, or None if it isn't plainly same-origin.
+
+    Anything a browser could read as another origin — '//host', '/\\host', a
+    scheme — is rejected outright rather than patched up."""
+    v = (raw or "").strip()
+    if not v.startswith("/") or v[1:2] in ("/", "\\"):
+        return None
+    if "://" in v or "\r" in v or "\n" in v:
+        return None
+    return v
 
 
 def base_ctx(request: Request, active: str = "") -> dict:

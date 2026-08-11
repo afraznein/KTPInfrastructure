@@ -5,10 +5,9 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from .. import auth, bracket, common, db
-from .. import schedule as sched
+from .. import auth, common, db, demos
 from ..config import settings
 from ..templating import templates
 
@@ -17,44 +16,26 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _parse_match(raw: str):
-    """'sat:123' / 'bkt:QF1' -> (schedule_id, bracket_mkey)."""
+    """'sat:123' / 'bkt:QF1' / 'gen:draft' -> (schedule_id, bracket_mkey, category).
+
+    A gen: value is whitelisted here rather than trusted from the form — it is
+    written straight into an ENUM column, and an out-of-range value would be a
+    STRICT_TRANS_TABLES error on insert."""
     raw = (raw or "").strip()
     if raw.startswith("sat:") and raw[4:].isdigit():
-        return int(raw[4:]), None
+        return int(raw[4:]), None, "match"
     if raw.startswith("bkt:") and raw[4:]:
-        return None, raw[4:][:8]
-    return None, None
+        return None, raw[4:][:8], "match"
+    if raw.startswith("gen:") and raw[4:] in demos.GENERIC:
+        return None, None, raw[4:]
+    return None, None, "match"
 
 
 @router.get("/demos", name="demos")
 def demos_page(request: Request, team: int | None = None):
-    where, params = "", []
-    if team:
-        where, params = "WHERE d.team_id=%s", [team]
-    rows = db.query_all(
-        "SELECT d.*, t.name AS team_name FROM lan_demos d "
-        f"LEFT JOIN lan_teams t ON t.id = d.team_id {where} ORDER BY d.uploaded_at DESC",
-        tuple(params),
-    )
-    # resolve each demo's linked match label
-    s_lbl = {m["id"]: f"Sat R{m['round']}: {m['a_name']} v {m['b_name']}" for m in sched.get_matches()}
-    b_lbl = {b["mkey"]: bracket.BY_KEY.get(b["mkey"], {}).get("label", b["mkey"]) for b in bracket.get_bracket()}
-    for d in rows:
-        d["match_label"] = (s_lbl.get(d["schedule_id"]) if d["schedule_id"]
-                            else b_lbl.get(d["bracket_mkey"]) if d["bracket_mkey"] else None)
-    # matches the uploader's own team played — the attach dropdown
-    my_matches, ident = [], auth.current_identity(request)
-    if ident:
-        tid = ident["team_id"]
-        for m in sched.get_matches():
-            if tid in (m["team_a_id"], m["team_b_id"]):
-                opp = m["b_name"] if m["team_a_id"] == tid else m["a_name"]
-                my_matches.append({"value": f"sat:{m['id']}", "label": f"Sat R{m['round']} vs {opp}"})
-        for b in bracket.get_bracket():
-            if tid in (b["team_a_id"], b["team_b_id"]):
-                lbl = bracket.BY_KEY.get(b["mkey"], {}).get("label", b["mkey"])
-                opp = b["b_name"] if b["team_a_id"] == tid else b["a_name"]
-                my_matches.append({"value": f"bkt:{b['mkey']}", "label": f"{lbl} vs {opp or 'TBD'}"})
+    rows = demos.listing(team)
+    ident = auth.current_identity(request)
+    my_matches = (demos.team_matches(ident["team_id"]) + demos.generic_options()) if ident else []
     ctx = common.base_ctx(request, "demos")
     ctx["demos"] = rows
     ctx["max_mb"] = settings.demo_max_bytes // (1024 * 1024)
@@ -87,11 +68,12 @@ async def demos_upload(
     orig = (_SAFE.sub("_", file.filename or "demo.dem") or "demo.dem")[:255]
     already_zip = data[:2] == b"PK" or orig.lower().endswith(".zip")  # accept .dem OR an existing zip
 
-    schedule_id, bracket_mkey = _parse_match(match)
+    schedule_id, bracket_mkey, category = _parse_match(match)
     demo_id = db.execute(
-        "INSERT INTO lan_demos (alias, team_id, schedule_id, bracket_mkey, original_filename, note, uploaded_by, uploaded_ip) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-        (alias[:64], ident["team_id"], schedule_id, bracket_mkey, orig,
+        "INSERT INTO lan_demos (alias, team_id, schedule_id, bracket_mkey, category, "
+        "original_filename, note, uploaded_by, uploaded_ip) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (alias[:64], ident["team_id"], schedule_id, bracket_mkey, category, orig,
          (note or "").strip()[:255] or None, ident["discord_id"], common.client_ip(request)),
     )
     Path(settings.demo_dir).mkdir(parents=True, exist_ok=True)
@@ -106,6 +88,8 @@ async def demos_upload(
         "UPDATE lan_demos SET stored_name=%s, size_bytes=%s WHERE id=%s",
         (stored, zpath.stat().st_size, demo_id),
     )
+    if common.wants_json(request):
+        return JSONResponse({"ok": True, "id": demo_id})
     return RedirectResponse(request.url_for("demos"), status_code=303)
 
 

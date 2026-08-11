@@ -9,10 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from .config import settings
-from .routes import (admin_routes, auth_routes, bracket_routes, checkin_routes,
-                     demo_routes, extras_routes, mappoll_routes, placements_routes,
-                     poll_routes, public, schedule_routes, stations_routes,
-                     veto_routes)
+from .routes import (admin_routes, api_routes, auth_routes, bracket_routes,
+                     checkin_routes, demo_routes, extras_routes, mappoll_routes,
+                     placements_routes, poll_routes, public, schedule_routes,
+                     stations_routes, veto_routes)
 
 app = FastAPI(title="WSDoD LAN 2026", root_path=settings.root_path)
 
@@ -31,6 +31,16 @@ app.mount(
     name="static",
 )
 
+# The rebuilt WSDoD site, served from this app rather than its own vhost so the
+# session cookie, the OAuth callback and the upload endpoints stay same-origin.
+# Unset in dev; the deploy points it at the built dist/.
+if settings.site_dir and Path(settings.site_dir).is_dir():
+    app.mount(
+        settings.site_mount,
+        StaticFiles(directory=settings.site_dir, html=True),
+        name="wsdod_site",
+    )
+
 app.include_router(public.router)
 app.include_router(auth_routes.router)
 app.include_router(poll_routes.router)
@@ -43,4 +53,5 @@ app.include_router(placements_routes.router)
 app.include_router(checkin_routes.router)
 app.include_router(demo_routes.router)
 app.include_router(extras_routes.router)
+app.include_router(api_routes.router)
 app.include_router(admin_routes.router)

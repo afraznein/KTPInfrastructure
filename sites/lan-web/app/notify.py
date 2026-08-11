@@ -1,5 +1,6 @@
 """Best-effort Discord notifications: DMs to team captains (e.g. "you're up on
-Server 3") and announcement cross-posts to a channel webhook.
+Server 3"), announcement cross-posts to a channel webhook, and staff alerts
+routed through the KTP Discord Relay.
 
 DMs use a bot token (LAN_DISCORD_BOT_TOKEN) — the bot must share a guild with the
 captain, which KTPAdminBot already does. No token set → silently no-ops. Network
@@ -60,6 +61,49 @@ def post_announcement(text: str) -> bool:
         headers={"Content-Type": "application/json", "User-Agent": _UA},
         method="POST",
     )
+    try:
+        with urllib.request.urlopen(req, timeout=6):
+            return True
+    except Exception:
+        return False
+
+
+def relay_payload(channel_id: str, content: str, ping_user_id: str = "") -> dict:
+    """Body for a KTP Discord Relay post.
+
+    parse:[] is load-bearing — the content carries text a member typed, and this
+    is what stops it firing @everyone/@here. Only the operator ping resolves."""
+    ping = (ping_user_id or "").strip()
+    if not ping.isdigit():
+        ping = ""
+    # The relay keys this one camelCase; snake_case 400s with "channelId required".
+    return {
+        "channelId": str(channel_id),
+        "content": content,
+        "allowed_mentions": {"parse": [], "users": [ping] if ping else []},
+    }
+
+
+def post_relay(channel_id: str, content: str, ping_user_id: str = "") -> bool:
+    """Post to a channel through the KTP Discord Relay. True on delivery, False
+    if unconfigured or the post failed. Never raises.
+
+    LAN_DISCORD_RELAY_URL already ends in /reply — appending it again 404s."""
+    url = settings.discord_relay_url
+    if not url or not channel_id or not content:
+        return False
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(relay_payload(channel_id, content, ping_user_id)).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": _UA,
+            "X-Relay-Auth": settings.discord_relay_auth,
+        },
+        method="POST",
+    )
+    # The relay forwards Discord's own status, so a 4xx raises here and reads as
+    # undelivered — no need to sniff the body for an error object.
     try:
         with urllib.request.urlopen(req, timeout=6):
             return True

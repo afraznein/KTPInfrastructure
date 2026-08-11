@@ -114,8 +114,7 @@ async def admin_publish(request: Request):
     if flag not in seeding.PUBLISH_FLAGS:
         raise HTTPException(400, "Unknown publish target.")
     seeding.set_setting(flag, "1" if f.get("publish") else "0")
-    nxt = (f.get("next") or "").strip()
-    target = nxt if nxt.startswith("/") and not nxt.startswith("//") else str(request.url_for("admin"))
+    target = common.safe_next(f.get("next")) or str(request.url_for("admin"))
     return RedirectResponse(target, status_code=303)
 
 
@@ -180,6 +179,33 @@ async def audit_undo(request: Request):
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return RedirectResponse(request.url_for("audit_log"), status_code=303)
+
+
+@router.get("/admin/photo-requests", name="photo_requests")
+def photo_requests(request: Request):
+    """Photo takedown queue — pending first, handled kept for the record."""
+    auth.require_admin(request)
+    rows = db.query_all(
+        "SELECT r.*, ph.stored_name, ph.caption "
+        "FROM lan_photo_removal_requests r LEFT JOIN lan_photos ph ON ph.id = r.photo_id "
+        "ORDER BY r.status = 'handled', r.created_at DESC"
+    )
+    ctx = common.base_ctx(request, "admin")
+    ctx["rows"] = rows
+    ctx["pending"] = sum(1 for r in rows if r["status"] == "pending")
+    return templates.TemplateResponse(request, "photo_requests.html", ctx)
+
+
+@router.post("/admin/photo-requests/handled", name="photo_request_handled")
+async def photo_request_handled(request: Request):
+    me = auth.require_admin(request)
+    f = await request.form()
+    db.execute(
+        "UPDATE lan_photo_removal_requests SET status='handled', handled_by=%s, handled_at=NOW() "
+        "WHERE id=%s AND status='pending'",
+        (int(me), int(f["request_id"])),
+    )
+    return RedirectResponse(request.url_for("photo_requests"), status_code=303)
 
 
 @router.post("/admin/staff/add", name="admin_grant")
