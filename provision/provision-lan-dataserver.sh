@@ -331,25 +331,20 @@ fi
 mkdir -p "$HLTV_HOME/cmdpipes"
 chown hltvserver:hltvserver "$HLTV_HOME/cmdpipes"
 
-cat > "$HLTV_HOME/hltv-wrapper.sh" << 'SCRIPT'
-#!/bin/bash
-# HLTV Wrapper Script - enables remote command input via FIFO pipe.
-# Usage: hltv-wrapper.sh <port>   (invoked by hltv@<port>.service)
-
-PORT=$1
-PIPE="/home/hltvserver/cmdpipes/hltv-${PORT}.pipe"
-HLTV="/home/hltvserver/hlds/hltv"
-CONFIG="configs/hltv-${PORT}.cfg"
-
-# A stale REGULAR file at the pipe path would make mkfifo fail and tail -f
-# follow a plain file — commands would silently never reach HLTV.
-if [ -e "$PIPE" ] && [ ! -p "$PIPE" ]; then rm -f "$PIPE"; fi
-[ -p "$PIPE" ] || mkfifo "$PIPE"
-
-# tail -f keeps the pipe open and feeds commands to HLTV stdin.
-# Filter the RunFrame time-difference spam out of the journal.
-exec tail -f "$PIPE" | exec "$HLTV" -game dod -port "$PORT" +exec "$CONFIG" 2>&1 | grep -v --line-buffered 'WARNING! System::RunFrame: system time difference'
-SCRIPT
+# Installed from the canonical script, never embedded here. This file used to
+# carry its own copy, which had already drifted a full rewrite behind
+# scripts/hltv-wrapper.sh — so a fresh LAN provision would have installed a
+# wrapper with no startup gate at all, silently. Same dual-copy injury the
+# 308-line restart-script template caused in clone-ktp-stack.sh; fail loudly
+# rather than fall back to an inline copy.
+PROVISION_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CANONICAL_WRAPPER="$PROVISION_DIR/../scripts/hltv-wrapper.sh"
+if [ ! -f "$CANONICAL_WRAPPER" ]; then
+    echo "[ERROR] canonical wrapper not found: $CANONICAL_WRAPPER" >&2
+    echo "        Run this script from a full KTPInfrastructure checkout." >&2
+    exit 1
+fi
+cp "$CANONICAL_WRAPPER" "$HLTV_HOME/hltv-wrapper.sh"
 chmod +x "$HLTV_HOME/hltv-wrapper.sh"
 chown hltvserver:hltvserver "$HLTV_HOME/hltv-wrapper.sh"
 
