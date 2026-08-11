@@ -14,9 +14,14 @@ config/online/hltv_recorder.ini
 config/online/dodserver.cfg
 
 # Scripts with credentials (use *.example as templates)
-scripts/setup_renice_cron.py
-scripts/draft_day_monitor.py
-scripts/nightly_match_monitor.py
+# POLICY: these are ignored because they EMBED credentials or fleet IPs, not because
+# they are scripts. Audited 2026-08-11 against the known secret values: 10 of 14 hit,
+# so this list is doing real work -- do not bulk-un-ignore it.
+# A script that sources its secrets instead (e.g. /etc/ktp/discord-relay.conf, as
+# scripts/ktp-hltv-liveness.sh does) carries nothing sensitive and SHOULD be tracked.
+# That refactor is the way to shrink this list; deleting lines from it is not.
+# ⚠️ A keyword grep is not sufficient to clear a file: hltv-api.py was called clean
+# twice before a value-based check found AUTH_KEY on line 34. Match the VALUES.
 scripts/ktp-scheduled-restart.sh
 scripts/ktp-organize-hltv-demos.sh
 scripts/hltv-api.py
