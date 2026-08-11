@@ -1,0 +1,10 @@
+[Unit]
+Description=KTP HLTV proxy liveness check (port-bound, not systemd unit state)
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-hltv-liveness.sh
+# exit 1 = proxies missing, exit 2 = probe broken. Both are reported by the
+# script itself; do not let systemd mark the unit failed and stop the timer.
+SuccessExitStatus=0 1 2

@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the HLTV proxy liveness check every 5 minutes
+
+[Timer]
+# 5 min bounds an undetected outage to ~5 min. The 2026-08-10 incident ran
+# 9h48m because the only HLTV alerting is the 03:00/11:00 restart job.
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=ktp-hltv-liveness.service
+
+[Install]
+WantedBy=timers.target
