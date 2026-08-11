@@ -71,6 +71,11 @@ def main():
     body = body.group(1)
     # strip the blocks that become shared assets or are re-emitted per page
     body = re.sub(r"<script[^>]*>.*?</script>", "", body, flags=re.S)
+    # The publication switcher is a reviewer's tool for reading the prototype in
+    # both gate states. Production decides server-side, so it must not ship.
+    body, gone = re.subn(r'\n?<div class="mock">.*?</div>\s*</div>', "", body, flags=re.S)
+    if gone != 1:
+        sys.exit("build: expected exactly one mockup switcher to strip, found %d" % gone)
 
     sections = {}
     for m in re.finditer(r"<section\b([^>]*)>.*?</section>", body, re.S):
