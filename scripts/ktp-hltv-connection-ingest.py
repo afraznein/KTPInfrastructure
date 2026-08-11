@@ -8,9 +8,9 @@ ktp-hltv-correlate.py, because two attempts to make the kernel decide were both
 structurally wrong in production. So these rows are connection ATTEMPTS.
 
 Relies on INSERT IGNORE against a unique key rather than tracking a file offset:
-an offset file is one more thing that can desync. Reads the rotated sibling too,
-so a run landing just after logrotate does not skip the tail of the previous
-week.
+an offset file is one more thing that can desync. Reads the newest few rotations
+too (KEEP_FILES), so a run landing just after logrotate does not skip the tail of
+the previous week -- but NOT the whole retained set; see log_files().
 
 VOLUME -- measured, because this file previously assumed "a few lines a day" and
 every sizing decision downstream inherited that: the live rule captures
@@ -27,7 +27,7 @@ scrapers sweeping the published proxy range. So:
   * Rows older than RETENTION_DAYS are deleted here, because nothing else does it
     and an unbounded table makes the correlate query worse every day.
 """
-import glob, gzip, re, subprocess, sys
+import glob, gzip, os, re, subprocess, sys
 from datetime import datetime, timedelta
 
 LOG_GLOB = "/var/log/ktp-hltv-connections.log*"
@@ -36,6 +36,7 @@ CHUNK_ROWS = 1000
 # rotation without re-sending the whole table; INSERT IGNORE absorbs the overlap.
 OVERLAP_HOURS = 6
 RETENTION_DAYS = 180  # matches the 26-week logrotate window
+KEEP_FILES = 3        # current + 2 rotations; rotation is weekly, overlap is hours
 LINE = re.compile(
     r"^(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2})\s+.*?"
     r"KTP_HLTV_CONN.*?\bSRC=(?P<src>\d+\.\d+\.\d+\.\d+).*?\bDPT=(?P<dpt>\d+)"
@@ -63,9 +64,27 @@ def watermark():
         return None
 
 
+def log_files():
+    """Current log plus the newest few rotations -- NOT the whole 26-week set.
+
+    The watermark bounds what gets INSERTed, but an unbounded glob still re-parses
+    every retained line on every 15-minute run: ~4M lines at full retention, for
+    rows that are all older than the watermark anyway. Rotation is weekly and the
+    overlap is hours, so the current file plus a couple of siblings is a wide
+    margin. Newest-first by mtime rather than by name: `.log.10.gz` sorts before
+    `.log.2.gz` lexically, so a name sort silently picks the OLDEST files.
+    """
+    paths = glob.glob(LOG_GLOB)
+    try:
+        paths.sort(key=os.path.getmtime, reverse=True)
+    except OSError:
+        paths.sort(reverse=True)
+    return paths[:KEEP_FILES]
+
+
 def rows(stats, since):
     seen = set()
-    for path in sorted(glob.glob(LOG_GLOB)):
+    for path in sorted(log_files()):
         opener = gzip.open if path.endswith(".gz") else open
         try:
             with opener(path, "rt", errors="replace") as fh:
@@ -100,7 +119,7 @@ def main():
     # reader that empty was expected -- so a dead pipeline read exactly like a
     # quiet week. Nothing watches this log, so it has to say which case it is.
     stats = {"read": 0, "parsed": 0, "skipped": 0, "errors": [],
-             "files": len(glob.glob(LOG_GLOB))}
+             "files": len(log_files())}
     since = watermark()
     batch = list(rows(stats, since))
     for err in stats["errors"]:
