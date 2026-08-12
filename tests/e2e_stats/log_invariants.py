@@ -189,7 +189,12 @@ def summarise(log_text: str) -> dict:
         "kills": len(_KILL_RE.findall(log_text)),
         "assists": len(_ASSIST_RE.findall(log_text)),
         "breaks": len(_BREAK_RE.findall(log_text)),
-        "headshot_markers": log_text.count('triggered "headshot_kill"'),
+        # Phase 5 retired the dedicated "headshot_kill" marker in favour of
+        # `(headshot "1")` as one property on the unconditional "frag_context"
+        # marker every kill now emits -- count that instead. The old string
+        # will never appear again; a plugin built before Phase 5 landed would
+        # correctly show 0 here, which is the accurate answer for that build.
+        "headshot_markers": log_text.count('(headshot "1")'),
         "assist_violations": check_assist_attribution(log_text),
         "break_violations": check_break_attribution(log_text),
     }

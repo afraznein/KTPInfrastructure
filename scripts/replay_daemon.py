@@ -49,7 +49,10 @@ def _emitted(log_text: str) -> dict[str, int]:
         # Unit 1. The verb string is confirmed against real DoD logs:
         #   "Kazooie<10><0><Allies>" committed suicide with "grenade"
         "suicide": log_text.count('committed suicide with'),
-        "headshot": log_text.count('triggered "headshot_kill"'),
+        # Phase 5 retired the dedicated "headshot_kill" marker for
+        # `(headshot "1")` as one property on the unconditional "frag_context"
+        # marker every kill now emits.
+        "headshot": log_text.count('(headshot "1")'),
     }
 
 

@@ -512,7 +512,10 @@ def main() -> int:
             "assist": log_text.count('triggered "assist"'),
             "cap_break": log_text.count('triggered "cap_break"'),
             "suicide": log_text.count('committed suicide with'),
-            "headshot": log_text.count('triggered "headshot_kill"'),
+            # Phase 5 retired the dedicated "headshot_kill" marker for
+            # `(headshot "1")` as one property on the unconditional
+            # "frag_context" marker every kill now emits.
+            "headshot": log_text.count('(headshot "1")'),
         }
         report["lines_fed"] = daemon.lines_fed
         real_sql, benign_sql = daemon.classify_sql_errors()
