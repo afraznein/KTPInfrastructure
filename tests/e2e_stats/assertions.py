@@ -441,6 +441,47 @@ def check_headshots_carried(db, *, emitted: int) -> dict:
             "rows": rows, "detail": f"{rows}/{emitted} carried"}
 
 
+def check_damage_ledger(db, *, emitted: int) -> dict:
+    """Did every emitted `damage` marker land in `ktp_damage_events`, and is
+    `damage_capped` actually capped?
+
+    Unit 6's regression check. Two things checked together because a defect
+    in either makes the ledger untrustworthy: rows missing means the INSERT
+    isn't landing (a table/column mismatch, or the daemon match failing);
+    `damage_capped` violating its own invariant means the cap logic itself is
+    wrong, which is a correctness bug a plain row-count could not catch.
+    """
+    rows = db.count("SELECT COUNT(*) FROM ktp_damage_events")
+    violations = db.count(
+        "SELECT COUNT(*) FROM ktp_damage_events "
+        "WHERE damage_capped > 100 OR damage_capped > damage"
+    )
+    if emitted == 0:
+        return {"code": "damage_ledger", "status": "not_exercised", "emitted": 0,
+                "rows": rows, "cap_violations": violations, "detail":
+                "no `damage` markers in the game log, so the ledger path was "
+                "not exercised this run."}
+    if violations > 0:
+        return {"code": "damage_ledger", "status": "pipeline", "emitted": emitted,
+                "rows": rows, "cap_violations": violations, "detail":
+                f"{violations} row(s) with damage_capped > 100 or "
+                f"damage_capped > damage — the cap is a plugin-side "
+                f"MIN(damage, 100), so a violation here is a real defect in "
+                f"that logic, not a coverage gap. Should never happen "
+                f"regardless of weapon or hitzone."}
+    if rows != emitted:
+        return {"code": "damage_ledger", "status": "pipeline", "emitted": emitted,
+                "rows": rows, "cap_violations": violations, "detail":
+                f"{emitted} damage marker(s) in the game log but {rows} row(s) "
+                f"in ktp_damage_events. Unlike headshot/frag_context, this is "
+                f"a direct INSERT per event, not an UPDATE onto an existing "
+                f"row — a shortfall here means the INSERT itself is failing "
+                f"(check daemon SQL errors) or the marker line isn't "
+                f"reaching the daemon at all."}
+    return {"code": "damage_ledger", "status": "ok", "emitted": emitted,
+            "rows": rows, "cap_violations": 0, "detail": f"{rows}/{emitted} carried, cap never violated"}
+
+
 def assert_no_dropped_lines(log_text: str) -> None:
     """The plugin's ring buffer never overflowed.
 

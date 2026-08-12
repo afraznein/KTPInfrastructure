@@ -53,6 +53,7 @@ def _emitted(log_text: str) -> dict[str, int]:
         # `(headshot "1")` as one property on the unconditional "frag_context"
         # marker every kill now emits.
         "headshot": log_text.count('(headshot "1")'),
+        "damage": log_text.count('triggered "damage"'),
     }
 
 
@@ -172,6 +173,7 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=emitted["suicide"]),
             assertions.check_headshots_carried(db, emitted=emitted["headshot"]),
+            assertions.check_damage_ledger(db, emitted=emitted["damage"]),
         ]
         report["carried"] = carried
         report["coverage_gaps"] = [f"{c['code']}: {c['detail']}" for c in carried

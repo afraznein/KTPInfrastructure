@@ -516,6 +516,7 @@ def main() -> int:
             # `(headshot "1")` as one property on the unconditional
             # "frag_context" marker every kill now emits.
             "headshot": log_text.count('(headshot "1")'),
+            "damage": log_text.count('triggered "damage"'),
         }
         report["lines_fed"] = daemon.lines_fed
         real_sql, benign_sql = daemon.classify_sql_errors()
@@ -543,6 +544,7 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
         ]
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":

@@ -195,6 +195,7 @@ def summarise(log_text: str) -> dict:
         # will never appear again; a plugin built before Phase 5 landed would
         # correctly show 0 here, which is the accurate answer for that build.
         "headshot_markers": log_text.count('(headshot "1")'),
+        "damage_markers": log_text.count('triggered "damage"'),
         "assist_violations": check_assist_attribution(log_text),
         "break_violations": check_break_attribution(log_text),
     }
