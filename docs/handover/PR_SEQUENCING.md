@@ -3,19 +3,28 @@
 **For:** whoever opens and merges the PRs.
 **Goal:** get `main`/`master` across three repos to what has been verified
 locally.
-**Verified against remotes on 2026-08-12.** If you read this much later,
-re-run the commands in [Appendix A](#appendix-a--re-verify-the-state) first.
+**Verified against remotes on 2026-08-12 (re-checked same day, after the
+first three PRs merged).** If you read this much later, re-run the commands
+in [Appendix A](#appendix-a--re-verify-the-state) first — or just run
+`check_pr_status.ps1` at the repo root (one level up from
+`KTPInfrastructure`): `powershell -File check_pr_status.ps1`.
 
-**PRs already opened as of 2026-08-12** (someone started working through this
-list — see the table below for which). Check these before opening new ones:
-[KTPHLStatsX #1](https://github.com/afraznein/KTPHLStatsX/pull/1),
-[#2](https://github.com/afraznein/KTPHLStatsX/pull/2),
-[#3](https://github.com/afraznein/KTPHLStatsX/pull/3),
+**Merged as of 2026-08-12: KTPHLStatsX PRs
+[#1](https://github.com/afraznein/KTPHLStatsX/pull/1) (suicide fix),
+[#3](https://github.com/afraznein/KTPHLStatsX/pull/3) (cap-break seed) and
+[#4](https://github.com/afraznein/KTPHLStatsX/pull/4) (assist seed, the
+final merge into `main`).** That's all of Units 1–3's DB half. Their
+KTPAMXX plugin halves (Units 2–4) still have no PR open.
+
+**Open, not yet merged:**
 [KTPInfrastructure #54](https://github.com/afraznein/KTPInfrastructure/pull/54),
-[#55](https://github.com/afraznein/KTPInfrastructure/pull/55). None are merged
-yet. `check_pr_status.ps1` at the repo root (one level up from
-`KTPInfrastructure`) re-checks all of these plus everything below in one run —
-`powershell -File check_pr_status.ps1`.
+[#55](https://github.com/afraznein/KTPInfrastructure/pull/55).
+
+**Pushed but no PR opened yet** (rebased onto the post-merge `main` the same
+day the merge landed, per the rule below, then pushed): KTPHLStatsX
+`feat/frag-context-columns`, `feat/ktp-damage-event`; KTPAMXX
+`feat/stats-frag-context`, `feat/stats-damage-ledger`. All four are ready for
+a PR to be opened whenever — nothing blocks it.
 
 **Branches with an open PR should not be rebased or force-pushed** until that
 PR merges or is explicitly abandoned — rewriting history mid-review is more
@@ -55,43 +64,49 @@ second.**
 
 ## Current state
 
-Default branches moved since 2026-08-10 from **unrelated** work (hltv logging,
-a `ktp_schema.sql` MySQL/MariaDB fix, a dodx territorial-scoring-clock
-feature, a tier2 manifest-pin fix, stage-runner versioning, docs). None of it
-overlaps these branches' files — checked directly, not assumed.
+KTPHLStatsX `main` moved twice since 2026-08-10: once from unrelated work
+(a `ktp_schema.sql` MySQL/MariaDB fix), then again from **PRs #1/#3/#4
+merging Units 1–3's DB half in**. KTPAMXX `master` and KTPInfrastructure
+`main` only moved from unrelated work (dodx territorial-scoring-clock;
+hltv logging, a tier2 manifest-pin fix, stage-runner versioning, docs) — none
+of it overlaps these branches' files, checked directly, not assumed.
 
 | Repo | Default branch | At |
 |---|---|---|
-| KTPHLStatsX | `main` | `86621f2` |
+| KTPHLStatsX | `main` | `e2b6e7b` (was `86621f2` before PRs #1/#3/#4) |
 | KTPAMXX | `master` | `9758f4db` |
 | KTPInfrastructure | `main` | `39bc74a` |
 
-### KTPHLStatsX — a clean stack of four
+### KTPHLStatsX — Units 1–3 merged; the stack continues from `main`
 
 ```
-main (86621f2)
- └─ fix/suicide-dispatch-goldsrc      d3921b7   1 commit    Unit 1  (PR #1, open)
-     └─ feat/seed-assist-action        7eefed6   2 commits   Unit 2  (PR #2, open)
-         └─ feat/seed-cap-break-action a8c9a97   3 commits   Unit 3  (PR #3, open)
-             └─ feat/frag-context-columns bb53e8b 4 commits  Unit 5  (no PR yet)
+main (e2b6e7b) — Units 1, 2, 3 all in: fix/suicide-dispatch-goldsrc,
+                 feat/seed-assist-action, feat/seed-cap-break-action
+ └─ feat/frag-context-columns 19650f7  2 commits  Unit 5  (no PR yet, pushed)
+     └─ feat/ktp-damage-event 757ac96  1 commit   Unit 6  (no PR yet, pushed)
 ```
 
-### KTPAMXX — a clean stack of four, plus one independent
+Rebased onto the post-merge `main` and pushed on 2026-08-12, same day the
+merge landed — content-identical to the pre-rebase versions, verified by
+diff-stat parity before push. No PR existed for either at rebase time, so
+this was safe per the rule below.
+
+### KTPAMXX — a clean stack of five, plus one independent
 
 ```
 master (9758f4db)
  └─ feat/stats-assists          776ce9fe  1 commit    Unit 2  (no PR yet)
      └─ feat/stats-cap-breaks   f73d0282  2 commits   Unit 3  (no PR yet)
          └─ feat/stats-positions 989c8f4f 3 commits   Unit 4  (no PR yet)
-             └─ feat/stats-frag-context b15295c8 4 commits Unit 5 (no PR yet)
+             └─ feat/stats-frag-context b15295c8 4 commits Unit 5 (no PR yet, pushed)
+                 └─ feat/stats-damage-ledger 5eb05ebd 2 commits Unit 6 (no PR yet, pushed)
 
 master (9758f4db)
  └─ feat/lane-b-fakeclient-players  684d3af1  1 commit   test-only, no unit (no PR yet)
 ```
 
-Rebased onto current `master` on 2026-08-12 — no PR existed for any of these
-four branches at rebase time, so this was safe per the rule above. If a PR
-now exists for any of them, re-check before rebasing further.
+KTPAMXX's `master` hasn't moved, so nothing here needed rebasing — pushed
+as-is on 2026-08-12.
 
 ### KTPInfrastructure — three independent branches, plus the Lane B work-in-progress
 
@@ -112,18 +127,20 @@ onto the fleet — if something is wrong you want one suspect, not two.
 
 | # | Repo | Branch | PR base | Notes |
 |---|---|---|---|---|
-| 1 | KTPHLStatsX | `fix/suicide-dispatch-goldsrc` | `main` | Unit 1. Gate cleared — see below. |
-| 2 | KTPInfrastructure | `feat/stats-capture-include` | `main` | 5 lines. Do it early: the plugin build needs the `.inc` to be copied, and it is harmless on its own. |
-| 3 | KTPHLStatsX | `feat/seed-assist-action` | `fix/suicide-dispatch-goldsrc` | Unit 2, DB half. **Apply the seed SQL and restart the daemon before step 4.** |
-| 4 | KTPAMXX | `feat/stats-assists` | `master` | Unit 2, plugin half. |
-| 5 | KTPHLStatsX | `feat/seed-cap-break-action` | `feat/seed-assist-action` | Unit 3, DB half. **Seed + restart before step 6.** |
-| 6 | KTPAMXX | `feat/stats-cap-breaks` | `feat/stats-assists` | Unit 3, plugin half. |
-| 7 | KTPAMXX | `feat/stats-positions` | `feat/stats-cap-breaks` | Unit 4. No SQL, no daemon change. |
-| 8 | KTPInfrastructure | `docs/stats-capture-plan-branch-status` | `main` | Docs only. |
-| 9 | KTPInfrastructure | `feat/tier2-bot-lane-stats-e2e` | `main` | The Lane B test infrastructure. **Rebase onto `main` after step 8** — see the conflict note. |
-| 10 | KTPAMXX | `feat/lane-b-fakeclient-players` | `master` | Test-only. Optional, but Lane B cannot run without it — see below. |
-| 11 | KTPHLStatsX | `feat/frag-context-columns` | `feat/seed-cap-break-action` | Unit 5, DB half. **Apply the seed SQL and restart the daemon before step 12.** |
-| 12 | KTPAMXX | `feat/stats-frag-context` | `feat/stats-positions` | Unit 5, plugin half. Retires the old `headshot_kill` marker — see below. |
+| 1 | ~~KTPHLStatsX~~ | ~~`fix/suicide-dispatch-goldsrc`~~ | ~~`main`~~ | **MERGED**, PR #1. Unit 1. |
+| 2 | KTPInfrastructure | `feat/stats-capture-include` | `main` | 5 lines. Do it early: the plugin build needs the `.inc` to be copied, and it is harmless on its own. PR #54, open. |
+| 3 | ~~KTPHLStatsX~~ | ~~`feat/seed-assist-action`~~ | ~~`fix/suicide-dispatch-goldsrc`~~ | **MERGED**, PR #4. Unit 2, DB half. |
+| 4 | KTPAMXX | `feat/stats-assists` | `master` | Unit 2, plugin half. **Apply step 3's seed and restart the daemon before this ships** — already true even though step 3 is merged; the daemon still needs its own restart, separate from the merge. No PR yet. |
+| 5 | ~~KTPHLStatsX~~ | ~~`feat/seed-cap-break-action`~~ | ~~`feat/seed-assist-action`~~ | **MERGED**, PR #3. Unit 3, DB half. |
+| 6 | KTPAMXX | `feat/stats-cap-breaks` | `feat/stats-assists` | Unit 3, plugin half. Seed already merged; still needs the daemon restart before this ships. No PR yet. |
+| 7 | KTPAMXX | `feat/stats-positions` | `feat/stats-cap-breaks` | Unit 4. No SQL, no daemon change. No PR yet. |
+| 8 | KTPInfrastructure | `docs/stats-capture-plan-branch-status` | `main` | Docs only. PR #55, open. |
+| 9 | KTPInfrastructure | `feat/tier2-bot-lane-stats-e2e` | `main` | The Lane B test infrastructure. **Rebase onto `main` after step 8** — see the conflict note. No PR yet. |
+| 10 | KTPAMXX | `feat/lane-b-fakeclient-players` | `master` | Test-only. Optional, but Lane B cannot run without it — see below. No PR yet. |
+| 11 | KTPHLStatsX | `feat/frag-context-columns` | `main` | Unit 5, DB half. Base is `main` directly now (was `feat/seed-cap-break-action`, merged 2026-08-12) — **rebased and pushed already**. **Apply the seed SQL and restart the daemon before step 12.** No PR yet. |
+| 12 | KTPAMXX | `feat/stats-frag-context` | `feat/stats-positions` | Unit 5, plugin half. Retires the old `headshot_kill` marker — see below. Pushed, no PR yet. |
+| 13 | KTPHLStatsX | `feat/ktp-damage-event` | `feat/frag-context-columns` | Unit 6, DB half. Creates `ktp_damage_events` — **apply before step 14**, though unlike other units a backwards deploy here fails loudly (daemon `INSERT` errors) rather than silently. Pushed, no PR yet. |
+| 14 | KTPAMXX | `feat/stats-damage-ledger` | `feat/stats-frag-context` | Unit 6, plugin half. Damage capped at 100 — see below. Pushed, no PR yet. |
 
 **Open each stacked PR against its parent branch, not against `main`.** GitHub
 auto-retargets a stacked PR to the default branch once its base merges, so the
@@ -196,6 +213,35 @@ through — now does nothing but dispatch into `ksc_on_death`. Re-run Units
 Compiled against the KTP fork's `amxxpc` (0 warnings) and `hlstats.pl`
 syntax-checked with `perl -c`, both inside the Lane B image, before this was
 written up — see Unit 5 in `KTPR_DEPLOYMENT_PLAN.md` for the live-run numbers.
+
+### 13 — `feat/ktp-damage-event`, 14 — `feat/stats-damage-ledger` (Unit 6)
+
+A new standalone table, `ktp_damage_events`, plus a `damage` marker fired on
+every `client_damage` hit — enemy, team, and self alike. **First unit that
+doesn't extend a stock `hlstats_Events_*` table** — it's a direct-`INSERT`
+handler, same shape `KTP_MATCH_*` already uses, not the generic
+`recordEvent`-batched mechanism.
+
+**Damage is capped at 100 in a second column, `damage_capped`.** DoD's raw
+per-hit value is the nominal weapon value with multipliers applied
+(headshot, wallbang) and is not clamped to a player's actual 0-100 HP pool —
+a single hit can log 400+. Live run: max raw value observed was 212,
+18/216 rows exceeded the cap and were correctly clamped to 100. Raw is kept
+alongside the capped value — nothing discarded — but **any KTPR-facing
+consumer should read `damage_capped`, not `damage`.** Same convention CS2
+uses, prompted directly by user feedback during this phase.
+
+No colleague sign-off needed on ordering risk the way Units 1-3 have it: a
+backwards deploy here (plugin before table) fails loudly — the daemon's
+`INSERT` errors against a missing table — rather than silently discarding
+data the way an unseeded `hlstats_Actions` row does. Still land the seed
+first; a noisy failure beats depending on that distinction.
+
+Compiled against the KTP fork's `amxxpc` (0 warnings) and `hlstats.pl`
+syntax-checked with `perl -c`. Live run: 216/216 damage markers carried, 0
+cap violations, 0 dropped buffer lines at the new 128-entry size (up from
+48 — this event type fires far more often than any prior capture),
+zero regressions on Units 2-5 — see Unit 6 in `KTPR_DEPLOYMENT_PLAN.md`.
 
 ### 9 — `feat/tier2-bot-lane-stats-e2e`
 
