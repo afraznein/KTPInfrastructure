@@ -4,6 +4,50 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: reconcile the HLStatsX ingest path hourly (2026-08-12)
+
+Three defects at the Philadelphia 2026 LAN each destroyed real data and **none of
+them raised anything at the time**. The stats were only discovered to be wrong ten
+days later, by comparing them against photographs of the scoreboard. 982 kill
+events and 2,755 objective events had to be reconstructed from the servers' own
+console logs. This turns each of those failures into a check that fires on the day.
+
+- **`scripts/hlstatsx-ingest-monitor.py`** plus a service + hourly timer. Checks:
+  UDP receive-buffer drops (delta since last run), halves with no summary rows,
+  summaries short of the events they summarise, second halves far below their own
+  first half, and the daemon's own `KTP_HEALTH` line. `--logs` adds a
+  log-versus-database comparison, which is only possible where the game servers
+  share a host with the daemon — the LAN case, and the check that would have
+  caught all three.
+- Findings exit 1, failing the unit, which fires the existing `ktp-systemd-alert`
+  `OnFailure` wiring into Discord. That delivery path is deliberate: a monitor
+  writing to a log nobody opens repeats the original failure.
+
+⚠️ **UDP loss is not detectable per-event, by construction.** GoldSrc `logaddress`
+is fire-and-forget — the sender keeps no copy and the receiver never sees the
+packet, so there is nothing to retry and nothing to notice. The kernel's
+`RcvbufErrors` counter is the only evidence, which is why this lives here rather
+than in the daemon: the daemon cannot see its own dropped packets. **On the
+production data server that counter already reads 5,404** — the fleet is losing
+log lines today, and buffer size is not the constraint (`net.core.rmem_max` is
+25 MB and the daemon's 1 MB request is granted in full).
+
+⚠️ **Three false-positive controls, all found by running it against live data.**
+The load-bearing one: `ktp_match_stats` is written by `doEvent_KTPMatchEnd` —
+once, at **match** end, for every half together. A half legitimately has no
+summary rows for as long as its match is still being played, so keying the checks
+on the half rather than the finished match alerts on *every live match*. That is
+how a monitor gets muted and stops being a monitor. Also: a half that ended in the
+last ten minutes may not be aggregated yet, and a summary running *ahead* of its
+tagged events is explained by freeze-time kills being untagged (`recordEvent` only
+stamps `match_id` while the round is live) rather than by any defect.
+
+⚠️ **The schema is two collation families.** Upstream `hlstats_Events_*` tables are
+`utf8mb4_unicode_ci`; the KTP `ktp_*` tables are `utf8mb4_0900_ai_ci`. Joining
+`match_id` across them raises *Illegal mix of collations* and the query returns
+**nothing at all**, which reads exactly like a clean result. Every join in the
+script pins the collation explicitly; keep it that way if you add one.
+
 ### `ops`: disk-usage trend sampling in ktp-data-server-health (2026-08-02)
 
 Three misconfigured systemd units wrote `/var/log/syslog` at 14.8 GiB/day from
