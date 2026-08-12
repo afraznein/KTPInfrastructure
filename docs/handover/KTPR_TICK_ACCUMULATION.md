@@ -210,7 +210,20 @@ which rating snapshot to use (pre-match, rolling, or season) — flag it to
 the plan's author rather than letting it get waved through as "just weight
 by opponent skill."
 
-## What not to do
+## More backlog ideas (2026-08-12, same source)
+
+A follow-up batch from the same colleague, again independent of tick-
+accumulation vs. event-counting:
+
+| Idea | What it needs captured | Status today |
+|---|---|---|
+| Throwback nade kills (killing with a live grenade caught and thrown back) | grenade-entity ownership tracking — who threw it originally, and whether it changed hands before detonating | **not captured, and not cheap** — this is not a log line DoD emits; it needs tracking individual grenade entities across a possible catch-and-return, which is a real engine-level capture project, not a query or a small hook. Scope before committing |
+| Last-flag full caps completed | a distinct "this was the game-deciding flag" marker on a capture | **not captured** — depends on Phase 7's capout work and on the plan knowing which flag is "last" per map (asymmetric in DoD; not always the numerically-final one). Couples to the map-layout gap already tracked in `tests/e2e_stats/NEXT_PHASES.md` (KTP maps have no waypoints yet, which blocks more than just bots — any per-map "which flag is last" table needs the same map-by-map work) |
+| Enemy-flag caps vs. recaptures of your own 1st/2nd flag ("double caps") | capture classification by prior ownership, i.e. the same `old_owner` signal flagged under the flag-cap-weighting idea above | **not captured**, same gap as the earlier flag-cap-weighting row — this is really that idea's central example, not a separate one. The colleague's intuition (recapturing your own early flag may be close to half of some players' total on some maps and is lower-impact) is exactly the kind of thing worth checking empirically once `old_owner` is captured, before weighting anything |
+| Total nades thrown | a grenade-throw event, which does not exist in capture today | **not captured** — DoD logs a throw distinctly from a detonation/kill; this is a new, fairly cheap hook (one event type, no attribution ambiguity) compared to the throwback-kill idea above, which needs the same underlying entity but a lot more logic on top |
+| Time spent holding forward ("holding W") | continuous per-tick input or movement-vector sampling | **not captured, and the cheapest-sounding one is a trap** — DoD's server does not expose client input state (which key is held) directly; the closest proxy is inferring movement from position deltas between polls, which conflates walking, running, being pushed by an explosion, and knockback. Flag this to the plan's author as needing a validated proxy before it is trusted as a signal, not a straightforward capture |
+
+
 
 - **Do not replace the existing profiles.** `weights.toml` keeps `old` and
   `current` frozen deliberately so redesigns can be compared against them. Add
