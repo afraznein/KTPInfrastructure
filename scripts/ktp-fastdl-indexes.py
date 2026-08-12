@@ -15,10 +15,16 @@ LAN-PHILLY2026 is skipped -- it has its own generator that knows the team names.
 
 Idempotent: only ever writes index.html. Usage: fastdl_indexes.py [--apply]
 """
-import argparse, collections, html, os, re, time
+import argparse, collections, html, json, os, re, time
 
 FASTDL = "/var/www/fastdl"
 DEMOS = "/home/hltvserver/hlds/dod/demos"
+
+# Stamped into every footer. The archive is a generated static site, so "what is
+# on this page" and "what is on disk" are only the same as of the last build --
+# a demo finishing at 21:00 was invisible until the next morning before this was
+# hourly, and nothing on the page said so.
+GENERATED = time.strftime("%Y-%m-%d %H:%M %Z")
 SKIP = {"LAN-PHILLY2026"}
 CITY = {"ATL": "Atlanta", "DAL": "Dallas", "DEN": "Denver", "NY": "New York", "CHI": "Chicago"}
 TYPE_LABEL = {"ktp": "League (.ktp)", "scrim": "Scrims", "draft": "Drafts", "12man": "12-man"}
@@ -157,7 +163,51 @@ SCRIPT = """<script>
     none.hidden = !(terms.length>0 && shown===0);
   }
   q.addEventListener('input',apply);
-  apply();
+  // The filter is per-page, but browsers restore form state on back/forward
+  // (and bfcache restores the whole page), so a term typed on one page came
+  // back looking like it had followed you to another. Clear on every show,
+  // including bfcache restores, where no 'load' fires.
+  function reset(){ if(q.value){ q.value=''; } apply(); }
+  window.addEventListener('pageshow', reset);
+  reset();
+})();
+</script>"""
+
+
+# Whole-archive search, demos index page only. The per-page filter above can only
+# hide what is already rendered, so on the index -- which lists servers, not demos
+# -- typing a map name matched nothing and read as "we have no armory demos".
+# Rendered from an embedded index rather than ~1800 hidden rows: the rows would
+# be dead weight on every visit, and the per-page filter would count them.
+GLOBAL_JS = """<script>
+(function(){
+  var q=document.getElementById('q'), box=document.getElementById('gs'),
+      raw=document.getElementById('gsdata');
+  if(!q||!box||!raw) return;
+  var idx=JSON.parse(raw.textContent), CAP=300;
+  function draw(){
+    var terms=q.value.trim().toLowerCase().split(/\\s+/).filter(Boolean);
+    if(!terms.length){ box.hidden=true; box.innerHTML=''; return; }
+    var hits=idx.filter(function(e){
+      return terms.every(function(w){ return e[0].indexOf(w)!==-1; });
+    });
+    box.hidden=false;
+    if(!hits.length){
+      box.innerHTML='<h2>Across every server</h2><p class="note">No demo anywhere matches that.</p>';
+      return;
+    }
+    var shown=hits.slice(0,CAP), rows=shown.map(function(e){
+      return '<a class="card" href="'+e[1]+'"><div class="t">'+e[2]
+           +'</div><div class="d">'+e[3]+'</div></a>';
+    }).join('');
+    box.innerHTML='<h2>Across every server</h2><p class="note">'
+      +hits.length+' demo'+(hits.length===1?'':'s')+' match'+(hits.length===1?'es':'')
+      +(hits.length>CAP?(' &mdash; showing the newest '+CAP):'')
+      +'.</p><div class="row2">'+rows+'</div>';
+  }
+  q.addEventListener('input',draw);
+  window.addEventListener('pageshow',draw);
+  draw();
 })();
 </script>"""
 
@@ -168,6 +218,8 @@ def footer(what):
             '    <p><a href="https://github.com/sponsors/afraznein">Sponsor the infrastructure</a> '
             '&middot;\n      <a href="https://support.ktpdod.com">Report a problem</a></p>\n'
             '    <p class="mt8"><span class="accent">Keep the Practice</span></p>\n'
+            '    <p class="note">File list updated ' + html.escape(GENERATED) + '.<br>'
+            'Rebuilt hourly &mdash; a match that just finished may take up to an hour to appear.</p>\n'
             '  </div>\n</footer>\n')
 
 # Root-relative nav hrefs 404 on netcode/profiles/bundles, which each have their own docroot.
@@ -178,7 +230,7 @@ def _nav(markup):
     assert hrefs and not bad, "nav href must be absolute, got %s" % (bad or "no navlinks")
     return markup
 
-def page(title, site, body, what):
+def page(title, site, body, what, extra_js=""):
     return "\n".join([
       '<!DOCTYPE html>', '<html lang="en">', '<head>', '<meta charset="utf-8">',
       '<meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -191,7 +243,7 @@ def page(title, site, body, what):
       '<title>' + html.escape(title) + '</title>',
       '<style>' + CSS + '</style>', '</head>', '<body>',
       _nav(nav(site)), '<div class="wrap">', EYEBROW, body, footer(what), '</div>',
-      SCRIPT, '</body></html>', ''])
+      SCRIPT, extra_js, '</body></html>', ''])
 
 def human(n):
     v = float(n)
@@ -312,6 +364,18 @@ def rec_stamp(fname):
     return "" if ts is None else time.strftime("%Y-%m-%d ", ts) + clock(ts) + " " + TZ_LABEL
 
 
+def rec_key(fname):
+    """Sort key: when this demo was recorded, newest first.
+
+    Filenames sort alphabetically by match id, which is not chronological -- a
+    1.3 queue id and a unix timestamp interleave, so the newest match could land
+    anywhere on the page. Files with no readable date sort last rather than
+    jumping to the top.
+    """
+    ts = rec_parts(fname)
+    return time.strftime("%Y%m%d%H%M", ts) if ts else "0"
+
+
 
 
 def match_when(mid, files):
@@ -368,11 +432,10 @@ body = ('<div class="crumb"><a href="/">fastdl</a> / demos</div>'
         '<h1>Demo <span class="accent">archive</span></h1>'
         '<p class="lede">Every match HLTV records across the 24-server fleet, sorted by server and '
         'match type. <b>League and draft matches are kept 180 days; pickups and scrims 90.</b> '
-        'Download one before it ages out.</p>' + SEARCH + "".join(sections))
-out.append((DEMOS + "/index.html",
-            page("KTP Demo Archive", "Demo Archive", body,
-                 "Every competitive match on the KTP fleet, recorded by HLTV and kept on a "
-                 "per-type retention schedule.")))
+        'Download one before it ages out.</p>' + SEARCH
+        + '<div id="gs" hidden></div>' + "".join(sections))
+demos_index_body = body          # written after the loop below, which fills GLOBAL_INDEX
+GLOBAL_INDEX = []                # [search key, href, title, meta] per demo file
 
 # ---------------------------------------------------------------- per server / per type
 for s in servers:
@@ -393,7 +456,10 @@ for s in servers:
 
     for t in types:
         tp = sp + "/" + t
-        files = sorted(f for f in os.listdir(tp) if f.endswith(".dem"))
+        # Newest match first. Groups keep insertion order, so ordering the file
+        # list orders the page.
+        files = sorted((f for f in os.listdir(tp) if f.endswith(".dem")),
+                       key=lambda f: (rec_key(f), f), reverse=True)
         groups = collections.OrderedDict()
         for f in files:
             m = re.search(r"([\w.\-]+?)-(?:[A-Z]+\d+)(?:_h\d)?-\d{10}-", f)
@@ -413,6 +479,16 @@ for s in servers:
                              + (' title="recorded ' + html.escape(rec, quote=True) + '"' if rec else "")
                              + '><span class="h">' + lbl + '</span><span class="sz">'
                              + human(os.path.getsize(tp + "/" + f)) + '</span></a>')
+                # Feed the whole-archive search on the demos index. Keyed on the
+                # same things a person would type: server, map, match id, date.
+                mapname = mp.group(1) if mp else ""
+                GLOBAL_INDEX.append([
+                    " ".join((s, t, TYPE_LABEL.get(t, t), mid, mapname, rec, f)).lower(),
+                    html.escape("/demos/%s/%s/%s" % (s, t, f), quote=True),
+                    html.escape("%s — %s" % (s, mapname or mid)),
+                    html.escape("%s · %s · %s" % (TYPE_LABEL.get(t, t), rec or "date unknown", lbl)),
+                    rec_key(f),      # sort field only; stripped before embedding
+                ])
             inner = ('<div class="mh"><span class="teams">'
                      + html.escape(when or mid) + '</span><span class="meta">'
                      + html.escape(mp.group(1) if mp else "")
@@ -432,6 +508,21 @@ for s in servers:
                 + ' from recording, then deleted.</p>' + SEARCH + "".join(cards))
         out.append((tp + "/index.html", page("KTP demos — " + s + " " + t, "Demo Archive", body,
                     "Every competitive match on the KTP fleet, recorded by HLTV.")))
+
+# Written here, not where its body was built: the whole-archive index is only
+# complete once every server/type has been walked. Newest first, so a capped
+# result list drops the oldest rather than an arbitrary slice.
+GLOBAL_INDEX.sort(key=lambda e: e[4], reverse=True)
+_gs = [e[:4] for e in GLOBAL_INDEX]
+out.append((DEMOS + "/index.html",
+            page("KTP Demo Archive", "Demo Archive",
+                 demos_index_body
+                 + '<script id="gsdata" type="application/json">'
+                 + json.dumps(_gs, separators=(",", ":")).replace("</", "<\\/")
+                 + '</script>',
+                 "Every competitive match on the KTP fleet, recorded by HLTV and kept on a "
+                 "per-type retention schedule.",
+                 extra_js=GLOBAL_JS)))
 
 
 # ---------------------------------------------------------------- /dod subdirectories
