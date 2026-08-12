@@ -27,6 +27,7 @@ class Settings:
     feedback_channel_id: str
     site_dir: str
     site_mount: str
+    site_at_root: bool
     owner_discord_id: str
     photo_thumb_px: int
     admin_discord_ids: frozenset
@@ -71,6 +72,10 @@ def load() -> Settings:
         feedback_channel_id=os.getenv("LAN_FEEDBACK_CHANNEL_ID", "1535106233877663744"),
         site_dir=os.getenv("LAN_SITE_DIR", ""),
         site_mount=os.getenv("LAN_SITE_MOUNT", "/2026"),
+        # Serve the WSDoD site at "/" as well, and move the LAN briefing to
+        # /lan. Off by default so deploying this is a no-op and the switch is
+        # an env change plus a restart — which is also the rollback.
+        site_at_root=os.getenv("LAN_SITE_AT_ROOT", "").lower() in ("1", "true", "yes"),
         # Deliberately one id, not the admin list: closing a vote ends it for
         # everyone, so it does not widen when staff are added.
         owner_discord_id=os.getenv("LAN_OWNER_DISCORD_ID", "218890328273321984"),

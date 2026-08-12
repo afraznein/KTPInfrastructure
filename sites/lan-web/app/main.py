@@ -55,3 +55,20 @@ app.include_router(demo_routes.router)
 app.include_router(extras_routes.router)
 app.include_router(api_routes.router)
 app.include_router(admin_routes.router)
+
+# The site at "/" as well as /2026, once LAN_SITE_AT_ROOT is set.
+#
+# ⚠️ MUST stay below every include_router above. Starlette matches routes in
+# registration order and Mount("/") matches EVERY path, so mounting it with the
+# /2026 block higher up silently swallows /api, /auth and /admin — the front
+# page works while sign-in, uploads, voting and the admin panel all 404.
+# Measured, not theorised: that ordering returns 404 for /api/photos while this
+# one reaches the handler.
+#
+# /2026 stays mounted so already-shared links keep working.
+if settings.site_at_root and settings.site_dir and Path(settings.site_dir).is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=settings.site_dir, html=True),
+        name="wsdod_site_root",
+    )

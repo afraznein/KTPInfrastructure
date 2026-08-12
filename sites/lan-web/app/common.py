@@ -41,6 +41,15 @@ def safe_next(raw: str | None) -> str | None:
     return v
 
 
+def home_url(request) -> str:
+    """Where "home" is, for a post-logout style redirect.
+
+    Not url_for("index"): that route is the LAN briefing, which moves to /lan
+    once LAN_SITE_AT_ROOT is set — logging out would then land on the briefing
+    rather than the front page. The site root is home in both modes."""
+    return str(request.base_url)
+
+
 def base_ctx(request: Request, active: str = "") -> dict:
     """Vars every page needs. `request` is passed positionally to
     TemplateResponse, so it is intentionally NOT included here."""

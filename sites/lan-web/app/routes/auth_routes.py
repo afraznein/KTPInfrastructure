@@ -34,7 +34,7 @@ async def auth_callback(request: Request):
 
 @router.get("/logout", name="logout")
 async def logout(request: Request, next: str | None = None):
-    dest = common.safe_next(next) or str(request.url_for("index"))
+    dest = common.safe_next(next) or common.home_url(request)
     request.session.clear()
     return RedirectResponse(url=dest)
 
