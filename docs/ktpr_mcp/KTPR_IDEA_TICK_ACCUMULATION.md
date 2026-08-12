@@ -4,6 +4,12 @@
 lost. Nothing here is agreed, designed or started — it is a direction for a
 future revision of KTPR, recorded while the reasoning was fresh.
 
+The full handover for whoever plans this — including a second colleague's
+2026-08-12 feedback on other candidate signals (opponent-strength win
+weighting, nade-vs-gun kills, class, map weighting, capouts, break
+mechanism, frag/death share) — is
+[`docs/handover/KTPR_TICK_ACCUMULATION.md`](../handover/KTPR_TICK_ACCUMULATION.md).
+
 ## The idea
 
 Instead of rating from discrete end-of-match outcomes, accumulate points

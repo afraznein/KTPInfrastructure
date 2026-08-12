@@ -168,6 +168,48 @@ specifying inputs nobody will build. A reasonable plan might instead
 **propose what Phase 7 should capture** so that this becomes possible later —
 that is a much cheaper intervention than a parallel rating project.
 
+## Colleague feedback (2026-08-12): additional signal ideas
+
+A second colleague reviewed the point-accumulation idea and raised nine more
+candidate inputs, independent of whether the final system ends up
+tick-accumulated or stays event-counted. **Treat these as ideas to weigh in
+the plan, not a requirement list** — the plan should say which are worth the
+capture cost and which are not, the same way the tension section above asks
+for `tw_kd` vs. presence to be argued, not assumed.
+
+For each, this table says what would have to be captured that is not today,
+so the plan does not have to re-derive it:
+
+| Idea | What it needs captured | Status today |
+|---|---|---|
+| Win/loss weighted by opponent strength | a per-team or per-opponent skill estimate at match time, to weight a win over a stacked team above a win over a weak one | **not captured** — no opponent-strength signal exists; would need a rating-at-match-time snapshot, which is circular with KTPR itself and needs care (rate players using a rating derived from the same players' rating) |
+| K:D | — | **already the model's biggest lever** (`tw_kd`, see above); this is not new work, just confirms the direction |
+| Flag-cap weighting: mine vs. enemy's vs. neutral vs. recovering my own, per-map | per-flag-event classification (capturing a neutral point vs. an enemy-held one vs. retaking a lost one) crossed with a per-map value table | **not captured** — `flag_cap` today is one undifferentiated action; the doc's own warning applies ("this could get complicated") — recovering your own point and taking a neutral one are different plays and DoD's `dod_control_point_captured` forward does carry `old_owner`, so the raw signal exists (see KTPAMXX CHANGELOG's territorial-scoring-clock entry, which documents `old_owner` semantics), the gap is in what the capture layer does with it |
+| Nade kills vs. gun kills | none — **already there** | `hlstats_Events_Frags.weapon` is populated on every kill today; splitting nade (`hand_grenade`, `riflegrenade`, etc.) from gun weapons is a query-time classification, not a new capture. Cheapest item on this list |
+| Class-weighted scoring | per-kill (or per-life) DoD class of the player | **not captured anywhere** — no class capture exists in `ktp_stats_capture.inc` or the schema. DoD exposes class via the player entity; this is a real gap, not a query-time fix |
+| Map-weighted kills / K:D | a per-map difficulty or role-value table | **not captured** — `hlstats_Events_Frags` already carries the map per event (standard HLStatsX), so the join key exists; what's missing is the weight table itself, which is a design/tuning artifact more than a capture gap |
+| Capouts | a distinct capout event, separate from a contested capture | **Phase 7** in `IMPLEMENTATION_PHASES.md` — already planned, not yet built |
+| Cap breaks: differentiate a body block from a kill-break | break *mechanism* (killed the capturer vs. simply stood in the zone and denied progress without a kill) | **partially not captured** — `cap_break` today is kill-attributed only (see the KTPAMXX cap-break CHANGELOG entry: "killing an enemy standing on a point... is the only way to stop capture progress" as currently modeled). A body-block-without-a-kill is not a DoD server event in the same sense — worth scoping carefully before committing to it, since it may not be detectable the way a kill-break is |
+| % of a player's frags out of the match total (and the same for deaths) | none beyond what exists — **derivable today** | both frags and deaths per player per match are already captured; this is a normalization done at query/scoring time, not a capture gap. Flagged in the source feedback as possibly "the best frag value" — worth an early predict-accuracy check since it's nearly free to try |
+
+**Two items are free to prototype against the existing corpus** (weapon-type
+split, frag/death share) — they need no new capture, just a query over data
+Lane B's corpus replay (`scripts/replay_corpus.py`, `tests/e2e_stats/corpus/`)
+already produces. Worth trying those first as a cheap signal check before
+costing the expensive ones (class capture, opponent-strength weighting).
+
+**Two items need new capture work before they can be evaluated at all**
+(class, capout-vs-contested-capture) — same category as the tick-accumulation
+idea itself: don't design the scoring around them until Phase 7 (or a
+class-capture equivalent) lands.
+
+**One item (opponent-strength-weighted win/loss) has a circularity to solve**
+before it's even a capture question: weighting a win by the opponent's KTPR
+means using KTPR to rate KTPR inputs. That needs its own design note on
+which rating snapshot to use (pre-match, rolling, or season) — flag it to
+the plan's author rather than letting it get waved through as "just weight
+by opponent skill."
+
 ## What not to do
 
 - **Do not replace the existing profiles.** `weights.toml` keeps `old` and
@@ -204,3 +246,7 @@ that is a much cheaper intervention than a parallel rating project.
 - [ ] is explicit about what it would make *worse* — every scoring change
       re-ranks somebody, and a proposal that claims only upside has not been
       thought about hard enough
+- [ ] addresses the colleague-feedback ideas above — which are worth
+      prototyping now (weapon-type split, frag/death share), which need new
+      capture first (class, capout-vs-contested), and whether
+      opponent-strength weighting is worth its circularity cost
