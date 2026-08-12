@@ -25,6 +25,7 @@ checklists below are a **shorter** job than they look. Each unit carries a
 | 3 — cap breaks | **positive plus all four negatives, staged deliberately.** No step is manual any more; off-point kill and voluntary walk-off do not stage on every run, which is expected — see Unit 3. |
 | 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
 | 5 — frag context | **covered.** Compiled/syntax-verified against the real toolchain and run live — see Unit 5. |
+| 6 — damage ledger | **covered.** Compiled/syntax-verified against the real toolchain and run live — see Unit 6. |
 
 Two caveats worth reading before treating any of this as sign-off:
 
@@ -56,6 +57,7 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 2 | `feat/seed-assist-action` | `d3921b7` | `7eefed6` | `fix/suicide-dispatch-goldsrc` |
 | 3 | `feat/seed-cap-break-action` | `7eefed6` | `a8c9a97` | `feat/seed-assist-action` |
 | 4 | `feat/frag-context-columns` | `a8c9a97` | `bb53e8b` | `feat/seed-cap-break-action` |
+| 5 | `feat/ktp-damage-event` | `bb53e8b` | `9777786` | `feat/frag-context-columns` |
 
 ### KTPAMXX — default `master` @ `a052f7d9`
 
@@ -65,6 +67,7 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 2 | `feat/stats-cap-breaks` | `30da9b71` | `d0e88885` | `feat/stats-assists` |
 | 3 | `feat/stats-positions` | `d0e88885` | `5f0e5379` | `feat/stats-cap-breaks` |
 | 4 | `feat/stats-frag-context` | `5f0e5379` | `b15295c8` | `feat/stats-positions` |
+| 5 | `feat/stats-damage-ledger` | `b15295c8` | `5eb05ebd` | `feat/stats-frag-context` |
 
 ### KTPInfrastructure — default `main` @ `7117349`
 
@@ -726,15 +729,168 @@ retired is dead code either way, so nothing regresses to check.
 
 ---
 
-# After all five units
+# Unit 6 — Per-hit damage ledger
 
-Once breaks, assists, positions and frag context are landing cleanly,
-`ktpr_mcp` can start reading them (Phase 8 in the implementation plan) —
-`hlstats_Events_PlayerPlayerActions` for assists, `hlstats_Events_PlayerActions`
-for breaks, `hlstats_Events_Frags` for positions and frag context, all
+**Value:** every `client_damage` hit — enemy, team, and self — now lands as
+its own row: attacker, victim, weapon, raw damage, a capped damage value,
+hitplace, `game_time`, and `match_id`/`half`. This is the input Phase 8's
+damage-based signals need, and the first unit to introduce a wholly new KTP
+table rather than extend a stock one.
+
+| Repo | Branch | Base | Head |
+|---|---|---|---|
+| KTPHLStatsX | `feat/ktp-damage-event` | `bb53e8b` | `9777786` |
+| KTPAMXX | `feat/stats-damage-ledger` | `b15295c8` | `5eb05ebd` |
+
+Same ordering rule as every prior unit: **KTPHLStatsX first**
+(`migrate_006_damage_ledger.sql` creates `ktp_damage_events`), **KTPAMXX
+second** (the plugin that starts emitting `damage` lines). Unlike Units 2/3,
+a backwards deploy here fails loudly — the daemon's `INSERT` errors against a
+table that doesn't exist yet — rather than silently discarding data. Still
+land the seed first; a noisy failure beats depending on that.
+
+**No daemon-batching reuse, on purpose.** This is the first KTP event type
+that does not extend `hlstats_Events_*` via the generic `recordEvent`
+mechanism (that machinery is config-driven around the stock event set) —
+it's a standalone table (`ktp_damage_events`) with a direct per-event
+`INSERT`, the same shape `KTP_MATCH_*` already uses. At the volume this
+phase runs (~1,100–1,500 hits/match), that means proportionally more
+individual `INSERT`s than any prior unit. Flagged as a known, deliberate
+simplification in the CHANGELOG — batch it later if the volume proves to be
+a real cost, don't assume it is or isn't without measuring.
+
+**Damage is capped at 100, and `damage_capped` — not `damage` — is the
+KTPR-facing column.** DoD's raw per-hit damage is the nominal weapon value
+with multipliers applied (headshot, wallbang/penetration) and is not clamped
+to a player's actual 0-100 HP pool — a single hit can log 400+. Read as "how
+much this hit mattered to the outcome," that number is wrong; read as "how
+strong this weapon+hitzone combo is on paper," it's fine, which is why raw
+is kept alongside the capped value rather than discarded. Same convention
+CS2 uses. Any future KTPR term built on damage must sum `damage_capped`.
+
+### Deploy
+
+1. Apply the seed:
+   ```
+   mysql -u hlstatsx -p hlstatsx < sql/migrate_006_damage_ledger.sql
+   ```
+2. Verify the table exists:
+   ```sql
+   SELECT COLUMN_NAME FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ktp_damage_events'
+   ORDER BY ORDINAL_POSITION;
+   ```
+   Expect 12 columns. **No daemon restart required for this step alone** —
+   same reasoning as Unit 5: a new table, unlike a new `hlstats_Actions` row,
+   doesn't need the actions-table reload. A restart is still needed for step
+   4's code change, with sign-off as always.
+3. Restart `hlstatsx` **(needs sign-off)** to pick up the new
+   `doEvent_KTPDamage` handler.
+4. Update both local checkouts (KTPAMXX + KTPHLStatsX), build plugins,
+   distribute `stats_logging.amxx` as `.new`, md5-verify, let the nightly
+   swap take it.
+
+### Smoke test
+
+1. Raw server log contains, on any hit:
+   `"A<uid><STEAM_x><Allies>" triggered "damage" against "V<uid><STEAM_y><Axis>" with "weapon" (damage "137") (damage_capped "100") (hitplace "1") (game_time "245.32")`
+2. Recorded:
+   ```sql
+   SELECT attacker_id, victim_id, weapon, damage, damage_capped, hitplace,
+          match_id, half
+   FROM ktp_damage_events ORDER BY id DESC LIMIT 10;
+   ```
+   Expect rows with damage varying naturally by weapon and hitplace.
+3. **Cap correctness — the point of this unit.**
+   ```sql
+   SELECT COUNT(*) FROM ktp_damage_events
+   WHERE damage_capped > 100 OR damage_capped > damage;
+   ```
+   Must be **zero**, always. Any row here is a real defect in the cap logic,
+   not a coverage gap — it should never happen regardless of what weapon or
+   hitzone produced the hit.
+4. **Self and team damage included.** Confirm at least one row exists where
+   `attacker_id = victim_id` (self-damage, e.g. a player's own grenade) if
+   the run had any — this is deliberately not filtered out at capture time,
+   unlike assist attribution.
+5. Buffer health — AMXX log should **not** contain
+   `[KTP-STATS] dropped N capture line(s)`. This unit is the real test of the
+   48 → 128 buffer bump: damage fires far more often than any prior capture
+   type, and a burst of drops here is the signal the bump wasn't enough for
+   real match density, not just Lane B's bot density.
+6. Regression: Units 2/3/4/5 checks still pass — assists, breaks, positions,
+   and frag context all unaffected. `client_damage` was extended in this
+   unit; confirm the assist-attribution damage matrix (`g_kscDmgTaken`) still
+   works, since it reads the same hook.
+
+**Pass =** every hit ledgered, cap never violated, self/team damage present,
+no regression on Units 2–5.
+
+### Lane B pre-verification
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1 raw log line present | yes | 216 `damage` lines, all four properties on every one |
+| 2 non-default values recorded | yes | damage varies naturally by weapon/hitplace — see figures below |
+| 3 cap correctness | yes | **0** rows with `damage_capped > 100` or `damage_capped > damage`, across 216 rows |
+| 4 self/team damage included | yes | 8/216 rows have `attacker_id = victim_id` (self-damage, e.g. a player's own grenade/mortar splash) |
+| 5 buffer health | yes | **0** `[KTP-STATS] dropped` lines at 128 entries — the bump held |
+| 6 no regression on Units 2–5 | yes | assists/breaks/positions/headshot all still carried exactly (see figures below) |
+
+Compiled and syntax-verified against the real toolchain before any run:
+`stats_logging.amxx` built with the KTP fork's `amxxpc` from commit
+`5eb05ebd`, **0 warnings**; `hlstats.pl` from commit `9777786` passed
+`perl -c` inside the Lane B image.
+
+**Live run, 2026-08-12** (150s play window, 16 bots, `dod_anzio`):
+
+| | log | db |
+|---|---|---|
+| kills | 85 | 85 (frags) |
+| assist | 8 | 8 (ppa) |
+| cap_break | 2 | 2 (pa) |
+| suicide | 2 | 2 |
+| headshot (frag_context) | 5 | 5 |
+| **damage (ledger)** | **216** | **216** |
+
+Damage figures: max raw value observed **212** (a wallbang/multiplier
+reading, not a real 212-HP hit); **18/216** rows exceeded the 100 cap and
+were correctly clamped to `damage_capped = 100`; the rest passed through
+unchanged (e.g. a 30-damage pistol hit logs `damage_capped = 30`). Assist
+positions: 8 rows, 0 null, 0 all-zero, 8 distinct, max magnitude 2350. Break
+positions: 2 rows, 0 null, 0 all-zero, 2 distinct, max magnitude 2605. Zero
+SQL errors, zero regressions on Units 2–5 (`all assertions passed` from the
+harness, cross-checked with a `replay_daemon.py` replay of the same
+captured log — 216/216 damage rows carried, 0 cap violations, independently
+of the live run's own ephemeral database).
+
+**One thing worth flagging, not a defect.** `damage` events run at a wholly
+different rarity than the other markers — 216 per 85 kills in this run,
+roughly 2.5 hits logged per kill, since most fights involve several
+non-lethal hits before the finisher. `check_damage_ledger` reports
+`not_exercised` rather than a false pass on a run with zero `damage`
+markers, same shape as every other `check_*_carried` function, for whenever
+a future run does land a quiet damage window.
+
+### Rollback
+
+`ktp_stats_capture 0`, or previous `.amxx` / `hlstats.pl`. Reverting to
+`b15295c8` (KTPAMXX) / `bb53e8b` (KTPHLStatsX) leaves Units 2–5 intact — the
+damage ledger is a new, independent table with nothing else reading it yet,
+so nothing regresses to check.
+
+---
+
+# After all six units
+
+Once breaks, assists, positions, frag context and the damage ledger are
+landing cleanly, `ktpr_mcp` can start reading them (Phase 8 in the
+implementation plan) — `hlstats_Events_PlayerPlayerActions` for assists,
+`hlstats_Events_PlayerActions` for breaks, `hlstats_Events_Frags` for
+positions and frag context, `ktp_damage_events` for the damage ledger, all
 already carrying `match_id` and `half` from the daemon's own tagging.
 
-Still outstanding and **not** covered by these units: the per-hit damage
-ledger, and break context (contester count / capout / last-flag defense /
-ninja caps). See `IMPLEMENTATION_PHASES.md` for the plan and
-`CONTINUATION_NOTES.md` for the detail needed to pick that work up cold.
+Still outstanding and **not** covered by these units: break context
+(contester count / capout / last-flag defense / ninja caps). See
+`IMPLEMENTATION_PHASES.md` for the plan and `CONTINUATION_NOTES.md` for the
+detail needed to pick that work up cold.
