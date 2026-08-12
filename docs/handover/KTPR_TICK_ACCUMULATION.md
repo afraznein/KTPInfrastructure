@@ -223,6 +223,43 @@ accumulation vs. event-counting:
 | Total nades thrown | a grenade-throw event, which does not exist in capture today | **not captured** — DoD logs a throw distinctly from a detonation/kill; this is a new, fairly cheap hook (one event type, no attribution ambiguity) compared to the throwback-kill idea above, which needs the same underlying entity but a lot more logic on top |
 | Time spent holding forward ("holding W") | continuous per-tick input or movement-vector sampling | **not captured, and the cheapest-sounding one is a trap** — DoD's server does not expose client input state (which key is held) directly; the closest proxy is inferring movement from position deltas between polls, which conflates walking, running, being pushed by an explosion, and knockback. Flag this to the plan's author as needing a validated proxy before it is trusted as a signal, not a straightforward capture |
 
+## Baseline signal set (2026-08-12, same source) — confirms the core, not new ideas
+
+A third round from the same colleague, but this one is different in kind from
+the two batches above: it names the **basic** signals a scoring system should
+be built on, not a novel idea to scope. Frags (total or per-match), K:D,
+assists, breaks, flags, damage. None of this is new information to this
+project — it is exactly `KTPR_KNOBS.md`'s existing six-term weighted average
+(kills, K/D, assists, damage, flags, breaks) — so the useful reading of this
+feedback is as **confirmation that the existing core is the right core**, not
+as a request to build something new. Worth stating plainly to whoever plans
+future work: the fancier ideas in the two sections above are refinements on
+top of this set, not replacements for it.
+
+### Damage should be capped per hit before it feeds any stat — read before Phase 6 ships a raw column
+
+**This one is not a someday idea — it is a capture-time design decision, and
+Phase 6 (the per-hit damage ledger) is being built right now.** DoD's engine
+damage values are the *nominal* weapon value with multipliers applied
+(headshot, wallbang/penetration, etc.) — they are not clamped to a player's
+actual HP pool (0-100) the way a kill's real effect is. A single hit can
+carry a logged value like 400 even though the target had at most 100 HP to
+lose. Un-capped, that number does not mean "how much this hit mattered" — it
+means "how strong this weapon+hitzone combination is on paper," which is a
+different, less useful quantity for a per-player rating. CS2 caps logged
+per-hit damage at 100 for exactly this reason.
+
+**Design decision made in Phase 6** (see the phase's own section below for
+the implementation): capture the raw engine value *and* a capped value
+side by side, rather than choosing one. Raw is kept because this project's
+standing rule is never to discard a real reading (the same principle behind
+storing `k_prone` un-collapsed in Phase 5, and omitting rather than
+fabricating a failed position read) — some future consumer may legitimately
+want to know a wallbang connected for absurd values, or may want to compute
+overkill. But **any KTPR-facing stat should read the capped column, not the
+raw one** — a rating that summed raw damage would let one absurd wallbang
+distort a player's rating more than three clean kills, and that is not a
+real signal about how the player performed.
 
 
 - **Do not replace the existing profiles.** `weights.toml` keeps `old` and
