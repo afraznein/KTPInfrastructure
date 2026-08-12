@@ -24,6 +24,7 @@ checklists below are a **shorter** job than they look. Each unit carries a
 | 2 — assists | **all steps covered but one, and one open finding.** Every emitted assist carried exactly; headshots unaffected. A killer was credited an assist on their own kill once in 225 kills, on an explosive — see Unit 2. **`hlstats_Events_Statsme` is not covered** — check by hand. |
 | 3 — cap breaks | **positive plus all four negatives, staged deliberately.** No step is manual any more; off-point kill and voluntary walk-off do not stage on every run, which is expected — see Unit 3. |
 | 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
+| 5 — frag context | **covered.** Compiled/syntax-verified against the real toolchain and run live — see Unit 5. |
 
 Two caveats worth reading before treating any of this as sign-off:
 
@@ -54,6 +55,7 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 1 | `fix/suicide-dispatch-goldsrc` | `9588794` | `d3921b7` | `main` |
 | 2 | `feat/seed-assist-action` | `d3921b7` | `7eefed6` | `fix/suicide-dispatch-goldsrc` |
 | 3 | `feat/seed-cap-break-action` | `7eefed6` | `a8c9a97` | `feat/seed-assist-action` |
+| 4 | `feat/frag-context-columns` | `a8c9a97` | `bb53e8b` | `feat/seed-cap-break-action` |
 
 ### KTPAMXX — default `master` @ `a052f7d9`
 
@@ -62,6 +64,7 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 1 | `feat/stats-assists` | `a052f7d9` | `30da9b71` | `master` |
 | 2 | `feat/stats-cap-breaks` | `30da9b71` | `d0e88885` | `feat/stats-assists` |
 | 3 | `feat/stats-positions` | `d0e88885` | `5f0e5379` | `feat/stats-cap-breaks` |
+| 4 | `feat/stats-frag-context` | `5f0e5379` | `b15295c8` | `feat/stats-positions` |
 
 ### KTPInfrastructure — default `main` @ `7117349`
 
@@ -571,15 +574,167 @@ Units 2 and 3 intact and working — positions were purely additive.
 
 ---
 
-# After all four units
+# Unit 5 — Frag context (prone/scope/ammo/headshot)
 
-Once breaks and assists are landing cleanly, `ktpr_mcp` can start reading them
-(Phase 8 in the implementation plan) — `hlstats_Events_PlayerPlayerActions` for
-assists, `hlstats_Events_PlayerActions` for breaks, both already carrying
-`match_id` and `half` from the daemon's own tagging.
+**Value:** every kill now carries the state that makes it legible after the
+fact — was the victim prone, scoped, out of ammo. This is genuinely new
+information (DoD's engine log carries none of it), not a re-query, and it is
+the input Phase 8's per-kill quality signals need.
 
-Still outstanding and **not** covered by these units: frag context
-(prone/scope/ammo at kill), the per-hit damage ledger, and break context
-(contester count / capout / last-flag defense / ninja caps). See
-`IMPLEMENTATION_PHASES.md` for the plan and `CONTINUATION_NOTES.md` for the
-detail needed to pick that work up cold.
+| Repo | Branch | Base | Head |
+|---|---|---|---|
+| KTPHLStatsX | `feat/frag-context-columns` | `a8c9a97` | `bb53e8b` |
+| KTPAMXX | `feat/stats-frag-context` | `5f0e5379` | `b15295c8` |
+
+Order matters the same way it does for Units 2/3: **KTPHLStatsX first**
+(`migrate_005_frag_context_columns.sql` adds the columns the daemon writes
+into), **KTPAMXX second** (the plugin that starts emitting `frag_context`
+lines). Getting this backwards doesn't lose data silently the way an
+unseeded action would — the UPDATE just fails against columns that don't
+exist yet — but it does mean noisy daemon errors until the seed lands.
+
+This unit **retires** `stats_logging.sma`'s old dedicated `headshot_kill`
+marker (headshot-only) in favor of a single `frag_context` marker fired on
+every kill, using the identical buffer-then-daemon-UPDATE technique. See the
+CHANGELOG entries in both repos for the full reasoning. The old daemon
+handler branch (event type 900) is left in place as dead code — nothing
+emits `headshot_kill` anymore, but nothing needs it removed either.
+
+### Deploy
+
+1. Apply the seed:
+   ```
+   mysql -u hlstatsx -p hlstatsx < sql/migrate_005_frag_context_columns.sql
+   ```
+2. Verify the columns landed:
+   ```sql
+   SELECT COLUMN_NAME FROM information_schema.COLUMNS
+   WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'hlstats_Events_Frags'
+     AND COLUMN_NAME IN ('k_prone','v_prone','k_scope','v_scope',
+                          'k_clip','k_ammo','v_clip','v_ammo');
+   ```
+   Expect 8 rows. Unlike Units 2/3, **no daemon restart is required for this
+   step alone** — new columns don't need the actions table reload that a new
+   `hlstats_Actions` row does. (A restart still needs sign-off for the code
+   change in step 4, same as any daemon deploy.)
+3. Restart `hlstatsx` **(needs sign-off)** to pick up the new `hlstats.pl`
+   frag_context handler.
+4. Update both local checkouts (KTPAMXX + KTPHLStatsX), build plugins,
+   distribute `stats_logging.amxx` as `.new`, md5-verify, let the nightly
+   swap take it.
+
+### Smoke test
+
+1. Raw server log contains, on an ordinary (non-headshot) kill:
+   `"K<uid><STEAM_x><Allies>" triggered "frag_context" against "V<uid><STEAM_y><Axis>" with "weapon" (headshot "0") (k_prone "0") ...`
+2. Recorded on the frag row:
+   ```sql
+   SELECT killerId, victimId, weapon, headshot, k_prone, v_prone,
+          k_scope, v_scope, k_clip, k_ammo, v_clip, v_ammo
+   FROM hlstats_Events_Frags ORDER BY id DESC LIMIT 10;
+   ```
+   Expect non-default values on at least some rows — all-default
+   (`0/0/0/0/-1/-1/-1/-1`) across an entire match means the marker isn't
+   matching, not that nobody happened to be prone or scoped.
+3. **Headshot regression — the important one.** This unit removes the code
+   path Unit 2's smoke test checked. Re-run it:
+   ```sql
+   SELECT COUNT(*) FROM hlstats_Events_Frags
+   WHERE headshot = 1 AND eventTime > NOW() - INTERVAL 15 MINUTE;
+   ```
+   Non-zero after a normal match. A zero count here means `frag_context`
+   isn't landing at all, not just that the new columns are empty.
+4. **Sanity on clip/ammo — corrected after a live run, read this before
+   trusting your intuition here.** `k_clip`/`k_ammo`/`v_clip`/`v_ammo` are the
+   participant's **current** weapon at the moment of the kill line, not
+   necessarily the weapon that scored it. A grenade kill in the live run
+   showed real rifle clip/ammo values, because the killer had already
+   switched back to their gun by the time `client_death` fired. **A melee
+   kill legitimately shows `0 0`** — that is a real engine reading for a
+   knife, not the sentinel. `-1 -1` means the read failed (in practice, a
+   narrow disconnect race), and should be rare — a run showing `-1 -1` on a
+   large fraction of rows, not just the occasional one, is the actual
+   anomaly to chase.
+5. Buffer health — AMXX log should **not** contain
+   `[KTP-STATS] dropped N capture line(s)`. The line grew again in this unit
+   (384 → 512 bytes budgeted); a burst of dropped lines here is the signal to
+   raise `KSC_BUF_MAX_ENTRIES` or `KSC_BUF_LINE_LEN` further, not to shrug it
+   off.
+6. Regression: Units 2/3/4 checks still pass — assists, breaks, and
+   positions unaffected. `client_death` was rewritten in this unit (it now
+   only dispatches into `ksc_on_death`), so this is the widest-blast-radius
+   check in the whole plan.
+
+**Pass =** frag_context recorded with varied, plausible values; headshot
+count unaffected; no regression on Units 2/3/4.
+
+### Lane B pre-verification
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1 raw log line present | yes | 135 `frag_context` lines, all nine properties present on every one |
+| 2 non-default values recorded | yes | varied prone/scope/clip/ammo across rows — see figures below |
+| 3 headshot regression | yes | 16 headshot kills, 16/16 carried to `hlstats_Events_Frags.headshot` |
+| 4 clip/ammo semantics | yes, **and corrected** | see the smoke-test step 4 rewrite above — the live run changed what "sanity" means here |
+| 5 buffer health | yes | no `[KTP-STATS] dropped` lines at 512 bytes |
+| 6 no regression on Units 2/3/4 | yes | assists/breaks/positions all still carried exactly (see figures below) |
+
+Compiled and syntax-verified against the real toolchain before any run:
+`stats_logging.amxx` built with the KTP fork's `amxxpc` from commit `b15295c8`,
+**0 warnings**; `hlstats.pl` from commit `bb53e8b` passed `perl -c` inside the
+Lane B image.
+
+**Live run, 2026-08-12** (150s play window, 16 bots, `dod_anzio`):
+
+| | log | db |
+|---|---|---|
+| kills | 146 | 146 (frags) |
+| assist | 21 | 21 (ppa) |
+| cap_break | 2 | 2 (pa) |
+| suicide | 10 | 10 |
+| **headshot (frag_context)** | **16** | **16** |
+
+Assist positions: 21 rows, 0 null, 0 all-zero, 21 distinct, max magnitude
+3407. Break positions: 2 rows, 0 null, 0 all-zero, 2 distinct, max magnitude
+1769. Zero SQL errors, zero regressions on Units 2/3/4.
+
+**One real bug found and fixed by this run, not a plugin bug — a stale test
+harness.** The first pass reported headshot as `not_exercised`: three call
+sites in `tests/e2e_stats`/`scripts` still grepped the log for the literal
+string `"headshot_kill"`, which this unit retires. Fixed to count
+`(headshot "1")` instead (the property `frag_context` now carries), then
+**re-verified against the same captured log** via `replay_daemon.py` — 16/16
+carried, `all assertions passed`. This is exactly the kind of gap a
+compile-only check would have missed: the plugin was correct throughout, and
+without a live run the harness would have silently under-reported its own
+coverage indefinitely.
+
+**One thing the design got wrong, corrected from the same run.** The
+original comments (plugin, migration SQL, both CHANGELOGs) described `-1`
+clip/ammo as a melee/grenade sentinel. The live log shows otherwise: a
+grenade kill carried real rifle clip/ammo (the killer had switched back by
+`client_death`), and a knife kill carried real `0 0` from the engine, not
+`-1`. Comments and the smoke test corrected to match what was actually
+observed — see the CHANGELOG entries in both repos for the fix commits.
+
+### Rollback
+
+`ktp_stats_capture 0`, or previous `.amxx` / `hlstats.pl`. Reverting to
+`5f0e5379` (KTPAMXX) / `a8c9a97` (KTPHLStatsX) leaves Units 2/3/4 intact —
+frag context is purely additive, and the `headshot_kill` daemon branch it
+retired is dead code either way, so nothing regresses to check.
+
+---
+
+# After all five units
+
+Once breaks, assists, positions and frag context are landing cleanly,
+`ktpr_mcp` can start reading them (Phase 8 in the implementation plan) —
+`hlstats_Events_PlayerPlayerActions` for assists, `hlstats_Events_PlayerActions`
+for breaks, `hlstats_Events_Frags` for positions and frag context, all
+already carrying `match_id` and `half` from the daemon's own tagging.
+
+Still outstanding and **not** covered by these units: the per-hit damage
+ledger, and break context (contester count / capout / last-flag defense /
+ninja caps). See `IMPLEMENTATION_PHASES.md` for the plan and
+`CONTINUATION_NOTES.md` for the detail needed to pick that work up cold.

@@ -3,8 +3,25 @@
 **For:** whoever opens and merges the PRs.
 **Goal:** get `main`/`master` across three repos to what has been verified
 locally.
-**Verified against remotes on 2026-08-10.** If you read this much later,
+**Verified against remotes on 2026-08-12.** If you read this much later,
 re-run the commands in [Appendix A](#appendix-a--re-verify-the-state) first.
+
+**PRs already opened as of 2026-08-12** (someone started working through this
+list — see the table below for which). Check these before opening new ones:
+[KTPHLStatsX #1](https://github.com/afraznein/KTPHLStatsX/pull/1),
+[#2](https://github.com/afraznein/KTPHLStatsX/pull/2),
+[#3](https://github.com/afraznein/KTPHLStatsX/pull/3),
+[KTPInfrastructure #54](https://github.com/afraznein/KTPInfrastructure/pull/54),
+[#55](https://github.com/afraznein/KTPInfrastructure/pull/55). None are merged
+yet. `check_pr_status.ps1` at the repo root (one level up from
+`KTPInfrastructure`) re-checks all of these plus everything below in one run —
+`powershell -File check_pr_status.ps1`.
+
+**Branches with an open PR should not be rebased or force-pushed** until that
+PR merges or is explicitly abandoned — rewriting history mid-review is more
+disruptive than the staleness it would fix. Branches with no PR yet are safe
+to rebase onto current main/master at any time; do that once, right before you
+open the PR, not continuously.
 
 ---
 
@@ -38,40 +55,52 @@ second.**
 
 ## Current state
 
+Default branches moved since 2026-08-10 from **unrelated** work (hltv logging,
+a `ktp_schema.sql` MySQL/MariaDB fix, a dodx territorial-scoring-clock
+feature, a tier2 manifest-pin fix, stage-runner versioning, docs). None of it
+overlaps these branches' files — checked directly, not assumed.
+
 | Repo | Default branch | At |
 |---|---|---|
-| KTPHLStatsX | `main` | `6c9567d` |
-| KTPAMXX | `master` | `abd3e1b3` |
-| KTPInfrastructure | `main` | `06de9d0` |
+| KTPHLStatsX | `main` | `86621f2` |
+| KTPAMXX | `master` | `9758f4db` |
+| KTPInfrastructure | `main` | `39bc74a` |
 
-### KTPHLStatsX — a clean stack of three
-
-```
-main (6c9567d)
- └─ fix/suicide-dispatch-goldsrc      d3921b7   1 commit    Unit 1
-     └─ feat/seed-assist-action        7eefed6   2 commits   Unit 2
-         └─ feat/seed-cap-break-action a8c9a97   3 commits   Unit 3
-```
-
-### KTPAMXX — a clean stack of three, plus one independent
+### KTPHLStatsX — a clean stack of four
 
 ```
-master (abd3e1b3)
- └─ feat/stats-assists         30da9b71   1 commit    Unit 2
-     └─ feat/stats-cap-breaks  d0e88885   2 commits   Unit 3
-         └─ feat/stats-positions 5f0e5379 3 commits   Unit 4
-
-master (abd3e1b3)
- └─ feat/lane-b-fakeclient-players  c1408a48  1 commit   test-only, no unit
+main (86621f2)
+ └─ fix/suicide-dispatch-goldsrc      d3921b7   1 commit    Unit 1  (PR #1, open)
+     └─ feat/seed-assist-action        7eefed6   2 commits   Unit 2  (PR #2, open)
+         └─ feat/seed-cap-break-action a8c9a97   3 commits   Unit 3  (PR #3, open)
+             └─ feat/frag-context-columns bb53e8b 4 commits  Unit 5  (no PR yet)
 ```
 
-### KTPInfrastructure — three independent branches
+### KTPAMXX — a clean stack of four, plus one independent
 
 ```
-main (06de9d0)
- ├─ docs/stats-capture-plan-branch-status  14a68be   1 commit,  1 file
- ├─ feat/stats-capture-include             53ea398   1 commit,  5 lines
- └─ feat/tier2-bot-lane-stats-e2e          8fedbbc  17 commits, 41 files
+master (9758f4db)
+ └─ feat/stats-assists          776ce9fe  1 commit    Unit 2  (no PR yet)
+     └─ feat/stats-cap-breaks   f73d0282  2 commits   Unit 3  (no PR yet)
+         └─ feat/stats-positions 989c8f4f 3 commits   Unit 4  (no PR yet)
+             └─ feat/stats-frag-context b15295c8 4 commits Unit 5 (no PR yet)
+
+master (9758f4db)
+ └─ feat/lane-b-fakeclient-players  684d3af1  1 commit   test-only, no unit (no PR yet)
+```
+
+Rebased onto current `master` on 2026-08-12 — no PR existed for any of these
+four branches at rebase time, so this was safe per the rule above. If a PR
+now exists for any of them, re-check before rebasing further.
+
+### KTPInfrastructure — three independent branches, plus the Lane B work-in-progress
+
+```
+main (39bc74a)
+ ├─ docs/stats-capture-plan-branch-status  14a68be   1 commit,  1 file        (PR #55, open)
+ ├─ feat/stats-capture-include             53ea398   1 commit,  5 lines       (PR #54, open)
+ └─ feat/tier2-bot-lane-stats-e2e          806a365  18 commits, 45 files      (no PR yet, rebased 2026-08-12)
+     └─ feat/lane-b-synthetic-match        fef92da  10 commits on top         (active work-in-progress, not ready for PR)
 ```
 
 ---
@@ -93,6 +122,8 @@ onto the fleet — if something is wrong you want one suspect, not two.
 | 8 | KTPInfrastructure | `docs/stats-capture-plan-branch-status` | `main` | Docs only. |
 | 9 | KTPInfrastructure | `feat/tier2-bot-lane-stats-e2e` | `main` | The Lane B test infrastructure. **Rebase onto `main` after step 8** — see the conflict note. |
 | 10 | KTPAMXX | `feat/lane-b-fakeclient-players` | `master` | Test-only. Optional, but Lane B cannot run without it — see below. |
+| 11 | KTPHLStatsX | `feat/frag-context-columns` | `feat/seed-cap-break-action` | Unit 5, DB half. **Apply the seed SQL and restart the daemon before step 12.** |
+| 12 | KTPAMXX | `feat/stats-frag-context` | `feat/stats-positions` | Unit 5, plugin half. Retires the old `headshot_kill` marker — see below. |
 
 **Open each stacked PR against its parent branch, not against `main`.** GitHub
 auto-retargets a stacked PR to the default branch once its base merges, so the
@@ -141,6 +172,30 @@ FROM hlstats_Actions WHERE game='dod' AND code IN ('assist','cap_break');
 
 `reward_player` must be `0` on both: these feed KTPR's own rating, and a
 non-zero HLStatsX skill reward would re-rate the whole ladder as a side effect.
+
+### 11 — `feat/frag-context-columns`, 12 — `feat/stats-frag-context` (Unit 5)
+
+Eight new columns on `hlstats_Events_Frags` (prone/scope/clip/ammo, killer and
+victim) plus a new daemon handler for a `frag_context` marker fired on every
+kill. **This retires `stats_logging.sma`'s old dedicated `headshot_kill`
+marker** — headshot itself needs no new column, it already existed from that
+marker, which is why this unit adds 8 columns, not 9.
+
+Same ordering rule as Units 2/3, but the failure mode if you get it backwards
+is different and milder: an unseeded `hlstats_Actions` row silently drops
+data with no error (the Philly LAN failure mode). Missing *columns* instead
+makes the daemon's `UPDATE` fail loudly against a table that doesn't have
+them — noisy, not silent. Still land the seed first; there's no reason to
+take the noisy failure over no failure.
+
+**Widest-blast-radius plugin change in the whole stack.** `client_death` in
+`stats_logging.sma` — which every other unit's kill-time capture also flows
+through — now does nothing but dispatch into `ksc_on_death`. Re-run Units
+2/3/4's smoke tests after this one, not just Unit 5's own.
+
+Compiled against the KTP fork's `amxxpc` (0 warnings) and `hlstats.pl`
+syntax-checked with `perl -c`, both inside the Lane B image, before this was
+written up — see Unit 5 in `KTPR_DEPLOYMENT_PLAN.md` for the live-run numbers.
 
 ### 9 — `feat/tier2-bot-lane-stats-e2e`
 
