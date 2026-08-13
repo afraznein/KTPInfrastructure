@@ -881,6 +881,105 @@ so nothing regresses to check.
 
 ---
 
+# Full regression checkpoint (2026-08-12/13) — Units 1–6 together, real match tagging
+
+Every unit above had been verified individually. This checkpoint ran all six
+**together**, for the first time with a **real driven match** (previous
+Units 5/6 validation used `--no-match`) — one full KTP-shaped match, both
+halves, halftime map reload and team swap, via
+`scripts/lane_b_match_series.py`. The resulting database was dumped
+(`hlstatsx-fixture.sql`, 783 INSERTs) and queried directly rather than only
+checked against the harness's own pass/fail assertions, specifically to
+catch anything a boolean check wouldn't surface.
+
+## Result: clean, plus two real bugs found and fixed along the way
+
+**Match tagging: 98/98 frags tagged**, split 46 (half 1) / 52 (half 2) under
+one `match_id` — the first time frag_context and the damage ledger have been
+proven to inherit match/half context correctly, not just proven to exist.
+
+**Damage cap, with real numbers behind it.** 268 hits logged, 0 cap
+violations (`damage_capped` never exceeded 100 or exceeded raw `damage`).
+Concretely: total raw damage across the match was 14,491; total capped was
+12,789 — **raw overstates total damage dealt by 11.7%** purely from hits
+whose nominal value exceeded a real 100-HP kill. The effect is not uniform:
+`scopedkar` (the sniper rifle) averaged **147.4 raw vs 96.5 capped** per hit
+— almost 1.5×, the largest gap of any weapon — with `mortar` next at 47.8
+vs 34.4. This is the concrete version of the feedback that started Unit 6:
+an uncapped damage stat would systematically over-credit snipers and
+explosive kills relative to what actually happened on a 100-HP body.
+
+**Everything else held**: 0 double-recorded assists/breaks (PA/PPA flags
+correct in both directions), 0 bad positions (null or `0 0 0`) on 8 assist
+and 2 break rows, headshot rate 10.2% (10/98) fully carried, clip/ammo
+sentinel fired on exactly 3/98 rows (a narrow disconnect race, matching the
+rate documented in Unit 5), corpus regression suite still matches baseline
+(3/3) after being re-pointed at the full current schema.
+
+**One data point worth recording, not a defect**: `v_scope` (victim
+scoped at death) was 0% this run (0/95) against `k_scope` (killer scoped)
+at 16.3% — verified against the raw log directly (zero `(v_scope "1")`
+lines), not a query bug. Plausible small-sample real behavior — a scoped
+player is usually stationed and aiming, more often the killer in that
+engagement than the one caught out — but worth a second full-match sample
+before treating 0% as expected rather than coincidence.
+
+## Two bugs found by running everything together
+
+**1. Harness bug, fixed.** `check_damage_ledger` crashed the corpus
+regression suite outright ("table doesn't exist") instead of reporting a
+coverage gap, because the corpus fixtures predate migrate_006 and
+`run_corpus.sh` wasn't seeding it. Fixed in two places: the check itself now
+verifies the table exists first and reports `not_exercised` rather than
+raising, and `run_corpus.sh` now seeds the full current schema
+(migrate_003–006) so future corpus runs get real coverage instead of relying
+on the tolerance fix alone.
+
+**2. Real, separate bug found — NOT part of Units 1–6, needs its own
+owner.** `KTPMatchHandler`'s current `main` (`c24b1b5`) fails to compile
+against the image's `amxxpc` (2.7.26.1): `undefined symbol` on
+`dodx_get_aim_stats`/`dodx_get_aim_window`/`dodx_reset_aim_stats`, three
+natives that genuinely exist in KTPAMXX's current `dodx.inc`. Bisected, not
+assumed: pointing the compiler at KTPAMXX's own fresh `plugins/include`
+(instead of the image's baked-in copy) did **not** fix it, but stripping the
+long `/** ... */` doc comments immediately preceding those three natives
+did — with no other change. This is a doc-comment parser bug in the old
+`amxxpc` 2.7.26.1 binary, triggered by something in those specific
+comment blocks (length, a token, or a nesting pattern — not further
+isolated), not a missing declaration or a stale include path.
+
+**This checkpoint worked around it**, it did not fix it: the match-driving
+run above used `KTPMatchHandler` pinned to `7db55e5` (one commit before
+`fa4a5b2`, "upload aim geometry on the existing flush cadence," which is
+what introduced the three natives), extracted via `git archive` rather than
+touching the branch. That commit has none of the fixes after it
+(`0.10.157`'s "refuse to run a half with no match id," `0.10.158`'s weapon
+stats reset, the buffer/retention fixes) — fine for exercising match
+tagging, but **not a substitute for testing current `KTPMatchHandler` HEAD**.
+Whoever owns `KTPMatchHandler`/`dodx.inc` should either shorten those three
+doc comments or get a newer `amxxpc` into the base image; either fixes it
+for good. `scripts/lane_b_e2e.py`'s `compile_sma()` and
+`build_test_mode_matchhandler()` now accept an `include_dir` override
+(`--matchhandler-includes`) so this at least stops being an include-path
+guessing game once the doc-comment issue itself is fixed.
+
+## Reproducing this
+
+```
+python3 scripts/lane_b_match_series.py \
+    --ktpamx-so <path> --plugin <path> --hlstats <path> \
+    --schema <base-schema.sql> \
+    --seed migrate_003 migrate_004 migrate_005 migrate_006 \
+    --matchhandler-includes <KTPAMXX>/plugins/include \
+    --matches 1 --half-seconds 300
+```
+
+Then load the resulting `ktpr-fixture/hlstatsx-fixture.sql` into any MySQL
+and query directly — that is how the damage-cap and scope-rate figures above
+were produced, not from the harness's own summary output.
+
+---
+
 # After all six units
 
 Once breaks, assists, positions, frag context and the damage ledger are

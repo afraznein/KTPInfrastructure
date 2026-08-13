@@ -2,8 +2,41 @@
 
 ## Deferred, deliberately
 
-Both of these are real gaps with an owner-less status. They are parked rather
-than forgotten, and each says what would make it worth picking up.
+These are real gaps with an owner-less status. They are parked rather than
+forgotten, and each says what would make it worth picking up.
+
+### KTPMatchHandler HEAD fails to compile against the image's amxxpc
+
+Found 2026-08-13 running a full Units 1–6 regression with real match
+tagging. `KTPMatchHandler` `main` (`c24b1b5`) fails with `undefined symbol`
+on `dodx_get_aim_stats`/`dodx_get_aim_window`/`dodx_reset_aim_stats` — three
+natives that genuinely exist in KTPAMXX's current `dodx.inc`. Bisected: the
+problem is not the include path (pointing the compiler at KTPAMXX's own
+fresh includes doesn't fix it) but the long `/** ... */` doc comments
+immediately preceding those three natives in `dodx.inc` — stripping them,
+nothing else, fixes it. A doc-comment parser bug in the image's `amxxpc`
+2.7.26.1, not a missing declaration.
+
+**Why it is parked:** it isn't Lane B's bug to fix — it's in
+`KTPMatchHandler`/`dodx.inc`, repos this project consumes, not owns. Lane B
+worked around it for the regression checkpoint by pinning `KTPMatchHandler`
+to `7db55e5` (the commit before the one that introduced those natives), via
+`git archive`, not by touching the branch.
+
+**When to pick it up:** before the next time `KTPMatchHandler` needs to be
+compiled against current `main` for anything besides a quick Lane B check —
+the pin is a workaround for testing, not a fix, and it means Lane B is not
+actually exercising `KTPMatchHandler`'s latest fixes (`0.10.157`'s
+"refuse to run a half with no match id," `0.10.158`'s weapon stats reset,
+the buffer/retention work) until this is resolved.
+
+**How, in one line:** either shorten/restructure the three doc comments in
+KTPAMXX's `dodx.inc` around `dodx_get_aim_stats`/`dodx_get_aim_window`/
+`dodx_reset_aim_stats`, or rebuild the base image with a newer `amxxpc`.
+`scripts/lane_b_e2e.py`'s `compile_sma()`/`build_test_mode_matchhandler()`
+now take an `include_dir` override (`--matchhandler-includes`) so a fresh
+KTPAMXX checkout's natives are always visible — that wasn't the cause here,
+but it was a real gap in its own right and is fixed regardless.
 
 ### The bazooka assist mis-attribution
 

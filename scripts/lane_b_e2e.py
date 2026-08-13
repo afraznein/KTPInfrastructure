@@ -55,7 +55,8 @@ BOOT_ATTEMPTS = 3
 
 def compile_sma(src: Path, out: Path, *, scripting: Path,
                 extra_sources: tuple[Path, ...] = (),
-                defines: tuple[str, ...] = ()) -> Path:
+                defines: tuple[str, ...] = (),
+                include_dir: Path | None = None) -> Path:
     """Compile a .sma against the image's own amxxpc.
 
     amxxpc must run from its own directory or it cannot find amxxpc32.so, and
@@ -70,6 +71,15 @@ def compile_sma(src: Path, out: Path, *, scripting: Path,
     Pawn compiler takes command-line `#define`s. That is the mechanism behind
     `KTP_TEST_MODE=1`, and it is why a test-mode build is a compile-time
     decision that cannot leak into a production binary.
+
+    `include_dir`, when given, is searched BEFORE `{scripting}/include` (the
+    image's own baked-in includes, from whenever the image was last built).
+    Without this, a source checked out fresh from a branch can reference
+    natives the image's stale includes don't have yet — found live: current
+    KTPMatchHandler calls dodx_get_aim_stats()/dodx_reset_aim_stats()/
+    dodx_get_aim_window(), all present in KTPAMXX's current dodx.inc, absent
+    from the image's baked copy, so a plain compile_sma() call failed with
+    "undefined symbol" even though the natives genuinely exist.
     """
     # read_text() applies universal newlines, so a CRLF source lands as LF.
     work_dir = Path("/tmp/sma")
@@ -80,8 +90,10 @@ def compile_sma(src: Path, out: Path, *, scripting: Path,
         (work_dir / extra.name).write_text(
             extra.read_text(encoding="utf-8", errors="replace"))
 
-    argv = [str(scripting / "amxxpc"), str(work),
-            f"-i{scripting}/include", f"-i{work_dir}", f"-o{out}"]
+    argv = [str(scripting / "amxxpc"), str(work)]
+    if include_dir is not None:
+        argv.append(f"-i{include_dir}")
+    argv += [f"-i{scripting}/include", f"-i{work_dir}", f"-o{out}"]
     argv += list(defines)
     r = subprocess.run(argv, cwd=str(scripting), capture_output=True,
                        text=True, timeout=300)
@@ -91,7 +103,8 @@ def compile_sma(src: Path, out: Path, *, scripting: Path,
 
 
 def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
-                                 scripting: Path) -> Path:
+                                 scripting: Path,
+                                 include_dir: Path | None = None) -> Path:
     """Compile KTPMatchHandler with the `amx_ktp_test_*` rcons enabled.
 
     The image ships the PRODUCTION build, in which the whole test block
@@ -101,6 +114,10 @@ def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
 
     Mirrors `KTPMatchHandler/compile.sh KTP_TEST_MODE=1`, deliberately: if that
     script's flags change, this should follow rather than drift.
+
+    `include_dir` should point at the KTPAMXX branch under test's
+    `plugins/include` — see `compile_sma`'s docstring for why the image's own
+    baked-in includes can be stale relative to it.
     """
     sma = src_dir / "KTPMatchHandler.sma"
     inc = src_dir / "ktp_matchhandler_discord.inc"
@@ -108,7 +125,8 @@ def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
         raise SystemExit(f"KTPMatchHandler.sma not found under {src_dir}")
     return compile_sma(sma, out, scripting=scripting,
                        extra_sources=(inc,) if inc.is_file() else (),
-                       defines=("KTP_TEST_MODE=1",))
+                       defines=("KTP_TEST_MODE=1",),
+                       include_dir=include_dir)
 
 
 def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
@@ -363,6 +381,12 @@ def main() -> int:
                     default=Path("/src/KTPMatchHandler"),
                     help="KTPMatchHandler checkout; compiled with "
                          "KTP_TEST_MODE=1 so a match can be driven")
+    ap.add_argument("--matchhandler-includes", type=Path, default=None,
+                    help="KTPAMXX plugins/include dir to compile "
+                         "KTPMatchHandler against, searched before the "
+                         "image's own baked-in includes. Needed whenever "
+                         "KTPMatchHandler references a native newer than the "
+                         "image — see compile_sma's docstring")
     ap.add_argument("--no-match", action="store_true",
                     help="run without driving a match. Every row is then "
                          "match_id NULL, which is correct for warmup and "
@@ -411,7 +435,8 @@ def main() -> int:
         if not args.no_match and args.matchhandler_src.is_dir():
             mh_amxx = build_test_mode_matchhandler(
                 args.matchhandler_src, Path("/tmp/KTPMatchHandler.amxx"),
-                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting",
+                include_dir=args.matchhandler_includes)
             print(f"compiled test-mode KTPMatchHandler "
                   f"({mh_amxx.stat().st_size} bytes)", flush=True)
         elif not args.no_match:

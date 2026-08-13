@@ -337,6 +337,9 @@ def main() -> int:
     ap.add_argument("--seed", type=Path, nargs="*", default=[])
     ap.add_argument("--matchhandler-src", type=Path,
                     default=Path("/src/KTPMatchHandler"))
+    ap.add_argument("--matchhandler-includes", type=Path, default=None,
+                    help="KTPAMXX plugins/include dir to compile "
+                         "KTPMatchHandler against; see lane_b_e2e.compile_sma")
     ap.add_argument("--match-drive-sma", type=Path,
                     default=Path("/work/tests/e2e_stats/diagnostics/KTPMatchDrive.sma"))
     ap.add_argument("--map", default="dod_anzio")
@@ -379,7 +382,7 @@ def main() -> int:
         scripting = args.serverfiles / "dod/addons/ktpamx/scripting"
         mh = build_test_mode_matchhandler(
             args.matchhandler_src, Path("/tmp/KTPMatchHandler.amxx"),
-            scripting=scripting)
+            scripting=scripting, include_dir=args.matchhandler_includes)
         drive = compile_sma(args.match_drive_sma,
                             Path("/tmp/KTPMatchDrive.amxx"), scripting=scripting)
         print(f"compiled test-mode KTPMatchHandler + {drive.name}", flush=True)
