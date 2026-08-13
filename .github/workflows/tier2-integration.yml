@@ -25,13 +25,18 @@
 #
 # Trigger model:
 #   - Manually via workflow_dispatch (operator-driven, with timeout multiplier)
-#   - On every PR to main — required status check per branch protection on
-#     `main` (flipped from warn-only after 2 weeks green-on-main, original
-#     design decision 2026-04-24, applied 2026-05-18).
-#   - Nightly via schedule (09:00 UTC) — keeps the live plugin stack exercised
-#     between PRs; paired with scripts/ktp-tier2-heartbeat.sh (data-server cron)
-#     which alerts on a missing/stale/failed last-run marker so a dead runner is
-#     not silently green.
+#   - On every PR to main or preprod — required status check per branch
+#     protection on `main` (flipped from warn-only after 2 weeks green-on-main,
+#     original design decision 2026-04-24, applied 2026-05-18) and, since the
+#     preprod/prod gate was introduced, on `preprod` too.
+#   - Nightly via schedule (09:00 UTC), matrixed over [main, preprod] — keeps
+#     both the live and staged plugin stacks exercised between PRs; paired
+#     with scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
+#     missing/stale/failed last-run marker so a dead runner is not silently
+#     green. Schedule triggers always fire from the default branch's copy of
+#     this file (a GitHub Actions constraint — schedules can't run from a
+#     non-default branch), so the [main, preprod] coverage comes from the
+#     matrix explicitly checking out each ref, not from the trigger itself.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
@@ -67,19 +72,29 @@ on:
     # (the change-detection step only self-skips on pull_request events).
     - cron: '0 9 * * *'
   pull_request:
-    branches: [main]
-
-# Concurrency: only one Tier 2 run at a time per PR. Self-hosted runner
-# can't safely run two suites in parallel against the same hlds_linux
-# subprocess port.
-concurrency:
-  group: tier2-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [main, preprod]
 
 jobs:
   integration:
     runs-on: [self-hosted, ktp-tier2]
     timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      # Only the nightly schedule matrixes over both branches; PR and manual
+      # dispatch runs stay single-leg against whatever ref triggered them.
+      # max-parallel: 1 — one hlds_linux port on the self-hosted runner, see
+      # the concurrency block below for why that also needs matrix.target_ref.
+      max-parallel: 1
+      matrix:
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
+
+    # Concurrency: only one Tier 2 run at a time per (triggering ref, matrix
+    # target). Job-level (not workflow-level) because it needs `matrix`,
+    # which workflow-level concurrency blocks can't see.
+    concurrency:
+      group: tier2-${{ github.ref }}-${{ matrix.target_ref }}
+      cancel-in-progress: true
 
     env:
       # Self-hosted runner stages the test serverfiles tree at this path.
@@ -113,6 +128,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          # matrix.target_ref is always the triggering ref except on schedule,
+          # where it's explicitly main or preprod (see strategy.matrix above —
+          # schedule always *fires* from the default branch's copy of this
+          # file, but each matrix leg checks out its own target content).
+          ref: ${{ matrix.target_ref }}
           # Need diff against base for relevance detection on PRs.
           fetch-depth: 0
 
@@ -319,16 +339,28 @@ jobs:
 
       - name: Record Tier 2 last-run marker (heartbeat input)
         if: always() && steps.changes.outputs.run == '1'
-        # scripts/ktp-tier2-heartbeat.sh (data-server cron) reads this marker
-        # and alerts to Discord if Tier 2 hasn't run within its window or the
-        # last run failed — so a dead self-hosted runner / broken schedule is
-        # VISIBLE instead of looking identical to "all green". Written to a
-        # runner-writable path next to the serverfiles tree; the cron (root)
-        # reads it. Gated on run == '1' so a self-skipped docs-only PR doesn't
-        # stamp an empty-outcome marker over the last real run.
+        # scripts/ktp-tier2-heartbeat.sh (data-server cron) reads
+        # tier2-last-run.json and alerts to Discord if Tier 2 hasn't run
+        # within its window or the last run failed — so a dead self-hosted
+        # runner / broken schedule is VISIBLE instead of looking identical to
+        # "all green". Written to a runner-writable path next to the
+        # serverfiles tree; the cron (root) reads it. Gated on run == '1' so
+        # a self-skipped docs-only PR doesn't stamp an empty-outcome marker
+        # over the last real run.
+        #
+        # Only the `main` leg writes the canonical filename the existing
+        # heartbeat cron already watches — left untouched so that monitoring
+        # doesn't regress. The `preprod` leg writes a second, parallel marker
+        # so preprod health is visible too, without the heartbeat script
+        # needing to change (it doesn't need to, yet — see
+        # docs/handover/PREPROD_BRANCHING.md).
         run: |
-          MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
-          printf '{"ts": %s, "outcome": "%s", "run_id": "%s", "event": "%s"}\n' \
-            "$(date +%s)" "${{ steps.pytest.outcome }}" "${{ github.run_id }}" "${{ github.event_name }}" \
+          if [ "${{ matrix.target_ref }}" = "preprod" ]; then
+            MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run-preprod.json"
+          else
+            MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
+          fi
+          printf '{"ts": %s, "outcome": "%s", "run_id": "%s", "event": "%s", "ref": "%s"}\n' \
+            "$(date +%s)" "${{ steps.pytest.outcome }}" "${{ github.run_id }}" "${{ github.event_name }}" "${{ matrix.target_ref }}" \
             > "$MARKER"
           echo "Wrote $MARKER ($(cat "$MARKER"))"

@@ -30,6 +30,26 @@
 name: Lane B Stats E2E
 
 on:
+  workflow_call:
+    inputs:
+      amxx_ref:
+        description: KTPAMXX ref under test
+        required: true
+        type: string
+      daemon_ref:
+        description: KTPHLStatsX ref under test
+        required: true
+        type: string
+      lane:
+        description: "'corpus', 'full', or 'db-only'"
+        required: false
+        type: string
+        default: corpus
+      infrastructure_ref:
+        description: KTPInfrastructure ref containing the reusable harness
+        required: false
+        type: string
+        default: preprod
   workflow_dispatch:
     inputs:
       amxx_ref:
@@ -45,11 +65,11 @@ on:
       lane:
         description: >-
           'full' = bots + server + database. 'db-only' = schema/migrations/daemon
-          half, no bot needed. Use db-only when you explicitly want the cheap
-          half; it is NOT a fallback for a broken bot.
+          probe. 'corpus' = deterministic committed-log replay and is the merge
+          gate. Use db-only only when explicitly testing the cheap live half.
         required: false
         type: choice
-        options: [full, db-only]
+        options: [full, db-only, corpus]
         default: full
       map_name:
         description: 'Map to run bots on'
@@ -86,23 +106,29 @@ concurrency:
 
 jobs:
   lane-b:
-    name: Lane B (${{ github.event.inputs.lane || 'full' }})
+    name: Lane B (${{ inputs.lane || 'full' }}, ${{ matrix.target_ref }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
+    strategy:
+      fail-fast: false
+      matrix:
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || github.event_name == 'workflow_call' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
+
     env:
-      AMXX_REF: ${{ github.event.inputs.amxx_ref || 'feat/stats-positions' }}
-      DAEMON_REF: ${{ github.event.inputs.daemon_ref || 'feat/seed-cap-break-action' }}
-      LANE: ${{ github.event.inputs.lane || 'full' }}
-      MAP_NAME: ${{ github.event.inputs.map_name || 'dod_anzio' }}
-      PLAY_SECONDS: ${{ github.event.inputs.play_seconds || '180' }}
-      BOT: ${{ github.event.inputs.bot || 'marinebot' }}
+      AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
+      DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
+      LANE: ${{ inputs.lane || 'full' }}
+      MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
+      PLAY_SECONDS: ${{ inputs.play_seconds || '180' }}
+      BOT: ${{ inputs.bot || 'marinebot' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
       - name: Checkout KTPInfrastructure
         uses: actions/checkout@v6
         with:
+          ref: ${{ matrix.target_ref }}
           path: KTPInfrastructure
 
       # Full history: the build step resolves refs with `git show <ref>:<path>`,
@@ -204,6 +230,7 @@ jobs:
             "
 
       - name: Phase 0 spike (facts, not assertions)
+        if: ${{ env.LANE != 'corpus' }}
         working-directory: KTPInfrastructure
         run: |
           set -euo pipefail
@@ -229,6 +256,23 @@ jobs:
                 --out /work/build/spike-report.json \
                 ${SPIKE_ARGS}
             "
+
+      - name: Replay deterministic stats corpus
+        if: ${{ env.LANE == 'corpus' }}
+        working-directory: KTPInfrastructure
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build:ro" \
+            -w /work \
+            ktp-lane-b:ci \
+            python3 scripts/replay_corpus.py \
+              --hlstats /work/build/artifacts/hlstats.pl \
+              --schema /work/build/artifacts/sql/ktp_schema.sql \
+              --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
+                     /work/build/artifacts/sql/migrate_004_cap_break_action.sql
 
       - name: Upload reports
         if: always()
