@@ -50,6 +50,24 @@ Because they are stacked, open each PR against its **PR base branch** column,
 not against `main`/`master`. GitHub auto-retargets a stacked PR to the default
 branch once its base branch merges, so the merge order takes care of itself.
 
+**All seven branches were pushed to `origin` on 2026-08-09** and are ready for
+PRs. Heads on the remote match the `Head` column below exactly.
+
+⚠️ **Two default branches have advanced since these branches were cut.** Both
+moves are **fast-forwards, not divergence** — each branch's `Base` commit is
+still an ancestor of the current default head, verified with
+`git merge-base --is-ancestor`. **No rebase is required** and there are no
+structural conflicts; the `Base` column below is still the correct rollback
+target. The `@` in each heading is the default branch's head *as of
+2026-08-09*, which is what a PR page will show.
+
+Of note in what landed on KTPInfrastructure `main` meanwhile: `370ba49` /
+`4b7ef60` / `d18708f` moved KTPR's damage sourcing onto HLStatsX and corrected
+two overstated claims about HLStatsX damage. That overlaps Phase 6 (the per-hit
+damage ledger) — read those three before starting it, because the "HLStatsX
+logs no damage events" premise in `CONTINUATION_NOTES.md` may have partially
+changed.
+
 ### KTPHLStatsX — default `main` @ `9588794`
 
 | # | Branch | Base | Head | PR base branch |
@@ -65,7 +83,10 @@ Units 1–3 merged 2026-08-12 (PRs #1/#3/#4) — Units 4–6 here rebased onto
 the post-merge `main` the same day; see `PR_SEQUENCING.md` for the current,
 maintained merge-status table rather than treating this one as live.
 
-### KTPAMXX — default `master` @ `a052f7d9`
+### KTPAMXX — default `master` @ `abd3e1b3`
+
+Advanced by 8 commits since these branches were cut (the DODX BSP
+default-owner seed work, releases #9/#13/#14). `a052f7d9` remains an ancestor.
 
 | # | Branch | Base | Head | PR base branch |
 |---|---|---|---|---|
@@ -76,7 +97,10 @@ maintained merge-status table rather than treating this one as live.
 | 5 | `feat/stats-damage-ledger` | `b15295c8` | `5eb05ebd` | `feat/stats-frag-context` |
 | 6 | `feat/stats-break-context` | `5eb05ebd` | `0af155fe` | `feat/stats-damage-ledger` |
 
-### KTPInfrastructure — default `main` @ `7117349`
+### KTPInfrastructure — default `main` @ `b8f1255`
+
+Advanced by ~19 commits since this branch was cut — including `b8f1255`, which
+is *this document*. `7117349` remains an ancestor.
 
 | # | Branch | Base | Head | PR base branch |
 |---|---|---|---|---|
