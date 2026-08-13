@@ -96,3 +96,12 @@ sites/wsdod-lan-2026/dist/
 # KTPR roster — maps every player's SteamID to every alias they've used.
 # Not a credential, but publishing it permanently deanonymizes alt accounts.
 docs/ktpr_mcp/roster.csv
+
+# Third-party DoD bot AI (Marine Bot / new_bot) for the Lane B stats e2e tests.
+# TEST-ONLY and quarantined: it must never reach the fleet, never enter a
+# deploy manifest, and never sit in the fleet-matching serverfiles tree. Not
+# ours to redistribute either. See tests/e2e_stats/README.md.
+bot-kit/
+**/bot-kit/
+# Spike output — facts from one run on one box, not a repo artifact.
+spike-report.json
