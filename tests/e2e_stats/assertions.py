@@ -450,7 +450,22 @@ def check_damage_ledger(db, *, emitted: int) -> dict:
     isn't landing (a table/column mismatch, or the daemon match failing);
     `damage_capped` violating its own invariant means the cap logic itself is
     wrong, which is a correctness bug a plain row-count could not catch.
+
+    Tolerant of `ktp_damage_events` not existing at all — e.g. replaying a
+    corpus log captured before migrate_006 landed, against a schema that was
+    never asked to create it. That is a coverage gap (this run cannot judge
+    the ledger), not a defect, so it reports `not_exercised` rather than
+    raising through the daemon's own "table doesn't exist" SQL error.
     """
+    table_exists = db.count(
+        "SELECT COUNT(*) FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ktp_damage_events'"
+    ) > 0
+    if not table_exists:
+        return {"code": "damage_ledger", "status": "not_exercised", "emitted": emitted,
+                "rows": 0, "cap_violations": 0, "detail":
+                "ktp_damage_events does not exist -- migrate_006 was not applied "
+                "to this database, so the ledger was not exercised this run."}
     rows = db.count("SELECT COUNT(*) FROM ktp_damage_events")
     violations = db.count(
         "SELECT COUNT(*) FROM ktp_damage_events "
