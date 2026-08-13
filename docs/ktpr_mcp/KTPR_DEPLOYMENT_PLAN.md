@@ -26,6 +26,7 @@ checklists below are a **shorter** job than they look. Each unit carries a
 | 4 — positions | **covered**, except cross-flag clustering, which needs more than one break per run. |
 | 5 — frag context | **covered.** Compiled/syntax-verified against the real toolchain and run live — see Unit 5. |
 | 6 — damage ledger | **covered.** Compiled/syntax-verified against the real toolchain and run live — see Unit 6. |
+| 7 — break context / flag positions / last-flag-defense | **covered**, with one open tuning question — `KSC_LAST_FLAG_RADIUS` is unmeasured; see Unit 7. |
 
 Two caveats worth reading before treating any of this as sign-off:
 
@@ -57,7 +58,12 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 2 | `feat/seed-assist-action` | `d3921b7` | `7eefed6` | `fix/suicide-dispatch-goldsrc` |
 | 3 | `feat/seed-cap-break-action` | `7eefed6` | `a8c9a97` | `feat/seed-assist-action` |
 | 4 | `feat/frag-context-columns` | `a8c9a97` | `bb53e8b` | `feat/seed-cap-break-action` |
-| 5 | `feat/ktp-damage-event` | `bb53e8b` | `9777786` | `feat/frag-context-columns` |
+| 5 | `feat/ktp-damage-event` | `bb53e8b` | `757ac96` | `feat/frag-context-columns` |
+| 6 | `feat/break-context-parse` | `757ac96` | `0753474` | `feat/ktp-damage-event` |
+
+Units 1–3 merged 2026-08-12 (PRs #1/#3/#4) — Units 4–6 here rebased onto
+the post-merge `main` the same day; see `PR_SEQUENCING.md` for the current,
+maintained merge-status table rather than treating this one as live.
 
 ### KTPAMXX — default `master` @ `a052f7d9`
 
@@ -68,6 +74,7 @@ branch once its base branch merges, so the merge order takes care of itself.
 | 3 | `feat/stats-positions` | `d0e88885` | `5f0e5379` | `feat/stats-cap-breaks` |
 | 4 | `feat/stats-frag-context` | `5f0e5379` | `b15295c8` | `feat/stats-positions` |
 | 5 | `feat/stats-damage-ledger` | `b15295c8` | `5eb05ebd` | `feat/stats-frag-context` |
+| 6 | `feat/stats-break-context` | `5eb05ebd` | `0af155fe` | `feat/stats-damage-ledger` |
 
 ### KTPInfrastructure — default `main` @ `7117349`
 
@@ -980,16 +987,143 @@ were produced, not from the harness's own summary output.
 
 ---
 
-# After all six units
+# Unit 7 — Break context, flag positions, last-flag-defense
 
-Once breaks, assists, positions, frag context and the damage ledger are
-landing cleanly, `ktpr_mcp` can start reading them (Phase 8 in the
-implementation plan) — `hlstats_Events_PlayerPlayerActions` for assists,
-`hlstats_Events_PlayerActions` for breaks, `hlstats_Events_Frags` for
-positions and frag context, `ktp_damage_events` for the damage ledger, all
-already carrying `match_id` and `half` from the daemon's own tagging.
+**Value:** contester count and time-remaining turn a bare "break happened"
+into "how big a push, how close to completing" — the clutch signal. Flag
+positions unlock last-flag-defense (a defender who kills a would-be ninja
+*before* they start capping, invisible to the break queue) and are the
+prerequisite for ninja-cap detection later.
 
-Still outstanding and **not** covered by these units: break context
-(contester count / capout / last-flag defense / ninja caps). See
-`IMPLEMENTATION_PHASES.md` for the plan and `CONTINUATION_NOTES.md` for the
-detail needed to pick that work up cold.
+| Repo | Branch | Base | Head |
+|---|---|---|---|
+| KTPHLStatsX | `feat/break-context-parse` | `757ac96` | `0753474` |
+| KTPAMXX | `feat/stats-break-context` | `5eb05ebd` | `0af155fe` |
+
+**The mechanism spike, resolved.** The phase plan flagged "extend
+`doEvent_PlayerAction`'s property parsing, or a new event type" as
+genuinely unsettled. Reading `HLstats_EventHandlers.plib`'s
+`doEvent_PlayerAction` settled it: its column list
+(`playerId`/`actionId`/`reward`/`pos_x/y/z`) is fixed by
+`%g_eventTables`/`buildEventInsertData`, both upstream, config-driven, and
+not a small edit — arbitrary named properties are read into `%properties`
+but only a handful of hardcoded game-specific ones (TF2's `flagevent_*`)
+are ever persisted. So this follows Units 5/6's own precedent instead:
+`break_context` is a follow-up marker on `cap_break`, UPDATEing the most
+recent matching `PlayerActions` row — the same shape `frag_context` already
+uses on `Frags`, not a new mechanism.
+
+**Two questions turned out to be the same question.** `is_capout` (does
+this break save the defending team from dropping to zero flags) and
+`is_last_flag_defense` (was this kill near a team's last-remaining flag)
+both reduce to "does team T currently own exactly one flag right now" —
+`ksc_team_flag_count()` answers both, asked at two different event types.
+
+**Last-flag-defense keys off kill position, not the break queue** — the
+operator's explicit correction mid-design: a defender who kills a would-be
+ninja before they start capping is defending just as much, and the break
+queue structurally cannot see a kill that never touched a capture zone.
+`KSC_LAST_FLAG_RADIUS` (1000 units, 2D — `dodx.inc` has no `CP_origin_z`)
+is a **starting estimate, not a measured one** — see the live-run finding
+below before trusting it.
+
+Same ordering rule as every prior unit: **KTPHLStatsX first**
+(`migrate_007_break_context.sql`), **KTPAMXX second**. A backwards deploy
+here fails loudly (`UPDATE` against missing columns), same shape as Unit 6,
+not the silent-loss shape Units 2/3 warn about.
+
+### Deploy
+
+1. Apply the seed: `mysql -u hlstatsx -p hlstatsx < sql/migrate_007_break_context.sql`
+2. Verify: 3 new `PlayerActions` columns, 1 new `Frags` column, and
+   `ktp_flag_positions` all exist (queries in the migration file's header).
+   No daemon restart needed for this step alone — same reasoning as Units 5/6.
+3. Restart `hlstatsx` **(needs sign-off)** for the new handlers.
+4. Update both local checkouts, build plugins, distribute, md5-verify.
+
+### Smoke test
+
+1. `KTP_FLAG_POSITION` markers appear in the log at every map load; `ktp_flag_positions` has one row per flag with real, non-zero `(origin_x, origin_y)`.
+2. A `cap_break` followed by a `break_context` line; the matching `PlayerActions` row shows non-null `contester_count`/`time_remaining` and `is_capout` in `{0,1}`.
+3. **`is_capout` sanity**: force (or wait for) a break on a team's last flag; confirm `is_capout = 1` only then, never on a break where the defending team still holds another flag.
+4. `Frags.is_last_flag_defense` shows both 0 and 1 across a match; positions (`pos_x/y/z`, `pos_victim_x/y/z`) populated on frag_context-carrying rows, same non-fabricated-zero guard as Unit 4.
+5. Regression: Units 2–6 still pass — this unit's plugin change touches `ksc_emit_break` and `ksc_emit_frag_context`, both shared with earlier units.
+
+**Pass =** flag positions real and non-zero, break_context values plausible,
+`is_capout` only true on a genuine last-flag break, no regression on Units 2–6.
+
+### Lane B pre-verification
+
+| Step | Lane B | Result |
+|---|---|---|
+| 1 flag positions | yes | 5 real flags on `dod_anzio`, real coordinates — see figures below |
+| 2 break_context values | yes | 2/2 breaks, plausible contester_count/time_remaining — see figures below |
+| 3 is_capout sanity | yes | 0/2 this run (neither break was the defender's last flag) — correct given each team owned >1 flag at those moments |
+| 4 last-flag-defense + positions | yes, **with a caveat** | 28/95 (29.5%) flagged — see the finding below before trusting the rate |
+| 5 no regression on Units 2–6 | yes | assists/breaks/positions/headshot/damage all still carried — one live-tailing race explained below, not a defect |
+
+Compiled against the KTP fork's `amxxpc` (0 warnings) and `hlstats.pl`
+syntax-checked with `perl -c`, both before any run.
+
+**Live run, 2026-08-12/13** (`dod_anzio`, two runs: a full match series for
+match-tagged coverage, plus a `lane_b_e2e.py` run for guaranteed
+cap_break coverage via the staged scenarios):
+
+- **Flag positions**: `POINT_ANZIO_LAUNDRY (-1495,-326)`, `POINT_BRIDGE
+  (1040,-288)`, `POINT_ANZIO_STREET (448,800)`, `POINT_ANZIO_PLAZA
+  (-698,923)`, `POINT_ANZIO_HILL (1375,1682)` — real names, real spread
+  coordinates, not defaults.
+- **Break context**: 2/2 breaks carried. `contester_count` 3 and 2;
+  `time_remaining` 0.1s and 0.5s — both genuinely close finishes, exactly
+  the "clutch break" signal this was built for; `is_capout` 0 on both
+  (correct — neither defending team was down to one flag at that moment);
+  positions landed on both rows.
+- **Last-flag-defense**: 28/95 kills (29.5%) flagged. Checked for an
+  asymmetric-map artifact (a team structurally owning only one flag most of
+  the match would inflate this without meaning anything) — **ruled out**:
+  the 28 flagged kills split 14 Allies / 15 Axis, not lopsided toward one
+  side. Real signal, not a bug, but **29.5% is higher than intuition
+  suggests** and `KSC_LAST_FLAG_RADIUS` (1000 units) is unmeasured — some
+  of anzio's flags sit under 1200 units apart, comparable to the radius
+  itself, so tighten and re-check before this rate is trusted for any
+  KTPR-facing use.
+- **Damage ledger regression, explained not just observed**: the live run
+  showed 330 emitted / 329 carried — the harness's own `check_damage_ledger`
+  correctly flagged this as a `pipeline` failure. Investigated rather than
+  waved through: zero daemon SQL errors, zero `[KTP-STATS] dropped` lines,
+  and a **deterministic `replay_daemon.py` replay of the exact same
+  captured log gave 330/330, cap violations 0**. That isolates the gap to
+  live log-tailing timing (a line read mid-write during the real-time tail)
+  — the same class of flakiness already accepted elsewhere in this project
+  (e.g. `hlds_linux` needing two boot attempts), not a defect in the
+  Phase 6 code. Recorded here rather than silently dropped, per the
+  project's own rule against silent caps.
+
+### Rollback
+
+`ktp_stats_capture 0`, or previous `.amxx` / `hlstats.pl`. Reverting to
+`5eb05ebd` (KTPAMXX) / `757ac96` (KTPHLStatsX) leaves Units 2–6 intact.
+
+---
+
+# After all seven units
+
+Once breaks, assists, positions, frag context, the damage ledger, and break
+context are landing cleanly, `ktpr_mcp` can start reading them (Phase 8 in
+the implementation plan) — `hlstats_Events_PlayerPlayerActions` for
+assists, `hlstats_Events_PlayerActions` for breaks (now carrying
+contester_count/time_remaining/is_capout), `hlstats_Events_Frags` for
+positions, frag context and last-flag-defense, `ktp_damage_events` for the
+damage ledger, `ktp_flag_positions` for static map geometry — all already
+carrying `match_id` and `half` from the daemon's own tagging where
+applicable.
+
+Still outstanding and **not** covered by these units: ninja-cap detection.
+Per `CONTINUATION_NOTES.md`, this needs a roster-wide position broadcast at
+a flat, low interval (explicitly *not* event-triggered — that puts
+judgment back in the engine) with the interval itself an open question
+needing real EPS data, plus `ReAPI`'s `CheckVisibilityInOrigin()` as the
+strongest available line-of-sight upgrade, unused anywhere yet. Deliberately
+deferred — see `tests/e2e_stats/NEXT_PHASES.md`. See
+`IMPLEMENTATION_PHASES.md` for the phase plan and `CONTINUATION_NOTES.md`
+for the detail needed to pick either up cold.
