@@ -213,6 +213,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build/lane-b-artifacts
+          if [ "$LANE" = "corpus" ]; then
+            # Corpus replay exercises committed logs through the daemon. The
+            # current preprod KTPAMXX ref may not yet contain stats capture,
+            # so do not make an unrelated plugin extraction a prerequisite.
+            PLUGIN_ARGS="--no-plugin"
+          else
+            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /opt/hlds/dod/addons/ktpamx/scripting/include"
+          fi
           docker run --rm \
             -v "${PWD}/..:/repos:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
@@ -225,8 +233,7 @@ jobs:
               python3 scripts/build_stats_lane_artifacts.py \
                 --amxx-repo   /repos/KTPAMXX      --amxx-ref   '${AMXX_REF}' \
                 --daemon-repo /repos/KTPHLStatsX  --daemon-ref '${DAEMON_REF}' \
-                --amxxpc   /opt/hlds/dod/addons/ktpamx/scripting/amxxpc \
-                --includes /opt/hlds/dod/addons/ktpamx/scripting/include \
+                ${PLUGIN_ARGS} \
                 --out /work/build/artifacts
             "
 
