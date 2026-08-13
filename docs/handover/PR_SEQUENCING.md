@@ -84,6 +84,7 @@ main (e2b6e7b) — Units 1, 2, 3 all in: fix/suicide-dispatch-goldsrc,
                  feat/seed-assist-action, feat/seed-cap-break-action
  └─ feat/frag-context-columns 19650f7  2 commits  Unit 5  (no PR yet, pushed)
      └─ feat/ktp-damage-event 757ac96  1 commit   Unit 6  (no PR yet, pushed)
+         └─ feat/break-context-parse 0753474 1 commit Unit 7 (no PR yet, pushed)
 ```
 
 Rebased onto the post-merge `main` and pushed on 2026-08-12, same day the
@@ -100,6 +101,7 @@ master (9758f4db)
          └─ feat/stats-positions 989c8f4f 3 commits   Unit 4  (no PR yet)
              └─ feat/stats-frag-context b15295c8 4 commits Unit 5 (no PR yet, pushed)
                  └─ feat/stats-damage-ledger 5eb05ebd 2 commits Unit 6 (no PR yet, pushed)
+                     └─ feat/stats-break-context 0af155fe 1 commit Unit 7 (no PR yet, pushed)
 
 master (9758f4db)
  └─ feat/lane-b-fakeclient-players  684d3af1  1 commit   test-only, no unit (no PR yet)
@@ -141,6 +143,8 @@ onto the fleet — if something is wrong you want one suspect, not two.
 | 12 | KTPAMXX | `feat/stats-frag-context` | `feat/stats-positions` | Unit 5, plugin half. Retires the old `headshot_kill` marker — see below. Pushed, no PR yet. |
 | 13 | KTPHLStatsX | `feat/ktp-damage-event` | `feat/frag-context-columns` | Unit 6, DB half. Creates `ktp_damage_events` — **apply before step 14**, though unlike other units a backwards deploy here fails loudly (daemon `INSERT` errors) rather than silently. Pushed, no PR yet. |
 | 14 | KTPAMXX | `feat/stats-damage-ledger` | `feat/stats-frag-context` | Unit 6, plugin half. Damage capped at 100 — see below. Pushed, no PR yet. |
+| 15 | KTPHLStatsX | `feat/break-context-parse` | `feat/ktp-damage-event` | Unit 7, DB half. New `ktp_flag_positions` table + `PlayerActions`/`Frags` columns — **apply before step 16**. Pushed, no PR yet. |
+| 16 | KTPAMXX | `feat/stats-break-context` | `feat/stats-damage-ledger` | Unit 7, plugin half. Flag positions, break context, last-flag-defense — see below. Pushed, no PR yet. |
 
 **Open each stacked PR against its parent branch, not against `main`.** GitHub
 auto-retargets a stacked PR to the default branch once its base merges, so the
@@ -242,6 +246,40 @@ syntax-checked with `perl -c`. Live run: 216/216 damage markers carried, 0
 cap violations, 0 dropped buffer lines at the new 128-entry size (up from
 48 — this event type fires far more often than any prior capture),
 zero regressions on Units 2-5 — see Unit 6 in `KTPR_DEPLOYMENT_PLAN.md`.
+
+### 15 — `feat/break-context-parse`, 16 — `feat/stats-break-context` (Unit 7)
+
+A new table (`ktp_flag_positions`), a follow-up marker on `cap_break`
+(`break_context`: contester count, time remaining, is_capout), and two new
+columns on `Frags` (`is_last_flag_defense`, using the row's *existing*
+stock `pos_x/y/z`/`pos_victim_x/y/z` for kill position — verified against
+`base-schema.sql` before assuming a migration was needed).
+
+**The mechanism question from the phase plan is resolved**, not just
+answered inline: `doEvent_PlayerAction`'s column list is fixed by upstream
+`%g_eventTables` config, not freely extensible, so this follows Units 5/6's
+own precedent (a follow-up marker + `UPDATE`) rather than touching that
+upstream machinery.
+
+**Last-flag-defense keys off kill position, not the break queue** — a
+defender who kills a would-be ninja before they start capping is defending
+just as much, and the break queue cannot see a kill that never touched a
+capture zone. `is_capout` (on breaks) and `is_last_flag_defense` (on kills)
+share one test: does the team own exactly one flag right now.
+
+**One open tuning question, not a defect**: live-run last-flag-defense hit
+29.5% (28/95 kills) — checked for an asymmetric-map artifact (ruled out, a
+balanced 14/15 team split) but `KSC_LAST_FLAG_RADIUS` (1000 units) is an
+unmeasured starting estimate on a map where some flags sit under 1200 units
+apart. Tighten and re-check before using the rate for anything KTPR-facing.
+
+Compiled against the KTP fork's `amxxpc` (0 warnings) and `hlstats.pl`
+syntax-checked with `perl -c`. Live run: 5 real flag positions, 2/2 breaks
+carried with plausible clutch values, 91/95 frag positions populated,
+zero regressions on Units 2-6 — see Unit 7 in `KTPR_DEPLOYMENT_PLAN.md` for
+the full numbers, including an investigated (not just observed) live-run
+damage-ledger discrepancy that turned out to be a log-tailing race, not a
+regression.
 
 ### 9 — `feat/tier2-bot-lane-stats-e2e`
 
