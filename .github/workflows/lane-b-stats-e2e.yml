@@ -113,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || github.event_name == 'workflow_call' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
 
     env:
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
@@ -128,6 +128,7 @@ jobs:
       - name: Checkout KTPInfrastructure
         uses: actions/checkout@v6
         with:
+          repository: ${{ github.repository_owner }}/KTPInfrastructure
           ref: ${{ matrix.target_ref }}
           path: KTPInfrastructure
 
