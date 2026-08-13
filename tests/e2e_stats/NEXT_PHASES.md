@@ -5,6 +5,33 @@
 These are real gaps with an owner-less status. They are parked rather than
 forgotten, and each says what would make it worth picking up.
 
+### Ninja-cap detection
+
+Deliberately excluded from Phase 7 (break context / flag positions /
+last-flag-defense), which otherwise shipped complete 2026-08-13.
+
+**Why it is parked:** per the operator's direction, ninja-cap detection
+should capture raw facts only and classify entirely in the query layer —
+not judge "is this a ninja cap" in the engine. That needs a roster-wide
+position broadcast at a **flat, unconditional, low interval**, explicitly
+*not* event-triggered ("only when a solo cap starts" puts judgment back in
+the engine, which is exactly what this is trying to avoid). The broadcast
+interval is a real open question that wants measured EPS data before
+picking a number, not a guess — the same discipline `KSC_LAST_FLAG_RADIUS`
+(Phase 7's other unmeasured constant) should get before it's trusted either.
+
+**When to pick it up:** whenever someone is ready to measure the broadcast
+interval empirically (a Lane B run instrumented to log EPS at a few
+candidate intervals would answer it directly), or when `ktp_flag_positions`
+(Phase 7) has been live long enough to validate the last-flag-defense
+radius, since both share the same "positions relative to a flag" territory.
+
+**How, in one line:** add a periodic (interval TBD) roster-position
+broadcast marker, store it in its own table, and let the query layer decide
+what counts as a ninja cap from positions + `ktp_flag_positions` +
+`ReAPI`'s `CheckVisibilityInOrigin()` for line-of-sight — none of that
+judgment belongs in the capture layer.
+
 ### KTPMatchHandler HEAD fails to compile against the image's amxxpc
 
 Found 2026-08-13 running a full Units 1–6 regression with real match
