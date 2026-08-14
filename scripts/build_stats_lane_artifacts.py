@@ -76,7 +76,14 @@ def main() -> int:
     ap.add_argument("--includes", type=Path, default=None,
                     help="KTPAMXX plugins/include dir (required with --amxxpc)")
 
-    ap.add_argument("--schema", nargs="*", default=["sql/ktp_schema.sql"],
+    ap.add_argument("--schema", nargs="*", default=[
+                        "sql/ktp_schema.sql",
+                        "sql/migrate_005_frag_context_columns.sql",
+                        "sql/migrate_006_damage_ledger.sql",
+                        "sql/migrate_007_break_context.sql",
+                        "sql/migrate_008_position_samples.sql",
+                        "sql/migrate_009_disable_connect_announcements.sql",
+                    ],
                     help="Schema files, repo-relative, in apply order")
     ap.add_argument("--seed", nargs="*",
                     default=["sql/migrate_003_assist_action.sql",

@@ -116,7 +116,14 @@ class ArtifactSet:
         daemon_repo: Path,
         daemon_ref: str,
         include_plugin: bool = True,
-        schema_files: tuple[str, ...] = ("sql/ktp_schema.sql",),
+        schema_files: tuple[str, ...] = (
+            "sql/ktp_schema.sql",
+            "sql/migrate_005_frag_context_columns.sql",
+            "sql/migrate_006_damage_ledger.sql",
+            "sql/migrate_007_break_context.sql",
+            "sql/migrate_008_position_samples.sql",
+            "sql/migrate_009_disable_connect_announcements.sql",
+        ),
         seed_files: tuple[str, ...] = (
             "sql/migrate_003_assist_action.sql",
             "sql/migrate_004_cap_break_action.sql",
