@@ -939,7 +939,7 @@ def render(board: dict, names: dict) -> str:
     </div>
 
     <details class="panel kt-about">
-      <summary>About KTPR &mdash; an experiment, and how it is worked out</summary>
+      <summary>About KTPR &mdash; an experiment, and how its worked out</summary>
       <div class="body">
         <p><b>Philly LAN 2026 is running an experimental KTPR.</b> It leans on
         stats that only exist because the broadcast HUD was watching &mdash;

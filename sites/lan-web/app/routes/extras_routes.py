@@ -3,9 +3,9 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from .. import auth, awards, common, db
+from .. import auth, awards, common, db, photos
 from ..config import settings
 from ..templating import templates
 
@@ -127,6 +127,9 @@ async def gallery_upload(request: Request, file: UploadFile = File(...), caption
     stored = f"{pid:06d}.{ext}"
     (Path(settings.photo_dir) / stored).write_bytes(data)
     db.execute("UPDATE lan_photos SET stored_name=%s WHERE id=%s", (stored, pid))
+    photos.make(stored)
+    if common.wants_json(request):
+        return JSONResponse({"ok": True, "id": pid})
     return RedirectResponse(request.url_for("gallery"), status_code=303)
 
 
@@ -142,6 +145,16 @@ def gallery_img(photo_id: int):
     return FileResponse(str(path), media_type=_IMG_EXT.get(ext, "application/octet-stream"))
 
 
+@router.get("/gallery/{photo_id}/thumb", name="gallery_thumb")
+def gallery_thumb(photo_id: int):
+    """The grid's image. 404 when none was generated — the caller falls back to
+    the original rather than showing a hole."""
+    row = db.query_one("SELECT stored_name FROM lan_photos WHERE id=%s", (photo_id,))
+    if not row or not photos.has_thumb(row["stored_name"]):
+        raise HTTPException(404, "No thumbnail.")
+    return FileResponse(str(photos.thumb_path(row["stored_name"])), media_type="image/jpeg")
+
+
 @router.post("/admin/gallery/delete", name="gallery_delete")
 async def gallery_delete(request: Request):
     auth.require_admin(request)
@@ -149,8 +162,9 @@ async def gallery_delete(request: Request):
     pid = int(f["photo_id"])
     row = db.query_one("SELECT stored_name FROM lan_photos WHERE id=%s", (pid,))
     if row and row["stored_name"]:
-        p = Path(settings.photo_dir) / row["stored_name"]
-        if p.is_file():
-            p.unlink()
+        for p in (Path(settings.photo_dir) / row["stored_name"],
+                  photos.thumb_path(row["stored_name"])):
+            if p.is_file():
+                p.unlink()
     db.execute("DELETE FROM lan_photos WHERE id=%s", (pid,))
     return RedirectResponse(request.url_for("gallery"), status_code=303)

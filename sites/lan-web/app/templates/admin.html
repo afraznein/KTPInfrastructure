@@ -27,6 +27,8 @@
           <tr><td>Seeds locked</td><td>{{ 'yes' if seeds_locked else 'no' }}</td></tr>
           <tr><td>Saturday matches</td><td>{{ 'generated' if matches_generated else 'not generated' }} — <a href="{{ url_for('schedule') }}">manage</a> · {{ pubtoggle('schedule_sat_published', schedule_sat_published) }}</td></tr>
           <tr><td>Playoff bracket</td><td>{{ 'generated' if bracket_generated else 'not generated' }} — <a href="{{ url_for('bracket') }}">manage</a> · {{ pubtoggle('schedule_sun_published', schedule_sun_published) }}</td></tr>
+          <tr><td>Stats board</td><td>post-event — {{ pubtoggle('stats_published', stats_published) }}</td></tr>
+          <tr><td>Awards board</td><td>post-event — {{ pubtoggle('awards_published', awards_published) }}</td></tr>
           <tr><td>Station board</td><td><a href="{{ url_for('stations') }}">set "now playing" + connect info</a></td></tr>
           <tr><td>Final placements</td><td><a href="{{ url_for('placements') }}">publish final standing</a></td></tr>
         </tbody>
@@ -59,8 +61,10 @@
         <tbody>
           <tr><td>Caster / streams</td><td><a href="{{ url_for('stations') }}">manage on the station board</a></td></tr>
           <tr><td>Result audit &amp; undo</td><td><a href="{{ url_for('audit_log') }}">view change log</a></td></tr>
+          <tr><td>Staff action log</td><td><a href="{{ url_for('admin_audit_log') }}">award ticks, retitles, staff grants</a></td></tr>
           <tr><td>Awards voting</td><td><a href="{{ url_for('awards') }}">open categories &amp; results</a></td></tr>
           <tr><td>Photo gallery</td><td><a href="{{ url_for('gallery') }}">event photos</a></td></tr>
+          <tr><td>Photo removal requests</td><td><a href="{{ url_for('photo_requests') }}">takedown queue</a></td></tr>
         </tbody>
       </table>
 

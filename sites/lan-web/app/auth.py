@@ -98,6 +98,36 @@ def is_admin(request: Request) -> bool:
     return int(did) in db_admin_ids()
 
 
+def is_master_admin(request: Request) -> bool:
+    """Staff who also decide: they hold the award checkbox and see the tally.
+
+    Conjoined with is_admin rather than checked alone — a master is staff plus,
+    never staff instead, so revoking someone's staff access revokes this too."""
+    if not is_admin(request):
+        return False
+    return int(request.session.get(SESSION_ID)) in settings.master_admin_discord_ids
+
+
+def require_master_admin(request: Request) -> int:
+    if not is_master_admin(request):
+        raise HTTPException(status_code=403, detail="Master admins only")
+    return request.session.get(SESSION_ID)
+
+
+def is_owner(request: Request) -> bool:
+    """The single account allowed to end a vote. Not the admin list — closing a
+    category is final for everyone, so it must not widen as staff are added."""
+    did = request.session.get(SESSION_ID)
+    owner = (settings.owner_discord_id or "").strip()
+    return bool(did) and owner.isdigit() and int(did) == int(owner)
+
+
+def require_owner(request: Request) -> int:
+    if not is_owner(request):
+        raise HTTPException(status_code=403, detail="Only the event owner can do that.")
+    return request.session.get(SESSION_ID)
+
+
 def require_admin(request: Request) -> int:
     if not is_admin(request):
         raise HTTPException(status_code=403, detail="LAN staff only")

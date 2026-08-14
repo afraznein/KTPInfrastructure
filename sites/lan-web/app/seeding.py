@@ -119,6 +119,10 @@ PUBLISH_FLAGS = frozenset({
     "map_skip_results_published",
     "schedule_sat_published",
     "schedule_sun_published",
+    # Post-event, and independent of each other: the numbers can go public
+    # while staff are still deciding which awards to tick.
+    "stats_published",
+    "awards_published",
 })
 
 

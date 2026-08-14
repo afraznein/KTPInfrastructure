@@ -12,9 +12,14 @@ things and one of them is the league's historical authority:
   HUD (hud_player_stats + hud_damage + hud_prone + hud_spawns)
       assists, damage, hitboxes, prone, class. Everything HLStatsX cannot see.
 
-Where both hold a stat, HLStatsX wins. The HUD counts teamkills and suicides as
-kills and logs continuously across half boundaries, so its kill totals run ~11%
-higher; taking whichever was larger would silently change what a "kill" means.
+Where both hold a stat, HLStatsX wins — taking whichever was larger would
+silently change what a "kill" means.
+
+Re-measured 2026-08-14 after the ktp_match_stats repair: the HUD now reads
+uniformly LOW, not high, across every shared stat (kills, deaths, headshots,
+damage, flags, hits). This paragraph previously claimed its kill totals ran
+~11% high, which was true of the pre-repair data and is now backwards. The
+precedence is unchanged; only the reason it matters has flipped.
 
 KTPR = [ (K/D / avgKD) + (kills_per_half / avgKPH) + 0.25*(flags_per_half / avgFPH) ] / 2.25
 
@@ -26,12 +31,14 @@ carries that warning so nobody sorts one table by it.
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import sys
 import warnings
 from collections import defaultdict
 
+import kill_streaks
 from lookups import label_classes, label_hitboxes, primary_role, roll_up_roles
 
 import paramiko
@@ -89,6 +96,13 @@ def sql(c, q, t=600):
     if out.startswith("ERROR"):
         raise RuntimeError(out[:300])
     return [line.split("\t") for line in out.splitlines() if line.strip()]
+
+
+def load_json(name):
+    """Read a file next to this one, not next to the caller's cwd."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name),
+              encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def roster_roles() -> dict[str, str]:
@@ -193,6 +207,32 @@ def main() -> int:
     for m, s, cls, n in classes:
         class_by[(m, sid(s))][cls] = int(n)
 
+    # --- kill streaks, from the frag log ------------------------------------
+    # NOT the HUD's own best_streak column, which is fetched alongside it above
+    # and kept as hud_best_streak: the HUD counts teamkills and suicides as
+    # kills and does not reset cleanly, so the two disagree for a sixth of the
+    # field. The walk is shared with build_awards.py.
+    frags = [(mid, int(half), sid(k), sid(v), weapon)
+             for mid, half, k, v, weapon in sql(c, """
+                 SELECT f.match_id, f.half, ku.uniqueId, vu.uniqueId, f.weapon
+                 FROM hlstats_Events_Frags f
+                 JOIN hlstats_PlayerUniqueIds ku ON ku.playerId = f.killerId
+                 JOIN hlstats_PlayerUniqueIds vu ON vu.playerId = f.victimId
+                 WHERE f.half IN (1,2) AND f.match_id IN (%s)
+                 ORDER BY f.id""" % ids)]
+    streak_by = kill_streaks.best_by(
+        kill_streaks.best_runs(frags),
+        lambda mid, _half, steam: (matches[mid]["day"], steam)
+        if mid in matches else (None, steam))
+    print("streaks rebuilt from the frag log: %d" % len(streak_by))
+
+    # Weekday comes from the match's own start_time; the match index carries no
+    # year, so a name derived from it would be a guess that holds until it doesn't.
+    weekday = {}
+    for mid, start in sql(c, "SELECT match_id, MIN(start_time) FROM ktp_matches "
+                             "WHERE match_id IN (%s) GROUP BY match_id" % ids):
+        weekday[mid] = datetime.date(*(int(x) for x in start[:10].split("-"))).strftime("%A")
+
     hitbox = sql(c, "SELECT attacker_id, hitplace, COUNT(*), SUM(damage) FROM hud_damage "
                     "WHERE match_id IN (%s) AND attacker_id IS NOT NULL "
                     "GROUP BY attacker_id, hitplace" % ids)
@@ -206,7 +246,7 @@ def main() -> int:
         return {"halves": 0, "kills": 0, "deaths": 0, "headshots": 0, "damage_hl": 0,
                 "score": 0, "flags": 0, "assists": 0, "damage_hud": 0, "hits": 0,
                 "hs_hits": 0, "caps_hud": 0, "cap_breaks": 0, "obj_score": 0,
-                "best_streak": 0, "nade_kills": 0, "gun_kills": 0, "prone": 0,
+                "hud_best_streak": 0, "nade_kills": 0, "gun_kills": 0, "prone": 0,
                 "matches": set(), "classes": defaultdict(int), "name": ""}
 
     per_map: dict[tuple, dict] = defaultdict(blank)
@@ -238,7 +278,7 @@ def main() -> int:
         per_day[(meta["day"], steam)]["flags"] += n
 
     HUDF = ["assists", "damage_hud", "hits", "hs_hits", "caps_hud", "cap_breaks",
-            "obj_score", "best_streak", "nade_kills", "gun_kills"]
+            "obj_score", "hud_best_streak", "nade_kills", "gun_kills"]
     for (mid, steam), vals in hud_by.items():
         meta = matches.get(mid)
         if not meta:
@@ -248,7 +288,7 @@ def main() -> int:
                             (per_day, (meta["day"], steam))):
             b = bucket[key]
             for f, v in zip(HUDF, vals):
-                b[f] = max(b[f], v) if f == "best_streak" else b[f] + v
+                b[f] = max(b[f], v) if f == "hud_best_streak" else b[f] + v
         n = prone_by.get((mid, steam), 0)
         if n:
             per_map[(meta["day"], meta["map"], steam)]["prone"] += n
@@ -258,6 +298,36 @@ def main() -> int:
             per_day[(meta["day"], steam)]["classes"][cls] += n
 
     print("players with hud data: %d" % len(seen_hud))
+
+    # --- the streak a player is credited with, and what it was made of ------
+    clubs = {k: v.get("team") for k, v in
+             load_json("player_teams.json").items()}
+    match_clubs = load_json("match-teams.json")
+
+    def streak_length(day, steam):
+        got = streak_by.get((day, steam))
+        return got[1].length if got else 0
+
+    def streak_detail(day, steam):
+        """Where the streak happened and what it was made with, or None.
+
+        `vs` is the opposition, which is why this needs the club lists: the frag
+        log knows who died, not which side they were on.
+        """
+        got = streak_by.get((day, steam))
+        if not got:
+            return None
+        (mid, half), run = got
+        mine = clubs.get(steam)
+        other = [t for t in match_clubs.get(mid, []) if t != mine]
+        mp = matches[mid]["map"]
+        return {
+            "vs": other[0] if len(other) == 1 else None,
+            "map": mp[4:] if mp.startswith("dod_") else mp,
+            "day": weekday.get(mid),
+            "half": half,
+            "guns": kill_streaks.label_guns(run.weapons),
+        }
 
     # --- KTPR, with averages recomputed per day ----------------------------
     def rates(b):
@@ -297,7 +367,10 @@ def main() -> int:
                 "assists": b["assists"], "damage_hud": b["damage_hud"],
                 "hits": b["hits"], "hs_hits": b["hs_hits"],
                 "caps_hud": b["caps_hud"], "cap_breaks": b["cap_breaks"],
-                "obj_score": b["obj_score"], "best_streak": b["best_streak"],
+                "obj_score": b["obj_score"],
+                "best_streak": streak_length(day, steam),
+                "hud_best_streak": b["hud_best_streak"],
+                "streak_detail": streak_detail(day, steam),
                 "nade_kills": b["nade_kills"], "gun_kills": b["gun_kills"],
                 "prone_changes": b["prone"],
                 "classes": label_classes(b["classes"]),
@@ -341,7 +414,11 @@ def main() -> int:
         for mp in d["maps"]:
             d["maps"][mp].sort(key=lambda p: -p["ktpr"])
 
-    out = "lan-stats.json"
+    # Overridable so a regeneration can be diffed against the committed board
+    # before it replaces it — the database has been repaired since that file was
+    # produced, so "rebuild it and see" is not a safe default.
+    out = next((a.split("=", 1)[1] for a in sys.argv[1:] if a.startswith("--out=")),
+               "lan-stats.json")
     with open(out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=1)
     print("\nwrote %s" % out)

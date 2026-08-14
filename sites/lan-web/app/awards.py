@@ -61,3 +61,21 @@ def results(award: dict) -> list[dict]:
 def total_votes(award_id: int) -> int:
     r = db.query_one("SELECT COUNT(*) AS n FROM lan_award_votes WHERE award_id=%s", (award_id,))
     return r["n"] if r else 0
+
+
+def eligible_voters() -> int | None:
+    """The denominator turnout reads against: people who could vote at all.
+
+    Casting needs a Discord account linked to a roster row, so an unlinked
+    player is not eligible. None when nothing is linked — a denominator of zero
+    would read as an answer rather than as no answer."""
+    r = db.query_one("SELECT COUNT(*) AS n FROM lan_players WHERE discord_id IS NOT NULL")
+    return (int(r["n"]) if r else 0) or None
+
+
+def turnout(award_id: int, eligible: int | None) -> dict:
+    """How many voted, never who is winning — safe to show while a vote is live.
+
+    One ballot per voter per category is the table's primary key, so the ballot
+    count is already a headcount and there is no third number to carry."""
+    return {"ballots": total_votes(award_id), "eligible": eligible}
