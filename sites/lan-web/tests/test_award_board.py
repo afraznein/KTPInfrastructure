@@ -57,7 +57,8 @@ def board_db(fake_db, monkeypatch):
     fake_db.flags = {}                      # lan_settings, keyed by flag name
     fake_db.admins = []                     # lan_admins rows
     fake_db.types = {t["slug"]: dict(t) for t in TYPES}
-    fake_db.selected = {"clean-award", "renamed-award"}
+    fake_db.selected = {"clean-award", "renamed-award"}   # weekend scope
+    fake_db.selected_at = {}                # match_key -> ticked slugs
     fake_db.rows = list(CANDIDATES)
     fake_db.reads = {}
     fake_db.votes = {}                      # (edition, match_key, slug) -> voter ids
@@ -74,8 +75,12 @@ def board_db(fake_db, monkeypatch):
     # that read its "old" value after writing the new one.
     fake_db.add("FROM lan_award_types WHERE slug",
                 lambda p: dict(fake_db.types[p[0]]) if p[0] in fake_db.types else None)
+    # Scoped like the real query. A fake that answered the weekend set for every
+    # match would report a per-match record as ticked when nobody ticked it —
+    # the exact claim the automatic-publish tests are checking.
     fake_db.add("SELECT award_slug FROM lan_award_selections",
-                lambda p: [{"award_slug": s} for s in sorted(fake_db.selected)])
+                lambda p: [{"award_slug": s} for s in sorted(
+                    fake_db.selected if p[1] == "" else fake_db.selected_at.get(p[1], set()))])
     fake_db.add("SELECT selected FROM lan_award_selections",
                 lambda p: {"selected": 1 if p[1] in fake_db.selected else 0})
     # Filters on match_key the way the real query does — a fake that ignored it
@@ -718,3 +723,121 @@ def test_a_match_scoped_nomination_is_audited_against_that_match(client, board_d
                       "match_key": "sat-r1-harrington", "voted": True})
     assert board_db.writes[0][1][2] == "sat-r1-harrington"
     assert board_db.writes[1][1][3] == f"{EDITION}:clean-award@sat-r1-harrington"
+
+
+# ── per-match records publish automatically ───────────────────────────────
+# One tick per award per match is a workload nobody absorbs, so a match record
+# is not a selection at all: it publishes with the scoreboard it sits under, on
+# `stats_published`. The weekend board is untouched.
+MATCH = "sat-r1-harrington"
+
+
+def with_match_rows(fdb):
+    """Two records for one match, neither ticked — the state every match is in."""
+    add_award(fdb, "match-kills-high", "match", "player", [
+        cand("match-kills-high", 1, "piff", 44, where="harrington", match=MATCH),
+        cand("match-kills-high", 2, "hildebrand", 41, where="harrington", match=MATCH),
+    ], sort_order=98)
+    add_award(fdb, "match-ktpr-high", "match", "player", [
+        cand("match-ktpr-high", 1, "dicE", 1.9, where="harrington", match=MATCH),
+    ], sort_order=99)
+
+
+def test_a_match_strip_is_hidden_while_the_stats_are_unpublished(client, board_db):
+    """Then the same request with the flag on, as the control — without it, an
+    absent name proves the fixture, not the gate."""
+    with_match_rows(board_db)
+    r = client.get(f"/api/awards/candidates?edition={EDITION}&match={MATCH}")
+    assert r.json() == {"published": False, "awards": []}
+    for leak in ("piff", "match-kills-high", "harrington"):
+        assert leak not in r.text
+    board_db.flags["stats_published"] = "1"
+    assert "piff" in client.get(
+        f"/api/awards/candidates?edition={EDITION}&match={MATCH}").text
+
+
+def test_an_unpublished_match_strip_never_reads_the_award_tables(client, fake_db):
+    """No fake rule for any award table is registered, so a read that got past
+    the gate raises — a well-formed response is itself the proof."""
+    fake_db.add("FROM lan_admins ORDER BY added_at", [])
+    fake_db.add("FROM lan_settings WHERE k", None)
+    r = client.get(f"/api/awards/candidates?edition={EDITION}&match={MATCH}")
+    assert r.status_code == 200
+    assert r.json() == {"published": False, "awards": []}
+
+
+def test_staff_see_a_match_strip_the_public_cannot(client, board_db):
+    with_match_rows(board_db)
+    as_staff(board_db, client)
+    b = board(client, match=MATCH)
+    assert b["published"] is False and b["is_staff"] is True
+    assert {a["slug"] for a in b["awards"]} == {"match-kills-high", "match-ktpr-high"}
+
+
+def test_a_published_match_strip_carries_records_nobody_ticked(client, board_db):
+    """The behaviour change. Both of these are unselected and both are public."""
+    with_match_rows(board_db)
+    board_db.flags["stats_published"] = "1"
+    b = board(client, match=MATCH)
+    assert b["published"] is True and b["is_staff"] is False
+    assert [a["slug"] for a in b["awards"]] == ["match-kills-high", "match-ktpr-high"]
+    assert all(a["selected"] is False for a in b["awards"])
+    assert [w["who"] for w in b["awards"][0]["winners"]] == ["piff"]
+
+
+def test_a_ticked_match_record_still_reports_selected(client, board_db):
+    """`selected` is reported truthfully, it just decides nothing here — and it
+    is the control for the all-False assertion above."""
+    with_match_rows(board_db)
+    board_db.selected_at[MATCH] = {"match-ktpr-high"}
+    board_db.flags["stats_published"] = "1"
+    assert {a["slug"]: a["selected"] for a in board(client, match=MATCH)["awards"]} == {
+        "match-kills-high": False, "match-ktpr-high": True}
+
+
+def test_a_match_strip_rides_the_stats_flag_and_not_the_awards_one(client, board_db):
+    """Publishing the awards board must not drag the match records out with it,
+    and the strip must not lag the scoreboard it sits under."""
+    with_match_rows(board_db)
+    board_db.flags["awards_published"] = "1"
+    assert board(client, match=MATCH) == {"published": False, "awards": []}
+    board_db.flags["awards_published"] = "0"
+    board_db.flags["stats_published"] = "1"
+    assert [a["slug"] for a in board(client, match=MATCH)["awards"]] == [
+        "match-kills-high", "match-ktpr-high"]
+
+
+def test_the_weekend_board_still_waits_for_the_tick(client, board_db):
+    """The other half: nothing about the weekend board moved. `tie-award` is a
+    real candidate nobody ticked, and it stays off."""
+    with_match_rows(board_db)
+    board_db.flags["awards_published"] = "1"
+    board_db.flags["stats_published"] = "1"
+    assert [a["slug"] for a in board(client)["awards"]] == ["clean-award", "renamed-award"]
+    board_db.selected.add("tie-award")
+    assert "tie-award" in [a["slug"] for a in board(client)["awards"]]
+
+
+def test_a_match_card_is_the_same_shape_as_a_weekend_card(client, board_db):
+    """The page mounts one renderer at both scopes, so the key set must not move."""
+    with_match_rows(board_db)
+    board_db.flags["stats_published"] = "1"
+    board_db.flags["awards_published"] = "1"
+    weekend = board(client)["awards"][0]
+    card = board(client, match=MATCH)["awards"][0]
+    assert set(card) == set(weekend)
+    for tier in ("my_vote", "vote_count", "can_select"):
+        assert tier not in card
+
+
+def test_the_match_strip_keeps_the_staff_fields_and_the_master_checkbox(client, board_db):
+    """Nominating and ticking a match award still work — they just no longer
+    decide whether anyone sees it."""
+    with_match_rows(board_db)
+    cast(board_db, "match-kills-high", DID, match=MATCH)
+    as_master(board_db, client)
+    by = {a["slug"]: a for a in board(client, match=MATCH)["awards"]}
+    assert by["match-kills-high"]["my_vote"] is True
+    assert by["match-kills-high"]["vote_count"] == 1
+    assert by["match-ktpr-high"]["my_vote"] is False
+    assert all(a["can_select"] is True for a in by.values())

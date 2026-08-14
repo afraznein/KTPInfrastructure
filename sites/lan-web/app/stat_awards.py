@@ -196,14 +196,23 @@ def board(edition: str, match_key: str = WEEKEND, staff: bool = False,
           voter=None, master: bool = False) -> list[dict]:
     """Award cards for one edition, ready to render.
 
-    Staff get every candidate the build produced; everyone else gets only what
-    staff ticked. Staff order surfaces the awards worth reviewing first — a
-    clean single winner above a wide tie, decisive above marginal — while the
-    public order is the operator's own.
+    On the weekend board, staff get every candidate the build produced and
+    everyone else gets only what staff ticked. A per-match scope has no tick to
+    wait for — one decision per award per match is a workload nobody absorbs, so
+    a strip gated that way is empty forever. Every candidate is returned and the
+    route gates the whole scope on `stats_published` instead. `selected` is
+    still reported truthfully there; it just decides nothing.
+
+    Staff order surfaces the awards worth reviewing first — a clean single
+    winner above a wide tie, decisive above marginal — while the public order is
+    the operator's own.
 
     The two tiers ride along per card: a staff member's own nomination, and —
     for a master admin only — the tally and the right to tick."""
     types = award_types()
+    gated = match_key == WEEKEND
+    # Read even where it no longer filters: a master's own tick reported back as
+    # false is a lie, and the page draws its checkbox from it.
     picked = selected_slugs(edition, match_key)
     # Guarded so a public request never touches the vote table at all, and a
     # non-master never reads the tally even to discard it.
@@ -220,7 +229,7 @@ def board(edition: str, match_key: str = WEEKEND, staff: bool = False,
         if t is None:  # retired, or a slug this build invented
             continue
         is_sel = slug in picked
-        if not (staff or is_sel):
+        if gated and not (staff or is_sel):
             continue
         card = _card(t, rows, is_sel)
         if not card:

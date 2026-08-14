@@ -662,12 +662,20 @@ def fmt_value(fmt, value, row=None):
         total = int(round(value))
         return "%d:%02d" % (total // 60, total % 60)
     if fmt == FMT_RATIO:
-        # The single-match K/D cards print the pair they came from, because a
-        # ratio with no counts behind it cannot be sanity-checked by eye.
-        if row and row.get("kills") is not None and row.get("deaths") is not None:
-            return "%.2f K/D (%d-%d)" % (value, row["kills"], row["deaths"])
+        # The pair the ratio came from is still printed -- a ratio nobody can
+        # sanity-check by eye is worth less -- but it rides the context line
+        # rather than the value. `.val` is nowrap in a narrow card, and
+        # "0.66 K/D (441-670)" squeezed the winner's name into its ellipsis.
         return "%.2f K/D" % value
     return str(value)
+
+
+def ratio_context(row, where):
+    """The kills-deaths pair, folded into the context line ahead of the match."""
+    if not row or row.get("kills") is None or row.get("deaths") is None:
+        return where
+    pair = "%d-%d" % (row["kills"], row["deaths"])
+    return "%s · %s" % (pair, where) if where else pair
 
 
 # ------------------------------------------------------------------ ranking
@@ -936,7 +944,8 @@ def build(facts):
                 "who_alias": r["alias"], "role": None, "slot": None,
                 "value_num": round(r["value"], 4),
                 "value_text": fmt_value(d["fmt"], r["value"], r["source"]),
-                "where_text": r["where"],
+                "where_text": (ratio_context(r["source"], r["where"])
+                               if d["fmt"] == FMT_RATIO else r["where"]),
             })
         return len(ranked)
 
@@ -1175,11 +1184,14 @@ def summarise(out):
 # and an anchor that fails on it tests the sort, not the figure.
 ANCHORS = [
     {"name": "Difficulty: Tourist", "slug": "match-kd-high",
-     "published": {1: [("hildebrand?", "5.15 K/D (67-13)")]},
-     "current": {1: [("hildebrand?", "5.14 K/D (72-14)")]},
+     "published": {1: [("hildebrand?", "5.15 K/D")]},
+     "current": {1: [("hildebrand?", "5.14 K/D")]},
      "why": "ktp_match_stats was re-imported after publication — mostly half 1, "
             "over a quarter of the tournament set. The frag log agrees with the "
-            "new figures kill for kill, so the repair is the better data."},
+            "new figures kill for kill, so the repair is the better data. "
+            "The kills-deaths pair moved to the context line, so it is no "
+            "longer part of the value this anchor compares — 67-13 and 72-14 "
+            "are the two readings behind these ratios."},
     {"name": "Sidearm Specialist", "slug": "match-pistol-kills-high",
      "published": {1: [("patten", "9")],
                    2: [("nomistizzle", "6"), ("LaNGoNdd", "6")]},

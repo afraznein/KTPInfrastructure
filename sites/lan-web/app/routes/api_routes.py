@@ -152,15 +152,24 @@ def api_awards(request: Request):
     drop real people from the ballot without saying so."""
     ident = auth.current_identity(request)
     mine = awards.my_votes(ident["discord_id"]) if ident else {}
+    master = auth.is_master_admin(request)
+    # One roster count for the whole response rather than one per category.
+    eligible = awards.eligible_voters() if master else None
     out = []
     for a in awards.all_awards():
         row = {"id": a["id"], "slug": a["slug"], "title": a["title"],
                "kind": a["kind"], "is_open": bool(a["is_open"]),
-               "my_vote": mine.get(a["id"]), "total": awards.total_votes(a["id"])}
+               "my_vote": mine.get(a["id"])}
         # A tally while voting is live would sway it, so results publish only
         # once the category is closed — the same rule the staff page uses.
         if not a["is_open"]:
             row["results"] = awards.results(a)
+            row["total"] = awards.total_votes(a["id"])
+        elif master:
+            # Turnout, never standings: masters are themselves rostered voters,
+            # so a running order would sway the vote it is meant to measure.
+            # Everyone else is sent no count at all, not one the page hides.
+            row["turnout"] = awards.turnout(a["id"], eligible)
         out.append(row)
     return {
         "logged_in": auth.session_user(request) is not None,
@@ -234,9 +243,16 @@ def api_award_candidates(request: Request, edition: str = "", match: str = ""):
     An unpublished board answers with no award data at all — not data the page
     is trusted to hide. The gate is checked before anything is read, so an
     unpublished dataset is never one view-source away. Staff see every
-    candidate the build produced, published or not."""
+    candidate the build produced, published or not.
+
+    A per-match request rides `stats_published`, because those records are a
+    readout of the scoreboard they sit under on the same page and the two must
+    never disagree about being visible. The weekend board is unchanged: it
+    waits for the tick and for `awards_published`."""
     staff = auth.is_admin(request)
-    published = seeding.is_published("awards_published")
+    match_key = (match or "").strip()
+    published = seeding.is_published(
+        "stats_published" if match_key else "awards_published")
     if not (staff or published):
         return {"published": False, "awards": []}
     edition = (edition or "").strip()
@@ -247,7 +263,7 @@ def api_award_candidates(request: Request, edition: str = "", match: str = ""):
         "published": published,
         "is_staff": staff,
         "edition": edition,
-        "awards": stat_awards.board(edition, (match or "").strip(), staff=staff,
+        "awards": stat_awards.board(edition, match_key, staff=staff,
                                     voter=request.session.get(auth.SESSION_ID),
                                     master=master),
     }

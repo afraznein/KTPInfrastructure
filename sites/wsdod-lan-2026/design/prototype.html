@@ -663,6 +663,11 @@ details.panel[open] > summary::after { content: "\2013"; }
 .runners:not(.tied) li:nth-child(2):not([data-rank]) .rn,
 .runners:not(.tied) li:nth-child(2):not([data-rank]) .rv { color: var(--bronze); font-weight: 700; }
 .runners .rw { grid-column: 2 / -1; color: var(--faint); font-size: 0.6rem; }
+/* a folded tie group's names hang under their row, in the name column. The
+   nested items must not spend the runners counter — that is what numbers the
+   rank-less fallback rows. */
+.runners li > .shortlist { grid-column: 2 / -1; margin-top: 5px; }
+.runners .shortlist li::before { counter-increment: none; }
 /* The best six reads as a roster: rifle heavy 3rd / rifle heavy sniper. Three
    fixed columns, because auto-fit would reflow it to 2 or 4 and break the
    pairing the layout is there to show. Capped and centred so six slots don't
@@ -1662,9 +1667,9 @@ field counts as pushing rather than failing:</span>
       Heavy, 3rd, Sniper &mdash; finalized with staff after the event (dashed pill =
       read from class play; solid = named by staff). Click any column header to
       sort; rank, and the medal colours with it, recompute within whatever view,
-      filter and sort you're looking at. Hover <b>KTPR</b> or <b>Style</b> for what
-      the numbers and labels mean. Click <b>detail</b> on any row for hitboxes,
-      class spawns and the rest of the ledger. Clan tags are stripped for display
+      filter and sort you're looking at. Hover <b>KTPR</b> for what the rating
+      means. Click <b>detail</b> on any row for hitboxes, class spawns, style,
+      the longest streak, prone time and the rest of the ledger. Clan tags are stripped for display
       &mdash; the full in-game name is on each player cell's title, and a player
       who re-tagged between days appears under the name they played that day.</p>
     <p class="status-foot"><b>Counting basis:</b> kills, deaths, K/D, flags, damage,
@@ -1672,7 +1677,7 @@ field counts as pushing rather than failing:</span>
       scoped to match time. The streak is rebuilt from the frag log rather than read off
       the HUD, which reported it short whenever a run was still going at its last save.
       Everything marked <span class="srcbadge">HUD</span> &mdash; assists, capture
-      breaks, prone, and the HUD rows in the detail panel &mdash; comes from the
+      breaks, grenade kills, and the HUD rows in the detail panel &mdash; comes from the
       broadcast HUD's periodic save, and is pulled in two directions: the save runs
       whenever the server is up, so <b>warmup and knife rounds can land in the
       total</b>, while its final write comes before a half ends, so the tail of each
@@ -1683,7 +1688,8 @@ field counts as pushing rather than failing:</span>
     <p class="status-foot"><b>Map boards</b> (a map chip on a day view) are rated
       against that day's baselines with the breaks term omitted &mdash; breaks aren't
       recorded per map &mdash; and the remaining five weights renormalized; they also
-      drop the streak/breaks columns and the detail panel, which are day-level.
+      drop the per-match and per-half rates, grenade kills, breaks and the detail
+      panel, none of which the per-map rows carry.
       <b>Weights</b> kill_exp 0.65 &middot; kills 1.0 &middot;
       K/D 3.0 &middot; assists 1.0 &middot;
       damage 0.5 &middot; flags 0.7 &middot;
@@ -1780,6 +1786,11 @@ field counts as pushing rather than failing:</span>
         if (!x) return;   // injection-time verification makes this unreachable
         var row = copyRow(r);
         row.ktpr = x[0]; row.tier = x[1]; row.arch = x[2];
+        // the per-match rates are the board figures with no field behind them;
+        // they live on the row so sorting reads them like any other number, and
+        // a zero-match row would otherwise sort as Infinity
+        row.kpm = row.m ? row.k / row.m : 0;
+        row.npm = row.m ? row.nk / row.m : 0;
         out.push(row);
       });
       return out;
@@ -1810,6 +1821,8 @@ field counts as pushing rather than failing:</span>
         row.sk = useA ? (a && a.sk) : b.sk;
         // rates recomputed from the summed totals — never averaged
         row.kd = row.d ? row.k / row.d : row.k;
+        row.kpm = row.m ? row.k / row.m : 0;
+        row.npm = row.m ? row.nk / row.m : 0;
         row.kph = row.h ? row.k / row.h : 0;
         row.fph = row.h ? row.fl / row.h : 0;
         row.prh = row.h ? row.pr / row.h : 0;
@@ -2046,18 +2059,30 @@ field counts as pushing rather than failing:</span>
       c2.appendChild(dl2);
       c2.appendChild(el("p", "hint mt8", "Position: " + row.role + " (" +
         (row.rs === "inferred" ? "read from class play" : "named by staff") + ")"));
+      // Style left the board for the detail panel, and its explanation came
+      // with it — the chip row filters on these words, so they still need a
+      // place that says what they mean.
+      var sp = el("p", "hint mt8");
+      var sbtn = el("button", "sortbtn");
+      sbtn.type = "button";
+      sbtn.appendChild(el("span", "tipcue", "Style"));
+      bindTip(sbtn, styleTip, null);
+      sp.appendChild(sbtn);
+      sp.appendChild(document.createTextNode(": " + row.tier + " " + row.arch));
+      c2.appendChild(sp);
       grid.appendChild(c2);
 
       var c3 = el("div");
       c3.appendChild(el("h4", null, "The rest of the ledger"));
       var dl3 = el("dl", "kvmini");
       [["Matches", row.m + " (" + row.h + " halves)"],
-       ["Kills/half", row.kph.toFixed(1)], ["Flags/half", row.fph.toFixed(2)],
+       ["Flags/half", row.fph.toFixed(2)],
        ["Headshot kills", row.hs],
        ["Hits landed (HUD)", fmt(row.hits)], ["Headshot hits (HUD)", row.hsh],
        ["Flag caps (HUD)", row.caps], ["Objective score (HUD)", row.obj],
-       ["Grenade kills (HUD)", row.nk], ["Gun kills (HUD)", row.gk],
+       ["Gun kills (HUD)", row.gk],
        ["Time prone (HUD)", mmss(row.pr)],
+       ["Prone per half (HUD)", row.prh === undefined ? "—" : mmss(row.prh)],
        ["Times went prone (HUD)", row.pre === undefined ? "\u2014" : row.pre],
        ["Average prone (HUD)", row.pre ? (row.pr / row.pre).toFixed(1) + "s" : "\u2014"]
       ].forEach(function (p) {
@@ -2096,34 +2121,44 @@ field counts as pushing rather than failing:</span>
 
     // ---- column model ----
     // Uniform across the three views, so the grid never reshapes on a view
-    // switch. A map sub-filter still drops Streak/Breaks/detail — the per-map
-    // data never carried them (same behaviour the old day boards had).
+    // switch. A map sub-filter drops every column the per-map rows never
+    // carried — the rates, Nades, Breaks and detail (same behaviour the old day
+    // boards had).
+    //
+    // Style, Streak and Prone sit in the detail panel rather than here, and
+    // matches played stayed there: the board is capped by what fits without a
+    // sideways scrollbar at 1280, measured against the widest monospace a
+    // visitor might resolve --mono to. A column added is a column displaced.
     function columns(isMap) {
       var cols = [
         { key: "rank",   label: "#",       type: "rank" },
         { key: "player", label: "Player",  type: "alpha" },
         { key: "role",   label: "Pos",     type: "role" },
         { key: "ktpr",   label: "KTPR",    type: "num", tip: true },
-        { key: "style",  label: "Style",   type: "style", stip: true },
         { key: "kd",     label: "K/D",     type: "num" },
-        { key: "k",      label: "Kills",   type: "num" },
-        { key: "d",      label: "Deaths",  type: "num" },
-        { key: "fl",     label: "Flags",   type: "num" },
-        { key: "hs",     label: "HS",      type: "num",
-          hint: "headshot kills, and their share of that player's kills" },
-        { key: "as",     label: "Assists", type: "num", hud: true },
-        { key: "dm",     label: "Damage",  type: "num" }
+        { key: "k",      label: "Kills",   type: "num" }
       ];
       if (!isMap) {
-        cols.push({ key: "st", label: "Streak", type: "num",
-                    hint: "longest run of kills without dying, from the match record" },
-                  { key: "cb", label: "Breaks", type: "num", hud: true,
-                    hint: "enemy captures broken up" });
+        cols.push({ key: "kpm", label: "K/Match", type: "num",
+                    hint: "kills per match played" },
+                  { key: "kph", label: "K/Half", type: "num",
+                    hint: "kills per half played" });
       }
-      cols.push({ key: "pr", label: "Prone", type: "num", hud: true,
-                  hint: "total time spent on the deck, m:ss \u2014 each go-prone timed "
-                      + "until the player stood up or died" });
-      if (!isMap) cols.push({ key: "detail", label: "", type: null });
+      cols.push({ key: "d",  label: "Deaths",  type: "num" },
+                { key: "fl", label: "Flags",   type: "num" },
+                { key: "hs", label: "HS",      type: "num",
+                  hint: "headshot kills, and their share of that player's kills" },
+                { key: "as", label: "Assists", type: "num", hud: true },
+                { key: "dm", label: "Damage",  type: "num" });
+      if (!isMap) {
+        cols.push({ key: "nk",  label: "Nades",   type: "num", hud: true,
+                    hint: "kills with a grenade" },
+                  { key: "npm", label: "N/Match", type: "num", hud: true,
+                    hint: "grenade kills per match played" },
+                  { key: "cb",  label: "Breaks",  type: "num", hud: true,
+                    hint: "enemy captures broken up" },
+                  { key: "detail", label: "", type: null });
+      }
       return cols;
     }
 
@@ -2136,9 +2171,6 @@ field counts as pushing rather than failing:</span>
         if (b.ktpr !== a.ktpr) return b.ktpr - a.ktpr;
         return a.n.localeCompare(b.n);
       };
-    }
-    function styleOrd(r) {
-      return TIER_ORDER.indexOf(r.tier) * 10 + ARCH_ORDER.indexOf(r.arch);
     }
     // standings under the current ranking metric, independent of display order —
     // reversing a sort must not move the medals
@@ -2158,23 +2190,17 @@ field counts as pushing rather than failing:</span>
           var d = ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role);
           return d !== 0 ? d : b.ktpr - a.ktpr;
         });
-      } else if (key === "style") {
-        out.sort(function (a, b) {
-          var d = styleOrd(a) - styleOrd(b);
-          return d !== 0 ? d : b.ktpr - a.ktpr;
-        });
       } else if (key === "rank") {
         out.sort(byNumDesc(state.rankKey));
       } else {
         out.sort(byNumDesc(key));
       }
-      var canonicalIsAsc = (key === "player" || key === "role" ||
-                            key === "style" || key === "rank");
+      var canonicalIsAsc = (key === "player" || key === "role" || key === "rank");
       if (canonicalIsAsc ? state.sortDir === "desc" : state.sortDir === "asc") out.reverse();
       return out;
     }
     function clickSort(col) {
-      var firstDir = { num: "desc", alpha: "asc", role: "asc", style: "asc", rank: "asc" };
+      var firstDir = { num: "desc", alpha: "asc", role: "asc", rank: "asc" };
       if (state.sortKey === col.key) {
         state.sortDir = state.sortDir === "desc" ? "asc" : "desc";
       } else {
@@ -2289,17 +2315,16 @@ field counts as pushing rather than failing:</span>
         var th = el("th", col.type === "num" ? "r" : null);
         if (!col.type) { htr.appendChild(th); return; }
         var btn = el("button", "sortbtn");
-        btn.appendChild(el("span", (col.tip || col.stip) ? "tipcue" : null, col.label));
+        btn.appendChild(el("span", col.tip ? "tipcue" : null, col.label));
         if (col.hud) btn.appendChild(el("span", "srcbadge", "HUD"));
         if (state.sortKey === col.key) {
           th.setAttribute("aria-sort", state.sortDir === "desc" ? "descending" : "ascending");
           btn.appendChild(el("span", "dir", state.sortDir === "desc" ? "\u25bc" : "\u25b2"));
         }
-        var what = { rank: "rank", alpha: "player name", role: "position", style: "style" }[col.type] || col.label;
+        var what = { rank: "rank", alpha: "player name", role: "position" }[col.type] || col.label;
         btn.title = "Sort by " + what + (col.hint ? " (" + col.hint + ")" : "");
         btn.addEventListener("click", function () { clickSort(col); });
         if (col.tip) bindTip(btn, ktprTip, fillKtprTip);
-        if (col.stip) bindTip(btn, styleTip, null);
         th.appendChild(btn);
         htr.appendChild(th);
       });
@@ -2331,9 +2356,16 @@ field counts as pushing rather than failing:</span>
         tr.appendChild(tdp);
         var tdr = el("td"); tdr.appendChild(rolePill(row)); tr.appendChild(tdr);
         var tdk = el("td"); tdk.appendChild(ktprCell(row.ktpr, maxK)); tr.appendChild(tdk);
-        tr.appendChild(el("td", null, row.tier + " " + row.arch));
         tr.appendChild(el("td", "r", row.kd.toFixed(2)));
         tr.appendChild(el("td", "r", String(row.k)));
+        if (!isMap) {
+          var tdKpm = el("td", "r", row.kpm.toFixed(1));
+          tdKpm.title = row.k + " kills over " + row.m + " matches";
+          tr.appendChild(tdKpm);
+          var tdKph = el("td", "r", row.kph.toFixed(1));
+          tdKph.title = row.k + " kills over " + row.h + " halves";
+          tr.appendChild(tdKph);
+        }
         tr.appendChild(el("td", "r", String(row.d)));
         tr.appendChild(el("td", "r", String(row.fl)));
         // count with its share of that player's kills — 40 headshots off 300
@@ -2352,17 +2384,11 @@ field counts as pushing rather than failing:</span>
         tr.appendChild(el("td", "r", String(row.as)));
         tr.appendChild(el("td", "r", fmt(row.dm)));
         if (!isMap) {
-          tr.appendChild(el("td", "r", String(row.st)));
+          tr.appendChild(el("td", "r", String(row.nk)));
+          var tdNpm = el("td", "r", row.npm.toFixed(1));
+          tdNpm.title = row.nk + " grenade kills over " + row.m + " matches";
+          tr.appendChild(tdNpm);
           tr.appendChild(el("td", "r", String(row.cb)));
-        }
-        var tdPr = el("td", "r", mmss(row.pr));
-        if (row.pre) {
-          tdPr.title = row.pre + " times prone, averaging "
-            + (row.pr / row.pre).toFixed(1) + "s each"
-            + (row.prh ? " \u00b7 " + mmss(row.prh) + " per half" : "");
-        }
-        tr.appendChild(tdPr);
-        if (!isMap) {
           var tdd = el("td", "r");
           var btn = el("button", "detailbtn", "detail");
           btn.setAttribute("aria-expanded", "false");
@@ -4352,21 +4378,72 @@ if (el25) {
     return l;
   }
 
+  // Runs of equal rank, in the order the API sent them. Rows with no rank fall
+  // back to their value, and rows with neither group alone -- a shared key of
+  // "undefined" would fold a whole list of them into one row.
+  function rankRuns(list) {
+    var runs = [];
+    list.forEach(function (r, i) {
+      var key = r.rank !== undefined && r.rank !== null ? "r" + r.rank
+        : r.value !== undefined && r.value !== null ? "v" + r.value : "i" + i;
+      var last = runs[runs.length - 1];
+      if (last && last.key === key) last.rows.push(r);
+      else runs.push({ key: key, rank: r.rank, rows: [r] });
+    });
+    return runs;
+  }
+
+  function runnerRow(r) {
+    var li = el("li");
+    if (r.rank) li.setAttribute("data-rank", r.rank);
+    li.appendChild(el("span", "rn", shortName(r.who)));
+    if (r.value) li.appendChild(el("span", "rv", r.value));
+    var rw = ctxFor(r);
+    if (rw) { rw.className = "rw"; li.appendChild(rw); }
+    return li;
+  }
+
+  // The winners tier's treatment, one rank down: a rank this many players share
+  // is a bracket, not a placing, so it gets one row and the names fold away.
+  // Two or three still print -- that reads, and it is information.
+  var RUNNER_FOLD = 5;
+
+  function sharedRunnerRow(run) {
+    var li = el("li", "shared");
+    if (run.rank) li.setAttribute("data-rank", run.rank);
+    li.appendChild(el("span", "rn", "Shared by " + run.rows.length));
+    if (run.rows[0].value) li.appendChild(el("span", "rv", run.rows[0].value));
+    var names = document.createElement("details");
+    names.className = "shortlist";
+    names.appendChild(el("summary", null, "Show all " + run.rows.length));
+    var ol = el("ol");
+    run.rows.forEach(function (r) {
+      var sli = el("li");
+      sli.appendChild(el("span", "sn", shortName(r.who)));
+      var cx = ctxFor(r);
+      if (cx) { cx.className = "sw"; sli.appendChild(cx); }
+      ol.appendChild(sli);
+    });
+    names.appendChild(ol);
+    li.appendChild(names);
+    return li;
+  }
+
   function runnersFor(a) {
     var tw = a.tie_width || (a.winners || []).length || 0;
     if (tw >= 5 || !a.runners || !a.runners.length) return null;
     var ol = el("ol", "runners");
-    a.runners.forEach(function (r) {
-      var li = el("li");
-      if (r.rank) li.setAttribute("data-rank", r.rank);
-      li.appendChild(el("span", "rn", shortName(r.who)));
-      if (r.value) li.appendChild(el("span", "rv", r.value));
-      var rw = ctxFor(r);
-      if (rw) { rw.className = "rw"; li.appendChild(rw); }
-      ol.appendChild(li);
+    rankRuns(a.runners).forEach(function (run) {
+      if (run.rows.length >= RUNNER_FOLD) { ol.appendChild(sharedRunnerRow(run)); return; }
+      run.rows.forEach(function (r) { ol.appendChild(runnerRow(r)); });
     });
     return ol;
   }
+
+  // The scope every write on this mount carries. "" is the weekend scope's real
+  // value (the key holds '' rather than NULL), so a match mount that hardcoded
+  // it wrote its ticks onto the weekend board instead.
+  var SCOPE = matchKey || "";
 
   // Every staff member votes -- the card's own dulled/filled look follows
   // my_vote immediately, ahead of the next full reload. A vote publishes
@@ -4383,7 +4460,7 @@ if (el25) {
       var next = cb.checked;
       cb.disabled = true;
       WS.postJSON("/api/awards/staff-vote",
-        { edition: EDITION, slug: a.slug, match_key: "", voted: next })
+        { edition: EDITION, slug: a.slug, match_key: SCOPE, voted: next })
         .then(function (r) {
           cb.disabled = false;
           if (r.ok) {
@@ -4404,22 +4481,35 @@ if (el25) {
     return wrap;
   }
 
-  // Master-only: the real publish checkbox, wired to /api/awards/select and
+  // Master-only: the selection checkbox, wired to /api/awards/select and
   // a.selected -- deliberately independent of the vote toggle above, so a
   // master may tick an award they did not vote for. vote_count is `null` for
   // "withheld", not "zero" -- a strict null/undefined check, never `!count`,
   // or a real 0 would render as nothing and a withheld tally would render as
   // a lie. This element only ever exists when a.can_select is true.
+  //
+  // Match-scope records publish on their own, so the tick there is a staff pick
+  // and is labelled as one -- a control that says it publishes and doesn't is
+  // worse than no control.
+  var SELECT_WORD = matchKey ? "Feature" : "Publish";
+  var SELECT_ON = matchKey
+    ? "Featured — flagged as a staff pick"
+    : "Selected — showing to the public";
+  var SELECT_OFF = matchKey ? "Not featured" : "Not selected — staff only";
+
   function masterControls(a) {
     var wrap = el("div", "mastercontrols");
     var lab = el("label");
     var cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = !!a.selected;
-    cb.setAttribute("aria-label", "Publish “" + a.title + "” to the public");
+    cb.setAttribute("aria-label", matchKey
+      ? "Feature “" + a.title + "” as a staff pick"
+      : "Publish “" + a.title + "” to the public");
     lab.appendChild(cb);
-    lab.appendChild(document.createTextNode("Publish"));
+    lab.appendChild(document.createTextNode(SELECT_WORD));
     wrap.appendChild(lab);
+    lab.title = cb.checked ? SELECT_ON : SELECT_OFF;
     if (a.vote_count !== null && a.vote_count !== undefined) {
       wrap.appendChild(el("span", "votecount",
         a.vote_count + (a.vote_count === 1 ? " vote" : " votes")));
@@ -4428,12 +4518,12 @@ if (el25) {
       var next = cb.checked;
       cb.disabled = true;
       WS.postJSON("/api/awards/select",
-        { edition: EDITION, slug: a.slug, match_key: "", selected: next })
+        { edition: EDITION, slug: a.slug, match_key: SCOPE, selected: next })
         .then(function (r) {
           cb.disabled = false;
           if (r.ok) {
             a.selected = next;
-            lab.title = next ? "Selected — showing to the public" : "Not selected — staff only";
+            lab.title = next ? SELECT_ON : SELECT_OFF;
           } else {
             cb.checked = !next;
             lab.title = "Couldn't save that (HTTP " + r.status + ").";
@@ -5920,6 +6010,14 @@ if (el25) {
       .catch(function () { stat(slug, "err", "Couldn't reach the server — nothing was counted."); });
   }
 
+  function turnoutLine(t) {
+    // An unlinked roster gives no denominator, and "of 0" would read as one.
+    return (t.eligible
+      ? t.ballots + " of " + t.eligible + " rostered voters have voted"
+      : t.ballots + (t.ballots === 1 ? " vote" : " votes") + " cast so far")
+      + " — turnout only; the standings publish when this category closes.";
+  }
+
   function showResults(panel, a) {
     var box = WS.el("div", "panel mt16");
     var hd = WS.el("div", "head", "Result");
@@ -5984,6 +6082,12 @@ if (el25) {
       if (a.my_vote) stat(slug, "ok", "Your vote is in — change it any time until this closes.");
       var btn = panel.querySelector("[data-vote]");
       if (btn) btn.addEventListener("click", function () { cast(slug, a.id, sel); });
+
+      // Turnout for master admins — a headcount, never a tally. The server
+      // sends it to nobody else, so its presence is the permission check.
+      if (a.turnout && inn) {
+        inn.appendChild(WS.el("p", "hint mt8", turnoutLine(a.turnout)));
+      }
 
       // Ending a vote is the owner's alone, so the control only exists for them.
       if (r.body.is_owner && inn) {

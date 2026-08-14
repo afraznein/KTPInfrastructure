@@ -25,8 +25,36 @@ is 0 returns `{"published": false, "awards": []}` and nothing else.
 Query: `?edition=philly-2026` (required), `&match=<match_key>` (optional; omit for
 weekend scope, which also covers `day` and `team` scopes).
 
-Staff (`is_admin`) always see everything. Public sees only ticked awards, and only
-when `awards_published` is 1.
+Staff (`is_admin`) always see everything.
+
+**The gate depends on the scope, and so does whether selection applies:**
+
+| Request | Gate flag | Selection |
+|---|---|---|
+| weekend board (no `match`) | `awards_published` | public sees **only ticked** awards |
+| per-match strip (`?match=`) | **`stats_published`** | **none — every candidate publishes** |
+
+*(Amended 2026-08-14. 56 matches × ~18 award types is over a thousand tick
+decisions nobody will make, so a selection-gated match strip is permanently
+empty. And the strip sits directly under the scoreboard on the same page, so
+gating both on `stats_published` means the two can never disagree about being
+visible.)*
+
+⚠️ At match scope `selected` is **informational, not a gate**. It still reports
+truthfully whether a master ticked that record — the table is read for reporting
+and never for filtering — so a ticked box stays ticked on reload. Do not read it
+as "this is why the card is showing".
+
+⚠️ `can_select` and `my_vote` ride along unchanged at both scopes: they describe
+capability and personal state, not consequence, and `POST /api/awards/select`
+still accepts a match-scoped tick. The checkbox on a match card means **featured
+/ staff pick**, not published.
+
+⚠️ **A match-scoped tick must send the mount's `match_key`.** Posting `""` from a
+match page writes a *weekend* selection for that slug, which now silently
+publishes an unrelated card on the weekend board. Empty string is the legitimate
+weekend value — the schema uses `''` rather than NULL so those rows can sit in
+the primary key — so this fails as a wrong value, never as an error.
 
 ```json
 {
@@ -67,8 +95,10 @@ when `awards_published` is 1.
   reads as "least decisive" and the page would print with a minus sign.)*
 - `is_renamed` is true when `lan_award_types.title` is set, so staff can see at a
   glance which cards carry an operator title.
-- Public responses omit `is_staff`-only fields? **No** — they carry the same shape with
-  `selected` always true, because every award the public sees is a selected one.
+- Public responses omit `is_staff`-only fields? **No** — they carry the same shape.
+  ⚠️ *(Corrected 2026-08-14: this said `selected` is "always true, because every award
+  the public sees is a selected one". True of the weekend board only. A public
+  match strip returns unselected candidates, and reports `selected` truthfully.)*
 
 Staff sort: `(tie_width ASC, decisiveness DESC)`. Public sort: `sort_order ASC`.
 
