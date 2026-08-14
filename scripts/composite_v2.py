@@ -2,17 +2,26 @@
 """Composite score v2: normalized damage, flag captures, deaths-as-efficiency.
 
 Ad-hoc exploration script (not part of the test suite). Combines the
-persisted match-1 fixture DB with the raw game log (flag captures aren't
-in the DB yet -- confirmed empty ktp_match_stats/ktp_match_players in this
-fixture -- so they're parsed straight from the log for this draft).
+persisted fixture DB with itself -- flag captures now come straight from
+ktp_flag_captures (KTPHLStatsX migrate_009_flag_captures.sql,
+doEvent_KTPFlagCapture), not from a separate raw-log regex parse. That
+retires two real bugs this script used to carry on its own: double-counting
+half boundaries (KTP_MATCH_START appearing twice per transition) and a
+colon-anchoring regex bug, both artifacts of reimplementing parsing the
+daemon already does correctly and tags with match_id/half itself.
+
+A fixture captured before migrate_009 existed (e.g. the original match-1
+recovery) has no ktp_flag_captures table at all -- CREATE_FLAG_CAPTURES
+below is applied right after loading the fixture, idempotently, so this
+script runs against either an old or a current fixture; it just reports
+zero captures against an old one rather than erroring.
 
 Usage (inside ktp-lane-b:dev, tests/ and scripts/ mounted):
-    scripts/composite_v2.py <fixture.sql> <raw_log_path>
+    scripts/composite_v2.py <fixture.sql>
 """
 
 from __future__ import annotations
 
-import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -23,44 +32,84 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 
 
-LOG_PREFIX = r'^L \d\d/\d\d/\d{4} - \d\d:\d\d:\d\d:\s*'
-CAP_LINE = re.compile(
-    LOG_PREFIX + r'"(?P<name>[^<]+)<\d+><[^>]*><(?P<team>Axis|Allies)>" '
-    r'triggered a "dod_capture_area" - "(?P<flag>[^"]+)"'
-)
-TEAM_CAP_LINE = re.compile(
-    LOG_PREFIX + r'Team "(?P<team>Axis|Allies)" triggered a "dod_capture_area" - "(?P<flag>[^"]+)"'
-)
-HALF_END = re.compile(r"KTP_HALF_END")
-# The bare top-level marker only -- "[KTPMatchHandler.amxx] KTP_MATCH_START
-# ... [test-mode mirror]" is a second, later line for the SAME half
-# transition, and matching it too would double-increment the half counter.
-MATCH_START = re.compile(LOG_PREFIX + r"KTP_MATCH_START")
+# Mirrors KTPHLStatsX's sql/migrate_009_flag_captures.sql -- not read from
+# that file directly to keep this exploration script self-contained and
+# runnable from just this one repo. Keep the two in sync by hand if the
+# schema changes; CREATE TABLE IF NOT EXISTS makes an out-of-date copy here
+# merely redundant against a fixture that already has the real table, not
+# wrong.
+CREATE_FLAG_CAPTURES = """
+CREATE TABLE IF NOT EXISTS ktp_flag_captures (
+    id INT AUTO_INCREMENT,
+    server_id INT UNSIGNED NOT NULL,
+    match_id VARCHAR(64) DEFAULT NULL,
+    half TINYINT NOT NULL DEFAULT 0,
+    player_id INT NOT NULL,
+    team VARCHAR(16) DEFAULT NULL,
+    flag_name VARCHAR(64) DEFAULT NULL,
+    event_time DATETIME NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_server (server_id),
+    KEY idx_match (match_id),
+    KEY idx_player (player_id),
+    KEY idx_event_time (event_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+"""
 
 
-def parse_captures(log_text: str):
-    """Returns (half_boundaries, team_cap_counts[half][team], player_caps[half][name][flag])."""
-    lines = log_text.splitlines()
-    half = 1
+def query_captures(db):
+    """Returns (team_cap_counts[half][team], flag_counts[flag], player_caps[half][name][flag]).
+
+    A single capture completion can emit multiple ktp_flag_captures rows --
+    one per capping player, DoD 1.3's own multi-capper mechanic -- so the
+    two event-level counts (team_counts, flag_counts) dedup by distinct
+    (team-or-flag, event_time) rather than counting rows, matching what the
+    old TEAM_CAP_LINE regex counted (one hit per completion, not per
+    capper). player_caps is deliberately row-level: each participating
+    player earns their own credit for a shared capture.
+    """
     team_counts = defaultdict(lambda: defaultdict(int))
     flag_counts = defaultdict(int)
     player_caps = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
-    seen_first_start = False
-    for line in lines:
-        if MATCH_START.search(line):
-            if seen_first_start:
-                half += 1
-            seen_first_start = True
-            continue
-        m = TEAM_CAP_LINE.match(line)
-        if m:
-            team_counts[half][m.group("team")] += 1
-            flag_counts[m.group("flag")] += 1
-            continue
-        m = CAP_LINE.match(line)
-        if m:
-            player_caps[half][m.group("name")][m.group("flag")] += 1
+
+    team_rows = db.sql("""
+        SELECT half, team, COUNT(DISTINCT CONCAT(flag_name, '|', event_time)) AS n
+        FROM ktp_flag_captures
+        WHERE team IS NOT NULL AND flag_name IS NOT NULL
+        GROUP BY half, team
+    """)
+    for half, team, n in _tsv_rows(team_rows):
+        team_counts[int(half)][team] = int(n)
+
+    flag_rows = db.sql("""
+        SELECT flag_name, COUNT(DISTINCT CONCAT(team, '|', event_time)) AS n
+        FROM ktp_flag_captures
+        WHERE flag_name IS NOT NULL
+        GROUP BY flag_name
+    """)
+    for flag, n in _tsv_rows(flag_rows):
+        flag_counts[flag] = int(n)
+
+    player_rows = db.sql("""
+        SELECT pn.name, fc.half, fc.flag_name, COUNT(*) AS n
+        FROM ktp_flag_captures fc
+        JOIN hlstats_PlayerNames pn ON pn.playerId = fc.player_id
+        WHERE fc.flag_name IS NOT NULL
+        GROUP BY pn.name, fc.half, fc.flag_name
+    """)
+    for name, half, flag, n in _tsv_rows(player_rows):
+        player_caps[int(half)][name][flag] = int(n)
+
     return team_counts, flag_counts, player_caps
+
+
+def _tsv_rows(s: str):
+    if not s.strip():
+        return
+    lines = s.strip("\n").split("\n")
+    for line in lines[1:]:  # skip header
+        yield line.split("\t")
 
 
 def half_winners(team_counts) -> dict[int, str | None]:
@@ -92,37 +141,40 @@ def flag_weights(flag_counts: dict[str, int]) -> dict[str, float]:
 
 def main() -> int:
     fixture = Path(sys.argv[1])
-    log_path = Path(sys.argv[2])
-    if log_path.suffix == ".gz":
-        import gzip
-        log_text = gzip.decompress(log_path.read_bytes()).decode("utf-8", errors="replace")
-    else:
-        log_text = log_path.read_text(encoding="utf-8", errors="replace")
-
-    team_counts, flag_counts, player_caps = parse_captures(log_text)
-    winners = half_winners(team_counts)
-    fweights = flag_weights(flag_counts)
-
-    print("=== capture events by half/team ===")
-    for half in sorted(team_counts):
-        print(f"  half {half}: {dict(team_counts[half])}  winner={winners[half] or 'TIE'}")
-    print("=== flag weights (inverse frequency, mean=1.0 across CONTESTED flags only) ===")
-    for f, w in sorted(fweights.items()):
-        print(f"  {f}: captured {flag_counts[f]}x -> weight {w}")
-    if len(fweights) < 3:
-        print("  NOTE: only", len(fweights), "of 5 flags were ever contested this match "
-              "(others are presumably home flags, pre-owned, never captured). With only "
-              f"{len(fweights)} data points this weighting is not a confident signal -- "
-              "flat/tied weights here reflect the data, not a claim that these flags are "
-              "equally important on the map. Real differentiation needs either map-topology "
-              "input or more matches.")
-    print()
 
     with EphemeralMysql.start(keep=False) as db:
         argv = [db.client, "--no-defaults", f"--socket={db.socket_path}",
                 "-u", "root", db.database]
         with fixture.open("rb") as fh:
             subprocess.run(argv, stdin=fh, check=True)
+
+        # Idempotent against a fixture that already has the real table --
+        # only matters for a pre-migrate_009 fixture, where this creates it
+        # empty so the queries below return zero rows instead of erroring.
+        db.sql(CREATE_FLAG_CAPTURES)
+
+        team_counts, flag_counts, player_caps = query_captures(db)
+        winners = half_winners(team_counts)
+        fweights = flag_weights(flag_counts)
+
+        print("=== capture events by half/team ===")
+        for half in sorted(team_counts):
+            print(f"  half {half}: {dict(team_counts[half])}  winner={winners[half] or 'TIE'}")
+        print("=== flag weights (inverse frequency, mean=1.0 across CONTESTED flags only) ===")
+        for f, w in sorted(fweights.items()):
+            print(f"  {f}: captured {flag_counts[f]}x -> weight {w}")
+        if 0 < len(fweights) < 3:
+            print("  NOTE: only", len(fweights), "of 5 flags were ever contested this match "
+                  "(others are presumably home flags, pre-owned, never captured). With only "
+                  f"{len(fweights)} data points this weighting is not a confident signal -- "
+                  "flat/tied weights here reflect the data, not a claim that these flags are "
+                  "equally important on the map. Real differentiation needs either map-topology "
+                  "input or more matches.")
+        elif not fweights:
+            print("  NOTE: zero captures found -- either this fixture predates "
+                  "migrate_009_flag_captures.sql (captures weren't recorded when it was "
+                  "taken) or the match genuinely had none.")
+        print()
 
         # Per-player, per-half team (majority vote of killerRole this half --
         # ktp_match_players/ktp_match_stats are both empty in this fixture,
@@ -198,9 +250,10 @@ def main() -> int:
     # normalized_damage: capped damage from ktp_damage_events, scaled by a
     # win/loss multiplier per half (1.2 if that half's team won, 0.8 if lost,
     # 1.0 on a tie or indeterminate team).
-    # flag_captures: parsed from the raw log, each capture credited in full
-    # to every participating player (a 2-person cap is not split -- both
-    # contributed presence), weighted by that flag's inverse-frequency value.
+    # flag_captures: read from ktp_flag_captures, each capture credited in
+    # full to every participating player (a 2-person cap is not split --
+    # both contributed presence), weighted by that flag's inverse-frequency
+    # value.
     # efficiency_bonus: kills/(deaths+1) -- additive, never subtracts,
     # rewards a high kill:death ratio as a separate differentiator from
     # raw kill volume. Deaths otherwise play NO role in the score.
