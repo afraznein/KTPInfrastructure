@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the KTP HLStatsX ingest reconciliation hourly
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+# Hourly is enough for the league, where the cost of a missed half is a wrong
+# scoreboard. At a LAN, drop this to every 10 minutes and pass --logs: there the
+# cost of not noticing is a whole weekend of stats nobody can reconstruct.
+OnCalendar=hourly
+RandomizedDelaySec=180
+Persistent=true
+
+[Install]
+WantedBy=timers.target
