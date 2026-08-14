@@ -275,8 +275,10 @@ jobs:
                        /work/build/artifacts/sql/migrate_008_position_samples.sql \
                        /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
                        /work/build/artifacts/sql/migrate_010_flag_captures.sql \
+                       /work/build/artifacts/sql/migrate_011_match_player_identity_width.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
+                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
               --map "$MAP_NAME" --per-team 8 --play-seconds "$PLAY_SECONDS" \
               --matchhandler-src /src/KTPMatchHandler \
               --matchhandler-includes /src/KTPAMXX/plugins/include \
@@ -332,8 +334,10 @@ jobs:
                        /work/build/artifacts/sql/migrate_008_position_samples.sql \
                        /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
                        /work/build/artifacts/sql/migrate_010_flag_captures.sql \
+                       /work/build/artifacts/sql/migrate_011_match_player_identity_width.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
-                     /work/build/artifacts/sql/migrate_004_cap_break_action.sql
+                     /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
+                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql
 
       - name: Upload reports
         if: always()

@@ -71,6 +71,7 @@ which is what a UDP forward would have delivered.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -459,18 +460,11 @@ class HlstatsDaemon:
     # defects. Each entry is (substring, why it is benign) and each one is a
     # claim that has to be justified — an unexplained entry here is a way to
     # make a real failure invisible.
-    _BENIGN_SQL = (
-        (
-            "Data too long for column 'steam_id'",
-            "ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a "
-            "synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam "
-            "IDs are ~19 characters, so production never hits this. Consequence "
-            "for the lane: ktp_match_players stays empty, so per-match player "
-            "tracking cannot be asserted here.",
-        ),
-    )
+    _BENIGN_SQL = ()
 
-    def classify_sql_errors(self) -> tuple[list[str], list[str]]:
+    def classify_sql_errors(self, *,
+                            expected_unresolved_actions: set[str] | None = None
+                            ) -> tuple[list[str], list[str]]:
         """Split daemon SQL errors into real failures and known lane artifacts.
 
         Returns (real, benign). Benign ones are reported as coverage gaps, not
@@ -480,7 +474,18 @@ class HlstatsDaemon:
         artifact produces a red that means nothing, which is worse.
         """
         real, benign = [], []
+        expected_unresolved_actions = expected_unresolved_actions or set()
         for line in self.sql_errors():
+            unresolved = re.search(r"Unresolved action '([^']+)'", line)
+            if unresolved and unresolved.group(1) in expected_unresolved_actions:
+                benign.append(
+                    f"{line.strip()[:160]}\n      Expected during the capture "
+                    "kill-switch window: the generic dispatcher probes the "
+                    "PlayerAction leg while the seeded assist is deliberately "
+                    "PlayerPlayerAction-only. Exact emitted-to-recorded assist "
+                    "parity is asserted separately."
+                )
+                continue
             for needle, why in self._BENIGN_SQL:
                 if needle in line:
                     benign.append(f"{line.strip()[:160]}\n      {why}")

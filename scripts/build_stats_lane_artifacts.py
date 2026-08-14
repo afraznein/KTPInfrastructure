@@ -84,6 +84,7 @@ def main() -> int:
                         "sql/migrate_008_position_samples.sql",
                         "sql/migrate_009_disable_connect_announcements.sql",
                         "sql/migrate_010_flag_captures.sql",
+                        "sql/migrate_011_match_player_identity_width.sql",
                     ],
                     help="Schema files, repo-relative, in apply order")
     ap.add_argument("--seed", nargs="*",

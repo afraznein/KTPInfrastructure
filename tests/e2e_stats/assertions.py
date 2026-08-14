@@ -513,6 +513,64 @@ def assert_no_dropped_lines(log_text: str) -> None:
         )
 
 
+def _check_direct_rows(db, *, code: str, table: str, emitted: int,
+                       exact: bool = True) -> dict:
+    """Compare a direct KTP marker with its destination table."""
+    rows = db.count(f"SELECT COUNT(*) FROM {table}")
+    if emitted == 0:
+        return {"code": code, "status": "not_exercised", "emitted": 0,
+                "rows": rows, "detail": f"no {code} markers were emitted"}
+    ok = rows == emitted if exact else rows > 0
+    if not ok:
+        expected = f"exactly {emitted}" if exact else "at least one"
+        return {"code": code, "status": "pipeline", "emitted": emitted,
+                "rows": rows, "detail": f"{emitted} marker(s) emitted but {rows} "
+                f"row(s) reached {table}; expected {expected}"}
+    return {"code": code, "status": "ok", "emitted": emitted, "rows": rows,
+            "detail": f"{rows}/{emitted} carried" if exact else
+                      f"{rows} current row(s) from {emitted} upsert marker(s)"}
+
+
+def check_flag_captures(db, *, emitted: int) -> dict:
+    return _check_direct_rows(db, code="flag_captures",
+                              table="ktp_flag_captures", emitted=emitted)
+
+
+def check_flag_positions(db, *, emitted: int) -> dict:
+    # Positions upsert on map + flag index, so repeated map-load markers can
+    # legitimately exceed the number of current rows.
+    return _check_direct_rows(db, code="flag_positions",
+                              table="ktp_flag_positions", emitted=emitted,
+                              exact=False)
+
+
+def check_position_samples(db, *, emitted: int) -> dict:
+    return _check_direct_rows(db, code="position_samples",
+                              table="ktp_position_samples", emitted=emitted)
+
+
+def check_capture_buffer(log_text: str) -> dict:
+    dropped = [line for line in log_text.splitlines()
+               if "[KTP-STATS] dropped" in line]
+    if dropped:
+        return {"code": "capture_buffer_drops", "status": "pipeline",
+                "rows": len(dropped), "detail":
+                f"{len(dropped)} buffer overflow report(s); captured stats are incomplete"}
+    return {"code": "capture_buffer_drops", "status": "ok", "rows": 0,
+            "detail": "0 capture lines dropped"}
+
+
+def check_match_players(db, *, expected: int) -> dict:
+    rows = db.count("SELECT COUNT(*) FROM ktp_match_players")
+    if rows != expected:
+        return {"code": "match_players", "status": "pipeline", "rows": rows,
+                "expected": expected, "detail":
+                f"{rows} match roster row(s), expected {expected}; every Lane B bot "
+                "must exercise match-player tracking"}
+    return {"code": "match_players", "status": "ok", "rows": rows,
+            "expected": expected, "detail": f"all {expected} bots tracked"}
+
+
 def summarise(db) -> dict:
     """Everything Lane B measured, for the run report. Raises nothing."""
     def _safe(fn, *a, **kw):
@@ -545,6 +603,10 @@ def summarise(db) -> dict:
         "bots": db.count("SELECT COUNT(*) FROM hlstats_Players "
                          "WHERE playerId IN (SELECT playerId FROM hlstats_PlayerUniqueIds "
                          "WHERE uniqueId LIKE 'BOT:%')"),
+        "match_players": db.count("SELECT COUNT(*) FROM ktp_match_players"),
+        "flag_captures": db.count("SELECT COUNT(*) FROM ktp_flag_captures"),
+        "flag_positions": db.count("SELECT COUNT(*) FROM ktp_flag_positions"),
+        "position_samples": db.count("SELECT COUNT(*) FROM ktp_position_samples"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),
     }
