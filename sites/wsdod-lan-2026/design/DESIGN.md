@@ -53,11 +53,14 @@ its palette *from* WSDoD, so WSDoD adopting the property style is mostly a homec
    carries the match log, the hero still carries the event facts. In production this is
    server-side (unpublished stats ship **no markup**); the prototype's toggle demonstrates
    both states client-side.
-5. **Publish nothing you cannot attribute.** Match *scores* exist in the engine record but
-   are not attributed to teams anywhere in the dataset — so the Results section ships the
-   verifiable match log (map, time, length, halves, demos) and holds bracket placements
-   behind a "being compiled by staff" note rather than guessing. Same discipline as the rest
-   of the property: identity is the verified record, never the banner.
+5. **Publish nothing you cannot attribute.** Same discipline as the rest of the property:
+   identity is the verified record, never the banner.
+   *(Updated 2026-08-14 — the scores are attributed now.)* Match scores were held back
+   because the engine record carries them as **allies/axis**, and teams swap sides at the
+   break, so neither pair belongs to one club. §13's derivation resolves the swap and
+   reproduces the match index's score column **88 of 88** times, so per-match pages now
+   carry a real score. The Results match log still ships map/time/length/halves/demos and
+   still names no score, because a log row has no room to explain a two-half swap.
 
 ---
 
@@ -838,3 +841,40 @@ moves gold to the assists leader and reversing the sort leaves the medals
 with the leaders; weekend detail panel shows merged class spawns, summed
 matches/halves and Saturday's 13-kill streak story; 2025's board renders
 exactly as before with the unified section absent.
+
+## 13. Sixth pass — 2026-08-14 (generated awards, staff nomination, per-match pages)
+
+Awards stopped being hand-curated JSON. `build_awards.py` generates candidates,
+staff nominate, master admins tick, and only a ticked award publishes. The page
+reads `GET /api/awards/candidates`, so a tick no longer needs a rebuild.
+
+### The `next` edition has nothing to inherit into
+
+The award framework is **edition-keyed and inherits forward for free**:
+`lan_award_types` holds an operator's renamed title and sting globally, so a
+2027 board picks up every rename made this year without anyone re-entering it.
+
+⚠️ **But `dist/next/` has no stats or awards section at all.** It is the
+coming-soon page — a lede, a Discord link, and nothing to hang a board on. So
+the inheritance has somewhere to come *from* and nowhere to land.
+
+What the 2027 edition needs, when it exists:
+
+- a `stats` and an `awards` section carrying `data-ed="<2027 slug>"`, matching
+  the 2026 markup — `build_site.py` routes by that attribute and needs no change
+- an `edition` entry in `#editions` with `statsPublished` present. ⚠️ **Do not
+  omit that key**: the server-side gate rewrites it, and the page reads
+  `body.dataset.stats` *from* it on load, so a missing key reads as `undefined`
+  and turns the gate off by accident
+- `lan_award_candidates` rows generated for the new edition. `lan_award_types`
+  is **not** regenerated — that is the point; leave the renames alone
+- its own `lan_award_selections`, since a tick is per edition. Nothing carries
+  over: a 2027 board starts unticked and unpublished, which is the correct
+  default
+- ⚠️ `day1-ktpr-high` / `day2-ktpr-high` are keyed by day **ordinal**, not date,
+  so they recur. A three-day event needs a `day3` type adding to the catalogue
+
+None of this is owed until there is a 2027 event. It is recorded because the
+inheritance is invisible until the second edition exists, and the failure mode
+is somebody rebuilding the awards from scratch and silently discarding a year of
+operator renames.
