@@ -136,7 +136,11 @@ jobs:
           # where it's explicitly main or preprod (see strategy.matrix above —
           # schedule always *fires* from the default branch's copy of this
           # file, but each matrix leg checks out its own target content).
-          ref: ${{ matrix.target_ref }}
+          # Leave PR/manual checkout at the action's event-aware default. In a
+          # PR, github.ref_name is `N/merge`, which is not a branch or tag and
+          # cannot be resolved when supplied explicitly. Only schedules need
+          # an explicit matrix ref.
+          ref: ${{ github.event_name == 'schedule' && matrix.target_ref || '' }}
           # Need diff against base for relevance detection on PRs.
           fetch-depth: 0
 
