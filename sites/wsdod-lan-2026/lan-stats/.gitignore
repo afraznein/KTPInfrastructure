@@ -1,0 +1,6 @@
+# Generator dry-run output. Regenerated on demand by build_awards.py and
+# build_match_scoreboard.py, and large enough to churn every diff -- unlike
+# match-slugs.json, which is frozen on purpose and must stay tracked.
+awards_candidates.json
+awards_candidates.sql
+match-scoreboard.json

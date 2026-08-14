@@ -48,7 +48,7 @@ its palette *from* WSDoD, so WSDoD adopting the property style is mostly a homec
    day, each carrying its own field baseline. There is no DOM state in which Saturday and
    Sunday rows share a table — the incomparability of KTPR across days is enforced by the
    page's shape, not by a footnote (the footnote exists too).
-4. **The publication gate must leave no scar.** With `lan_stats_publication.published=0`,
+4. **The publication gate must leave no scar.** With `lan_settings.stats_published=0`,
    the Stats section and its nav link are absent and the page reads complete: Results still
    carries the match log, the hero still carries the event facts. In production this is
    server-side (unpublished stats ship **no markup**); the prototype's toggle demonstrates
@@ -228,10 +228,21 @@ provenance is still drawn, not footnoted.
 
 ### Publication gate
 
-`body[data-stats="off"]` hides the section and its nav link (prototype). Production must
-do this server-side: when `lan_stats_publication.published=0`, the template emits neither
-the section nor the nav item nor the JSON — an unpublished dataset should not be one
-view-source away. Everything else on the page is written to stand without it: Results
+`body[data-stats="off"]` hides the section (prototype). Production does this server-side:
+when `lan_settings.stats_published=0` and the caller is not staff, the route in front of
+the static mount strips the JSON blocks outright — an unpublished dataset should not be one
+view-source away.
+
+⚠️ The gate must also rewrite `statsPublished` inside `#editions`, because `applyGate()`
+sets `body.dataset.stats` **from** that value on load and would otherwise overwrite a
+server-set attribute — stripping the data without it yields an empty board that reads as
+"nobody scored". The section now keeps its heading and shows a placeholder rather than
+vanishing; the nav link no longer hides with it.
+
+*(Corrected 2026-08-14: this named `lan_stats_publication.published`, which is a table in
+`hlstatsx_lan` that nothing has ever read and that lan-web has no privilege to reach.)*
+
+Everything else on the page is written to stand without it: Results
 carries the match log, the hero tiles are event facts (match/demo counts), and no copy
 elsewhere references "the stats below".
 

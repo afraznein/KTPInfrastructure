@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import audit, auth, bracket, common, db, mapskip, notify, seeding
+from .. import admin_audit, audit, auth, bracket, common, db, mapskip, notify, seeding
 from .. import schedule as sched
 from ..config import settings
 from ..templating import templates
@@ -99,6 +99,8 @@ def admin_home(request: Request):
         map_skip_published=seeding.is_published("map_skip_results_published"),
         schedule_sat_published=seeding.is_published("schedule_sat_published"),
         schedule_sun_published=seeding.is_published("schedule_sun_published"),
+        stats_published=seeding.is_published("stats_published"),
+        awards_published=seeding.is_published("awards_published"),
     )
     return templates.TemplateResponse(request, "admin.html", ctx)
 
@@ -181,6 +183,28 @@ async def audit_undo(request: Request):
     return RedirectResponse(request.url_for("audit_log"), status_code=303)
 
 
+AUDIT_PAGE = 50
+
+
+@router.get("/admin/audit-log", name="admin_audit_log")
+def admin_audit_log(request: Request, page: int = 1):
+    """Staff decisions — award ticks, retitles, staff grants — newest first.
+
+    A different record from /admin/audit, which is match results and carries an
+    undo; nothing here is reversible, so it is read-only by design."""
+    auth.require_admin(request)
+    page = max(1, page)
+    total = admin_audit.count()
+    ctx = common.base_ctx(request, "admin")
+    ctx.update(
+        rows=admin_audit.recent(AUDIT_PAGE, (page - 1) * AUDIT_PAGE),
+        page=page,
+        pages=max(1, -(-total // AUDIT_PAGE)),
+        total=total,
+    )
+    return templates.TemplateResponse(request, "admin_audit.html", ctx)
+
+
 @router.get("/admin/photo-requests", name="photo_requests")
 def photo_requests(request: Request):
     """Photo takedown queue — pending first, handled kept for the record."""
@@ -225,6 +249,7 @@ async def admin_grant(request: Request):
         "ON DUPLICATE KEY UPDATE label = COALESCE(VALUES(label), label)",
         (did, label, int(granter)),
     )
+    admin_audit.log_request(request, "staff_add", did, None, label)
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
@@ -236,7 +261,10 @@ async def admin_revoke(request: Request):
     if did == int(me):
         raise HTTPException(400, "You can't revoke your own staff access.")
     # Config (env) admins aren't in this table, so this can't touch them.
+    prior = db.query_one("SELECT label FROM lan_admins WHERE discord_id=%s", (did,))
     db.execute("DELETE FROM lan_admins WHERE discord_id=%s", (did,))
+    admin_audit.log_request(request, "staff_remove", did,
+                            prior["label"] if prior else None, None)
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 

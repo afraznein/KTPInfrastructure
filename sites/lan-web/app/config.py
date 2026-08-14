@@ -28,9 +28,11 @@ class Settings:
     site_dir: str
     site_mount: str
     site_at_root: bool
+    match_slugs_path: str
     owner_discord_id: str
     photo_thumb_px: int
     admin_discord_ids: frozenset
+    master_admin_discord_ids: frozenset
     db_host: str
     db_port: int
     db_user: str
@@ -48,6 +50,12 @@ class Settings:
 
 def _parse_ids(raw: str) -> frozenset:
     return frozenset(int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit())
+
+
+# Env-driven so a wrong id is a config change rather than a redeploy. An unset
+# variable falls back rather than emptying: no masters means nobody can publish
+# an award at all.
+MASTER_ADMINS = "218890328273321984,143944554440163328,749415733393621101"
 
 
 def load() -> Settings:
@@ -76,11 +84,21 @@ def load() -> Settings:
         # /lan. Off by default so deploying this is a no-op and the switch is
         # an env change plus a restart — which is also the rollback.
         site_at_root=os.getenv("LAN_SITE_AT_ROOT", "").lower() in ("1", "true", "yes"),
+        # The build's frozen key → slug map, read at runtime. Defaults to the
+        # repo layout; a standalone deploy sets the path. Absent is survivable —
+        # the raw-key redirect 404s and every slug URL is unaffected.
+        match_slugs_path=os.getenv(
+            "LAN_MATCH_SLUGS",
+            str(Path(__file__).resolve().parents[2] / "wsdod-lan-2026" /
+                "lan-stats" / "match-slugs.json"),
+        ),
         # Deliberately one id, not the admin list: closing a vote ends it for
         # everyone, so it does not widen when staff are added.
         owner_discord_id=os.getenv("LAN_OWNER_DISCORD_ID", "218890328273321984"),
         photo_thumb_px=int(os.getenv("LAN_PHOTO_THUMB_PX", "480")),
         admin_discord_ids=_parse_ids(os.getenv("LAN_ADMIN_DISCORD_IDS", "")),
+        master_admin_discord_ids=_parse_ids(
+            os.getenv("LAN_MASTER_ADMIN_DISCORD_IDS", "") or MASTER_ADMINS),
         db_host=os.getenv("LAN_DB_HOST", "127.0.0.1"),
         db_port=int(os.getenv("LAN_DB_PORT", "3306")),
         db_user=os.getenv("LAN_DB_USER", "ktp_lan"),

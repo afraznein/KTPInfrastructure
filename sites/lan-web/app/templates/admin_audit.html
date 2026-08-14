@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Staff Action Log{% endblock %}
+{% macro val(v) -%}{% if v %}<span style="font-family:var(--mono);font-size:11px;">{{ v }}</span>{% else %}<span style="color:var(--ink-faint);">—</span>{% endif %}{%- endmacro %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">&#9733;</div>
+      <h2 class="chapter-title">Staff Action Log</h2>
+      <span class="chapter-stamp">RESTRICTED / READ ONLY</span>
+    </header>
+    <div class="chapter-body">
+      <p style="font-size:13px;color:var(--ink-faint);"><a href="{{ url_for('admin') }}">&larr; Staff</a> — award ticks, retitles and staff grants, newest first.
+         Match results are a separate record with its own undo: <a href="{{ url_for('audit_log') }}">result audit</a>.</p>
+
+      {% if rows %}
+      <table>
+        <thead><tr><td>When</td><td>Who</td><td>Action</td><td>Target</td><td>Was</td><td>Now</td></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td style="font-size:12px;color:var(--ink-faint);white-space:nowrap;">{{ r.at }}</td>
+            <td style="font-size:12px;color:var(--ink-soft);">{{ r.actor_name or r.actor }}</td>
+            <td><span style="font-family:var(--stencil);letter-spacing:.06em;font-size:11px;text-transform:uppercase;color:var(--ink-soft);">{{ r.action }}</span></td>
+            <td style="width:auto;color:var(--ink);font-family:var(--mono);font-size:12px;">{{ r.target or '—' }}</td>
+            <td>{{ val(r.old_value) }}</td>
+            <td>{{ val(r.new_value) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p style="font-size:12px;color:var(--ink-faint);margin-top:12px;">
+        Page {{ page }} of {{ pages }} · {{ total }} entries
+        {% if page > 1 %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page - 1 }}">newer</a>{% endif %}
+        {% if page < pages %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page + 1 }}">older</a>{% endif %}
+      </p>
+      {% else %}
+      <div class="pending-note">No staff actions recorded yet.</div>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

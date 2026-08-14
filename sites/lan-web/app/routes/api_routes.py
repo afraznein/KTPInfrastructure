@@ -6,7 +6,8 @@ Discord id and IP are admin-only on the pages and must not travel with them."""
 from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, awards, common, db, demos, notify, photos
+from .. import (admin_audit, auth, awards, common, db, demos, match_stats,
+                notify, photos, seeding, stat_awards)
 from ..config import settings
 
 router = APIRouter()
@@ -201,6 +202,154 @@ async def api_award_vote(request: Request):
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"ok": True, "award_id": award_id, "target_id": target_id}
+
+
+async def _json_body(request: Request) -> dict:
+    """The request body as a dict. A malformed one is an empty body, which the
+    caller then rejects as a missing field rather than a 500."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _field(body: dict, key: str, limit: int) -> str:
+    return str(body.get(key) or "").strip()[:limit]
+
+
+def _flag(body: dict, key: str) -> bool:
+    """A JSON bool, or the string a form-ish client sends instead — bool("false")
+    is True, and an untick that silently ticks is the wrong way to be wrong."""
+    v = body.get(key)
+    if isinstance(v, str):
+        return v.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(v)
+
+
+@router.get("/api/awards/candidates", name="api_award_candidates")
+def api_award_candidates(request: Request, edition: str = "", match: str = ""):
+    """The generated award board: who won what, and by how much.
+
+    An unpublished board answers with no award data at all — not data the page
+    is trusted to hide. The gate is checked before anything is read, so an
+    unpublished dataset is never one view-source away. Staff see every
+    candidate the build produced, published or not."""
+    staff = auth.is_admin(request)
+    published = seeding.is_published("awards_published")
+    if not (staff or published):
+        return {"published": False, "awards": []}
+    edition = (edition or "").strip()
+    if not edition:
+        raise HTTPException(400, "An edition is required.")
+    master = staff and auth.is_master_admin(request)
+    return {
+        "published": published,
+        "is_staff": staff,
+        "edition": edition,
+        "awards": stat_awards.board(edition, (match or "").strip(), staff=staff,
+                                    voter=request.session.get(auth.SESSION_ID),
+                                    master=master),
+    }
+
+
+@router.get("/api/stats/match/{match_key}", name="api_match_stats")
+def api_match_stats(request: Request, match_key: str):
+    """One match's scoreboard, per player, per half and totalled.
+
+    Per-match pages are static shells that fetch this, which is the whole
+    reason they can be gated: an unpublished board is not baked into fifty-odd
+    files. Unpublished answers with no rows at all — the gate is checked before
+    anything is read, so the dataset is never one view-source away. Staff see
+    it whatever the flag says.
+
+    A key no match owns is a 404. A match with an empty scoreboard is a 200
+    with no players, and the page has to say something different about each."""
+    staff = auth.is_admin(request)
+    published = seeding.is_published("stats_published")
+    if not (staff or published):
+        return {"published": False, "match": None, "players": []}
+    m = match_stats.match(match_key.strip())
+    if not m:
+        raise HTTPException(404, "No such match.")
+    players = match_stats.scoreboard(m)
+    return {
+        "published": published,
+        "is_staff": staff,
+        "match": match_stats.header(m, players),
+        "players": players,
+        "sources": match_stats.SOURCES,
+    }
+
+
+@router.post("/api/awards/staff-vote", name="api_award_staff_vote")
+async def api_award_staff_vote(request: Request):
+    """Nominate an award, or withdraw the nomination. Any staff member.
+
+    Its own path rather than /api/awards/vote, which is the players' live
+    ballot on a different table entirely."""
+    actor = auth.require_admin(request)
+    body = await _json_body(request)
+    edition = _field(body, "edition", 32)
+    slug = _field(body, "slug", 48)
+    if not edition or not slug:
+        raise HTTPException(400, "An edition and an award slug are required.")
+    match_key = _field(body, "match_key", 64)
+    voted = _flag(body, "voted")
+    if not stat_awards.award_type(slug):
+        raise HTTPException(404, "No such award.")
+    was = stat_awards.vote_state(edition, slug, match_key, actor)
+    stat_awards.set_vote(edition, slug, match_key, voted, actor)
+    admin_audit.log_request(request, "award_staff_vote",
+                            stat_awards.ref(edition, slug, match_key),
+                            int(was), int(voted))
+    return {"ok": True, "voted": voted}
+
+
+@router.post("/api/awards/select", name="api_award_select")
+async def api_award_select(request: Request):
+    """Tick an award onto the public board, or take it back off.
+
+    Master admins only — a staff nomination is a vote, not a publish."""
+    actor = auth.require_master_admin(request)
+    body = await _json_body(request)
+    edition = _field(body, "edition", 32)
+    slug = _field(body, "slug", 48)
+    if not edition or not slug:
+        raise HTTPException(400, "An edition and an award slug are required.")
+    match_key = _field(body, "match_key", 64)
+    selected = _flag(body, "selected")
+    if not stat_awards.award_type(slug):
+        raise HTTPException(404, "No such award.")
+    was = stat_awards.selection_state(edition, slug, match_key)
+    stat_awards.set_selected(edition, slug, match_key, selected, actor)
+    admin_audit.log_request(request, "award_select", stat_awards.ref(edition, slug, match_key),
+                            int(was), int(selected))
+    return {"ok": True, "selected": selected}
+
+
+@router.post("/api/awards/rename", name="api_award_rename")
+async def api_award_rename(request: Request):
+    """Retitle an award for good. The override lives on the award type, not the
+    edition, so every future event inherits it — that is the whole point.
+    Sending an empty title clears it back to the generated default."""
+    actor = auth.require_admin(request)
+    body = await _json_body(request)
+    slug = _field(body, "slug", 48)
+    if not slug:
+        raise HTTPException(400, "An award slug is required.")
+    t = stat_awards.award_type(slug)
+    if not t:
+        raise HTTPException(404, "No such award.")
+    title = _field(body, "title", 96) or None
+    sting = _field(body, "sting", 255) or None
+    was = stat_awards.override_note(t["title"], t["sting"])  # captured before the write
+    stat_awards.rename(slug, title, sting, actor)
+    admin_audit.log_request(request, "award_rename", slug, was,
+                            stat_awards.override_note(title, sting))
+    return {"ok": True, "slug": slug, "is_renamed": title is not None,
+            "title": title or t["default_title"],
+            "sting": sting or t["default_sting"]}
 
 
 _CATEGORIES = {"event": "The event", "site": "This site",

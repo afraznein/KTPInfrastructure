@@ -8,11 +8,12 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import site_gate
 from .config import settings
 from .routes import (admin_routes, api_routes, auth_routes, bracket_routes,
                      checkin_routes, demo_routes, extras_routes, mappoll_routes,
-                     placements_routes, poll_routes, public, schedule_routes,
-                     stations_routes, veto_routes)
+                     match_routes, placements_routes, poll_routes, public,
+                     schedule_routes, stations_routes, veto_routes)
 
 app = FastAPI(title="WSDoD LAN 2026", root_path=settings.root_path)
 
@@ -35,6 +36,11 @@ app.mount(
 # session cookie, the OAuth callback and the upload endpoints stay same-origin.
 # Unset in dev; the deploy points it at the built dist/.
 if settings.site_dir and Path(settings.site_dir).is_dir():
+    # Above both mounts, and above the /2026 one in particular: StaticFiles ships
+    # the file byte-for-byte, so an HTML entry point it answers first hands out
+    # the baked stats dataset whatever stats_published says.
+    site_gate.register(app, Path(settings.site_dir), settings.site_mount,
+                       settings.site_at_root)
     app.mount(
         settings.site_mount,
         StaticFiles(directory=settings.site_dir, html=True),
@@ -54,6 +60,9 @@ app.include_router(checkin_routes.router)
 app.include_router(demo_routes.router)
 app.include_router(extras_routes.router)
 app.include_router(api_routes.router)
+# Below site_gate.register, which owns the real /match/<slug>/ pages, and above
+# the Mount("/") that would otherwise answer a raw key with a 404 of its own.
+app.include_router(match_routes.router)
 app.include_router(admin_routes.router)
 
 # The site at "/" as well as /2026, once LAN_SITE_AT_ROOT is set.

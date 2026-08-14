@@ -150,9 +150,17 @@ CREATE TABLE IF NOT EXISTS hud_spawns (
   KEY ix_hs_class (class_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Publication gate. Nothing is public until a row here says so, and the default
--- for a new dataset is NOT published -- a page that defaults to visible will
--- eventually leak something nobody meant to release.
+-- RETIRED 2026-08-14 -- NOT the production gate, and never was. Nothing has
+-- ever read this table, both audit columns are still NULL, and lan-web cannot
+-- reach it anyway: the app connects as ktp_lan and this lives in hlstatsx_lan.
+-- The live gate is lan_settings.stats_published, in ktp_lan, via /admin/publish.
+-- Kept only so an existing deployment does not lose a table. When per-match
+-- gating lands, rebuild the per-scope idea in ktp_lan rather than granting
+-- cross-database access to this one.
+--
+-- Its default was right and is worth carrying forward: a new dataset starts
+-- unpublished, because a page that defaults to visible eventually leaks
+-- something nobody meant to release.
 CREATE TABLE IF NOT EXISTS lan_stats_publication (
   scope       VARCHAR(32) NOT NULL,     -- 'all' | a match_id | a date
   published   TINYINT(1)  NOT NULL DEFAULT 0,

@@ -654,7 +654,8 @@ details.panel[open] > summary::after { content: "\2013"; }
 /* The best six reads as a roster: rifle heavy 3rd / rifle heavy sniper. Three
    fixed columns, because auto-fit would reflow it to 2 or 4 and break the
    pairing the layout is there to show. Capped and centred so six slots don't
-   stretch across the full breakout width. */
+   stretch across the full breakout width. Recovered from git history
+   (68c3431) for the render:"positions" award -- see the awards script. */
 .sixgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;
            max-width: 860px; margin: 0 auto; }
 @media (max-width: 720px) { .sixgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -686,6 +687,46 @@ details.panel[open] > summary::after { content: "\2013"; }
 .crit li { font-size: 0.68rem; color: var(--dim); background: var(--inset); border: 1px solid var(--rule); border-radius: 999px; padding: 4px 11px; }
 .awardcard.jump { cursor: pointer; }
 .awardcard.jump:hover { border-color: var(--blue); }
+/* ---- awards: API-driven candidates (vote, tie tiers, inline rename, and the
+   master-only publish checkbox + tally) ----
+   Staff-only affordances (.votebox, .renamed-badge, .renamebox,
+   .mastercontrols) render conditionally in JS and are shared between
+   .awardcard and the render:"positions" panel below, so none of them require
+   an .awardcard ancestor. The card underneath is the exact anatomy above,
+   extended not rewritten. */
+.awardcard { position: relative; }
+/* the vote toggle nests inside the title slot rather than adding a row of its
+   own -- see the "exactly four children" comment on card() in the awards
+   script. The panel below isn't part of that subgrid, so its toggle is a
+   plain flex child of .head instead (see .panel .head .votebox further down). */
+.awardcard .at.has-vote { padding-right: 24px; }
+.awardcard .votebox { position: absolute; top: 13px; right: 15px; display: flex; align-items: center; }
+.votebox input { width: 15px; height: 15px; accent-color: var(--blue); cursor: pointer; }
+/* every staff member votes; a card they haven't lit reads as inert rather
+   than live -- same premise "selected" used to carry, now driven by my_vote */
+.notvoted { opacity: 0.5; }
+.notvoted:hover { opacity: 0.8; }
+.renamed-badge { display: block; width: fit-content; font-size: 0.56rem; padding: 2px 8px; margin-top: 4px; }
+.renamebox { margin-top: 9px; }
+/* master-only: the real publish checkbox + the tally, independent of the
+   voting toggle above -- a master may tick an award they didn't vote for */
+.mastercontrols { display: flex; align-items: center; gap: 8px; margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--rule); font-size: 0.68rem; color: var(--dim); }
+.mastercontrols label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.mastercontrols input { width: 15px; height: 15px; accent-color: var(--blue); cursor: pointer; }
+.mastercontrols .votecount { margin-left: auto; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* tie_width 2-4: every winner is a real winner, so all of them go gold rather
+   than the board picking one to lead */
+.awardcard .who-stack { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.awardcard .who-stack .who { display: block; }
+/* tie_width 5+: a stat that wide isn't picking a winner, so the card says so
+   instead of dressing up a coin-flip -- names sit behind the fold, closed */
+.awardcard.shared { border-style: dashed; }
+.awardcard.shared .lead .who { color: var(--faint); font-weight: 400; font-size: 0.76rem; }
+.awardcard.shared .lead .val { color: var(--dim); }
+/* render:"positions" panel head -- title/badge/subtitle on the left, the
+   vote toggle a plain flex sibling on the right (no subgrid to respect here) */
+.panel .head .headleft { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.panel .head .votebox { flex: none; }
 /* staff capability cards — what a signed-in admin can change */
 .capcard .body ul { list-style: none; }
 .capcard .body li { font-size: 0.8rem; color: var(--dim); padding: 5px 0; border-bottom: 1px solid var(--rule); display: flex; gap: 8px; align-items: baseline; }
@@ -777,7 +818,16 @@ footer p { margin: 4px 0; }
 footer .accent { color: var(--red); white-space: nowrap; }
 
 /* ---- stats publication gate ---- */
-body[data-stats="off"] #stats { display: none; }
+/* #stats only -- 2026. #stats-25 is a past event with its own baked payload
+   and is deliberately NOT covered by this gate; don't extend the selector to
+   "cover both editions" without deciding that on purpose. */
+/* The board hides, not the whole section: .sec-head and the "being compiled"
+   line stay up, so #stats reads the way #awards does when its own gate is
+   off (an honest placeholder) rather than the heading and nav link both
+   vanishing with no word said. */
+.stats-placeholder { display: none; }
+body[data-stats="off"] #stats .stats-body { display: none; }
+body[data-stats="off"] #stats .stats-placeholder { display: block; }
 body[data-stats="off"] [data-stats-link] { display: none; }
 
 /* ---- MOCKUP-ONLY publication switcher — not part of the design ---- */
@@ -822,8 +872,12 @@ body[data-stats="off"] [data-stats-link] { display: none; }
     <a class="navlink hidesm" href="#event" data-ed="philly-2026">Event</a>
     <a class="navlink hidesm" href="#teams" data-ed="philly-2026">Teams</a>
     <a class="navlink hidesm" href="#results" data-ed="philly-2026">Results</a>
-    <a class="navlink hidesm" href="#stats" data-stats-link data-ed="philly-2026">Stats</a>
-    <a class="navlink hidesm" href="#awards" data-stats-link data-ed="philly-2026">Awards</a>
+    <!-- Neither Stats nor Awards is data-stats-link any more -- both sections
+         now render something (a heading + placeholder, at minimum) whether
+         their gate is on or off, so there is never a case where the link
+         should vanish. data-stats-link still exists for #stats-25, below. -->
+    <a class="navlink hidesm" href="#stats" data-ed="philly-2026">Stats</a>
+    <a class="navlink hidesm" href="#awards" data-ed="philly-2026">Awards</a>
     <!-- 2025's landmarks live inside the JS-rendered edition section, so these
          point at ids that module sets rather than at sections of their own -->
     <a class="navlink hidesm" href="#ed-record" data-ed="philly-2025">Event</a>
@@ -1102,6 +1156,10 @@ body[data-stats="off"] [data-stats-link] { display: none; }
       score submissions and the HLTV record, and hold up independently against the
       placement matches. The bracket below is the Sunday playoff as played; the match
       logs are the engine's own record, and every row links its demos in the public archive.
+      <b>58 is matches started, not matches with a page.</b> Two aborted after one half
+      with no score and aren't linked below — real play deserves a record, not a
+      restart with nothing to show. A third match's logging died before it could
+      close; it still has a page, built from what did survive.
     </div>
 
     <!-- Final placements — verified. The panel shape is the template next
@@ -1395,6 +1453,13 @@ body[data-stats="off"] [data-stats-link] { display: none; }
     <div class="sec-head"><h2>Player stats</h2>
       <span class="meta">HLStatsX + broadcast HUD &middot; tournament (.ktp) matches only &middot; one grid, three views</span></div>
 
+    <!-- Same voice as the Awards placeholder (#awards-api's is_staff===false,
+         published===false branch) -- the two gated sections should read as
+         one system, not two authors. -->
+    <p class="stats-placeholder hint">Stats are being compiled. Nothing is
+      public yet — check back once staff have published the board.</p>
+
+    <div class="stats-body">
     <div class="note-box">
       <b>One formula, three fields.</b> Saturday, Sunday and the full weekend are
       views of one board, and every view is scored by the formula KTPR actually
@@ -2331,6 +2396,7 @@ field counts as pushing rather than failing:</span>
   }
 })();
     </script>
+    </div>
   </section>
 <!-- season-board:end -->
 
@@ -2343,29 +2409,11 @@ field counts as pushing rather than failing:</span>
   <section id="awards" data-ed="philly-2026">
     <div class="sec-head"><h2>Awards</h2></div>
 
-    <h3 class="staffsub">The numbers decide these</h3>
-    <div class="awardgrid" id="awards-decided"></div>
-
-    <div class="panel mt16">
-      <div class="head">Best six by position
-        <span class="n">best single-day performances · two rifles, two heavies, a 3rd and a sniper</span></div>
-      <div class="body">
-        <!-- The day tag on each slot is not decoration: KTPR is measured against
-             the field of the day it was played, so these six are peaks from two
-             different fields sitting next to each other. -->
-        <p class="hint" style="margin:0 0 12px">Each of these is a <b>single day's</b>
-          performance, not a weekend average — the tag on each slot says which day.
-          They are the best mark seen at each position, so they do not add up to a
-          line-up that ever played together, and a Saturday figure and a Sunday one
-          are not measured against the same field.</p>
-        <div class="sixgrid" id="awards-positions"></div>
-      </div>
-    </div>
-
-    <h3 class="staffsub">Single-match records</h3>
-    <p class="hint" style="margin:-4px 0 10px">One match, not the weekend. Where the
-      top mark is shared the card says so — a record several people hit isn't one.</p>
-    <div class="awardgrid" id="awards-single"></div>
+    <!-- Live from GET /api/awards/candidates -- never baked into the page, so a
+         staff tick shows up without a rebuild. Unpublished ships zero rows
+         (DESIGN.md: "not one view-source away"), so this starts empty and stays
+         that way until the fetch resolves; see docs/AWARDS_API_CONTRACT.md. -->
+    <div id="awards-api"></div>
 
     <h3 class="staffsub">These need a vote</h3>
     <div class="awardgrid" id="awards-vote"></div>
@@ -3993,10 +4041,10 @@ if (el25) {
     return c;
   }
 
-  var gd = document.getElementById('awards-decided');
-  if (gd && aw.decided) aw.decided.forEach(function (a) { gd.appendChild(awardCard(a, true)); });
-  var gs = document.getElementById('awards-single');
-  if (gs && aw.single_match) aw.single_match.forEach(function (a) { gs.appendChild(awardCard(a, true)); });
+  // The decided/single-match/positions groups used to render from this same
+  // block, off the static #awards-data JSON. They're API-driven now (see the
+  // awards-api script below) -- this block keeps only what still is static:
+  // the vote summary cards, which jump down to the live ballots.
   var gv = document.getElementById('awards-vote');
   if (gv && aw.vote) aw.vote.forEach(function (a) {
     // the card is the summary; its ballot is the thing you act on
@@ -4011,25 +4059,6 @@ if (el25) {
     gv.appendChild(c);
   });
 
-  var ap = document.getElementById('awards-positions');
-  if (ap && aw.positions) {
-    aw.positions.rows.forEach(function (r) {
-      var s = el('div', 'sixslot');
-      s.appendChild(el('span', 'sr', r.role));
-      var line = el('div', 'row1');
-      line.appendChild(el('span', 'who', r.who_short || shortName(r.who)));
-      line.appendChild(el('span', 'val', r.value));
-      s.appendChild(line);
-      var sc = el('span', 'ctx');
-      sc.appendChild(document.createTextNode(r.where || ''));
-      if (r.as) {
-        sc.appendChild(document.createTextNode(' · '));
-        sc.appendChild(el('span', 'alias', 'as ' + r.as));
-      }
-      s.appendChild(sc);
-      ap.appendChild(s);
-    });
-  }
   // Ballots. Every eligibility list is computed from the published stats and
   // every rule that produced it is printed above the list, so staff can see
   // what to change rather than which name to strike. build_ballots.py
@@ -4225,6 +4254,589 @@ if (el25) {
 })();
 </script>
 <script>
+// ---- Awards, API-driven (docs/AWARDS_API_CONTRACT.md). The generator/staff
+// decide the shortlist; this only renders what GET /api/awards/candidates
+// says right now, so a checkbox tick shows up without a rebuild. Order is the
+// server's call (staff and public sort differently) -- never re-sorted here.
+(function () {
+  "use strict";
+  var WS = window.WS;
+  if (!WS) return;
+  var shortName = window.shortName || function (n) { return n; };
+
+  // Mounted once for the awards page's own #awards-api (matchKey null, the
+  // weekend-scope grid) and once per match page's #match-awards (matchKey
+  // set, via the API's own &match= scoping) -- same renderer, same vote and
+  // master controls, so a master can tick a per-match award from either
+  // page. root/EDITION/matchKey are real function parameters rather than
+  // closed-over vars specifically because load() below is async: reusing one
+  // set of outer vars across two mount() calls in a loop would have the
+  // second call's reassignment corrupt the first call's still-pending fetch.
+  function mount(root, EDITION, matchKey) {
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function ctxFor(w) {
+    if (!w.where && !w.alias) return null;
+    var cx = el("span", "ctx");
+    cx.appendChild(document.createTextNode(w.where || ""));
+    if (w.alias) {
+      if (w.where) cx.appendChild(document.createTextNode(" · "));
+      cx.appendChild(el("span", "alias", "as " + w.alias));
+    }
+    return cx;
+  }
+
+  // tie_width 1: today's card. 2-4: every winner is real, so all go gold and
+  // share the one value. 5+: a stat that wide isn't picking a winner, so the
+  // headline says "Shared by N" and the names sit closed behind a fold.
+  function leadFor(a) {
+    var l = el("div", "lead");
+    var w = a.winners || [];
+    var tw = a.tie_width || w.length || 0;
+    if (!w.length) {
+      l.appendChild(el("span", "who", "No candidate yet"));
+      return l;
+    }
+    if (tw >= 5) {
+      l.appendChild(el("span", "cap", "Shared record"));
+      var row = el("div", "row1");
+      row.appendChild(el("span", "who", "Shared by " + tw));
+      row.appendChild(el("span", "val", w[0].value));
+      l.appendChild(row);
+      var names = document.createElement("details");
+      names.className = "shortlist";
+      names.appendChild(el("summary", null, "Show all " + tw));
+      var ol = el("ol");
+      w.forEach(function (x) {
+        var li = el("li");
+        li.appendChild(el("span", "sn", x.alias || shortName(x.who)));
+        ol.appendChild(li);
+      });
+      names.appendChild(ol);
+      l.appendChild(names);
+    } else if (tw >= 2) {
+      var row2 = el("div", "row1");
+      var stack = el("div", "who-stack");
+      w.forEach(function (x) { stack.appendChild(el("span", "who", shortName(x.who))); });
+      row2.appendChild(stack);
+      row2.appendChild(el("span", "val", w[0].value));
+      l.appendChild(row2);
+      var cx2 = ctxFor(w[0]);
+      if (cx2) l.appendChild(cx2);
+    } else {
+      var row1 = el("div", "row1");
+      row1.appendChild(el("span", "who", shortName(w[0].who)));
+      row1.appendChild(el("span", "val", w[0].value));
+      l.appendChild(row1);
+      var cx1 = ctxFor(w[0]);
+      if (cx1) l.appendChild(cx1);
+    }
+    return l;
+  }
+
+  function runnersFor(a) {
+    var tw = a.tie_width || (a.winners || []).length || 0;
+    if (tw >= 5 || !a.runners || !a.runners.length) return null;
+    var ol = el("ol", "runners");
+    a.runners.forEach(function (r) {
+      var li = el("li");
+      if (r.rank) li.setAttribute("data-rank", r.rank);
+      li.appendChild(el("span", "rn", shortName(r.who)));
+      if (r.value) li.appendChild(el("span", "rv", r.value));
+      var rw = ctxFor(r);
+      if (rw) { rw.className = "rw"; li.appendChild(rw); }
+      ol.appendChild(li);
+    });
+    return ol;
+  }
+
+  // Every staff member votes -- the card's own dulled/filled look follows
+  // my_vote immediately, ahead of the next full reload. A vote publishes
+  // nothing; it never touches a.selected or /api/awards/select.
+  function voteBox(a, card) {
+    var wrap = el("label", "votebox");
+    wrap.title = a.my_vote ? "You voted for this" : "Not voted — vote to nominate it";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!a.my_vote;
+    cb.setAttribute("aria-label", "Vote for “" + a.title + "”");
+    wrap.appendChild(cb);
+    cb.addEventListener("change", function () {
+      var next = cb.checked;
+      cb.disabled = true;
+      WS.postJSON("/api/awards/staff-vote",
+        { edition: EDITION, slug: a.slug, match_key: "", voted: next })
+        .then(function (r) {
+          cb.disabled = false;
+          if (r.ok) {
+            a.my_vote = next;
+            card.classList.toggle("notvoted", !next);
+            wrap.title = next ? "You voted for this" : "Not voted — vote to nominate it";
+          } else {
+            cb.checked = !next;
+            wrap.title = "Couldn't save that (HTTP " + r.status + ") — still " + (a.my_vote ? "voted" : "not voted") + ".";
+          }
+        })
+        .catch(function () {
+          cb.checked = !next;
+          cb.disabled = false;
+          wrap.title = "Couldn't reach the server — nothing changed.";
+        });
+    });
+    return wrap;
+  }
+
+  // Master-only: the real publish checkbox, wired to /api/awards/select and
+  // a.selected -- deliberately independent of the vote toggle above, so a
+  // master may tick an award they did not vote for. vote_count is `null` for
+  // "withheld", not "zero" -- a strict null/undefined check, never `!count`,
+  // or a real 0 would render as nothing and a withheld tally would render as
+  // a lie. This element only ever exists when a.can_select is true.
+  function masterControls(a) {
+    var wrap = el("div", "mastercontrols");
+    var lab = el("label");
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!a.selected;
+    cb.setAttribute("aria-label", "Publish “" + a.title + "” to the public");
+    lab.appendChild(cb);
+    lab.appendChild(document.createTextNode("Publish"));
+    wrap.appendChild(lab);
+    if (a.vote_count !== null && a.vote_count !== undefined) {
+      wrap.appendChild(el("span", "votecount",
+        a.vote_count + (a.vote_count === 1 ? " vote" : " votes")));
+    }
+    cb.addEventListener("change", function () {
+      var next = cb.checked;
+      cb.disabled = true;
+      WS.postJSON("/api/awards/select",
+        { edition: EDITION, slug: a.slug, match_key: "", selected: next })
+        .then(function (r) {
+          cb.disabled = false;
+          if (r.ok) {
+            a.selected = next;
+            lab.title = next ? "Selected — showing to the public" : "Not selected — staff only";
+          } else {
+            cb.checked = !next;
+            lab.title = "Couldn't save that (HTTP " + r.status + ").";
+          }
+        })
+        .catch(function () {
+          cb.checked = !next;
+          cb.disabled = false;
+          lab.title = "Couldn't reach the server — nothing changed.";
+        });
+    });
+    return wrap;
+  }
+
+  // Global to the award TYPE, not this edition -- clearing the fields restores
+  // the generated default for every edition that reads it, this one included.
+  // Reloads the whole grid on success rather than patching the card in place:
+  // a cleared title's restored default is the server's to know, not ours.
+  function renameBox(a) {
+    var d = document.createElement("details");
+    d.className = "shortlist removal renamebox";
+    d.appendChild(el("summary", null, "Edit title"));
+    var box = el("div");
+    d.appendChild(box);
+    d.addEventListener("toggle", function () { if (d.open) fill(); });
+
+    function fill() {
+      WS.clear(box);
+      var f = document.createElement("form");
+      var tid = "aw-title-" + a.slug, sid = "aw-sting-" + a.slug;
+      var labT = el("label", null, "Title"); labT.setAttribute("for", tid);
+      var inpT = document.createElement("input");
+      inpT.type = "text"; inpT.id = tid; inpT.value = a.title; inpT.maxLength = 60;
+      var labS = el("label", null, "Sting"); labS.setAttribute("for", sid);
+      var inpS = document.createElement("input");
+      inpS.type = "text"; inpS.id = sid; inpS.value = a.sting || ""; inpS.maxLength = 160;
+      var btn = el("button", "btn ghost", "Save");
+      btn.type = "submit";
+      var clr = el("button", "btn ghost", "Restore default");
+      clr.type = "button";
+      clr.style.marginLeft = "6px";
+      var st = el("p", "formstat");
+      f.appendChild(labT); f.appendChild(inpT);
+      f.appendChild(labS); f.appendChild(inpS);
+      f.appendChild(btn); f.appendChild(clr); f.appendChild(st);
+      box.appendChild(f);
+
+      function save(title, sting) {
+        btn.disabled = clr.disabled = true;
+        st.className = "formstat work"; st.textContent = "Saving…";
+        WS.postJSON("/api/awards/rename", { slug: a.slug, title: title, sting: sting })
+          .then(function (r) {
+            if (!r.ok) {
+              btn.disabled = clr.disabled = false;
+              st.className = "formstat err";
+              st.textContent = WS.detail(r, "Couldn't save (HTTP " + r.status + ").");
+              return;
+            }
+            st.className = "formstat ok";
+            st.textContent = (title || sting)
+              ? "Saved — reloading…" : "Cleared — restoring the default…";
+            load();
+          })
+          .catch(function () {
+            btn.disabled = clr.disabled = false;
+            st.className = "formstat err";
+            st.textContent = "Couldn't reach the server — nothing changed.";
+          });
+      }
+      f.addEventListener("submit", function (e) {
+        e.preventDefault();
+        save(inpT.value.trim(), inpS.value.trim());
+      });
+      clr.addEventListener("click", function () {
+        inpT.value = ""; inpS.value = "";
+        save("", "");
+      });
+    }
+    return d;
+  }
+
+  // Exactly four direct children max (title, blurb, lead, foot) whether or
+  // not staff controls are present -- .awardcard's subgrid rows assume that
+  // shape (see the CSS comment above .awardcard), so the vote toggle and
+  // badge nest inside the title slot and the master/rename controls nest
+  // inside the foot slot rather than adding rows of their own.
+  function card(a, staff) {
+    var tw = a.tie_width || (a.winners || []).length || 0;
+    var c = el("div", "awardcard" + (tw >= 5 ? " shared" : "")
+      + (staff && !a.my_vote ? " notvoted" : ""));
+
+    var atEl = el("div", staff ? "at has-vote" : "at");
+    atEl.appendChild(document.createTextNode(a.title));
+    if (a.is_renamed) atEl.appendChild(el("span", "pill renamed-badge", "operator title"));
+    if (staff) atEl.appendChild(voteBox(a, c));
+    c.appendChild(atEl);
+
+    c.appendChild(el("div", "ab", a.sting || ""));
+    c.appendChild(leadFor(a));
+
+    var runners = runnersFor(a);
+    if (runners || staff) {
+      var foot = el("div", "afoot");
+      if (runners) foot.appendChild(runners);
+      // can_select, never vote_count -- a master looking at a zero-vote
+      // award still gets the checkbox; deciding from the count would hide
+      // it on exactly the awards nobody has nominated yet.
+      if (staff && a.can_select) foot.appendChild(masterControls(a));
+      if (staff) foot.appendChild(renameBox(a));
+      c.appendChild(foot);
+    }
+    return c;
+  }
+
+  // render:"positions" -- one award, six role slots, not a six-way tie.
+  // tie_width/decisiveness are null on this shape and unused here; slot order
+  // is rank_pos as the API sent it (that's display order, NOT (role,slot)),
+  // so winners render in array order and are never resorted.
+  function positionsPanel(a, staff) {
+    var wrap = el("div", "panel mt16" + (staff && !a.my_vote ? " notvoted" : ""));
+
+    var head = el("div", "head");
+    var left = el("div", "headleft");
+    left.appendChild(document.createTextNode(a.title));
+    if (a.is_renamed) left.appendChild(el("span", "pill renamed-badge", "operator title"));
+    left.appendChild(el("span", "n", a.sting || ""));
+    head.appendChild(left);
+    if (staff) head.appendChild(voteBox(a, wrap));
+    wrap.appendChild(head);
+
+    var body = el("div", "body");
+    var hint = el("p", "hint");
+    hint.style.margin = "0 0 12px";
+    hint.appendChild(document.createTextNode("Each of these is a "));
+    hint.appendChild(el("b", null, "single day's"));
+    hint.appendChild(document.createTextNode(" performance, not a weekend average — the tag "
+      + "on each slot says which day. They are the best mark seen at each position, so they "
+      + "do not add up to a line-up that ever played together, and a Saturday figure and a "
+      + "Sunday one are not measured against the same field."));
+    body.appendChild(hint);
+
+    // slot suffix only for roles that actually have two of them, so "3rd" and
+    // "Sniper" stay bare instead of printing a redundant "#1"
+    var winners = a.winners || [];
+    var counts = {};
+    winners.forEach(function (w) { counts[w.role] = (counts[w.role] || 0) + 1; });
+
+    var grid = el("div", "sixgrid");
+    winners.forEach(function (w) {
+      var s = el("div", "sixslot");
+      s.appendChild(el("span", "sr", w.role + (counts[w.role] > 1 ? " #" + w.slot : "")));
+      var row = el("div", "row1");
+      row.appendChild(el("span", "who", shortName(w.who)));
+      row.appendChild(el("span", "val", w.value));
+      s.appendChild(row);
+      var cx = ctxFor(w);
+      if (cx) s.appendChild(cx);
+      grid.appendChild(s);
+    });
+    body.appendChild(grid);
+
+    if (staff && a.can_select) body.appendChild(masterControls(a));
+    if (staff) body.appendChild(renameBox(a));
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function say(kind, text, retry) {
+    WS.clear(root);
+    var p = el("p", "formstat" + (kind ? " " + kind : ""));
+    p.appendChild(document.createTextNode(text + (retry ? " " : "")));
+    if (retry) {
+      var b = el("button", "btn ghost", "Try again");
+      b.type = "button";
+      b.style.fontSize = "0.66rem";
+      b.style.padding = "3px 10px";
+      b.addEventListener("click", retry);
+      p.appendChild(b);
+    }
+    root.appendChild(p);
+  }
+
+  // One section per group, fixed order, headed to match the copy the page
+  // used to carry statically. Awards land in their group's bucket in the
+  // order they arrive in data.awards -- a partition, not a sort, so a group
+  // interleaved through the raw array still comes out in the server's order.
+  var GROUPS = [
+    ["weekend", "The numbers decide these", null],
+    ["positions", null, null],   // heading lives on the panel itself
+    ["single-match", "Single-match records", "One match, not the weekend. "
+      + "Where the top mark is shared the card says so — a record several "
+      + "people hit isn't one."],
+    ["team", "Club records", null]
+  ];
+
+  function renderCardGroup(label, caption, list, staff) {
+    if (!list.length) return;
+    root.appendChild(el("h3", "staffsub", label));
+    if (caption) {
+      var p = el("p", "hint");
+      p.style.margin = "-4px 0 10px";
+      p.textContent = caption;
+      root.appendChild(p);
+    }
+    var grid = el("div", "awardgrid");
+    list.forEach(function (a) { grid.appendChild(card(a, staff)); });
+    root.appendChild(grid);
+  }
+
+  // render:"positions" is the one award that isn't a card -- the group can in
+  // principle carry more than one (a second role panel needs no code change,
+  // per the contract), and defends against a row missing role/slot by falling
+  // back to an ordinary card rather than a panel full of empty slots.
+  function renderPositionsGroup(list, staff) {
+    if (!list.length) return;
+    var strays = [];
+    list.forEach(function (a) {
+      if (a.render === "positions") {
+        root.appendChild(positionsPanel(a, staff));
+      } else {
+        strays.push(a);
+      }
+    });
+    if (strays.length) renderCardGroup("Best six by position", null, strays, staff);
+  }
+
+  function render(data) {
+    WS.clear(root);
+    var awards = data.awards || [];
+    if (!awards.length) {
+      // Unpublished ships {published:false, awards:[]} on purpose -- no data,
+      // not hidden data. A staff view with zero rows means the generator
+      // hasn't run yet, which is a different sentence.
+      root.appendChild(el("p", "hint", data.is_staff
+        ? "No candidates yet — run the generator for this edition."
+        : "Awards are being configured. Nothing is public yet — check back "
+          + "once staff have picked the winners."));
+      return;
+    }
+    if (data.is_staff) {
+      root.appendChild(el("p", "hint", data.published
+        ? "Awards are public — selected awards below are what visitors see."
+        : "Awards aren't public yet — nothing below is visible to visitors."));
+    }
+    var staff = !!data.is_staff;
+    var buckets = {};
+    awards.forEach(function (a) {
+      (buckets[a.group] || (buckets[a.group] = [])).push(a);
+    });
+    GROUPS.forEach(function (g) {
+      var list = buckets[g[0]] || [];
+      if (g[0] === "positions") renderPositionsGroup(list, staff);
+      else renderCardGroup(g[1], g[2], list, staff);
+    });
+    // A group the table above doesn't know about still ships rather than
+    // silently vanishing -- the contract can grow a fifth section without
+    // this page dropping it on the floor.
+    Object.keys(buckets).forEach(function (k) {
+      if (GROUPS.some(function (g) { return g[0] === k; })) return;
+      renderCardGroup(k, null, buckets[k], staff);
+    });
+  }
+
+  function load() {
+    say("work", "Loading awards…");
+    var url = "/api/awards/candidates?edition=" + encodeURIComponent(EDITION);
+    if (matchKey) url += "&match=" + encodeURIComponent(matchKey);
+    WS.get(url).then(function (r) {
+      if (!r.ok || !r.body) throw new Error("HTTP " + (r.status || 0));
+      render(r.body);
+    }).catch(function (e) {
+      // Never an empty grid on failure -- that reads as "no awards" when it
+      // means "couldn't ask". Say which one this is.
+      say("err", "Couldn't load awards (" + (e.message || "unreachable") + ").", load);
+    });
+  }
+
+  load();
+  }   // end mount()
+
+  var EDITION = "philly-2026";
+  var mainRoot = document.getElementById("awards-api");
+  if (mainRoot) mount(mainRoot, EDITION, null);
+  // Match pages carry their own key on the body so the same shared script
+  // can scope the fetch without a page-specific inline script.
+  var matchRoot = document.getElementById("match-awards");
+  var matchKeyAttr = document.body.getAttribute("data-match-key");
+  if (matchRoot && matchKeyAttr) mount(matchRoot, EDITION, matchKeyAttr);
+})();
+</script>
+<script>
+// ---- Match-page scoreboard: GET /api/stats/match/{key}, gated on
+// stats_published server-side exactly like the season board. Runs only on a
+// match page (needs both #match-scoreboard and the body's data-match-key),
+// so it's a no-op everywhere else this shared script loads.
+//
+// Shape is frozen in MATCH_PAGES_SPEC.md ("the response, frozen") -- read
+// that before touching this. The first draft here read row.name/row.kills
+// against an assumed flat shape; the real response nests every figure under
+// player.total (per-half breakdown under player.halves) and names the player
+// `who`, matching the award cards. published:true with a non-empty players
+// array is not proof the rows carry anything -- rowUsable() below is what
+// makes the honesty guard actually mean something, because published+
+// nonempty passed on the wrong shape too, straight into a full table of
+// em-dashes with blank names. Nothing threw. That's why this checks values,
+// not just presence.
+(function () {
+  "use strict";
+  var WS = window.WS;
+  var root = document.getElementById("match-scoreboard");
+  var matchKey = document.body.getAttribute("data-match-key");
+  if (!root || !WS || !matchKey) return;
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  var STAT_COLS = [
+    ["kills", "K"], ["deaths", "D"], ["kd", "K/D"], ["headshots", "HS"],
+    ["flags", "Flags"], ["assists", "A"], ["damage", "Dmg"], ["best_streak", "Streak"]
+  ];
+
+  function say(kind, text, retry) {
+    WS.clear(root);
+    var p = el("p", "formstat" + (kind ? " " + kind : ""));
+    p.appendChild(document.createTextNode(text + (retry ? " " : "")));
+    if (retry) {
+      var b = el("button", "btn ghost", "Try again");
+      b.type = "button";
+      b.style.fontSize = "0.66rem";
+      b.style.padding = "3px 10px";
+      b.addEventListener("click", retry);
+      p.appendChild(b);
+    }
+    root.appendChild(p);
+  }
+
+  function fmt(total, key) {
+    var v = total[key];
+    return (v === undefined || v === null) ? "—" : String(v);
+  }
+
+  // A row with no usable figures is a load failure, not a zero -- a shape
+  // change (or a row the endpoint emits but never populated) must fail this,
+  // not print a dash-filled line that looks like a real, scoreless player.
+  function rowUsable(p) {
+    var t = p && p.total;
+    if (!p || !p.who || !t || typeof t !== "object") return false;
+    return Object.keys(t).some(function (k) { return t[k] !== null && t[k] !== undefined; });
+  }
+
+  function render(body) {
+    WS.clear(root);
+    var players = (body && body.players) || [];
+    var usable = players.length > 0 && players.every(rowUsable);
+    if (!body || !body.published || !usable) {
+      // Never an empty table -- that reads as "nobody scored" when it means
+      // "not published yet". Same rule the section placeholders use.
+      root.appendChild(el("p", "hint", "Results for this match aren't published yet."));
+      return;
+    }
+    var m = body.match;
+    if (m) {
+      var notes = [];
+      if (m.closed === false) {
+        notes.push("logging ended before this match closed — scores below are from what did record");
+      }
+      if (m.halves && m.halves.length < 2) {
+        notes.push("only half " + m.halves.join(", ") + " is on record");
+      }
+      if (notes.length) root.appendChild(el("p", "hint mt8", notes.join(" · ")));
+    }
+    var table = el("table", "logtable");
+    var thead = el("thead"), htr = el("tr");
+    htr.appendChild(el("th", null, "Player"));
+    htr.appendChild(el("th", null, "Team"));
+    STAT_COLS.forEach(function (c) { htr.appendChild(el("th", "r", c[1])); });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+    var tbody = el("tbody");
+    players.forEach(function (p) {
+      var tr = el("tr");
+      tr.appendChild(el("td", null, p.who));
+      tr.appendChild(el("td", null, p.team || "—"));
+      STAT_COLS.forEach(function (c) { tr.appendChild(el("td", "r", fmt(p.total, c[0]))); });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    root.appendChild(table);
+  }
+
+  function load() {
+    say("work", "Loading the scoreboard…");
+    WS.get("/api/stats/match/" + encodeURIComponent(matchKey)).then(function (r) {
+      if (r.status === 404) {
+        // Different answer from a known match with no rows -- the key itself
+        // isn't in the stats system, which is worth saying plainly rather
+        // than folding into the generic "not published" line.
+        say(null, "This match isn't in the stats system.");
+        return;
+      }
+      if (!r.ok || !r.body) throw new Error("HTTP " + (r.status || 0));
+      render(r.body);
+    }).catch(function (e) {
+      say("err", "Couldn't load the scoreboard (" + (e.message || "unreachable") + ").", load);
+    });
+  }
+
+  load();
+})();
+</script>
+<script>
 // ---- Edition module. The switcher, the data-rendered editions, and the
 // per-edition publication gate. Everything a non-markup edition displays is
 // built from #editions — no per-edition markup exists to fall out of date.
@@ -4232,7 +4844,12 @@ if (el25) {
 // client-side switch is the prototype's stand-in.
 (function () {
   "use strict";
-  var ED = JSON.parse(document.getElementById("editions").textContent);
+  // Match pages share this script but carry no #editions block or edition
+  // chrome (#ed-hero, #edition) at all -- they're edition-locked and don't
+  // go in the switcher, see MATCH_PAGES_SPEC.md "Discovery".
+  var edEl = document.getElementById("editions");
+  if (!edEl) return;
+  var ED = JSON.parse(edEl.textContent);
   var current = ED.default;
   var chipsWrap = document.getElementById("edchips");
   var edSection = document.getElementById("edition");
