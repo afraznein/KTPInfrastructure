@@ -112,8 +112,11 @@ jobs:
 
     strategy:
       fail-fast: false
+      # Scheduled coverage is intentionally preprod-only until the production
+      # (main) leg is explicitly enabled. Called/manual runs retain their
+      # requested infrastructure ref.
       matrix:
-        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["preprod"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
 
     env:
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
