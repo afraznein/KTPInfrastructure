@@ -298,7 +298,8 @@ def check_match_tagging(db, *, match_id: str, half: int) -> list[dict]:
     return out
 
 
-def check_untagged_after_match(db, *, match_id: str, kills_during_match: int,
+def check_untagged_after_match(db, *, match_id: str, kills_before_match: int,
+                               kills_during_match: int,
                                kills_after_match: int) -> dict:
     """Rows created after `KTP_MATCH_END` must not still carry the match.
 
@@ -319,12 +320,21 @@ def check_untagged_after_match(db, *, match_id: str, kills_during_match: int,
     """
     tagged = db.count(
         f"SELECT COUNT(*) FROM hlstats_Events_Frags WHERE match_id = '{match_id}'")
+    total = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
     if kills_after_match == 0:
         return {"code": "match_context_cleared", "status": "not_exercised",
                 "detail":
                     "no kills after the match ended, so nothing could have "
                     "leaked into it — this run does not test context clearing.",
                 "tagged": tagged}
+    expected_total = kills_before_match + kills_during_match + kills_after_match
+    if total != expected_total:
+        return {"code": "match_context_cleared", "status": "pipeline",
+                "detail":
+                    f"{expected_total} kill line(s) across the before/during/after "
+                    f"windows but {total} frag row(s). The post-match probe cannot "
+                    "prove context clearing unless it reaches the database.",
+                "tagged": tagged, "total": total}
     if tagged > kills_during_match:
         return {"code": "match_context_cleared", "status": "pipeline",
                 "detail":
@@ -339,7 +349,7 @@ def check_untagged_after_match(db, *, match_id: str, kills_during_match: int,
                 f"{tagged} tagged row(s) against {kills_during_match} in-match "
                 f"kill(s); {kills_after_match} post-match kill(s) stayed "
                 f"untagged",
-            "tagged": tagged}
+            "tagged": tagged, "total": total}
 
 
 def check_statsme_flushed(db, *, weaponstats_lines: int) -> dict:

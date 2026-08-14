@@ -247,7 +247,7 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
 
 
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
-              map_name: str = "", during_play=None) -> dict:
+              map_name: str = "", during_play=None, after_match=None) -> dict:
     """Take the state machine LIVE, play, and end the match.
 
     This is what makes rows carry `match_id` and `half`. `recordEvent` injects
@@ -290,6 +290,9 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
 
     out["live_to"] = _count(log_path, chr(34) + " killed " + chr(34))
     driver.end_match(1, 0)
+    if after_match is not None:
+        after_match()
+        time.sleep(2.0)
     out["kills_during_match"] = out["live_to"] - out["live_from"]
     print(f"  match ended after {out['kills_during_match']} kills", flush=True)
     return out
@@ -538,11 +541,17 @@ def main() -> int:
                         report["break_scenarios"] = break_scenarios.run_all(
                             handle, args.log)
 
+                    def _stage_post_match_frag():
+                        if assist_drive_amxx is not None:
+                            print("staging post-match context probe", flush=True)
+                            handle.rcon("ktp_ad_postmatch_frag")
+
                     if mh_amxx is not None:
                         report["match"] = run_match(
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
-                            map_name=args.map, during_play=_stage_scenarios)
+                            map_name=args.map, during_play=_stage_scenarios,
+                            after_match=_stage_post_match_frag)
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
                         _stage_scenarios()
@@ -641,6 +650,7 @@ def main() -> int:
             report["match"]["window"] = win
             carried.append(assertions.check_untagged_after_match(
                 db, match_id=m["match_id"],
+                kills_before_match=win["before"],
                 kills_during_match=win["during"],
                 kills_after_match=win["after"]))
 
