@@ -274,7 +274,7 @@ jobs:
           # files over pinned upstream libraries before replaying; production
           # has those libraries in /opt/hlstatsx already, a fresh CI container
           # does not.
-          scripts/assemble_daemon_tree.sh \
+          bash scripts/assemble_daemon_tree.sh \
             ../KTPHLStatsX \
             build/lane-b-artifacts/daemon
           docker run --rm \
