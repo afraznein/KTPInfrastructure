@@ -4660,6 +4660,20 @@ if (el25) {
     if (strays.length) renderCardGroup("Best six by position", null, strays, staff);
   }
 
+  // Staff nominate from this page, not from /admin, and the static site carries
+  // no sign-in of its own -- the session comes from lan-web on the same origin.
+  // Without this a staff member lands on the placeholder and has no way to know
+  // signing in would show them a board to nominate on.
+  function signInPrompt() {
+    var p = el("p", "fineprint");
+    p.appendChild(document.createTextNode("Staff: "));
+    var a = el("a", null, "sign in");
+    a.href = "/login?next=" + encodeURIComponent(location.pathname + "#awards");
+    p.appendChild(a);
+    p.appendChild(document.createTextNode(" to nominate."));
+    return p;
+  }
+
   function render(data) {
     WS.clear(root);
     var awards = data.awards || [];
@@ -4671,6 +4685,7 @@ if (el25) {
         ? "No candidates yet — run the generator for this edition."
         : "Awards are being configured. Nothing is public yet — check back "
           + "once staff have picked the winners."));
+      if (!data.is_staff) root.appendChild(signInPrompt());
       return;
     }
     if (data.is_staff) {
