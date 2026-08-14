@@ -1,0 +1,15 @@
+[Unit]
+Description=KTP HLStatsX ingest reconciliation
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=mysql.service hlstatsx.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hlstatsx-ingest-monitor.py --since 90
+# The script exits 1 on a finding, which makes the unit fail, which fires the
+# existing ktp-systemd-alert OnFailure wiring. That is the whole delivery path --
+# a monitor that only writes to a log nobody opens is the failure it exists to fix.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

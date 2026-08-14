@@ -13,6 +13,11 @@
 
 set -e
 
+# Sibling repo paths, resolved the same way lan-deploy.sh does it. Optional
+# extras (the ingest monitor) are skipped with a warning when this script is
+# run standalone rather than from a checkout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ============================================
 # Configuration
 # ============================================
@@ -156,6 +161,42 @@ apt-get install -y \
     unzip \
     screen \
     tmux
+
+# --------------------------------------------
+# 1b. UDP receive buffers for the stats listener
+# --------------------------------------------
+# hlstats.pl is a single-threaded UDP listener: every game server streams to it
+# via `logaddress` and nothing retries. It asks the kernel for 25MB, but Linux
+# silently clamps that request to rmem_max, and the untuned default is ~208KB --
+# roughly a hundredth of what the daemon asked for, and small enough that any
+# stall while it writes to MySQL drops log lines with no error anywhere.
+#
+# Write a drop-in, NOT /etc/sysctl.conf. Ubuntu 26.04's systemd-sysctl applies
+# only /etc/sysctl.d/*.conf, so values in sysctl.conf revert to kernel defaults
+# on reboot -- and this one reverting looks like nothing at all until a busy
+# match quietly loses frags.
+log_info "Configuring UDP receive buffers for the stats listener..."
+
+cat > /etc/sysctl.d/98-ktp-dataserver.conf << 'EOF'
+# KTP data server — UDP buffers. rmem is the load-bearing half (hlstats.pl on
+# :27500); wmem is carried so a provisioned box matches the live data server.
+net.core.rmem_max=26214400
+net.core.rmem_default=26214400
+net.core.wmem_max=26214400
+net.core.wmem_default=26214400
+EOF
+
+sysctl --system >/dev/null
+
+# Assert rather than announce: the write above can succeed while the value does
+# not take, and the daemon's own warning would then be the only symptom.
+_rmem_live=$(sysctl -n net.core.rmem_max)
+if [ "$_rmem_live" -lt 26214400 ]; then
+    log_error "rmem_max is $_rmem_live after applying the drop-in; expected 26214400."
+    log_error "hlstats.pl will run with a clamped buffer and drop log lines under load."
+    exit 1
+fi
+log_info "UDP receive buffer ceiling: $_rmem_live bytes"
 
 # ============================================
 # 2. Create hltvserver User
@@ -998,6 +1039,47 @@ Manual recovery:
      The script will import the base schema + KTP migrations, generate
      /opt/hlstatsx/scripts/hlstats.conf, and enable hlstatsx.service.
 EOF
+fi
+
+# --------------------------------------------
+# 7b. Ingest reconciliation monitor
+# --------------------------------------------
+# Three defects at the Philadelphia 2026 LAN each destroyed real data and none
+# raised anything at the time: dropped UDP frags, an unseeded hlstats_Actions
+# discarding every objective capture, and a half whose events arrived with no
+# summary rows. This reads the kernel's drop counter, the daemon's warnings and
+# the events-vs-summary comparison, and exits non-zero on a finding so the
+# existing ktp-systemd-alert OnFailure wiring carries it to Discord.
+#
+# It reaches MySQL over the local socket, so it holds no credentials.
+_MON_SRC="$SCRIPT_DIR/../scripts"
+if [ -f "$_MON_SRC/hlstatsx-ingest-monitor.py" ]; then
+    log_info "Installing the HLStatsX ingest monitor..."
+    install -m 755 "$_MON_SRC/hlstatsx-ingest-monitor.py" /usr/local/bin/
+    install -m 644 "$_MON_SRC/systemd/ktp-hlstatsx-ingest-monitor.service" /etc/systemd/system/
+    install -m 644 "$_MON_SRC/systemd/ktp-hlstatsx-ingest-monitor.timer" /etc/systemd/system/
+    mkdir -p /var/lib/ktp
+
+    systemctl daemon-reload
+    systemctl enable ktp-hlstatsx-ingest-monitor.timer >/dev/null
+
+    # At a LAN the cost of not noticing is a whole weekend of stats nobody can
+    # reconstruct, so run it far more often than the league's hourly default.
+    mkdir -p /etc/systemd/system/ktp-hlstatsx-ingest-monitor.timer.d
+    cat > /etc/systemd/system/ktp-hlstatsx-ingest-monitor.timer.d/lan.conf << 'EOF'
+[Timer]
+# Clear the inherited hourly schedule before setting the LAN one -- OnCalendar
+# accumulates across drop-ins, it does not replace.
+OnCalendar=
+OnCalendar=*:0/10
+RandomizedDelaySec=30
+EOF
+    systemctl daemon-reload
+    log_info "Ingest monitor installed (every 10 min; league default is hourly)"
+else
+    log_warn "scripts/hlstatsx-ingest-monitor.py not found beside this script — skipping."
+    log_warn "Run from a KTPInfrastructure checkout to install it, or copy it by hand:"
+    log_warn "  /usr/local/bin/hlstatsx-ingest-monitor.py + the two systemd units."
 fi
 
 # ============================================
