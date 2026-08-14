@@ -76,6 +76,10 @@ on:
 
 jobs:
   integration:
+    # Keep the PR check context stable for branch protection. Scheduled runs
+    # need the target suffix because they have two matrix legs; PR/manual runs
+    # remain exactly `Tier 2 Integration / integration`.
+    name: ${{ github.event_name == 'schedule' && format('integration ({0})', matrix.target_ref) || 'integration' }}
     runs-on: [self-hosted, ktp-tier2]
     timeout-minutes: 30
 

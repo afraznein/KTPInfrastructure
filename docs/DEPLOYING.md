@@ -33,6 +33,11 @@ Servers are defined in `deploy/config.yaml`. Copy from `config.yaml.example` and
 > root `CLAUDE.md` (5 production hosts: Atlanta/Dallas/Denver/NYC baremetal +
 > Chicago VPS — **Denver is production, not a test cluster**, despite older
 > labels in this doc's examples).
+>
+> Branch promotion policy and current preprod gate status are documented in
+> [handover/PREPROD_BRANCHING.md](handover/PREPROD_BRANCHING.md). A preprod
+> branch is an integration gate, not permission to deploy its artifacts to a
+> persistent fleet server.
 
 | Cluster | Ports | Description |
 |---------|-------|-------------|
