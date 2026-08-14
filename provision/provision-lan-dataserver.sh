@@ -178,9 +178,12 @@ apt-get install -y \
 log_info "Configuring UDP receive buffers for the stats listener..."
 
 cat > /etc/sysctl.d/98-ktp-dataserver.conf << 'EOF'
-# KTP data server — UDP receive buffers for hlstats.pl (:27500)
+# KTP data server — UDP buffers. rmem is the load-bearing half (hlstats.pl on
+# :27500); wmem is carried so a provisioned box matches the live data server.
 net.core.rmem_max=26214400
 net.core.rmem_default=26214400
+net.core.wmem_max=26214400
+net.core.wmem_default=26214400
 EOF
 
 sysctl --system >/dev/null
