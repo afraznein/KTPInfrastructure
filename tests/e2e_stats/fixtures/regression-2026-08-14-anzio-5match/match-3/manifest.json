@@ -1,0 +1,83 @@
+{
+  "log": "/tmp/run-anzio-3.log",
+  "emitted": {
+    "kills": 197,
+    "assist": 26,
+    "cap_break": 8,
+    "suicide": 10,
+    "headshot": 22,
+    "damage": 478
+  },
+  "lines_fed": 6827,
+  "sql_errors": [
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Unresolved action 'dod_control_point' (game 'dod') is NOT in hlstats_Actions -- this event is being DISCARDED and will never reach the database. Seed the actions table for this game.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Unresolved action 'kill_streak_3' (game 'dod') is NOT in hlstats_Actions -- this event is being DISCARDED and will never reach the database. Seed the actions table for this game.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 619.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 619.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Query failed twice (#1): Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 619.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 619.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Query failed twice (#2): Data too long for column 'steam_id' at row 1 | ",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Unresolved action 'kill_streak_2' (game 'dod') is NOT in hlstats_Actions -- this event is being DISCARDED and will never reach the database. Seed the actions table for this game.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 640.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 640.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Query failed twice (#3): Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 640.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 640.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Query failed twice (#4): Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 641.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 641.",
+    "2026-08-14 16:45:45:       127.0.0.1:27015 - SQL_ERROR: Query failed twice (#5): Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 701.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 209, <STDIN> line 701."
+  ],
+  "rows": {
+    "assist": {
+      "code": "assist",
+      "ppa": 26,
+      "pa": 0
+    },
+    "cap_break": {
+      "code": "cap_break",
+      "ppa": 0,
+      "pa": 8
+    },
+    "ppa_rows_total": 26,
+    "pa_rows_total": 8,
+    "suicides": 10,
+    "suicide_weapons": "weapon\tCOUNT(*)\nworld\t4\ngrenade2\t2\ngrenade\t4",
+    "actions_seeded": "id\tcode\tfor_PlayerActions\tfor_PlayerPlayerActions\n724\tassist\t0\t1\n725\tcap_break\t1\t0",
+    "action_ids_seen": "actionId\tCOUNT(*)\n725\t8\n724\t26",
+    "frags": 197,
+    "players": 16,
+    "bots": 16,
+    "assist_positions": {
+      "rows": 26,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 25,
+      "max_abs": 2896
+    },
+    "break_positions": {
+      "rows": 8,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 7,
+      "max_abs": 1879
+    }
+  },
+  "log_invariants": {
+    "kills": 197,
+    "assists": 26,
+    "breaks": 8,
+    "headshot_markers": 22,
+    "damage_markers": 478,
+    "assist_violations": [],
+    "break_violations": []
+  },
+  "dump": {
+    "path": "/tmp/fixture-anzio-3/hlstatsx-fixture.sql",
+    "bytes": 1309104,
+    "inserts": 4223
+  }
+}
