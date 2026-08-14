@@ -277,6 +277,18 @@ jobs:
           bash scripts/assemble_daemon_tree.sh \
             ../KTPHLStatsX \
             build/lane-b-artifacts/daemon
+          # The committed regression fixture is a production-derived dump.
+          # Strip every mysqldump data block, leaving DDL only, so the KTP
+          # overlay migrations have their stock HLStatsX base tables. Refuse
+          # to proceed if an INSERT survives the extraction.
+          awk '
+            /^-- Dumping data for table / { in_data=1; next }
+            in_data && /^UNLOCK TABLES;/ { in_data=0; next }
+            !in_data { print }
+          ' tests/e2e_stats/fixtures/regression-2026-08-13-match1/hlstatsx-fixture.sql \
+            > build/lane-b-artifacts/base-schema.sql
+          test "$(grep -c '^INSERT' build/lane-b-artifacts/base-schema.sql || true)" -eq 0
+          test "$(grep -c '^CREATE TABLE' build/lane-b-artifacts/base-schema.sql)" -gt 0
           docker run --rm \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
@@ -285,7 +297,8 @@ jobs:
             ktp-lane-b:ci \
             python3 scripts/replay_corpus.py \
               --hlstats /work/build/daemon/hlstats.pl \
-              --schema /work/build/artifacts/sql/ktp_schema.sql \
+              --schema /work/build/base-schema.sql \
+                       /work/build/artifacts/sql/ktp_schema.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql
 
