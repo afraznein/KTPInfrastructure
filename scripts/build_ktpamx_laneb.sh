@@ -59,6 +59,14 @@ recipe_hash() {
 }
 
 resolve_sha() {
+    # The composite action resolves a moving branch once, keys the cache on the
+    # resulting commit, then passes that immutable SHA here. `git ls-remote`
+    # does not advertise arbitrary object IDs, so accept a full SHA directly;
+    # the clone + checkout below still proves the object exists remotely.
+    if [[ "$REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+        printf '%s\n' "${REF,,}"
+        return
+    fi
     if [ -d "$SRC/.git" ] || [ -d "$SRC" ]; then
         git -C "$SRC" rev-parse "$REF" 2>/dev/null && return
     fi
