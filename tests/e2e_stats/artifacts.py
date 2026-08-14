@@ -115,6 +115,7 @@ class ArtifactSet:
         amxx_ref: str,
         daemon_repo: Path,
         daemon_ref: str,
+        include_plugin: bool = True,
         schema_files: tuple[str, ...] = ("sql/ktp_schema.sql",),
         seed_files: tuple[str, ...] = (
             "sql/migrate_003_assist_action.sql",
@@ -130,17 +131,18 @@ class ArtifactSet:
         build_dir.mkdir(parents=True, exist_ok=True)
         inst = cls(build_dir=build_dir)
 
-        amxx_sha = resolve_ref(amxx_repo, amxx_ref)
+        amxx_sha = resolve_ref(amxx_repo, amxx_ref) if include_plugin else None
         daemon_sha = resolve_ref(daemon_repo, daemon_ref)
 
         # Plugin sources land in ONE directory — see the include-adjacency
         # note in the module docstring.
-        src = build_dir / "plugin-src"
-        inst.plugin_sma = extract(
-            amxx_repo, amxx_ref, "plugins/dod/stats_logging.sma", src / "stats_logging.sma")
-        inst.plugin_inc = extract(
-            amxx_repo, amxx_ref, "plugins/dod/ktp_stats_capture.inc",
-            src / "ktp_stats_capture.inc")
+        if include_plugin:
+            src = build_dir / "plugin-src"
+            inst.plugin_sma = extract(
+                amxx_repo, amxx_ref, "plugins/dod/stats_logging.sma", src / "stats_logging.sma")
+            inst.plugin_inc = extract(
+                amxx_repo, amxx_ref, "plugins/dod/ktp_stats_capture.inc",
+                src / "ktp_stats_capture.inc")
 
         inst.hlstats_pl = extract(
             daemon_repo, daemon_ref, "scripts/hlstats.pl", build_dir / "hlstats.pl")

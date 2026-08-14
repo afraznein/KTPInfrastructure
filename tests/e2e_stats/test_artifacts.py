@@ -119,6 +119,22 @@ def test_collect_at_an_older_ref_omits_the_include(amxx_repo, daemon_repo, tmp_p
         )
 
 
+def test_collect_without_plugin_does_not_require_amxx_sources(
+        amxx_repo, daemon_repo, tmp_path):
+    """Corpus replay is daemon-only. It must work even when the counterpart
+    AMXX ref predates stats capture (or is otherwise irrelevant to replay)."""
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="no/such/branch",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+        include_plugin=False,
+    )
+    assert arts.plugin_sma is None
+    assert arts.plugin_inc is None
+    assert arts.hlstats_pl.is_file()
+    assert arts.provenance["amxx"]["sha"] is None
+
+
 def test_missing_ref_is_a_build_error(amxx_repo, daemon_repo, tmp_path):
     with pytest.raises(BuildError):
         ArtifactSet.collect(

@@ -92,6 +92,7 @@ def main() -> int:
             args.out,
             amxx_repo=args.amxx_repo, amxx_ref=args.amxx_ref,
             daemon_repo=args.daemon_repo, daemon_ref=args.daemon_ref,
+            include_plugin=not args.no_plugin,
             schema_files=tuple(args.schema),
             seed_files=tuple(args.seed),
         )
@@ -100,7 +101,7 @@ def main() -> int:
             ("KTPAMXX", arts.provenance["amxx"]["sha"]),
             ("KTPHLStatsX", arts.provenance["daemon"]["sha"]),
         ):
-            print(f"  {label:14} {sha[:12]}")
+            print(f"  {label:14} {sha[:12] if sha else 'not collected'}")
 
         if args.amxxpc:
             out = arts.compile_plugin(amxxpc=args.amxxpc, include_dir=args.includes)
