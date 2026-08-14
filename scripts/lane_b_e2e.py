@@ -39,6 +39,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.e2e_stats import (assertions, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
+from tests.e2e_stats.table_report import (changed_table_samples,  # noqa: E402
+                                          render_markdown, table_counts)
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
@@ -399,6 +401,8 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=27015)
     ap.add_argument("--log", type=Path, default=Path("/work/build/lane-b-e2e.log"))
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
+    ap.add_argument("--summary-out", type=Path,
+                    default=Path("/work/build/lane-b-summary.md"))
     args = ap.parse_args()
 
     report: dict = {"map": args.map, "play_seconds": args.play_seconds}
@@ -420,6 +424,9 @@ def main() -> int:
         report["schema_repairs"] = HlstatsDaemon.repair_reconstructed_schema(db)
         HlstatsDaemon.ensure_server_row(db, address="127.0.0.1", port=args.port,
                                         min_players=2)
+        # Capture the seeded/configuration baseline. The final report then
+        # samples every table that gained rows during this specific match.
+        before_counts = table_counts(db)
 
         # Containment, before anything boots. This lane drives a REAL match
         # through the real state machine, so the Discord and HLTV code paths
@@ -625,6 +632,17 @@ def main() -> int:
                 f"{len(benign_sql)} known all-bot SQL artifact(s):\n  "
                 + "\n  ".join(benign_sql[:3]))
 
+        # Reassign after daemon classification so known all-bot SQL gaps are
+        # present in both JSON and Markdown, not just console output.
+        report["coverage_gaps"] = gaps + gaps_extra
+        if not any(check.get("status") == "ok" for check in carried):
+            failures.append(
+                "coverage floor: the match produced no successful carried "
+                "assertion; a green run would certify no stats behavior"
+            )
+
+        report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
+
     report["failures"] = failures
     print("\n=== emitted in log vs recorded in db ===")
     e, rows = report["emitted"], report["rows"]
@@ -657,7 +675,10 @@ def main() -> int:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, default=str))
+    args.summary_out.parent.mkdir(parents=True, exist_ok=True)
+    args.summary_out.write_text(render_markdown(report), encoding="utf-8")
     print(f"wrote {args.out}")
+    print(f"wrote {args.summary_out}")
     return 1 if failures else 0
 
 

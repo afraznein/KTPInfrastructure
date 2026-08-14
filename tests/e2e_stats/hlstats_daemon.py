@@ -267,6 +267,10 @@ class HlstatsDaemon:
             # $g_rcon = 0; these keep it off by configuration too.
             "BroadCastEvents": "0",
             "PlayerEvents": "0",
+            # Match preprod migration 009. Even though this server is isolated,
+            # the regression must exercise the intended no-connect-announcement
+            # configuration rather than silently restoring the old default.
+            "ConnectAnnounce": "0",
         }
         for parameter, value in config.items():
             db.sql(
