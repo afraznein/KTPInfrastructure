@@ -29,14 +29,15 @@
 #     protection on `main` (flipped from warn-only after 2 weeks green-on-main,
 #     original design decision 2026-04-24, applied 2026-05-18) and, since the
 #     preprod/prod gate was introduced, on `preprod` too.
-#   - Nightly via schedule (09:00 UTC), matrixed over [main, preprod] — keeps
-#     both the live and staged plugin stacks exercised between PRs; paired
+#   - Nightly via schedule (09:00 UTC), targeting preprod only while the staged
+#     stack is being proven. The main leg remains paused until production
+#     enablement; paired
 #     with scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
 #     missing/stale/failed last-run marker so a dead runner is not silently
 #     green. Schedule triggers always fire from the default branch's copy of
 #     this file (a GitHub Actions constraint — schedules can't run from a
-#     non-default branch), so the [main, preprod] coverage comes from the
-#     matrix explicitly checking out each ref, not from the trigger itself.
+#     non-default branch), so preprod coverage comes from the matrix explicitly
+#     checking out that ref, not from the trigger itself.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
@@ -77,7 +78,7 @@ on:
 jobs:
   integration:
     # Keep the PR check context stable for branch protection. Scheduled runs
-    # need the target suffix because they have two matrix legs; PR/manual runs
+    # need the target suffix so their ref is explicit; PR/manual runs
     # remain exactly `Tier 2 Integration / integration`.
     name: ${{ github.event_name == 'schedule' && format('integration ({0})', matrix.target_ref) || 'integration' }}
     runs-on: [self-hosted, ktp-tier2]
@@ -85,13 +86,14 @@ jobs:
 
     strategy:
       fail-fast: false
-      # Only the nightly schedule matrixes over both branches; PR and manual
-      # dispatch runs stay single-leg against whatever ref triggered them.
+      # Only the nightly schedule uses an explicit target matrix. It is
+      # preprod-only while staged testing is underway; PR and manual dispatch
+      # runs stay single-leg against whatever ref triggered them.
       # max-parallel: 1 — one hlds_linux port on the self-hosted runner, see
       # the concurrency block below for why that also needs matrix.target_ref.
       max-parallel: 1
       matrix:
-        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main","preprod"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["preprod"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
 
     # Concurrency: only one Tier 2 run at a time per (triggering ref, matrix
     # target). Job-level (not workflow-level) because it needs `matrix`,
@@ -133,7 +135,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           # matrix.target_ref is always the triggering ref except on schedule,
-          # where it's explicitly main or preprod (see strategy.matrix above —
+          # where it is explicitly preprod (see strategy.matrix above). The
           # schedule always *fires* from the default branch's copy of this
           # file, but each matrix leg checks out its own target content).
           # Leave PR/manual checkout at the action's event-aware default. In a

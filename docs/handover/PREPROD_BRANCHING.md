@@ -39,12 +39,17 @@ KTPInfrastructure `preprod` contains:
 
 - the selected Lane B and stats-capture work;
 - Tier 2 PR triggers for both `main` and `preprod`;
-- nightly Tier 2 matrices over `main` and `preprod`, serialized on the
-  self-hosted runner;
-- nightly Lane B matrices over `main` and `preprod`;
+- nightly Tier 2 coverage for `preprod`, serialized on the self-hosted runner;
+- nightly Lane B coverage for `preprod`;
 - a reusable `lane: corpus` workflow that assembles the delta-only HLStatsX
   daemon, derives zero-data base DDL from the committed production fixture,
   and replays the deterministic corpus.
+
+The scheduled `main` legs are intentionally paused while the preprod suite is
+proven. PR gates continue to run for both `main` and `preprod`. Re-enable the
+`main` nightly legs only as an explicit production-readiness change. GitHub
+Actions schedules execute the workflow copy on the default branch, so this
+preprod-only schedule takes effect after the workflow is promoted to `main`.
 
 The caller workflows were merged through green PRs:
 
@@ -111,8 +116,8 @@ it disables only the player-facing connect announcement.
 
 ## Verification still pending
 
-- Confirm the first scheduled Tier 2 and Lane B runs after these changes each
-  show separate `main` and `preprod` legs.
+- After the workflow is promoted to the default branch, confirm the first
+  scheduled Tier 2 and Lane B runs each show a `preprod` leg and no `main` leg.
 - After branch protection is installed, verify a failing corpus replay blocks
   merges into both `preprod` and `main`.
 - After access is granted, verify `preprod` exists in all three blocked repos.
