@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -37,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tests.e2e_stats import (assertions, break_scenarios,  # noqa: E402
+from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
 from tests.e2e_stats.table_report import (changed_table_samples,  # noqa: E402
                                           render_markdown, table_counts)
@@ -133,6 +134,7 @@ def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
 
 def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
                server_cfg_fixture: Path, break_drive: Path | None = None,
+               assist_drive: Path | None = None,
                matchhandler: Path | None = None) -> tuple[EphemeralTree, list[str]]:
     """Lay the branch's artifacts over the image's server tree.
 
@@ -169,6 +171,11 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
         tree.overlay_file(break_drive,
                           "dod/addons/ktpamx/plugins/KTPBreakDrive.amxx")
         plugins_txt = plugins_txt.rstrip() + "\nKTPBreakDrive.amxx\n"
+
+    if assist_drive is not None:
+        tree.overlay_file(assist_drive,
+                          "dod/addons/ktpamx/plugins/KTPAssistDrive.amxx")
+        plugins_txt = plugins_txt.rstrip() + "\nKTPAssistDrive.amxx\n"
 
     tree.write_text(plugins_rel, plugins_txt)
 
@@ -379,6 +386,9 @@ def main() -> int:
     ap.add_argument("--break-drive-sma", type=Path,
                     default=Path("/work/tests/e2e_stats/diagnostics/KTPBreakDrive.sma"),
                     help="diagnostic that stages the Unit 3 cap-break scenarios")
+    ap.add_argument("--assist-drive-sma", type=Path,
+                    default=Path("/work/tests/e2e_stats/diagnostics/KTPAssistDrive.sma"),
+                    help="diagnostic that stages the degraded projectile-killer assist scenario")
     ap.add_argument("--matchhandler-src", type=Path,
                     default=Path("/src/KTPMatchHandler"),
                     help="KTPMatchHandler checkout; compiled with "
@@ -460,10 +470,19 @@ def main() -> int:
                 scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
             print(f"compiled {drive_amxx.name}", flush=True)
 
+        assist_drive_amxx = None
+        if args.assist_drive_sma.is_file():
+            assist_drive_amxx = compile_sma(
+                args.assist_drive_sma, Path("/tmp/KTPAssistDrive.amxx"),
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+            print(f"compiled {assist_drive_amxx.name}", flush=True)
+
         tree, dropped = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
                                    plugin=args.plugin, config_dir=args.config_dir,
                                    server_cfg_fixture=args.server_cfg,
-                                   break_drive=drive_amxx, matchhandler=mh_amxx)
+                                   break_drive=drive_amxx,
+                                   assist_drive=assist_drive_amxx,
+                                   matchhandler=mh_amxx)
         report["containment"]["plugins_dropped"] = dropped
         if dropped:
             print(f"containment: dropped {dropped} from the plugin list", flush=True)
@@ -509,6 +528,10 @@ def main() -> int:
                         report["assists_before_match"] = _count(
                             args.log, 'triggered "assist"')
                     def _stage_scenarios():
+                        if assist_drive_amxx is not None:
+                            print("staging degraded-killer assist scenario", flush=True)
+                            report["assist_scenario"] = assist_scenario.run(
+                                handle, args.log)
                         if drive_amxx is None:
                             return
                         print("staging cap-break scenarios", flush=True)
@@ -549,9 +572,17 @@ def main() -> int:
             # "frag_context" marker every kill now emits.
             "headshot": log_text.count('(headshot "1")'),
             "damage": log_text.count('triggered "damage"'),
+            "flag_capture": sum(
+                1 for line in log_text.splitlines()
+                if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
+            ),
+            "flag_position": log_text.count("KTP_FLAG_POSITION "),
+            "position_sample": log_text.count('triggered "position_sample"'),
         }
         report["lines_fed"] = daemon.lines_fed
-        real_sql, benign_sql = daemon.classify_sql_errors()
+        real_sql, benign_sql = daemon.classify_sql_errors(
+            expected_unresolved_actions={"assist"}
+            if report.get("kill_switch") else set())
         report["sql_errors"] = real_sql[:20]
         report["sql_errors_benign"] = benign_sql[:5]
         report["rows"] = assertions.summarise(db)
@@ -577,7 +608,16 @@ def main() -> int:
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
+            assertions.check_flag_captures(
+                db, emitted=report["emitted"]["flag_capture"]),
+            assertions.check_flag_positions(
+                db, emitted=report["emitted"]["flag_position"]),
+            assertions.check_position_samples(
+                db, emitted=report["emitted"]["position_sample"]),
+            assertions.check_capture_buffer(log_text),
         ]
+        if report.get("assist_scenario"):
+            carried.append(report["assist_scenario"])
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")
@@ -586,6 +626,8 @@ def main() -> int:
 
         if report.get("match"):
             m = report["match"]
+            carried.append(assertions.check_match_players(
+                db, expected=args.per_team * 2))
             carried += assertions.check_match_tagging(
                 db, match_id=m["match_id"], half=m["half"])
             carried.append(assertions.check_statsme_flushed(

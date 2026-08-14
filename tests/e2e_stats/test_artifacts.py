@@ -72,6 +72,7 @@ def daemon_repo(tmp_path):
         (8, "position_samples"),
         (9, "disable_connect_announcements"),
         (10, "flag_captures"),
+        (11, "match_player_identity_width"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -90,7 +91,7 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_sma.is_file()
     assert arts.plugin_inc.is_file()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 7
+    assert len(arts.schema_sql) == 8
     assert len(arts.seed_sql) == 2
 
 
@@ -174,7 +175,8 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_007_break_context.sql",
                  "migrate_008_position_samples.sql",
                  "migrate_009_disable_connect_announcements.sql",
-                 "migrate_010_flag_captures.sql"):
+                 "migrate_010_flag_captures.sql",
+                 "migrate_011_match_player_identity_width.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 

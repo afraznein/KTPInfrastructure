@@ -256,17 +256,28 @@ def _with_stdout(tmp_path, body):
     return d
 
 
-def test_a_bot_steam_id_overflow_is_classified_benign(tmp_path):
-    """ktp_match_players.steam_id is VARCHAR(32) and a bot's synthetic id is 36
-    characters. Real Steam IDs are ~19, so production never hits it — failing
-    every nightly on it would be a red that means nothing."""
+def test_a_bot_steam_id_overflow_is_now_a_real_failure(tmp_path):
+    """Migration 011 supports full bot ids, so overflow means it was missed."""
     d = _with_stdout(tmp_path,
                      "DBD::mysql::db do failed: Data too long for column "
                      "'steam_id' at row 1 at .//HLstats.plib line 202.\n")
     real, benign = d.classify_sql_errors()
+    assert len(real) == 1
+    assert benign == []
+
+
+def test_expected_assist_probe_is_scoped_explicitly(tmp_path):
+    d = _with_stdout(
+        tmp_path,
+        "SQL_ERROR: Unresolved action 'assist' (game 'dod') is NOT in hlstats_Actions\n")
+    real, benign = d.classify_sql_errors(
+        expected_unresolved_actions={"assist"})
     assert real == []
     assert len(benign) == 1
-    assert "VARCHAR(32)" in benign[0], "the reason must travel with the error"
+
+    real, benign = d.classify_sql_errors()
+    assert len(real) == 1
+    assert benign == []
 
 
 def test_an_unknown_sql_error_stays_real(tmp_path):
@@ -282,7 +293,7 @@ def test_both_kinds_are_separated(tmp_path):
                      "DBD::mysql::db do failed: Data too long for column 'steam_id'\n"
                      "DBD::mysql::st execute failed: Table 'x' doesn't exist\n")
     real, benign = d.classify_sql_errors()
-    assert len(real) == 1 and len(benign) == 1
+    assert len(real) == 2 and benign == []
 
 
 def test_a_clean_run_classifies_to_nothing(tmp_path):
