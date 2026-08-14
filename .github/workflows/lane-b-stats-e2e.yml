@@ -274,6 +274,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_007_break_context.sql \
                        /work/build/artifacts/sql/migrate_008_position_samples.sql \
                        /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
+                       /work/build/artifacts/sql/migrate_010_flag_captures.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
               --map "$MAP_NAME" --per-team 8 --play-seconds "$PLAY_SECONDS" \
@@ -330,6 +331,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_007_break_context.sql \
                        /work/build/artifacts/sql/migrate_008_position_samples.sql \
                        /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
+                       /work/build/artifacts/sql/migrate_010_flag_captures.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql
 
