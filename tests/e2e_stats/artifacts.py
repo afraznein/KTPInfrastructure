@@ -123,6 +123,7 @@ class ArtifactSet:
             "sql/migrate_007_break_context.sql",
             "sql/migrate_008_position_samples.sql",
             "sql/migrate_009_disable_connect_announcements.sql",
+            "sql/migrate_010_flag_captures.sql",
         ),
         seed_files: tuple[str, ...] = (
             "sql/migrate_003_assist_action.sql",

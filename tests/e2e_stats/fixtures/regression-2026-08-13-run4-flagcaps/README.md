@@ -1,9 +1,9 @@
-# Run 4, replayed with migrate_009 applied — first fixture with real flag captures
+# Run 4, replayed with migrate_010 applied — first fixture with real flag captures
 
 Same source log as `regression-2026-08-13-run4-position5s/game.log.gz` (the
 real 16-bot Lane B match validating the 5s position-broadcast interval),
 replayed deterministically through the daemon a second time
-(`scripts/replay_and_dump.py`) after `migrate_009_flag_captures.sql` and its
+(`scripts/replay_and_dump.py`) after `migrate_010_flag_captures.sql` and its
 `doEvent_KTPFlagCapture` handler landed, seeded this time.
 
 Same reason the original run wasn't just re-dumped in place: the daemon code
@@ -16,7 +16,7 @@ for — no bots, no dice-rolling, same log in, same rows out.
 original match-1 fixture's 1731 — now also carries `ktp_damage_events`,
 `ktp_position_samples`, and `ktp_flag_captures`, none of which existed when
 that one was taken). 38 `ktp_flag_captures` rows — same count validated
-against the raw log when `migrate_009` was built (38/38, zero loss).
+against the raw log when `migrate_010` was built (38/38, zero loss).
 
 Used to validate `scripts/composite_v2.py`'s move from raw-log regex parsing
 to querying `ktp_flag_captures` directly:
