@@ -110,27 +110,64 @@ def _esc(s):
             .replace('"', "&quot;"))
 
 
+def _half_table(teams, cols, decides=False):
+    """Two club rows against per-half columns.
+
+    `cols` is [(heading, [club_a, club_b] | None), ...]; a None column prints an
+    em dash, which is how a half nobody has a figure for renders without the
+    reader taking a blank for a nil.
+
+    `decides` puts gold on whoever leads the last column, and belongs only to
+    the table that settles the match. Flags captured led a different club in
+    four matches -- all of them one- or two-flag margins -- so a gold row there
+    would contradict the score panel directly above it.
+    """
+    a, b = teams
+    final = cols[-1][1] if decides else None
+    win = "" if final is None or final[0] == final[1] else ("a" if final[0] > final[1] else "b")
+
+    def cells(i):
+        return "".join('<td class="r%s">%s</td>'
+                       % ("" if v else " na", _esc(v[i]) if v else "&mdash;")
+                       for _h, v in cols)
+    return (
+        '<table class="scoretable"><thead><tr><th></th>%s</tr></thead><tbody>'
+        '<tr class="%s"><td>%s</td>%s</tr>'
+        '<tr class="%s"><td>%s</td>%s</tr></tbody></table>'
+        % ("".join('<th class="r">%s</th>' % h for h, _v in cols),
+           "m1" if win == "a" else "", _esc(a), cells(0),
+           "m1" if win == "b" else "", _esc(b), cells(1)))
+
+
+def _points_table(teams, points):
+    """The match score -- team score, what the match was decided on.
+
+    Half 2 is the half's own points, not the cumulative figure the in-game
+    scoreboard shows at the whistle; that cumulative reading is the Final
+    column. lan-stats/build_match_extras.py has the derivation.
+    """
+    if points is None:
+        return ('<p class="hint">Not recorded — no score survived for this '
+                'match.</p>')
+    table = _half_table(teams, [("Half 1", points["h1"]), ("Half 2", points["h2"]),
+                                ("Final", points["total"])], decides=True)
+    if points["total"] is None:
+        table += ('<p class="hint mt16">Half 2 never started — this match was '
+                  'abandoned at the break, so there is no final.</p>')
+    return table
+
+
 def _score_table(teams, score):
-    """A minimal, honest scoreboard-shaped table -- score is [a, b] by index
-    into `teams`, or None for the one match with no close event."""
+    """Flags captured per half -- NOT the match score, which is above it on the
+    page. These are capture events per club; both figures are real and they do
+    not track each other, so the panel headings have to keep them apart.
+    """
     if score is None:
-        return ('<p class="hint">Score not recorded — logging ended before this '
+        return ('<p class="hint">Not recorded — logging ended before this '
                 'match closed. What survived (half boundaries, players, the map) '
                 'is above; the flag count is not.</p>')
-    a, b = teams
-    sa, sb = score["final"]
-    h1a, h1b = score["h1"]
-    h2a, h2b = score["h2"]
-    win = "a" if sa > sb else ("b" if sb > sa else "")
-    return (
-        '<table class="logtable">'
-        '<thead><tr><th></th><th class="r">Half 1</th><th class="r">Half 2</th>'
-        '<th class="r">Final</th></tr></thead><tbody>'
-        '<tr class="%s"><td>%s</td><td class="r">%d</td><td class="r">%d</td><td class="r">%d</td></tr>'
-        '<tr class="%s"><td>%s</td><td class="r">%d</td><td class="r">%d</td><td class="r">%d</td></tr>'
-        '</tbody></table>'
-        % ("m1" if win == "a" else "", _esc(a), h1a, h2a, sa,
-           "m1" if win == "b" else "", _esc(b), h1b, h2b, sb))
+    return _half_table(teams, [("Half 1", score["h1"]), ("Half 2", score["h2"]),
+                               ("Final", score["final"])])
 
 
 VETO_ACTION_WORD = {"ban": "banned", "pick": "picked", "decider": "decider"}
@@ -214,7 +251,12 @@ def build_match_pages(dist, data, editions):
             '<p class="lede">%s &middot; %s &middot; %s</p>'
             '</header>'
             '%s'
-            '<div class="panel mt16"><div class="head">Score</div><div class="body">%s</div></div>'
+            '<div class="panel mt16"><div class="head">Score'
+            '<span class="n">team score &middot; per half</span></div>'
+            '<div class="body">%s</div></div>'
+            '<div class="panel mt16"><div class="head">Flags captured'
+            '<span class="n">per half &middot; not the match score</span></div>'
+            '<div class="body">%s</div></div>'
             '%s'
             '<div class="panel mt16"><div class="head">Demos</div><div class="body">%s</div></div>'
             '<section style="padding-top:32px"><div class="sec-head"><h2>Scoreboard</h2></div>'
@@ -226,7 +268,8 @@ def build_match_pages(dist, data, editions):
             'WSDoD Philly 2026 &middot; <a href="../../">dodworldseries.com</a></p></footer>'
             '</div>'
             % (_esc(teams[0]), _esc(teams[1]), _esc(ex["map"]), day, _esc(ex["round"]),
-               note_html, _score_table(teams, ex["score"]),
+               note_html, _points_table(teams, ex.get("points")),
+               _score_table(teams, ex["score"]),
                _veto_list(veto_steps, ts_name, ls_name), _demo_list(demo_urls.get(mid)))
         )
 

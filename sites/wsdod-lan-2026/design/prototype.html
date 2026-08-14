@@ -302,6 +302,18 @@ section.folded > .sec-body { display: none; }
 .mnote { margin-left: 5px; color: var(--amber); cursor: help; font-size: 0.8em; }
 .mnote:focus { outline: 1px solid var(--amber); outline-offset: 2px; }
 .logtable th.r { text-align: right; padding-right: 24px; }
+/* Match pages, not the Results log: it sits in a narrow panel, so it must not
+   inherit .logtable's 520px floor, and its winner row needs a rule of its own —
+   .m1 is only defined for .placings and .leader. */
+.scoretable { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.scoretable th { text-align: left; color: var(--faint); font-weight: 400; font-size: 0.68rem; letter-spacing: 1.4px; text-transform: uppercase; padding: 6px 12px 6px 0; border-bottom: 1px solid var(--border); }
+.scoretable td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); color: var(--dim); }
+.scoretable tr:last-child td { border-bottom: none; }
+.scoretable td.r, .scoretable th.r { text-align: right; padding-right: 0; font-variant-numeric: tabular-nums; }
+.scoretable tr.m1 td { color: var(--gold); font-weight: 700; }
+/* a half with no figure at all — kept dim even on the gold row, so a match
+   abandoned at the break can't read as a nil score for that half. */
+.scoretable td.na, .scoretable tr.m1 td.na { color: var(--faint); font-weight: 400; }
 /* demo cells — the static span is only the no-JS state; the demo-links
    script replaces it with one link per file from #demo-urls. */
 .demo-pend { display: inline-block; color: var(--faint); border: 1px dashed var(--border); border-radius: 999px; padding: 0 9px; font-size: 0.7rem; white-space: nowrap; cursor: help; }
