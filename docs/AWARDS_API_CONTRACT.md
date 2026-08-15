@@ -249,7 +249,24 @@ form-post shape and their auth; they now also write `lan_admin_audit` (actions
 `POST /api/admin/staff`, which reads as a third endpoint — there isn't one, and a
 second way in would be a second thing to get the lockout guard right in.)*
 🔑 Bootstrap admins from `LAN_ADMIN_DISCORD_IDS` remain unrevocable — that is the
-lockout guard, not a bug.
+lockout guard, not a bug. *(Amended 2026-08-15: revoking one now returns 400 instead
+of running a DELETE that could never match. It used to write a `staff_remove` row for
+the attempt, so the log asserted a revocation that never happened — and a log that
+records changes it did not make is worse than one that records none. Revoking an id
+that was never granted likewise writes nothing.)*
+
+## What else writes `lan_admin_audit`
+
+`publish_flag` — `POST /admin/publish`, target = the flag name, old/new = `"0"`/`"1"`.
+Only on a real change, so a double-click is one decision rather than two. Every
+individual award tick was logged while "made the whole board public" was not.
+
+`award_close` — `POST /api/awards/{award_id}/close`, target = the award slug. Owner
+only, one-way, and it publishes the tally; a repeat close short-circuits and writes
+nothing.
+
+Not audited, deliberately: `POST /admin/audit/undo` writes the *result* log, which has
+its own record and an undo of its own.
 
 ## `GET /admin/audit-log` — staff only
 

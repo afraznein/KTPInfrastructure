@@ -1,8 +1,12 @@
 """The staff action log and the two grants that now land in it."""
 import datetime
 
+from dataclasses import replace
+
 import pytest
 
+from app import config
+from app.routes import admin_routes
 from conftest import sign_in
 
 DID = 218890328273321984
@@ -94,4 +98,35 @@ def test_revoking_yourself_is_still_refused_and_audits_nothing(client, audit_db)
 def test_a_non_admin_cannot_grant_and_leaves_no_trace(client, audit_db):
     sign_in(client, OTHER)
     assert client.post("/admin/staff/add", data={"discord_id": "1"}).status_code == 403
+    assert audit_db.writes == []
+
+
+# ── the lockout guard, and what the log is allowed to claim ───────────────
+def test_a_config_admin_cannot_be_revoked_and_no_row_claims_otherwise(
+        client, audit_db, monkeypatch):
+    """The DELETE could never reach an env admin, but it used to audit the
+    attempt as a revocation — a log asserting a change that never happened."""
+    monkeypatch.setattr(admin_routes, "settings",
+                        replace(config.settings, admin_discord_ids=frozenset({OTHER})))
+    as_staff(audit_db, client)
+    r = client.post("/admin/staff/remove", data={"discord_id": str(OTHER)})
+    assert r.status_code == 400
+    assert audit_db.writes == []
+
+
+def test_revoking_someone_who_was_never_granted_writes_nothing(client, audit_db):
+    as_staff(audit_db, client)
+    audit_db.add("SELECT label FROM lan_admins", None)
+    r = client.post("/admin/staff/remove", data={"discord_id": str(OTHER)},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert audit_db.writes == []
+
+
+@pytest.mark.parametrize("bad", ["", "  ", "not-a-number", "12x", "-1"])
+def test_a_non_numeric_revoke_is_a_400_not_a_500(client, audit_db, bad):
+    """/staff/add validated its input and /staff/remove did not, so the same
+    typo was a clean refusal on one route and a traceback on the other."""
+    as_staff(audit_db, client)
+    assert client.post("/admin/staff/remove", data={"discord_id": bad}).status_code == 400
     assert audit_db.writes == []

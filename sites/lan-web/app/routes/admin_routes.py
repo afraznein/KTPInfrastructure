@@ -46,6 +46,7 @@ def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
     }
     db_rows = {int(r["discord_id"]): r for r in auth.list_db_admins()}
     env_ids = set(settings.admin_discord_ids)
+    master_ids = set(settings.master_admin_discord_ids)
     admins = []
     for did in sorted(env_ids | set(db_rows)):
         rp = roster.get(did)
@@ -57,6 +58,13 @@ def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
             "label": label,
             "team": rp["team"] if rp else None,
             "source": "config" if is_env else "web",
+            # Masters alone can tick an award onto the public board, and the row
+            # looked identical to ordinary staff. Env-only, so there is nothing
+            # to grant here — it is reported, not editable.
+            "is_master": did in master_ids,
+            # Only the when; who granted it is a bare snowflake here and a named
+            # actor in the staff action log.
+            "granted_at": row.get("added_at") if row else None,
             "is_self": did == me,
             "removable": (not is_env) and did != me,
         })
@@ -115,7 +123,13 @@ async def admin_publish(request: Request):
     flag = (f.get("flag") or "").strip()
     if flag not in seeding.PUBLISH_FLAGS:
         raise HTTPException(400, "Unknown publish target.")
-    seeding.set_setting(flag, "1" if f.get("publish") else "0")
+    was = seeding.is_published(flag)
+    now = bool(f.get("publish"))
+    seeding.set_setting(flag, "1" if now else "0")
+    # Every individual award tick is logged; "made the whole board public" is the
+    # larger act and was the one with no record.
+    if now != was:
+        admin_audit.log_request(request, "publish_flag", flag, int(was), int(now))
     target = common.safe_next(f.get("next")) or str(request.url_for("admin"))
     return RedirectResponse(target, status_code=303)
 
@@ -257,14 +271,23 @@ async def admin_grant(request: Request):
 async def admin_revoke(request: Request):
     me = auth.require_admin(request)
     f = await request.form()
-    did = int(f["discord_id"])
+    raw = (f.get("discord_id") or "").strip()
+    if not raw.isdigit():
+        raise HTTPException(400, "A numeric Discord ID is required.")
+    did = int(raw)
     if did == int(me):
         raise HTTPException(400, "You can't revoke your own staff access.")
-    # Config (env) admins aren't in this table, so this can't touch them.
+    # Config (env) admins aren't in this table, so the DELETE could never touch
+    # them — but it also could not say so, and audited the refusal as a
+    # revocation. Refuse loudly instead; the lockout guard is unchanged.
+    if did in settings.admin_discord_ids:
+        raise HTTPException(400, "Config admins are set in the server environment "
+                                 "and can't be revoked here.")
     prior = db.query_one("SELECT label FROM lan_admins WHERE discord_id=%s", (did,))
+    if prior is None:  # nothing to revoke; an audit row here asserts a change that never happened
+        return RedirectResponse(request.url_for("admin"), status_code=303)
     db.execute("DELETE FROM lan_admins WHERE discord_id=%s", (did,))
-    admin_audit.log_request(request, "staff_remove", did,
-                            prior["label"] if prior else None, None)
+    admin_audit.log_request(request, "staff_remove", did, prior["label"], None)
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 

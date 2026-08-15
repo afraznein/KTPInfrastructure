@@ -47,6 +47,16 @@ def test_signed_out_cannot_close(client, owner_db):
     assert owner_db.writes == []
 
 
+def test_closing_is_audited(client, owner_db):
+    """One-way, and it publishes the tally — the irreversible act had no record."""
+    sign_in(client, OWNER, "nein")
+    client.post("/api/awards/7/close")
+    sql, params = owner_db.writes[1]
+    assert sql.startswith("INSERT INTO lan_admin_audit")
+    assert (params[0], params[2], params[3], params[4], params[5]) == (
+        OWNER, "award_close", "rookies", "1", "0")
+
+
 def test_closing_twice_is_not_an_error_and_writes_once(client, owner_db):
     owner_db.rules.insert(0, ("SELECT id, slug, is_open FROM lan_awards WHERE id", SHUT_A))
     sign_in(client, OWNER, "nein")
