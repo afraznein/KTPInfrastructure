@@ -14,10 +14,16 @@
       "suicide": 13
     },
     "rows": {
+      "assist": {
+        "pa": 0,
+        "ppa": 37
+      },
+      "cap_break": {
+        "pa": 3,
+        "ppa": 0
+      },
       "frags": 401,
-      "pa_rows_total": 3,
       "players": 16,
-      "ppa_rows_total": 37,
       "suicides": 13
     }
   },
@@ -36,10 +42,16 @@
       "suicide": 28
     },
     "rows": {
+      "assist": {
+        "pa": 0,
+        "ppa": 42
+      },
+      "cap_break": {
+        "pa": 10,
+        "ppa": 0
+      },
       "frags": 373,
-      "pa_rows_total": 10,
       "players": 17,
-      "ppa_rows_total": 42,
       "suicides": 28
     }
   },
@@ -58,10 +70,16 @@
       "suicide": 26
     },
     "rows": {
+      "assist": {
+        "pa": 0,
+        "ppa": 48
+      },
+      "cap_break": {
+        "pa": 4,
+        "ppa": 0
+      },
       "frags": 424,
-      "pa_rows_total": 4,
       "players": 17,
-      "ppa_rows_total": 48,
       "suicides": 26
     }
   }
