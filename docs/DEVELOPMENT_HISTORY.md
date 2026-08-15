@@ -9,7 +9,7 @@
 | **Project Duration** | October 2025 - Present |
 | **Total Repositories** | 20+ |
 | **Estimated Development Hours** | 2100-2650 |
-| **Last Updated** | 2026-07-20 |
+| **Last Updated** | 2026-08-15 |
 
 **Doc convention going forward:** Major releases (architectural changes, root-causes, incident responses) get full prose. Minor/patch releases get one-line entries in component-version tables. Reduces maintenance burden vs. backfilling per-version detail that's already in repo CHANGELOG files.
 
@@ -30,6 +30,7 @@
 - [May 2026](#may-2026---hltv-rebuild-1000fps-shutdown-races) - HLTV Rebuild, 1000fps, Shutdown Races
 - [June 2026](#june-2026---hitreg-audit--lan-preparation) - Hitreg Audit & LAN Preparation
 - [July 2026](#july-2026---root-cause-month) - Root-Cause Month
+- [August 2026](#august-2026---checks-that-lie) - Checks That Lie
 
 ---
 
@@ -47,7 +48,8 @@
 | May 2026 | 200-260 | HLTV always-on recording rebuild (1.7.0 + renamer service), 1000fps at idle CPU (absgrid + sys_ticrate), AmxxCurl shutdown-race saga begins, HPAK closure, score-persistence build, Tier-2 test runner live, credential rotation |
 | June 2026 | 200-260 | Fleet hitreg audit (lag-compensation root cause, `sv_unlagsamples 1`), engine spike-attribution telemetry (.925/.926), LAN provisioning dry-run, Tier-2 made self-sustaining, WSDoD LAN web app |
 | July 2026 | 260-340 | Root-cause month: async log writers (engine + AMXX), extension-mode shutdown callback, score persistence live, full-stack review fix waves, socket-lifecycle fix, monitoring rework (Netdata retired), pre-LAN release train |
-| **Total** | **2100-2650** | |
+| August 2026 (through 08-15) | 200-260 | Engine auto-ban repair (.930) + spike-attribution cut (.931), KTPAMXX extension-parity batch + split-artifact discipline (2.7.25-2.7.28), MatchHandler OT correctness cluster + match-telemetry uploads (0.10.147-161), August plugin wave, central ban distribution, HLStatsX ingest fixes, preprod/Lane B CI buildout, credential-rotation completion |
+| **Total** | **2300-2910** | |
 
 ### Repository Breakdown
 
@@ -1205,6 +1207,61 @@ The month closed with the release train through the 2026-07-24 LAN freeze: KTPAm
 
 ---
 
+## August 2026 - Checks That Lie
+
+*Section covers through 2026-08-15; the month is still in progress.*
+
+**Focus: the month of verification defects — mechanisms that reported success while doing nothing, and checks whose clean result meant nothing. The engine's auto-bans had printed `Banned...` for months without banning anyone; four per-phase spike counters turned out to be four copies of one number; a module confidently self-reported a version seven releases stale; a database dump wrote "Dump completed" after silently skipping tables it lacked privileges for. Each got the same treatment: fix the mechanism, then fix the check so the class can't hide again — a presence check became an equality check, a version string became a checksum, a "completed" banner became a table count.**
+
+The LAN the July freeze protected came and went on the provisioned hardware; the one open item it left — intermittent client-side freezes at the venue — was investigated and excluded from every layer of the KTP stack.
+
+### ReHLDS .930 (fleet 08-08): The Engine's Dead Protections Re-armed
+
+The KTP policy block on the `addip` console command turned out to have disarmed ReHLDS's *own* protections — rcon brute-force banning, the command-flood limiters, the decompression punish all reached the filter list by shelling out to the blocked command. Console and log said `Banned...`; no filter entry was ever added; the offender reconnected instantly. This had been true for roughly seven months on every public instance. The fix splits policy from mechanism (protections call an internal entry point; console `addip`/`removeip` stay refused) and gives every auto-ban a `[KTP_AUTOBAN]` log line — a mechanism that can permanently ban an IP should not be silent. The same cut fixed the launcher segfaulting on every signalled stop, which made it the rare wave shipping two artifacts (`engine_i486.so` *and* `hlds_linux`).
+
+### KTPAMXX 2.7.25 → 2.7.28: The Parity Batch and the Split-Artifact Lesson
+
+- **2.7.25 (08-08)** closed a review batch of extension-mode parity gaps in one cut: `client_connect`/`client_authorized` firing twice per player per map change, `cmdaccess.ini` never loaded, `g_players_num` never decrementing, seized slots reporting the wrong SteamID to disconnect handlers, unguarded DODX message sends that could kill the server, and Metamod-mode passthroughs missing from five ReHLDS hooks.
+- **2.7.26 (dodx wave 08-10)** reworked the DODX BSP control-point parser: every `dod_control_point` returned rather than only the indexed ones, origin matches consumed one-to-one, out-of-range owners clamped *and logged*, and an unreadable BSP reported as an I/O failure instead of "bad map data".
+- **2.7.27 (core wave 08-11)** added per-usercmd aim and ground-contact sampling with read natives. The cut was NOT-APPROVED on first review and went through five review passes before approval — two of the passes caught regressions the previous pass introduced. The standing policy held throughout: this public layer records **geometry only**; a calibrated threshold that had crept into a comment was removed, because anything that judges the numbers belongs server-side in the private backend.
+- **2.7.28 (dodx)** carries the match-scoped weapon-fire batching consumed by KTPMatchHandler's telemetry uploads.
+
+The organizational lesson outlived any single cut: the core and the DODX module build from one repo but **ship separately and can legitimately run different versions** — and every internal document that tracked "the KTPAMXX version" as one number was wrong the moment the halves diverged. A build cut against the stale half nearly shipped before the discrepancy was caught by reading the version off the live binary. Documentation now names the artifact, never the repo, when stating a version.
+
+### KTPMatchHandler 0.10.147 → 0.10.161
+
+- **The OT correctness cluster (0.10.151-0.10.154):** three coupled bugs reachable in *every* multi-round overtime, fixed together because fixing any one alone shifted the failure into the others — and the first fix attempt introduced a regression that review caught (the cut was NOT-APPROVED and re-worked).
+- **Abandoned-match leak closure (0.10.152/0.10.155/0.10.157):** an abandoned pending match left in-memory half state and the engine-persistent `ktp_match_competitive` cvar behind, so a later half could run with an empty match id — the exact malformed shape the stats parser had been choking on. The empty-match-id refusal now covers the path that actually leaks.
+- **Match-telemetry uploads (0.10.156-0.10.160):** the aim-geometry and weapon-fire batches gained their upload path, with identity carried by roster index rather than reusable slot number, rotation-fair counted truncation under load, and a hard rule that a shot outside a match never borrows a match id. 0.10.158 also stopped the game server emitting every `weaponstats` log line twice — duplicate rows had been flowing into accuracy stats undetected.
+- **OT halves went from a hardcoded 5 minutes to `ktp_ot_timelimit`, default 10 (0.10.161)** — ruleset §1.10, decided by season ballot. Read live each OT round; set at server-config level only, because the round announce renders before the per-map config executes.
+- **Testability (0.10.148/0.10.150):** `.setstate` was made reachable from the Tier-2 harness — chat-only commands are otherwise untestable, since DoD ships no bot capability.
+
+### The August Plugin Wave (fleet 08-11)
+
+One nightly carried the accumulated plugin releases, verified by checksum across all 24 instances the following morning: **KTPAdminAudit 2.7.20** (the central ban list — see TECHNICAL_GUIDE for the `banned.cfg`-ownership reasoning, the applied-entries-only unban rule, and the truncated-list refusal), **KTPCvarChecker 7.32** (standard tier derived from the full set minus the priority set, retiring a second hand-typed list nothing kept in sync), **KTPFileChecker 2.9** (Discord embed no longer undercounts past the batch buffer), **KTPPracticeMode 1.4.8** (`.grenade` checks the DODX returns before claiming success), **KTPGrenadeLoadout 1.0.11** (enum constants over hand-copied literals), and **KTPScoreTracker 1.1.5** (plus 1.1.4's fix for warmup captures being logged under the previous half's match id).
+
+### Stats Pipeline: HLStatsX 0.3.4/0.3.5 and the Receive-Buffer Lesson
+
+Two releases and two integration-branch fixes landed on the daemon: the accumulator flush became time-gated (it had been running on nearly every housekeeping pass), an event naming an unregistered action now logs instead of vanishing, the log-line property parser stopped swallowing the field after an empty quoted value (the greedy-regex defect that had seeded malformed match ids into downstream tables), and the daemon's UDP receive buffer was actually *requested* at the size the host had long been configured to grant. That last one is the month's theme in miniature: the kernel ceiling (`rmem_max`) had been raised weeks earlier and looked like a fix, but a ceiling is not a request — the socket got its small ask, and nothing changed until the daemon's own `setsockopt` was raised. The granted size is now logged at startup so the gap is visible.
+
+### CI: `preprod` Integration Branches and Lane B
+
+The repos where contributors land work each gained a permanent `preprod` branch as the integration gate: contributors PR into `preprod`, and a separate promotion PR moves `preprod` → `main` after the same automated checks pass. The hard gate is a **deterministic corpus replay** — committed production log corpora driven through an ephemeral MySQL and compared exactly against expected output — which starts no game server and runs no bots. Alongside it, "Lane B" runs a live bot-backed test match end-to-end on ephemeral GitHub-hosted runners only; it is informational by design and deliberately *not* an upgrade path for the Tier-2 suite, whose value is byte-parity with the production fleet. A late-July coverage lesson applied here too: one Lane B job installed a dependency subset and died at test collection while its check stayed green — the fix, as always, was checking that the job *ran*, not that the check passed.
+
+### Credential Hygiene: The Rotation Arc Closed
+
+The last shared secrets still traceable to the 2026-05 repository-history exposure were rotated in early August: the HLTV admin password moved to a fresh value across every proxy config, and the HLTV control API key was split into its own secret rather than reusing the same string. The rotation was staged to survive the fleet's restart cadence (a dual-key acceptance window on the API side, closed once every consumer had cycled), and the config generator was fixed to refuse to invent a default password for new instances rather than silently seeding a weak one — the generator's weak default was invisible precisely because it only fired when a proxy was *added*.
+
+### Anti-Cheat (High Level)
+
+Client and API releases continued through the 0.7.x line in the private repo. On the public side of the boundary, the game layer gained the two integration surfaces described above: the central ban applier (KTPAdminAudit 2.7.20) and the match-telemetry upload path (KTPMatchHandler 0.10.156+, DODX 2.7.27/2.7.28) — geometry reported by the public layer, judgment private, per standing policy.
+
+### Staged at Time of Writing
+
+ReHLDS **.931** (cut 08-14, staged fleet-wide 08-15, activating at the 2026-08-16 nightly) makes per-phase spike attribution real: the four per-phase spike detail lines had been emitted unconditionally on every spike, so the aggregated per-phase counters were four copies of the spike count and could attribute nothing — measured degenerate across the entire post-.930 corpus before the fix. Each line is now gated on its phase owning a material share of the frame, the counters change meaning at the boundary (documented as such), and the release check that missed the degeneracy was upgraded from a presence census to an equality check. The cut also closed three cross-thread hazards dating to the .913 Steam-thread work and wired up a documented-but-never-implemented rcon-shutdown block.
+
+---
+
 ## Related Documentation
 
 > For granular per-version changelogs, see the `CHANGELOG.md` in each project's repository.
@@ -1215,4 +1272,4 @@ The month closed with the release train through the 2026-07-24 LAN freeze: KTPAm
 
 ---
 
-*Last updated: 2026-07-20*
+*Last updated: 2026-08-15*
