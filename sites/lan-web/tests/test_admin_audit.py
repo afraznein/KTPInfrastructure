@@ -54,6 +54,78 @@ def test_paging_walks_backwards_by_offset(client, audit_db):
     assert [p[1] for p in seen] == [0, 100, 0]
 
 
+# ── filtering, because the log is not evenly interesting ─────────────────
+@pytest.fixture
+def filterable(audit_db):
+    """Records the params of every filtered read, so a test can assert what was
+    ASKED rather than what a fake chose to answer.
+
+    Rules are matched by substring in registration order, so the narrow needles
+    have to come first or the plain ones swallow them."""
+    audit_db.seen = []
+    audit_db.total = 1
+    audit_db.add("GROUP BY action", [{"action": "award_staff_vote", "n": 52},
+                                     {"action": "staff_add", "n": 1}])
+    audit_db.add("COUNT(*) AS n FROM lan_admin_audit WHERE",
+                 lambda p: (audit_db.seen.append(("count", p)), {"n": audit_db.total})[1])
+    audit_db.add("FROM lan_admin_audit WHERE",
+                 lambda p: (audit_db.seen.append(("rows", p)), [ENTRY])[1])
+    audit_db.add("FROM lan_admin_audit ORDER BY", [ENTRY])
+    audit_db.add("COUNT(*) AS n FROM lan_admin_audit", {"n": 53})
+    return audit_db
+
+
+def test_the_filter_offers_the_actions_that_are_there_with_counts(client, filterable):
+    as_staff(filterable, client)
+    text = client.get("/admin/audit-log").text
+    assert "award_staff_vote (52)" in text and "staff_add (1)" in text
+
+
+def test_filtering_by_action_narrows_the_query_not_just_the_page(client, filterable):
+    """The point is the staff grant buried under a weekend of award ticks, so
+    the filter has to reach the query — paging a filtered-in-Python list would
+    still put it on page 2."""
+    as_staff(filterable, client)
+    client.get("/admin/audit-log?action=staff_add")
+    assert ("count", ("staff_add",)) in filterable.seen
+    assert ("rows", ("staff_add", 50, 0)) in filterable.seen
+
+
+def test_filtering_by_target_is_a_prefix_match(client, filterable):
+    as_staff(filterable, client)
+    client.get("/admin/audit-log?target=player:")
+    assert ("rows", ("player:%", 50, 0)) in filterable.seen
+
+
+def test_a_percent_in_the_target_box_is_escaped_not_a_wildcard(client, filterable):
+    """Unescaped, '%' matches everything and reads as no filter at all."""
+    as_staff(filterable, client)
+    client.get("/admin/audit-log?target=%25")
+    assert ("rows", (r"\%%", 50, 0)) in filterable.seen
+
+
+def test_both_filters_apply_together(client, filterable):
+    as_staff(filterable, client)
+    client.get("/admin/audit-log?action=player_edit&target=player:1")
+    assert ("rows", ("player_edit", "player:1%", 50, 0)) in filterable.seen
+
+
+def test_an_unfiltered_page_asks_for_no_where_clause(client, filterable):
+    """The control: the filter is off by default, so the plain page must not be
+    quietly narrowed by an empty string."""
+    as_staff(filterable, client)
+    client.get("/admin/audit-log")
+    assert filterable.seen == []           # nothing hit the WHERE rules
+
+
+def test_the_pager_carries_the_filter(client, filterable):
+    """Otherwise page 2 silently drops back to everything."""
+    as_staff(filterable, client)
+    filterable.total = 120
+    text = client.get("/admin/audit-log?action=staff_add").text
+    assert "page=2&amp;action=staff_add" in text
+
+
 def test_the_result_log_stays_a_separate_record(client, audit_db):
     """/admin/audit is match results with an undo; this one is not that."""
     as_staff(audit_db, client)
@@ -122,8 +194,10 @@ def test_revoking_someone_who_was_never_granted_writes_nothing(client, audit_db)
     assert audit_db.writes == []
 
 
-#   '²' and '٠' are the load-bearing cases: isdigit() is True for both and int()
-#   raises on both, so an isdigit()-only guard sends them straight to a 500.
+#   '²', '٠' and '1٢3' are the load-bearing cases, and they fail differently:
+#   isdigit() is True for all three, but int() raises only on '²' — it returns 0
+#   and 123 for the other two, so an isdigit()-only guard grants staff to an id
+#   nobody typed. Classified in test_parse_guard.py.
 BAD_IDS = ["", "  ", "not-a-number", "12x", "-1", "²", "٠", "1٢3"]
 
 

@@ -12,6 +12,20 @@
       <p style="font-size:13px;color:var(--ink-faint);"><a href="{{ url_for('admin') }}">&larr; Staff</a> — award ticks, retitles and staff grants, newest first.
          Match results are a separate record with its own undo: <a href="{{ url_for('audit_log') }}">result audit</a>.</p>
 
+      <form method="get" action="{{ url_for('admin_audit_log') }}" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px;">
+        <label style="font-size:12px;color:var(--ink-soft);">Action
+          <select name="action" style="margin-left:4px;">
+            <option value="">all</option>
+            {% for a in action_counts %}<option value="{{ a.action }}"{% if a.action == f_action %} selected{% endif %}>{{ a.action }} ({{ a.n }})</option>{% endfor %}
+          </select>
+        </label>
+        <label style="font-size:12px;color:var(--ink-soft);">Target starts with
+          <input name="target" value="{{ f_target }}" placeholder="player: / philly-2026:" style="width:13rem;margin-left:4px;">
+        </label>
+        <button type="submit">Filter</button>
+        {% if filtered %}<a href="{{ url_for('admin_audit_log') }}" style="font-size:12px;">clear</a>{% endif %}
+      </form>
+
       {% if rows %}
       <table>
         <thead><tr><td>When</td><td>Who</td><td>Action</td><td>Target</td><td>Was</td><td>Now</td></tr></thead>
@@ -28,11 +42,14 @@
         {% endfor %}
         </tbody>
       </table>
+      {% set q = "&action=" ~ f_action|urlencode ~ "&target=" ~ f_target|urlencode %}
       <p style="font-size:12px;color:var(--ink-faint);margin-top:12px;">
-        Page {{ page }} of {{ pages }} · {{ total }} entries
-        {% if page > 1 %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page - 1 }}">newer</a>{% endif %}
-        {% if page < pages %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page + 1 }}">older</a>{% endif %}
+        Page {{ page }} of {{ pages }} · {{ total }} {% if filtered %}matching {% endif %}entries
+        {% if page > 1 %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page - 1 }}{{ q }}">newer</a>{% endif %}
+        {% if page < pages %} · <a href="{{ url_for('admin_audit_log') }}?page={{ page + 1 }}{{ q }}">older</a>{% endif %}
       </p>
+      {% elif filtered %}
+      <div class="pending-note">No staff actions match that filter.</div>
       {% else %}
       <div class="pending-note">No staff actions recorded yet.</div>
       {% endif %}
