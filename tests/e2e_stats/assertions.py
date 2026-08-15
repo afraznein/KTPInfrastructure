@@ -353,34 +353,18 @@ def check_untagged_after_match(db, *, match_id: str, kills_before_match: int,
 
 
 def check_statsme_flushed(db, *, weaponstats_lines: int) -> dict:
-    """`hlstats_Events_Statsme` — Unit 2 step 6, and Lane B cannot cover it.
+    """Assert Lane B's test-only bot weaponstats reach StatsMe.
 
-    It was expected that ending a match would populate this: `end_match` calls
-    `dodx_flush_all_stats()`, which fires the `dod_stats_flush` forward.
-    Driving a real match produced **zero** rows, and the reason is one line in
-    `stats_logging.sma`:
-
-        if ( is_user_bot(id) || !is_user_connected(id) || !isDSMActive() )
-            return PLUGIN_CONTINUE
-
-    Weaponstats are never logged for bots. Every Lane B player is a bot, so no
-    `weaponstats` line is ever emitted and no row can exist. This is a property
-    of the plugin, not a regression, and no amount of match driving changes it.
-
-    So the verdict keys off the LOG, not the table. Zero rows with zero source
-    lines is `not_exercised` — honest, and it keeps the check alive for the day
-    a human plays on this lane. Zero rows with lines present would be a real
-    daemon-side loss.
+    The full lane compiles ``stats_logging.sma`` with
+    ``KTP_LANE_B_BOT_WEAPONSTATS``. Production builds omit that define and
+    retain their bot exclusion. Zero source lines is therefore a pipeline
+    failure rather than an accepted all-bot limitation.
     """
     rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Statsme")
     if weaponstats_lines == 0:
-        return {"code": "statsme", "status": "not_exercised", "rows": rows,
-                "detail":
-                    "no `weaponstats` lines in the game log. stats_logging.sma "
-                    "skips bots in dod_stats_flush, and every Lane B player is "
-                    "a bot — so this table is structurally unreachable here. "
-                    "Deployment plan Unit 2 step 6 still needs a human on a "
-                    "server with real clients."}
+        return {"code": "statsme", "status": "pipeline", "rows": rows,
+                "detail": "Lane B emitted no bot `weaponstats` lines; the "
+                          "test-only compile flag or DODX flush path failed."}
     if rows == 0:
         return {"code": "statsme", "status": "pipeline", "rows": rows,
                 "detail":

@@ -48,11 +48,15 @@ EXPECTED = CORPUS / "expected.json"
 # What is compared. Deliberately the counts a regression would move, not the
 # whole report: eventTime, ids and the daemon's own timing vary per run and
 # comparing them would make the check fail for reasons nobody cares about.
+#
+# Action counts are scoped by code. The shared schema seeds standard DoD
+# actions too, so whole-table PA/PPA totals can legitimately change without
+# changing the assist or cap_break behavior this corpus protects.
 _COMPARED = (
     ("emitted", "kills"), ("emitted", "assist"), ("emitted", "cap_break"),
     ("emitted", "suicide"),
     ("rows", "frags"), ("rows", "players"), ("rows", "suicides"),
-    ("rows", "ppa_rows_total"), ("rows", "pa_rows_total"),
+    ("rows", "assist", "ppa"), ("rows", "cap_break", "pa"),
 )
 
 
@@ -122,7 +126,7 @@ def main() -> int:
                 "emitted": got["emitted"],
                 "rows": {k: got["rows"][k] for k in
                          ("frags", "players", "suicides",
-                          "ppa_rows_total", "pa_rows_total")},
+                          "assist", "cap_break")},
                 "carried": {c["code"]: c["status"] for c in got.get("carried", [])},
             }
             summary = results[log.name]
