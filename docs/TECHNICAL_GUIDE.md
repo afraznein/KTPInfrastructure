@@ -247,7 +247,7 @@ rehlds/
 
 ### Layer 1: KTP-ReHLDS (Engine)
 
-**Repository:** [github.com/afraznein/KTPReHLDS](https://github.com/afraznein/KTPReHLDS)
+**Repository:** [github.com/afraznein/KTP-ReHLDS](https://github.com/afraznein/KTP-ReHLDS)
 **Version:** 3.22.0.929
 **License:** MIT
 
@@ -994,7 +994,7 @@ addons/ktpamx/
 
 ### Layer 3: KTP-ReAPI (Engine Bridge Module)
 
-**Repository:** [github.com/afraznein/KTPReAPI](https://github.com/afraznein/KTPReAPI)
+**Repository:** [github.com/afraznein/KTP-ReAPI](https://github.com/afraznein/KTP-ReAPI)
 **Version:** 5.29.0.365-ktp
 **License:** GPL v3
 **Base:** ReAPI 5.26+
@@ -1129,7 +1129,7 @@ public OnPausedHUDUpdate() {
 
 ### Layer 4: KTP AMXX Curl (HTTP Module)
 
-**Repository:** [github.com/afraznein/KTPAmxxCurl](https://github.com/afraznein/KTPAmxxCurl)
+**Repository:** [github.com/afraznein/KTPAMXXCurl](https://github.com/afraznein/KTPAMXXCurl)
 **Version:** 1.3.15-ktp
 **License:** MIT
 **Base:** AmxxCurl by Polarhigh
@@ -1881,7 +1881,7 @@ Jimmy has also contributed fixes to the wider stack found through HudObserver de
 
 #### Discord Relay
 
-**Repository:** [github.com/afraznein/discord-relay](https://github.com/afraznein/discord-relay)
+**Repository:** [github.com/afraznein/KTPDiscordRelay](https://github.com/afraznein/KTPDiscordRelay)
 **Version:** 1.1.1
 **Platform:** Google Cloud Run (Node.js 22/Express)
 **License:** MIT
@@ -2639,7 +2639,7 @@ cp <hlds>/engine_i486.so <hlds>/engine_i486.so.backup
 copy <hlds>\swds.dll <hlds>\swds.dll.backup
 
 # Download KTP-ReHLDS from releases
-# https://github.com/afraznein/KTPReHLDS/releases
+# https://github.com/afraznein/KTP-ReHLDS/releases
 
 # Install
 # Linux:
@@ -2868,11 +2868,11 @@ discord_channel_id_audit_competitive=5555555555555555555
 
 | Layer    | Repository                                              | Version       | Description                         |
 |----------|---------------------------------------------------------|---------------|-------------------------------------|
-| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS)    | 3.22.0.929    | Custom ReHLDS with extension loader + frame profiler + async log writer |
+| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTP-ReHLDS)    | 3.22.0.929    | Custom ReHLDS with extension loader + frame profiler + async log writer |
 | SDK      | [KTP HLSDK](https://github.com/afraznein/KTPhlsdk)      | 1.0.0         | SDK headers with callback support   |
 | Platform | [KTPAMXX](https://github.com/afraznein/KTPAMXX)         | 2.7.24        | AMX Mod X extension mode fork + JIT + async CLog + lifecycle fixes |
-| Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTPReAPI)      | 5.29.0.365-ktp| ReAPI extension mode fork           |
-| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAmxxCurl)| 1.3.15-ktp   | Non-blocking HTTP module + connection-reuse fix |
+| Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTP-ReAPI)     | 5.29.0.365-ktp| ReAPI extension mode fork           |
+| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAMXXCurl)| 1.3.15-ktp   | Non-blocking HTTP module + connection-reuse fix |
 
 ### Application Plugins
 
@@ -2894,7 +2894,7 @@ All KTP plugins adopt the `ktp_version_reporter` shared include. `rcon amx_ktp_v
 
 | Service          | Repository                                                        | Version | Description                |
 |------------------|-------------------------------------------------------------------|---------|----------------------------|
-| Discord Relay    | [Discord Relay](https://github.com/afraznein/discord-relay)       | 1.1.1   | Cloud Run Discord API proxy |
+| Discord Relay    | [Discord Relay](https://github.com/afraznein/KTPDiscordRelay)       | 1.1.1   | Cloud Run Discord API proxy |
 | HLStatsX         | [KTPHLStatsX](https://github.com/afraznein/KTPHLStatsX)           | 0.3.3   | Per-half stats + batched processing |
 | File Distributor | [KTPFileDistributor](https://github.com/afraznein/KTPFileDistributor) | 1.1.3 | SFTP file distribution + Discord |
 | ~~HLTV Kicker~~  | [KTPHLTVKicker](https://github.com/afraznein/KTPHLTVKicker)       | 5.9     | DEFUNCT - replaced by systemd restarts |

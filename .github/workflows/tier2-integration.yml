@@ -30,14 +30,16 @@
 #     original design decision 2026-04-24, applied 2026-05-18) and, since the
 #     preprod/prod gate was introduced, on `preprod` too.
 #   - Nightly via schedule (09:00 UTC), targeting preprod only while the staged
-#     stack is being proven. The main leg remains paused until production
-#     enablement; paired
+#     stack is being proven; paired
 #     with scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
 #     missing/stale/failed last-run marker so a dead runner is not silently
 #     green. Schedule triggers always fire from the default branch's copy of
 #     this file (a GitHub Actions constraint — schedules can't run from a
 #     non-default branch), so preprod coverage comes from the matrix explicitly
 #     checking out that ref, not from the trigger itself.
+#     ⚠️ That matrix does nothing until this file IS the default branch's copy.
+#     Until then the schedule keeps running the old copy: the main leg is not
+#     paused, and preprod gets no scheduled coverage at all.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
