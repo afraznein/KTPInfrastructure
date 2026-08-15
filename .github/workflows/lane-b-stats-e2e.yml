@@ -251,6 +251,7 @@ jobs:
         if: ${{ env.LANE == 'full' }}
         run: |
           docker run --rm --network none \
+            -v "${PWD}/.github:/work/.github:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -w /work ktp-lane-b:ci \
