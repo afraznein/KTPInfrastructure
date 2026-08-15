@@ -2,10 +2,10 @@
 #
 # ## Why this is cached rather than rebuilt nightly
 #
-# The build is a full 32-bit C++ compile — roughly ten minutes — and its input,
-# `feat/lane-b-fakeclient-players`, is a single commit that changes rarely. A
-# nightly that rebuilds it spends most of its wall clock producing a byte you
-# already had.
+# The build is a full 32-bit C++ compile — roughly ten minutes. Its input is
+# KTPAMXX `preprod`, so the test-only core stays synchronized with every AMXX
+# change under validation instead of drifting on a long-lived feature branch.
+# The SHA-keyed cache still avoids rebuilding an unchanged preprod tip.
 #
 # ## What the key covers, and why it covers more than the commit
 #
@@ -38,9 +38,9 @@ inputs:
     required: false
     default: https://github.com/afraznein/KTPAMXX.git
   ref:
-    description: Ref carrying the fake-client patch
+    description: KTPAMXX ref carrying the compile-gated Lane B core support
     required: false
-    default: feat/lane-b-fakeclient-players
+    default: preprod
   out:
     description: Path to write ktpamx_i386.so to
     required: false

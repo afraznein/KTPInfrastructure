@@ -60,7 +60,7 @@ changes).
   id: ktpamx
   uses: ./.github/actions/build-ktpamx-laneb
   with:
-    ref: feat/lane-b-fakeclient-players
+    ref: preprod
     out: build/lane-b-artifacts/ktpamx_i386.so
 ```
 

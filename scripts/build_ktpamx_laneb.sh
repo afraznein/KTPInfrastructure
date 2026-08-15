@@ -11,10 +11,8 @@
 #
 # ## Caching
 #
-# The build takes ~10 minutes and the ref changes rarely, so a rebuild per
-# nightly is almost always wasted. The output is stamped with the commit it was
-# built from (`<out>.sha`); a later run with the same commit and the same build
-# recipe short-circuits.
+# The build takes ~10 minutes. It follows KTPAMXX preprod so the test core stays
+# synchronized, while the output stamp avoids rebuilding an unchanged commit.
 #
 # The stamp covers the RECIPE as well as the commit — this script's own hash is
 # part of it — because changing the toolchain or the configure flags without
@@ -31,7 +29,7 @@
 #
 #   LANEB_WORK    scratch dir for checkouts           (default: $HOME/ktp)
 #   LANEB_SRC     KTPAMXX source (path or git URL)    (default: GitHub)
-#   LANEB_REF     ref to build                        (default: feat/lane-b-fakeclient-players)
+#   LANEB_REF     ref to build                        (default: preprod)
 #   LANEB_OUT     where to write ktpamx_i386.so       (default: $HOME/lane-b-out/ktpamx_i386.so)
 #   LANEB_DOCKER  docker binary                       (default: docker)
 set -euo pipefail
@@ -41,7 +39,7 @@ FORCE=0
 
 W="${LANEB_WORK:-$HOME/ktp}"
 SRC="${LANEB_SRC:-https://github.com/afraznein/KTPAMXX.git}"
-REF="${LANEB_REF:-feat/lane-b-fakeclient-players}"
+REF="${LANEB_REF:-preprod}"
 OUT="${LANEB_OUT:-$HOME/lane-b-out/ktpamx_i386.so}"
 DOCKER="${LANEB_DOCKER:-docker}"
 HLSDK_URL="${LANEB_HLSDK_URL:-https://github.com/afraznein/KTPhlsdk.git}"
@@ -116,13 +114,17 @@ git -C "$CHECKOUT" submodule update --init --recursive -q
 
 echo "building from $(git -C "$CHECKOUT" rev-parse --short HEAD)"
 echo "amtl headers: $(ls "$CHECKOUT/public/amtl/amtl" 2>/dev/null | wc -l)"
-hits=$(grep -c KTP_LANE_B_FAKECLIENTS "$CHECKOUT/amxmodx/meta_api.cpp" || true)
-if [ "$hits" -eq 0 ]; then
-    echo "KTP_LANE_B_FAKECLIENTS is not in meta_api.cpp at $REF — this build" >&2
-    echo "would produce a stock binary and the lane would silently run blind." >&2
-    exit 1
-fi
-echo "define present in source: $hits hit(s)"
+for guarded_source in \
+    amxmodx/meta_api.cpp \
+    modules/dod/dodx/moduleconfig.cpp
+do
+    if ! grep -q KTP_LANE_B_FAKECLIENTS "$CHECKOUT/$guarded_source"; then
+        echo "KTP_LANE_B_FAKECLIENTS is not in $guarded_source at $REF" >&2
+        echo "the lane would either run blind or emit no bot weaponstats." >&2
+        exit 1
+    fi
+    echo "Lane B guard present: $guarded_source"
+done
 
 if ! "$DOCKER" image inspect ktp-amxx-builder:laneb >/dev/null 2>&1; then
     echo "building builder image..."
