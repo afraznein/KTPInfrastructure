@@ -263,12 +263,23 @@ def _admin_page(client, board_db, monkeypatch):
 
 def test_the_staff_table_marks_a_master(client, board_db, monkeypatch):
     """Only a master can tick an award onto the public board, and the row read
-    exactly like ordinary staff. Master is env-only, so it is shown, not offered."""
+    exactly like ordinary staff.
+
+    Pinned rather than leaning on the hardcoded fallback list, so exporting
+    LAN_MASTER_ADMIN_DISCORD_IDS does not fail this."""
+    from app.routes import admin_routes
+    monkeypatch.setattr(admin_routes, "settings",
+                        replace(config.settings,
+                                master_admin_discord_ids=frozenset({DID})))
     as_staff(board_db, client, OTHER)
     board_db.admins = [{"discord_id": OTHER, "label": "jrod"},
                        {"discord_id": DID, "label": "nein"}]
     page = _admin_page(client, board_db, monkeypatch)
-    assert page.count(">master<") == 1        # DID is in the master fallback list, OTHER is not
+    assert page.count(">master<") == 1
+    # In the right row: a count alone passes when the wrong row is badged.
+    nein_row = page.split("discord %d" % DID)[0].rsplit("<tr>", 1)[-1]
+    jrod_row = page.split("discord %d" % OTHER)[0].rsplit("<tr>", 1)[-1]
+    assert ">master<" in nein_row and ">master<" not in jrod_row
 
 
 def test_a_config_admin_has_no_revoke_button(client, board_db, monkeypatch):

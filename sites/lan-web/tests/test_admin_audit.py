@@ -122,10 +122,33 @@ def test_revoking_someone_who_was_never_granted_writes_nothing(client, audit_db)
     assert audit_db.writes == []
 
 
-@pytest.mark.parametrize("bad", ["", "  ", "not-a-number", "12x", "-1"])
+#   '²' and '٠' are the load-bearing cases: isdigit() is True for both and int()
+#   raises on both, so an isdigit()-only guard sends them straight to a 500.
+BAD_IDS = ["", "  ", "not-a-number", "12x", "-1", "²", "٠", "1٢3"]
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
 def test_a_non_numeric_revoke_is_a_400_not_a_500(client, audit_db, bad):
     """/staff/add validated its input and /staff/remove did not, so the same
     typo was a clean refusal on one route and a traceback on the other."""
     as_staff(audit_db, client)
     assert client.post("/admin/staff/remove", data={"discord_id": bad}).status_code == 400
     assert audit_db.writes == []
+
+
+@pytest.mark.parametrize("bad", BAD_IDS)
+def test_the_same_input_is_refused_the_same_way_on_grant(client, audit_db, bad):
+    """The two routes have to agree, or the guard is only half applied."""
+    as_staff(audit_db, client)
+    assert client.post("/admin/staff/add", data={"discord_id": bad}).status_code == 400
+    assert audit_db.writes == []
+
+
+def test_a_real_snowflake_control_still_gets_through(client, audit_db):
+    """A guard that refuses everything is broken, not strict."""
+    as_staff(audit_db, client)
+    audit_db.add("SELECT display_name FROM lan_players", None)
+    r = client.post("/admin/staff/add", data={"discord_id": str(OTHER)},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert audit_db.writes[0][0].startswith("INSERT INTO lan_admins")

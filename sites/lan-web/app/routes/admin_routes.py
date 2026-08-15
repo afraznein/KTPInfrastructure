@@ -30,6 +30,13 @@ def _norm_steam(raw: str) -> str | None:
     return "STEAM_" + s if s.count(":") == 2 else s
 
 
+def _snowflake(raw: str) -> int | None:
+    """A Discord id, or None. isdigit() alone is not a guard for int(): it is
+    true for '²' and every other Unicode digit, and int() then raises."""
+    s = (raw or "").strip()
+    return int(s) if s.isascii() and s.isdigit() else None
+
+
 def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
     """Returns (current admins, promotable players).
 
@@ -127,7 +134,8 @@ async def admin_publish(request: Request):
     now = bool(f.get("publish"))
     seeding.set_setting(flag, "1" if now else "0")
     # Every individual award tick is logged; "made the whole board public" is the
-    # larger act and was the one with no record.
+    # larger act and was the one with no record. The read is not atomic with the
+    # write, so simultaneous posts can still each log the same flip.
     if now != was:
         admin_audit.log_request(request, "publish_flag", flag, int(was), int(now))
     target = common.safe_next(f.get("next")) or str(request.url_for("admin"))
@@ -250,10 +258,9 @@ async def photo_request_handled(request: Request):
 async def admin_grant(request: Request):
     granter = auth.require_admin(request)
     f = await request.form()
-    raw = (f.get("discord_id") or "").strip()
-    if not raw.isdigit():
+    did = _snowflake(f.get("discord_id"))
+    if did is None:
         raise HTTPException(400, "A numeric Discord ID is required.")
-    did = int(raw)
     label = (f.get("label") or "").strip() or None
     if not label:  # fall back to the roster alias, if this id is on a team
         rp = db.query_one("SELECT display_name FROM lan_players WHERE discord_id=%s LIMIT 1", (did,))
@@ -271,10 +278,9 @@ async def admin_grant(request: Request):
 async def admin_revoke(request: Request):
     me = auth.require_admin(request)
     f = await request.form()
-    raw = (f.get("discord_id") or "").strip()
-    if not raw.isdigit():
+    did = _snowflake(f.get("discord_id"))
+    if did is None:
         raise HTTPException(400, "A numeric Discord ID is required.")
-    did = int(raw)
     if did == int(me):
         raise HTTPException(400, "You can't revoke your own staff access.")
     # Config (env) admins aren't in this table, so the DELETE could never touch

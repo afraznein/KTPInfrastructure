@@ -258,12 +258,17 @@ that was never granted likewise writes nothing.)*
 ## What else writes `lan_admin_audit`
 
 `publish_flag` — `POST /admin/publish`, target = the flag name, old/new = `"0"`/`"1"`.
-Only on a real change, so a double-click is one decision rather than two. Every
+Written only when the value actually moves, so a second click on an already-published
+flag is not a second decision in the log. ⚠️ **Sequentially, not concurrently** — the
+old value is read before the write and the two are not atomic, so simultaneous posts
+can each log the same flip. Same caveat `admin_announce` documents for itself, and
+unlike that form the publish toggle does not disable its buttons on submit. Every
 individual award tick was logged while "made the whole board public" was not.
 
 `award_close` — `POST /api/awards/{award_id}/close`, target = the award slug. Owner
 only, one-way, and it publishes the tally; a repeat close short-circuits and writes
-nothing.
+nothing. Same concurrency caveat: the row is written after the UPDATE rather than on
+its rowcount, so two simultaneous closes log twice against one real transition.
 
 Not audited, deliberately: `POST /admin/audit/undo` writes the *result* log, which has
 its own record and an undo of its own.
