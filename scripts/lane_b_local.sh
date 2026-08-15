@@ -81,6 +81,7 @@ build-artifacts)
             --daemon-repo /repos/KTPHLStatsX  --daemon-ref '$DAEMON_REF' \
             --amxxpc   /opt/hlds/dod/addons/ktpamx/scripting/amxxpc \
             --includes /opt/hlds/dod/addons/ktpamx/scripting/include \
+            --define KTP_LANE_B_BOT_WEAPONSTATS=1 \
             --out /work/build/artifacts
     "
     ;;

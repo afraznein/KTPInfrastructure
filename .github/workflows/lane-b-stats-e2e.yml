@@ -213,7 +213,7 @@ jobs:
             # so do not make an unrelated plugin extraction a prerequisite.
             PLUGIN_ARGS="--no-plugin"
           else
-            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /opt/hlds/dod/addons/ktpamx/scripting/include"
+            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /opt/hlds/dod/addons/ktpamx/scripting/include --define KTP_LANE_B_BOT_WEAPONSTATS=1"
           fi
           docker run --rm \
             -v "${PWD}/KTPAMXX:/repos/KTPAMXX:ro" \

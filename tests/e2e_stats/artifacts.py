@@ -176,6 +176,7 @@ class ArtifactSet:
         *,
         amxxpc: Path,
         include_dir: Path,
+        defines: tuple[str, ...] = (),
         timeout: float = 180.0,
     ) -> Path:
         """Compile stats_logging.sma → .amxx with amxxpc.
@@ -219,9 +220,10 @@ class ArtifactSet:
         # build/plugins/Dockerfile does `cd /compiler && ./amxxpc`, and
         # smoke-callable.yml does `cd .../scripting && ./amxxpc /work/<src>`.
         # Hence the absolute source path and the relative `./amxxpc`.
+        argv = [f"./{amxxpc.name}", str(norm),
+                f"-i{include_dir}", f"-i{src_dir}", f"-o{out}", *defines]
         r = subprocess.run(
-            [f"./{amxxpc.name}", str(norm),
-             f"-i{include_dir}", f"-i{src_dir}", f"-o{out}"],
+            argv,
             cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
         )
         combined = (r.stdout or "") + (r.stderr or "")
@@ -237,6 +239,7 @@ class ArtifactSet:
         self.plugin_amxx = out
         self.provenance.setdefault("build", {})["amxxpc_output"] = combined[-4000:]
         self.provenance["build"]["warnings"] = combined.count("Warning")
+        self.provenance["build"]["defines"] = list(defines)
         return out
 
     def use_prebuilt_plugin(self, path: Path) -> Path:

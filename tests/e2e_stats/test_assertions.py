@@ -82,6 +82,12 @@ def test_nothing_emitted_is_not_exercised_rather_than_a_failure():
     assert "did not produce the scenario" in v["detail"]
 
 
+def test_missing_lane_b_weaponstats_is_a_pipeline_failure():
+    v = assertions.check_statsme_flushed(FakeDb(), weaponstats_lines=0)
+    assert v["status"] == "pipeline"
+    assert "compile flag" in v["detail"]
+
+
 def test_nothing_emitted_but_rows_present_still_flags_the_flag_inversion():
     """The flag invariant is about configuration, not volume, so it is checked
     even when the run exercised nothing."""

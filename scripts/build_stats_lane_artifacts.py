@@ -75,6 +75,8 @@ def main() -> int:
                      help="Collect daemon + SQL only; skip the plugin entirely")
     ap.add_argument("--includes", type=Path, default=None,
                     help="KTPAMXX plugins/include dir (required with --amxxpc)")
+    ap.add_argument("--define", action="append", default=[],
+                    help="Compile-time NAME=VALUE passed to amxxpc; repeatable")
 
     ap.add_argument("--schema", nargs="*", default=[
                         "sql/ktp_schema.sql",
@@ -113,7 +115,9 @@ def main() -> int:
             print(f"  {label:14} {sha[:12] if sha else 'not collected'}")
 
         if args.amxxpc:
-            out = arts.compile_plugin(amxxpc=args.amxxpc, include_dir=args.includes)
+            out = arts.compile_plugin(
+                amxxpc=args.amxxpc, include_dir=args.includes,
+                defines=tuple(args.define))
             warn = arts.provenance.get("build", {}).get("warnings", 0)
             print(f"compiled {out.name} ({warn} warning(s))")
         elif args.prebuilt_plugin:

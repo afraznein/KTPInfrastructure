@@ -217,7 +217,10 @@ already says why:
   > `if ( is_user_bot(id) || ... ) return PLUGIN_CONTINUE` — **weaponstats are
   > never logged for bots**. Every Lane B player is a bot, so the table is
   > structurally unreachable here and no amount of match driving changes that.
-  > Unit 2 step 6 still needs a human on a server with real clients.
+  > **Superseded:** Lane B now compiles its ephemeral stats plugin with
+  > `KTP_LANE_B_BOT_WEAPONSTATS=1`, additionally gated by `sv_lan 1` and
+  > `ktp_testmatch_enabled 1`, so the all-bot match covers this path without
+  > changing production bot handling.
 
 Keep the kill-switch window and the staged break scenarios; they slot in around
 the play windows.
@@ -234,7 +237,7 @@ unlike bot behaviour, the daemon either tags a row or it does not.
 | **Kills during `KTP_ROUND_FREEZE` carry `match_id NULL`** | the fork's central claim — freeze-time kills excluded by design |
 | Assists and cap-breaks during live play carry non-NULL `match_id` | the new stats are not match-attributable, which is what KTPR needs |
 | Rows after `KTP_MATCH_END` are untagged again | context not cleared; every later warmup kill would join the last match |
-| `weaponstats` lines, if any, become `Statsme` rows | Unit 2 step 6 — **cannot fire on an all-bot lane**; reported `not_exercised` with the reason rather than passed |
+| Bot `weaponstats` lines become `Statsme` rows | Unit 2 step 6 — test-only compiled path; zero emission or zero rows fails the lane |
 | `match_id` ends in `-TEST` | containment |
 
 The freeze-time one is the sharpest: it is the difference between "match stats"

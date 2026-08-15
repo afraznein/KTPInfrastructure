@@ -4,6 +4,15 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `tests`: cover StatsMe in the all-bot Lane B match (2026-08-15)
+
+- Full Lane B builds `stats_logging.amxx` with the test-only
+  `KTP_LANE_B_BOT_WEAPONSTATS=1` define and records that define in artifact
+  provenance. Local Lane B uses the same build shape.
+- Missing bot `weaponstats` emission is now a pipeline failure. Emitted lines
+  must produce `hlstats_Events_Statsme` rows through the real HLStatsX parser.
+- Production KTPAMXX builds omit the define and continue excluding bots.
+
 ### `tests`: Lane B scaffolding — bot-driven stats-capture e2e, Phase 0 (2026-08-09)
 
 The stats-capture branches (assists / cap breaks / positions, see

@@ -308,3 +308,35 @@ def test_compile_normalises_crlf_before_compiling(amxx_repo, daemon_repo, tmp_pa
     arts.compile_plugin(amxxpc=fake, include_dir=inc)
     assert b"\r\n" not in arts.plugin_sma.read_bytes()
     assert b"\r\n" not in arts.plugin_inc.read_bytes()
+
+
+def test_compile_plugin_passes_and_records_lane_b_defines(
+        amxx_repo, daemon_repo, tmp_path, monkeypatch):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    fake = tmp_path / "amxxpc"
+    fake.write_text("")
+    inc = tmp_path / "include"
+    inc.mkdir()
+    out_path = arts.build_dir / "stats_logging.amxx"
+    seen = {}
+
+    class Result:
+        returncode = 0
+        stdout = "ok\n"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        out_path.write_bytes(b"AMXX")
+        return Result()
+
+    monkeypatch.setattr("tests.e2e_stats.artifacts.subprocess.run", fake_run)
+    define = "KTP_LANE_B_BOT_WEAPONSTATS=1"
+    arts.compile_plugin(amxxpc=fake, include_dir=inc, defines=(define,))
+
+    assert seen["argv"][-1] == define
+    assert arts.provenance["build"]["defines"] == [define]

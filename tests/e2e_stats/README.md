@@ -592,13 +592,12 @@ land between the state machine going live and the sample being taken.
 `log_invariants.match_window` counts between the log's own
 `KTP_MATCH_START`/`KTP_MATCH_END` markers instead — no sampling race.
 
-**Statsme.** It was predicted that ending a match would populate
-`hlstats_Events_Statsme` via `dodx_flush_all_stats()`, closing Unit 2's one
-gap. It does not. `stats_logging.sma`'s handler opens with
-`if ( is_user_bot(id) || ... ) return` — **weaponstats are never logged for
-bots**, so the table is structurally unreachable on an all-bot lane. The check
-now keys off the log rather than the table and reports `not_exercised` with
-that reason.
+**Statsme.** Production correctly excludes bots from `dod_stats_flush`, so the
+first all-bot runs could not exercise `hlstats_Events_Statsme`. Lane B now
+compiles only its ephemeral `stats_logging.amxx` with
+`KTP_LANE_B_BOT_WEAPONSTATS=1`; the source additionally requires `sv_lan 1`
+and `ktp_testmatch_enabled 1`. The match must emit bot `weaponstats` and create
+StatsMe rows or the run fails. Production artifacts retain the bot exclusion.
 
 ### Known all-bot artifact
 
