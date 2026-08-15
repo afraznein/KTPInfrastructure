@@ -46,8 +46,7 @@ from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from tests.e2e_stats.ephemeral_tree import EphemeralTree  # noqa: E402
 from tests.e2e_stats.hlstats_daemon import HlstatsDaemon  # noqa: E402
-from tests.integration.match_flow import (MatchDriver,  # noqa: E402
-                                         MatchDriverError, MatchType)
+from tests.integration.match_flow import MatchDriver, MatchDriverError  # noqa: E402
 from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 
 # The first hlds boot in a fresh container dies inside SteamAPI_Init and the
@@ -182,14 +181,15 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
     tree.write_text(
         "dod/lane_b_server.cfg",
         server_cfg_fixture.read_text()
-        + "\nmp_timelimit 0\nmp_limitteams 0\nktp_stats_capture 1\n")
+        + "\nmp_timelimit 0\nmp_limitteams 0\nktp_stats_capture 1\n"
+        + "ktp_testmatch_enabled 1\n")
     return tree, dropped
 
 
-def add_bots(handle, *, per_team: int, flag_priority: int = 100,
-             wait_for_cap: int = 100, bot_skill: int = 5,
-             settle: float = 15.0) -> None:
-    """Fill both teams and wait for them to spawn and engage.
+def configure_bots(handle, *, flag_priority: int = 100,
+                   wait_for_cap: int = 100, bot_skill: int = 5,
+                   settle: float = 0.0) -> None:
+    """Configure objective-focused behavior before .testmatch creates bots.
 
     `flag_priority_percent 100` points new_bot at the flags rather than into
     deathmatch. Bots that ignore objectives generate kills all day and never a
@@ -225,14 +225,8 @@ def add_bots(handle, *, per_team: int, flag_priority: int = 100,
                 f"wait_for_cap_percent {wait_for_cap}",
                 f"bot_skill {bot_skill}", "balance teams on"):
         handle.rcon(cmd)
-    for _ in range(per_team):
-        for team in ("allies", "axis"):
-            handle.rcon(f"addbot {team}")
-            time.sleep(0.8)
-    # Bots need to spawn, pick a class and find each other. Starting a measured
-    # window before that gives an opening stretch with no kills in it, which
-    # would make the kill-switch check look inconclusive for the wrong reason.
-    time.sleep(settle)
+    if settle:
+        time.sleep(settle)
 
 
 def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None:
@@ -247,7 +241,8 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
 
 
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
-              map_name: str = "", during_play=None, after_match=None) -> dict:
+              per_team: int = 8, before_play=None, during_play=None,
+              after_match=None) -> dict:
     """Take the state machine LIVE, play, and end the match.
 
     This is what makes rows carry `match_id` and `half`. `recordEvent` injects
@@ -255,27 +250,27 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     outside a live match is tagged NULL — correct behaviour, and useless for
     asserting the thing KTPR actually reads.
 
-    Two steps are load-bearing rather than tidy:
+    Match start is intentionally not synthesized here. `.testmatch` executes
+    the production restart, so the engine must reach `RoundState=1` and emit the
+    real `KTP_MATCH_START`; failure to do so is a regression, not a harness gap.
 
-    - `fire_match_start_log` — production emits `KTP_MATCH_START` from a task
-      gated on the engine's `RoundState=1`, which never fires without a real
-      round. The rcon drives the emission directly.
+    One teardown step remains test-only:
+
     - `end_match` — calls `dodx_flush_all_stats()`, which is what pushes
       weaponstats out to `hlstats_Events_Statsme`. Skipping it does not just
       leave the match open; it means the Statsme regression check cannot pass.
     """
     out = {"half": half}
     out["match_id"] = containment.assert_test_match_id(
-        driver.setup_match(MatchType.COMPETITIVE, map_name))
-    driver.advance_pending()
-    driver.advance_live(half)
-    driver.fire_match_start_log()
+        driver.testmatch(per_team=per_team))
     print(f"  match {out['match_id']} live, half {half}", flush=True)
 
     # Let the state change settle before the play window: the zone poll runs on
     # a 0.5s task and the capture buffer flushes on a 5s one, so starting the
     # clock immediately attributes pre-live time to the match.
     time.sleep(5.0)
+    if before_play is not None:
+        before_play()
     out["live_from"] = _count(log_path, chr(34) + " killed " + chr(34))
 
     play(play_seconds=play_seconds, log_path=log_path)
@@ -384,7 +379,7 @@ def main() -> int:
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
                          "more lone cappers and so more cap_breaks — untested; "
-                         "see add_bots for what is and is not known")
+                         "see configure_bots for what is and is not known")
     ap.add_argument("--flag-priority", type=int, default=100)
     ap.add_argument("--break-drive-sma", type=Path,
                     default=Path("/work/tests/e2e_stats/diagnostics/KTPBreakDrive.sma"),
@@ -518,18 +513,8 @@ def main() -> int:
                     print(f"server up (attempt {attempt})", flush=True)
                     report["boot_attempts"] = attempt
                     booted = True
-                    add_bots(handle, per_team=args.per_team,
-                             flag_priority=args.flag_priority,
-                             wait_for_cap=args.wait_for_cap)
-                    if args.kill_switch_seconds:
-                        # Before the match, not after: proving capture came
-                        # back on needs enough play to produce an assist, and
-                        # the match itself is that evidence.
-                        report["kill_switch"] = kill_switch_off_window(
-                            handle, log_path=args.log,
-                            seconds=args.kill_switch_seconds)
-                        report["assists_before_match"] = _count(
-                            args.log, 'triggered "assist"')
+                    configure_bots(handle, flag_priority=args.flag_priority,
+                                   wait_for_cap=args.wait_for_cap)
                     def _stage_scenarios():
                         if assist_drive_amxx is not None:
                             print("staging degraded-killer assist scenario", flush=True)
@@ -546,11 +531,21 @@ def main() -> int:
                             print("staging post-match context probe", flush=True)
                             handle.rcon("ktp_ad_postmatch_frag")
 
+                    def _stage_kill_switch():
+                        if not args.kill_switch_seconds:
+                            return
+                        report["kill_switch"] = kill_switch_off_window(
+                            handle, log_path=args.log,
+                            seconds=args.kill_switch_seconds)
+                        report["assists_before_match"] = _count(
+                            args.log, 'triggered "assist"')
+
                     if mh_amxx is not None:
                         report["match"] = run_match(
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
-                            map_name=args.map, during_play=_stage_scenarios,
+                            per_team=args.per_team, before_play=_stage_kill_switch,
+                            during_play=_stage_scenarios,
                             after_match=_stage_post_match_frag)
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
