@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import urllib.request
 
+from . import parse
 from .config import settings
 
 _API = "https://discord.com/api/v10"
@@ -48,7 +49,7 @@ def post_announcement(text: str) -> bool:
     # A non-numeric id would 400 the whole post; degrade to no ping instead, so
     # "ROLE_ID=none" behaves like the documented empty off-switch.
     role = (settings.discord_announce_role_id or "").strip()
-    if not role.isdigit():
+    if not parse.is_snowflake(role):
         role = ""
     prefix = f"<@&{role}> " if role else ""
     payload = {
@@ -74,7 +75,7 @@ def relay_payload(channel_id: str, content: str, ping_user_id: str = "") -> dict
     parse:[] is load-bearing — the content carries text a member typed, and this
     is what stops it firing @everyone/@here. Only the operator ping resolves."""
     ping = (ping_user_id or "").strip()
-    if not ping.isdigit():
+    if not parse.is_snowflake(ping):
         ping = ""
     # The relay keys this one camelCase; snake_case 400s with "channelId required".
     return {
