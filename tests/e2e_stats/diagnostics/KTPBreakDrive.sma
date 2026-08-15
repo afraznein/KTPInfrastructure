@@ -48,7 +48,7 @@
 
 #include <amxmodx>
 #include <dodx>
-#include <fun>
+#include <reapi>
 
 #define PLUGIN  "KTP Break Drive"
 #define VERSION "0.1"
@@ -370,7 +370,7 @@ stock bd_execute_walkoff(f) {
 	for (new i = 0; i < num; i++) {
 		new id = players[i]
 		if (is_user_connected(id) && get_user_team(id) == team)
-			set_user_godmode(id, 1)
+			set_entvar(id, var_takedamage, DAMAGE_NO)
 	}
 	remove_task(BD_TASK_UNPROTECT_BASE + team)
 	set_task(BD_WALKOFF_PROTECT_SECS, "bd_unprotect_team",
@@ -391,7 +391,7 @@ public bd_unprotect_team(taskid) {
 	for (new i = 0; i < num; i++) {
 		new id = players[i]
 		if (is_user_connected(id) && get_user_team(id) == team)
-			set_user_godmode(id, 0)
+			set_entvar(id, var_takedamage, DAMAGE_AIM)
 	}
 }
 

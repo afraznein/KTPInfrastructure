@@ -293,6 +293,15 @@ class BreakDriver:
         # Captures can finish inside that round trip. The plugin now observes
         # and moves the capper in the same server frame.
         self.handle.rcon("ktp_bd_arm_walkoff")
+        ack_deadline = time.monotonic() + 3.0
+        while time.monotonic() < ack_deadline:
+            if "[BD] walkoff ARMED" in _tail(self._read(), mark):
+                break
+            time.sleep(0.1)
+        else:
+            s.detail = ("walkoff arm produced no acknowledgment; diagnostic "
+                        "plugin is not running")
+            return s
         deadline = time.monotonic() + 245.0
         while time.monotonic() < deadline:
             tail = _tail(self._read(), mark)
