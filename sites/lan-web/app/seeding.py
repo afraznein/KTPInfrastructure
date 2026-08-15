@@ -96,12 +96,15 @@ def get_setting(key: str, default=None):
     return row["v"] if row else default
 
 
+def set_setting_stmt(key: str, value):
+    """Unexecuted, for callers pairing this with an audit row in one transaction."""
+    return ("INSERT INTO lan_settings (k, v) VALUES (%s, %s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+            (key, str(value)))
+
+
 def set_setting(key: str, value):
     from . import db
-    db.execute(
-        "INSERT INTO lan_settings (k, v) VALUES (%s, %s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-        (key, str(value)),
-    )
+    db.execute(*set_setting_stmt(key, value))
 
 
 def poll_is_open() -> bool:

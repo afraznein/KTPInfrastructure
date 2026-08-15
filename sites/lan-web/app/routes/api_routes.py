@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from .. import (admin_audit, auth, awards, common, db, demos, match_stats,
-                notify, photos, seeding, stat_awards)
+                notify, parse, photos, seeding, stat_awards)
 from ..config import settings
 
 router = APIRouter()
@@ -89,7 +89,7 @@ async def _reason(request: Request) -> str:
 def _removal_message(request: Request, photo: dict, su: dict, reason: str) -> str:
     """Everything staff need to act without opening the database."""
     ping = (settings.photo_report_ping_user_id or "").strip()
-    head = f"<@{ping}> " if ping.isdigit() else ""
+    head = f"<@{ping}> " if parse.is_snowflake(ping) else ""
     lines = [
         f"{head}\U0001f5bc\ufe0f **Photo removal request**",
         f"Photo #{photo['id']} — {request.url_for('gallery_img', photo_id=photo['id'])}",
@@ -190,10 +190,12 @@ def api_award_close(request: Request, award_id: int):
         raise HTTPException(404, "No such award.")
     if not aw["is_open"]:
         return {"ok": True, "slug": aw["slug"], "already_closed": True}
-    db.execute("UPDATE lan_awards SET is_open=0 WHERE id=%s AND is_open=1", (award_id,))
     # One-way and it publishes a result, so it is the action that most needs a
     # record. Logged only on the real transition -- a repeat close returns above.
-    admin_audit.log_request(request, "award_close", aw["slug"], 1, 0)
+    db.execute_all([
+        ("UPDATE lan_awards SET is_open=0 WHERE id=%s AND is_open=1", (award_id,)),
+        admin_audit.stmt_request(request, "award_close", aw["slug"], 1, 0),
+    ])
     return {"ok": True, "slug": aw["slug"], "already_closed": False}
 
 
@@ -318,10 +320,12 @@ async def api_award_staff_vote(request: Request):
     if not stat_awards.award_type(slug):
         raise HTTPException(404, "No such award.")
     was = stat_awards.vote_state(edition, slug, match_key, actor)
-    stat_awards.set_vote(edition, slug, match_key, voted, actor)
-    admin_audit.log_request(request, "award_staff_vote",
-                            stat_awards.ref(edition, slug, match_key),
-                            int(was), int(voted))
+    db.execute_all([
+        stat_awards.set_vote_stmt(edition, slug, match_key, voted, actor),
+        admin_audit.stmt_request(request, "award_staff_vote",
+                                 stat_awards.ref(edition, slug, match_key),
+                                 int(was), int(voted)),
+    ])
     return {"ok": True, "voted": voted}
 
 
@@ -341,9 +345,12 @@ async def api_award_select(request: Request):
     if not stat_awards.award_type(slug):
         raise HTTPException(404, "No such award.")
     was = stat_awards.selection_state(edition, slug, match_key)
-    stat_awards.set_selected(edition, slug, match_key, selected, actor)
-    admin_audit.log_request(request, "award_select", stat_awards.ref(edition, slug, match_key),
-                            int(was), int(selected))
+    db.execute_all([
+        stat_awards.set_selected_stmt(edition, slug, match_key, selected, actor),
+        admin_audit.stmt_request(request, "award_select",
+                                 stat_awards.ref(edition, slug, match_key),
+                                 int(was), int(selected)),
+    ])
     return {"ok": True, "selected": selected}
 
 
@@ -363,9 +370,11 @@ async def api_award_rename(request: Request):
     title = _field(body, "title", 96) or None
     sting = _field(body, "sting", 255) or None
     was = stat_awards.override_note(t["title"], t["sting"])  # captured before the write
-    stat_awards.rename(slug, title, sting, actor)
-    admin_audit.log_request(request, "award_rename", slug, was,
-                            stat_awards.override_note(title, sting))
+    db.execute_all([
+        stat_awards.rename_stmt(slug, title, sting, actor),
+        admin_audit.stmt_request(request, "award_rename", slug, was,
+                                 stat_awards.override_note(title, sting)),
+    ])
     return {"ok": True, "slug": slug, "is_renamed": title is not None,
             "title": title or t["default_title"],
             "sting": sting or t["default_sting"]}
