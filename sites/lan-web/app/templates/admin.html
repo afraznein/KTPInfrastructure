@@ -74,7 +74,9 @@
          <strong>Master</strong> is the extra authority to tick an award onto the public board. It is granted in the environment
          but it rides on staff access, so revoking a master's row here <em>does</em> take it away — and if that was the last
          master, nobody can publish an award until the row is granted back.
-         Grants and revocations are recorded in the <a href="{{ url_for('admin_audit_log') }}">staff action log</a>.</p>
+         Grants and revocations are recorded in the <a href="{{ url_for('admin_audit_log') }}">staff action log</a>.
+         <strong>Clear row</strong> shows when a config admin also has a leftover row in the table, from before their id went into the
+         environment. It deletes that row and nothing else — their access is unaffected.</p>
       <table>
         <tbody>
         {% for a in admins %}
@@ -86,6 +88,10 @@
               {% if a.removable %}
               <form method="post" action="{{ url_for('admin_revoke') }}" onsubmit="return confirm('Revoke staff access for {{ a.label or a.discord_id }}?{% if a.is_master %}\n\nThey are a MASTER — this also takes away the authority to publish an award.{% endif %}');" style="display:inline;">
                 <input type="hidden" name="discord_id" value="{{ a.discord_id }}"><button type="submit">Revoke</button>
+              </form>
+              {% elif a.stale_row %}
+              <form method="post" action="{{ url_for('admin_clear_stale_row') }}" onsubmit="return confirm('Clear the leftover staff row for {{ a.label or a.discord_id }}?\n\nThis does NOT revoke anything — they stay staff from the server environment.');" style="display:inline;">
+                <input type="hidden" name="discord_id" value="{{ a.discord_id }}"><button type="submit">Clear row</button>
               </form>
               {% endif %}
             </td>
