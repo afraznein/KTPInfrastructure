@@ -11,6 +11,7 @@ def test_full_lane_builds_test_core_from_preprod():
 
     assert "ref: feat/lane-b-fakeclient-players" not in workflow
     assert "          ref: preprod" in workflow
+    assert '-v "${PWD}/.github:/work/.github:ro"' in workflow
     assert "    default: preprod" in action
     assert 'REF="${LANEB_REF:-preprod}"' in script
 
