@@ -48,6 +48,7 @@
 
 #include <amxmodx>
 #include <dodx>
+#include <fun>
 
 #define PLUGIN  "KTP Break Drive"
 #define VERSION "0.1"
@@ -65,9 +66,13 @@
 #define BD_TEAM_ALLIES 1
 #define BD_TEAM_AXIS   2
 #define BD_TASK_WALKOFF_POLL 77130
-#define BD_WALKOFF_MAX_POLLS 600
+#define BD_TASK_UNPROTECT_BASE 77140
+#define BD_WALKOFF_MAX_POLLS 2400
+#define BD_WALKOFF_DEATH_QUIET_SECS 5.0
+#define BD_WALKOFF_PROTECT_SECS 5.0
 
 new g_bdWalkoffPolls = 0
+new Float:g_bdLastTeamDeath[3]
 
 public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
@@ -76,6 +81,12 @@ public plugin_init() {
 	register_srvcmd("ktp_bd_walkoff", "cmd_walkoff")
 	register_srvcmd("ktp_bd_arm_walkoff", "cmd_arm_walkoff")
 	log_amx("[BD] loaded — NOT FOR PRODUCTION")
+}
+
+public client_death(killer, victim, wpnindex, hitplace, TK) {
+	new team = get_user_team(victim)
+	if (team == BD_TEAM_ALLIES || team == BD_TEAM_AXIS)
+		g_bdLastTeamDeath[team] = get_gametime()
 }
 
 // ---------------------------------------------------------------------------
@@ -350,12 +361,38 @@ stock bd_execute_walkoff(f) {
 	new before = bd_zone_count(f, team)
 	new mname[32]
 	get_user_name(mover, mname, charsmax(mname))
+
+	// Diagnostic-only isolation: unrelated bot combat can otherwise kill a
+	// capper between this move and the detector's next poll. Protect only the
+	// capping team, and only for the short attribution window.
+	new players[32], num
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (is_user_connected(id) && get_user_team(id) == team)
+			set_user_godmode(id, 1)
+	}
+	remove_task(BD_TASK_UNPROTECT_BASE + team)
+	set_task(BD_WALKOFF_PROTECT_SECS, "bd_unprotect_team",
+		BD_TASK_UNPROTECT_BASE + team)
+
 	dodx_set_user_origin(mover, dest)
 	log_amx("[BD] walkoff flag=%d mover=%d mname=%s anchor=%d capteam=%d count_before=%d",
 		f, mover, mname, anchor, team, before)
 
 	set_task(1.5, "bd_report_after", f)
 	return
+}
+
+public bd_unprotect_team(taskid) {
+	new team = taskid - BD_TASK_UNPROTECT_BASE
+	new players[32], num
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (is_user_connected(id) && get_user_team(id) == team)
+			set_user_godmode(id, 0)
+	}
 }
 
 public cmd_walkoff() {
@@ -383,6 +420,10 @@ public bd_walkoff_poll() {
 	g_bdWalkoffPolls++
 	new f = bd_find_capturing()
 	if (f >= 0) {
+		new team = dodx_area_get_data(f, CA_capturing_team)
+		if (get_gametime() - g_bdLastTeamDeath[team] <
+				BD_WALKOFF_DEATH_QUIET_SECS)
+			return PLUGIN_HANDLED
 		remove_task(BD_TASK_WALKOFF_POLL)
 		bd_execute_walkoff(f)
 		return PLUGIN_HANDLED

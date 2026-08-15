@@ -293,14 +293,14 @@ class BreakDriver:
         # Captures can finish inside that round trip. The plugin now observes
         # and moves the capper in the same server frame.
         self.handle.rcon("ktp_bd_arm_walkoff")
-        deadline = time.monotonic() + 65.0
+        deadline = time.monotonic() + 245.0
         while time.monotonic() < deadline:
             tail = _tail(self._read(), mark)
             if _WALKOFF_RE.search(tail) or "[BD] walkoff ABORT" in tail:
                 break
             time.sleep(0.25)
         else:
-            s.detail = "armed walkoff produced no result within 65s"
+            s.detail = "armed walkoff produced no result within 245s"
             return s
         time.sleep(self.SETTLE)
         full = self._read()
@@ -490,7 +490,7 @@ class BreakDriver:
 
     @staticmethod
     def _capping_deaths_near(full_log: str, capteam: int,
-                            window: int = 10,
+                            window: int = 4,
                             marker: str = "[BD] walkoff") -> list[str]:
         """Deaths of capping-team players around the staged walk-off.
 
@@ -534,29 +534,29 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     running the positive first would leave its break sitting in the window the
     negatives read.
 
-    Retries because `not_staged` is common and cheap to fix by trying again:
-    caps on a 16-bot server last seconds, and a walk-off window is contaminated
-    whenever a capper happens to die nearby. Neither says anything about the
-    code. A verdict of ok or violation is final and stops the loop immediately —
-    retrying past a violation would be shopping for a green run.
+    Retries because `not_staged` is common and cheap to fix by trying again.
+    A verdict of ok or violation is final and stops the loop immediately —
+    retrying past a violation would be shopping for a green run. The walkoff
+    runs first and has a longer in-process watcher because it needs a naturally
+    active capture; once found, the diagnostic isolates its evidence window
+    from unrelated bot deaths.
 
-    `attempts` dropped from 8 to 3 when the scenarios themselves started
-    gating on `_fire_when_capturing`, which already waits up to 60s watching
+    `attempts` dropped from 8 to 3 when the kill scenarios themselves started
+    gating on `_fire_when_capturing`, which waits up to 60s watching
     for a capture rather than firing blind. The old 8×~10s outer schedule was
     doing the waiting badly — DoD's active-capture window turned out to be
     only a few seconds, so a fixed retry every ~10s mostly landed between
     captures rather than during one, and all four rcon-firing scenarios came
     back `not_staged` in a live run despite 38 `dod_capture_area` events in
-    the same log. 3 attempts at up to ~70s each is a similar total budget,
-    spent watching instead of guessing.
+    the same log.
     """
     d = BreakDriver(handle, log_path)
     out = []
     # negative_round_restart is LAST on purpose: it restarts the round out
     # from under everything else, so anything after it would be measuring a
     # server it did not set up.
-    for fn in (d.negative_off_point_kill,
-               d.negative_voluntary_walkoff,
+    for fn in (d.negative_voluntary_walkoff,
+               d.negative_off_point_kill,
                d.negative_clean_capture,
                d.positive_kill_on_point,
                d.negative_round_restart):
