@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Any
@@ -124,6 +125,30 @@ class MatchDriver:
         self._handle = handle
 
     # -- Lifecycle / state-machine --------------------------------------
+
+    def testmatch(self, per_team: int = 6, timeout: float = 90.0) -> str:
+        """Fill a disposable LAN server with bots and take the real competitive
+        chat flow live: `.ktp` -> two `.confirm`s -> every bot `.ready`.
+
+        The plugin owns bot creation and containment. This method only starts it
+        and polls the existing state readback until the production path is LIVE.
+        """
+        out = self._handle.rcon(f"amx_ktp_testmatch {int(per_team)}")
+        self._raise_on_error(out, "KTP_TESTMATCH")
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            status = self._handle.rcon("amx_ktp_testmatch_status")
+            self._raise_on_error(status, "KTP_TESTMATCH")
+            last = self.get_state()
+            if last.match_live:
+                if not last.match_id.endswith("-TEST"):
+                    raise MatchDriverError(
+                        f"testmatch produced non-test match_id: {last.match_id!r}"
+                    )
+                return last.match_id
+            time.sleep(0.5)
+        raise MatchDriverError(f"testmatch did not reach LIVE in {timeout}s; last={last!r}")
 
     def setup_match(self, match_type: MatchType, map_name: str = "") -> str:
         """PRESTART_BEGIN with synthetic captains. Returns the assigned
