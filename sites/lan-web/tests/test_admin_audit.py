@@ -1,6 +1,5 @@
 """The staff action log and the two grants that now land in it."""
 import datetime
-
 from dataclasses import replace
 
 import pytest
