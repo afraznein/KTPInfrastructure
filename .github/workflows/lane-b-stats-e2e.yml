@@ -70,7 +70,7 @@ on:
         default: 'preprod'
       lane:
         description: >-
-          'full' = 16 bots + server + database + assertion suite. 'corpus' =
+          'full' = 12 bots (6v6) + server + database + assertion suite. 'corpus' =
           deterministic committed-log replay and is the merge gate.
         required: false
         type: choice
@@ -171,7 +171,7 @@ jobs:
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 
       # AMXX normally ignores fake clients in extension mode. This test-only
-      # core build makes the 16 in-container bots visible to the stats plugin.
+      # core build makes the 12 in-container bots visible to the stats plugin.
       - name: Build/restore Lane B ktpamx
         if: ${{ env.LANE == 'full' }}
         id: ktpamx
@@ -256,7 +256,7 @@ jobs:
             -w /work ktp-lane-b:ci \
             python3 -m pytest tests/e2e_stats -q
 
-      - name: Run full synthetic match with 16 bots
+      - name: Run full synthetic 6v6 match with 12 bots
         if: ${{ env.LANE == 'full' }}
         run: |
           set -euo pipefail
@@ -284,7 +284,7 @@ jobs:
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
-              --map "$MAP_NAME" --per-team 8 --play-seconds "$PLAY_SECONDS" \
+              --map "$MAP_NAME" --per-team 6 --play-seconds "$PLAY_SECONDS" \
               --matchhandler-src /src/KTPMatchHandler \
               --matchhandler-includes /src/KTPAMXX/plugins/include \
               --log /work/build/lane-b-e2e.log \

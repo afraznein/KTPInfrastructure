@@ -374,7 +374,8 @@ def main() -> int:
     ap.add_argument("--schema", type=Path, nargs="+", required=True)
     ap.add_argument("--seed", type=Path, nargs="*", default=[])
     ap.add_argument("--map", default="dod_anzio")
-    ap.add_argument("--per-team", type=int, default=8)
+    ap.add_argument("--per-team", type=int, choices=(6,), default=6,
+                    help="Lane B is fixed at tournament-sized 6v6")
     ap.add_argument("--play-seconds", type=int, default=240)
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
@@ -501,18 +502,20 @@ def main() -> int:
         daemon.start()
         print("daemon up, tailing the game log", flush=True)
 
-        booted = False
+        completed = False
+        run_error = None
         for attempt in range(1, BOOT_ATTEMPTS + 1):
+            server_started = False
             try:
                 with booted_subprocess(args.serverfiles, map_name=args.map,
-                                       port=args.port, maxplayers=args.per_team * 2,
+                                       port=args.port, maxplayers=12,
                                        rcon_password="smoketest",
                                        server_cfg="lane_b_server.cfg",
                                        log_file=args.log, boot_timeout=90.0,
                                        extra_args=topo.extra_args) as handle:
                     print(f"server up (attempt {attempt})", flush=True)
+                    server_started = True
                     report["boot_attempts"] = attempt
-                    booted = True
                     configure_bots(handle, flag_priority=args.flag_priority,
                                    wait_for_cap=args.wait_for_cap)
                     def _stage_scenarios():
@@ -550,10 +553,20 @@ def main() -> int:
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
                         _stage_scenarios()
+                completed = True
                 break
             except Exception as e:  # noqa: BLE001
                 print(f"boot attempt {attempt} failed: {e}", flush=True)
-        if not booted:
+                # Retry transient engine boot failures only. Once the server
+                # accepted RCON, replaying against the same daemon/database
+                # would mix two attempted matches into one regression result.
+                if server_started:
+                    run_error = e
+                    break
+        if run_error is not None:
+            daemon.stop()
+            raise run_error
+        if not completed:
             daemon.stop()
             raise SystemExit(f"server never booted in {BOOT_ATTEMPTS} attempts")
 

@@ -126,7 +126,7 @@ class MatchDriver:
 
     # -- Lifecycle / state-machine --------------------------------------
 
-    def testmatch(self, per_team: int = 8, timeout: float = 90.0) -> str:
+    def testmatch(self, per_team: int = 6, timeout: float = 90.0) -> str:
         """Fill a disposable LAN server with bots and take the real competitive
         chat flow live: `.ktp` -> two `.confirm`s -> every bot `.ready`.
 
@@ -138,6 +138,8 @@ class MatchDriver:
         deadline = time.monotonic() + timeout
         last = None
         while time.monotonic() < deadline:
+            status = self._handle.rcon("amx_ktp_testmatch_status")
+            self._raise_on_error(status, "KTP_TESTMATCH")
             last = self.get_state()
             if last.match_live:
                 if not last.match_id.endswith("-TEST"):

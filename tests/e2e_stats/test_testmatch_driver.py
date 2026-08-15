@@ -11,7 +11,9 @@ class FakeHandle:
     def rcon(self, command):
         self.commands.append(command)
         if command.startswith("amx_ktp_testmatch"):
-            return "KTP_TESTMATCH: FILLING target_per_team=8"
+            if command == "amx_ktp_testmatch_status":
+                return "KTP_TESTMATCH: LIVE match_id=1700000000-TEST bots_per_team=6"
+            return "KTP_TESTMATCH: FILLING target_per_team=6"
         if command == "amx_ktp_test_get_state":
             return (
                 'KTP_TEST_STATE: {"mt":0,"h":1,"l":1,"p":0,'
@@ -23,11 +25,25 @@ class FakeHandle:
 
 def test_testmatch_uses_one_orchestrator_command_and_returns_test_id():
     handle = FakeHandle()
-    assert MatchDriver(handle).testmatch(per_team=8) == "1700000000-TEST"
-    assert handle.commands == ["amx_ktp_testmatch 8", "amx_ktp_test_get_state"]
+    assert MatchDriver(handle).testmatch(per_team=6) == "1700000000-TEST"
+    assert handle.commands == [
+        "amx_ktp_testmatch 6",
+        "amx_ktp_testmatch_status",
+        "amx_ktp_test_get_state",
+    ]
 
 
 def test_testmatch_rejects_any_non_test_match_id():
     with pytest.raises(MatchDriverError, match="non-test match_id"):
         MatchDriver(FakeHandle("1700000000-NY1")).testmatch()
 
+
+def test_testmatch_surfaces_asynchronous_plugin_failure():
+    class FailedHandle(FakeHandle):
+        def rcon(self, command):
+            if command == "amx_ktp_testmatch_status":
+                return "KTP_TESTMATCH: ERROR reason=production_ktp_start_rejected"
+            return super().rcon(command)
+
+    with pytest.raises(MatchDriverError, match="production_ktp_start_rejected"):
+        MatchDriver(FailedHandle()).testmatch()
