@@ -64,12 +64,17 @@
 
 #define BD_TEAM_ALLIES 1
 #define BD_TEAM_AXIS   2
+#define BD_TASK_WALKOFF_POLL 77130
+#define BD_WALKOFF_MAX_POLLS 600
+
+new g_bdWalkoffPolls = 0
 
 public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_bd_scan", "cmd_scan")
 	register_srvcmd("ktp_bd_kill", "cmd_kill")
 	register_srvcmd("ktp_bd_walkoff", "cmd_walkoff")
+	register_srvcmd("ktp_bd_arm_walkoff", "cmd_arm_walkoff")
 	log_amx("[BD] loaded — NOT FOR PRODUCTION")
 }
 
@@ -313,33 +318,33 @@ public bd_report_after(f) {
  * synthesised coordinate could drop the bot inside geometry; another player is
  * standing somewhere by definition valid.
  */
-public cmd_walkoff() {
-	new arg_flag[8]
-	read_argv(1, arg_flag, charsmax(arg_flag))
-	new f = bd_resolve_flag(arg_flag)
-
+stock bd_execute_walkoff(f) {
 	if (f < 0) {
 		log_amx("[BD] walkoff ABORT flag=-1 no flag is capturing right now")
-		return PLUGIN_HANDLED
+		return
+	}
+	if (!dodx_area_get_data(f, CA_is_capturing)) {
+		log_amx("[BD] walkoff ABORT flag=%d not capturing", f)
+		return
 	}
 	new team = dodx_area_get_data(f, CA_capturing_team)
 	if (team != BD_TEAM_ALLIES && team != BD_TEAM_AXIS) {
 		log_amx("[BD] walkoff ABORT flag=%d capteam=%d", f, team)
-		return PLUGIN_HANDLED
+		return
 	}
 
 	new Float:dist = 0.0
 	new mover = bd_pick(f, team, true, dist)
 	if (!mover) {
 		log_amx("[BD] walkoff ABORT flag=%d nobody on the point", f)
-		return PLUGIN_HANDLED
+		return
 	}
 
 	new Float:dest[3]
 	new anchor = bd_pick(f, team, false, dist)
 	if (!anchor || !dodx_get_user_origin(anchor, dest)) {
 		log_amx("[BD] walkoff ABORT flag=%d no distant team-mate to move to", f)
-		return PLUGIN_HANDLED
+		return
 	}
 
 	new before = bd_zone_count(f, team)
@@ -350,5 +355,42 @@ public cmd_walkoff() {
 		f, mover, mname, anchor, team, before)
 
 	set_task(1.5, "bd_report_after", f)
+	return
+}
+
+public cmd_walkoff() {
+	new arg_flag[8]
+	read_argv(1, arg_flag, charsmax(arg_flag))
+	bd_execute_walkoff(bd_resolve_flag(arg_flag))
+	return PLUGIN_HANDLED
+}
+
+/**
+ * Arm an in-process walkoff. Polling inside the game removes the scan->RCON
+ * race: the same server frame that observes a live capture selects and moves
+ * its capper. The old two-command path routinely watched a short capture end
+ * between those operations.
+ */
+public cmd_arm_walkoff() {
+	remove_task(BD_TASK_WALKOFF_POLL)
+	g_bdWalkoffPolls = 0
+	log_amx("[BD] walkoff ARMED")
+	set_task(0.1, "bd_walkoff_poll", BD_TASK_WALKOFF_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public bd_walkoff_poll() {
+	g_bdWalkoffPolls++
+	new f = bd_find_capturing()
+	if (f >= 0) {
+		remove_task(BD_TASK_WALKOFF_POLL)
+		bd_execute_walkoff(f)
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdWalkoffPolls >= BD_WALKOFF_MAX_POLLS) {
+		remove_task(BD_TASK_WALKOFF_POLL)
+		log_amx("[BD] walkoff ABORT flag=-1 no capture started while armed")
+	}
 	return PLUGIN_HANDLED
 }

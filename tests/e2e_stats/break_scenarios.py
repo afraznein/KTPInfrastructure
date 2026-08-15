@@ -289,8 +289,18 @@ class BreakDriver:
         """
         s = Scenario("negative_voluntary_walkoff")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_walkoff auto"):
-            s.detail = "no cap started within the wait"
+        # Arm one in-process poller rather than scan then issue a second RCON.
+        # Captures can finish inside that round trip. The plugin now observes
+        # and moves the capper in the same server frame.
+        self.handle.rcon("ktp_bd_arm_walkoff")
+        deadline = time.monotonic() + 65.0
+        while time.monotonic() < deadline:
+            tail = _tail(self._read(), mark)
+            if _WALKOFF_RE.search(tail) or "[BD] walkoff ABORT" in tail:
+                break
+            time.sleep(0.25)
+        else:
+            s.detail = "armed walkoff produced no result within 65s"
             return s
         time.sleep(self.SETTLE)
         full = self._read()
