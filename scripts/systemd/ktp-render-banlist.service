@@ -1,0 +1,7 @@
+[Unit]
+Description=Render the central KTP ban list into the file-distributor tree
+After=network.target ktp-ac-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-render-banlist.sh
