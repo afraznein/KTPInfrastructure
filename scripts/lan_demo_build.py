@@ -49,6 +49,12 @@ ap.add_argument("--apply", action="store_true")
 ap.add_argument("--type", default="all")
 args = ap.parse_args()
 
+# Making the directory EQUAL the intended set means an empty source computes an
+# empty set, and --apply then deletes every published demo. The archive has been
+# pruned since the LAN; refuse rather than reconcile against nothing.
+if not os.path.isdir(SRC) or not os.listdir(SRC):
+    raise SystemExit("demo source missing or empty, refusing to reconcile: " + SRC)
+
 windows = {m["id"]: m for m in json.load(open(AR + "/match_windows.json"))}
 parsed = {d["name"]: d for d in json.load(open(AR + "/demos_parsed.json"))}
 allrows = list(csv.DictReader(open(AR + "/match_index.csv")))
