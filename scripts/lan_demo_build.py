@@ -58,8 +58,15 @@ TYPES = ["ktp", "scrim", "draft", "12man"] if args.type == "all" else [args.type
 ids = [r["match_id"] for r in allrows]
 q = ("SELECT match_id, team, player_name FROM ktp_match_players WHERE match_id IN (%s)"
      % ",".join("'" + m + "'" for m in ids))
-out = subprocess.run(["mysql", "-N", "-B", "hlstatsx_lan_philly2026", "-e", q],
-                     capture_output=True, text=True).stdout
+mysql = subprocess.run(["mysql", "-N", "-B", "hlstatsx_lan", "-e", q],
+                       capture_output=True, text=True)
+# No roster means every match resolves to "unresolved", and --apply then os.removes
+# the correctly-named hardlinks and rebuilds the tree under server-named form. A
+# failed query has to stop the run, not quietly change the answer.
+if mysql.returncode != 0 or not mysql.stdout.strip():
+    raise SystemExit("roster query failed (rc=%d): %s"
+                     % (mysql.returncode, mysql.stderr.strip()[:400] or "no rows"))
+out = mysql.stdout
 side = collections.defaultdict(lambda: collections.defaultdict(collections.Counter))
 for ln in out.split("\n"):
     p = ln.split("\t")
