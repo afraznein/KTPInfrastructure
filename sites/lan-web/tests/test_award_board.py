@@ -6,11 +6,12 @@ tables are never read, not that the page is trusted to hide what it was sent.
 The vote tally is withheld from non-master staff the same way, and tested the
 same way — on the serialised body, with a positive control."""
 import re
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
-from app import db, stat_awards
+from app import config, db, stat_awards
 from conftest import sign_in
 
 EDITION = "philly-2026"
@@ -196,9 +197,42 @@ def test_each_new_flag_flips_through_the_existing_publish_route(client, board_db
     r = client.post("/admin/publish", data={"flag": flag, "publish": "1"},
                     follow_redirects=False)
     assert r.status_code == 303
-    assert board_db.writes[0][1] == (flag, "1")
+    board_db.flags[flag] = "1"           # so the second post is a real flip back
     client.post("/admin/publish", data={"flag": flag}, follow_redirects=False)
-    assert board_db.writes[1][1] == (flag, "0")
+    # By SQL, not by index — the audit row now lands between the two.
+    assert [p for sql, p in board_db.writes
+            if sql.startswith("INSERT INTO lan_settings")] == [(flag, "1"), (flag, "0")]
+
+
+@pytest.mark.parametrize("flag", ["stats_published", "awards_published"])
+def test_flipping_a_publish_gate_is_audited_both_ways(client, board_db, flag):
+    as_staff(board_db, client)
+    client.post("/admin/publish", data={"flag": flag, "publish": "1"},
+                follow_redirects=False)
+    board_db.flags[flag] = "1"
+    client.post("/admin/publish", data={"flag": flag}, follow_redirects=False)
+    rows = [p for sql, p in board_db.writes if sql.startswith("INSERT INTO lan_admin_audit")]
+    assert [(p[2], p[3], p[4], p[5]) for p in rows] == [
+        ("publish_flag", flag, "0", "1"),
+        ("publish_flag", flag, "1", "0"),
+    ]
+
+
+@pytest.mark.parametrize("flag", ["stats_published", "awards_published"])
+def test_a_publish_that_changes_nothing_writes_no_audit_row(client, board_db, flag):
+    """Otherwise a double-click reads as two separate decisions."""
+    as_staff(board_db, client)
+    board_db.flags[flag] = "1"
+    client.post("/admin/publish", data={"flag": flag, "publish": "1"},
+                follow_redirects=False)
+    assert not [1 for sql, _ in board_db.writes if sql.startswith("INSERT INTO lan_admin_audit")]
+
+
+def test_an_unknown_publish_target_is_refused_and_audits_nothing(client, board_db):
+    as_staff(board_db, client)
+    assert client.post("/admin/publish", data={"flag": "everything_published",
+                                               "publish": "1"}).status_code == 400
+    assert board_db.writes == []
 
 
 def test_both_flags_have_a_toggle_on_the_admin_home(client, board_db, monkeypatch):
@@ -214,6 +248,50 @@ def test_both_flags_have_a_toggle_on_the_admin_home(client, board_db, monkeypatc
     for flag in ("stats_published", "awards_published"):
         assert f'name="flag" value="{flag}"' in page
     assert "Staff action log" in page
+
+
+def _admin_page(client, board_db, monkeypatch):
+    from app import bracket
+    from app import schedule as sched
+    monkeypatch.setattr(sched, "seeds_locked", lambda: False)
+    monkeypatch.setattr(sched, "matches_exist", lambda: False)
+    monkeypatch.setattr(bracket, "bracket_exists", lambda: False)
+    board_db.add("FROM lan_teams ORDER BY", [])
+    board_db.add("SELECT p.discord_id, p.display_name", [])
+    return client.get("/admin").text
+
+
+def test_the_staff_table_marks_a_master(client, board_db, monkeypatch):
+    """Only a master can tick an award onto the public board, and the row read
+    exactly like ordinary staff.
+
+    Pinned rather than leaning on the hardcoded fallback list, so exporting
+    LAN_MASTER_ADMIN_DISCORD_IDS does not fail this."""
+    from app.routes import admin_routes
+    monkeypatch.setattr(admin_routes, "settings",
+                        replace(config.settings,
+                                master_admin_discord_ids=frozenset({DID})))
+    as_staff(board_db, client, OTHER)
+    board_db.admins = [{"discord_id": OTHER, "label": "jrod"},
+                       {"discord_id": DID, "label": "nein"}]
+    page = _admin_page(client, board_db, monkeypatch)
+    assert page.count(">master<") == 1
+    # In the right row: a count alone passes when the wrong row is badged.
+    nein_row = page.split("discord %d" % DID)[0].rsplit("<tr>", 1)[-1]
+    jrod_row = page.split("discord %d" % OTHER)[0].rsplit("<tr>", 1)[-1]
+    assert ">master<" in nein_row and ">master<" not in jrod_row
+
+
+def test_a_config_admin_has_no_revoke_button(client, board_db, monkeypatch):
+    """The lockout guard's UI half: the button is absent and the row says why."""
+    from app.routes import admin_routes
+    monkeypatch.setattr(admin_routes, "settings",
+                        replace(config.settings, admin_discord_ids=frozenset({THIRD})))
+    as_staff(board_db, client, OTHER)
+    board_db.admins = [{"discord_id": OTHER, "label": "jrod"}]
+    page = _admin_page(client, board_db, monkeypatch)
+    assert "config · permanent" in page
+    assert page.count("Revoke staff access for") == 0   # OTHER is self, THIRD is config
 
 
 # ── card shape ────────────────────────────────────────────────────────────

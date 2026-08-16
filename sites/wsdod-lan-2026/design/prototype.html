@@ -636,9 +636,10 @@ details.panel[open] > summary::after { content: "\2013"; }
 /* the podium three carry the same medal colours the leaderboard uses, so a
    glance at a card reads the same way a glance at the board does */
 .awardcard .lead .who { font-size: 0.86rem; color: var(--gold); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.awardcard .lead .val { color: var(--gold); }
 .awardcard .lead .val { margin-left: auto; font-size: 0.82rem; color: var(--text); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .awardcard .lead .ctx { display: block; font-size: 0.63rem; color: var(--faint); margin-top: 3px; }
+/* awardCard()'s vote cards, not the generated board's -- that one emits
+   "notvoted" and dulls the whole card. One letter apart, two renderers. */
 .awardcard.novote .lead .who { color: var(--faint); font-weight: 400; font-size: 0.76rem; }
 /* runners-up, always visible — the point is to be able to announce a category */
 .runners { margin-top: 9px; border-top: 1px solid var(--rule); padding-top: 7px; }
@@ -2960,7 +2961,7 @@ field counts as pushing rather than failing:</span>
 
 </div>
 
-<!-- MOCKUP-ONLY: demonstrates the lan_stats_publication gate (published=0).
+<!-- MOCKUP-ONLY: demonstrates lan_settings.stats_published=0, the real gate.
      In production this is server-side — unpublished stats ship no markup at all. -->
 <div class="mock">
   <span class="tag">Mockup only — stats gate</span>
@@ -4354,6 +4355,11 @@ if (el25) {
       w.forEach(function (x) {
         var li = el("li");
         li.appendChild(el("span", "sn", x.alias || shortName(x.who)));
+        // A match-scope award shared by five names is five different matches;
+        // without this the fold lists who and never where. Where only -- the
+        // name above is already the alias, so passing x would print it twice.
+        var cx = x.where ? ctxFor({ where: x.where }) : null;
+        if (cx) { cx.className = "sw"; li.appendChild(cx); }
         ol.appendChild(li);
       });
       names.appendChild(ol);

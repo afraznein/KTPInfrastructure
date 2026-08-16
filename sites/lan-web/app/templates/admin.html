@@ -70,17 +70,21 @@
 
       <h3 style="margin-top:30px;">Staff access</h3>
       <p style="font-size:13px;color:var(--ink-faint);">Everyone listed here can see this page and run every control. <strong>Config</strong> admins are
-         set in the server environment and can't be revoked here — that's the lockout guard.</p>
+         set in the server environment and can't be revoked here — that's the lockout guard.
+         <strong>Master</strong> is the extra authority to tick an award onto the public board. It is granted in the environment
+         but it rides on staff access, so revoking a master's row here <em>does</em> take it away — and if that was the last
+         master, nobody can publish an award until the row is granted back.
+         Grants and revocations are recorded in the <a href="{{ url_for('admin_audit_log') }}">staff action log</a>.</p>
       <table>
         <tbody>
         {% for a in admins %}
           <tr>
-            <td style="width:auto;color:var(--ink);">{{ a.label or '(unnamed)' }}{% if a.team %} <span style="color:var(--ink-faint);">· {{ a.team }}</span>{% endif %}{% if a.is_self %} <span style="color:var(--wsdod-blue);">— you</span>{% endif %}</td>
+            <td style="width:auto;color:var(--ink);">{{ a.label or '(unnamed)' }}{% if a.team %} <span style="color:var(--ink-faint);">· {{ a.team }}</span>{% endif %}{% if a.is_self %} <span style="color:var(--wsdod-blue);">— you</span>{% endif %}{% if a.is_master %} <span style="font-family:var(--stencil);letter-spacing:.12em;font-size:10px;text-transform:uppercase;color:var(--alert);">master</span>{% endif %}</td>
             <td style="font-size:12px;color:var(--ink-faint);">discord {{ a.discord_id }}</td>
-            <td style="width:10rem;">{% if a.source == 'config' %}<span style="color:var(--ink-faint);">config · permanent</span>{% else %}granted on staff page{% endif %}</td>
+            <td style="width:10rem;font-size:12px;">{% if a.source == 'config' %}<span style="color:var(--ink-faint);">config · permanent</span>{% else %}granted on staff page{% if a.granted_at %} <span style="color:var(--ink-faint);">· {{ a.granted_at }}</span>{% endif %}{% endif %}</td>
             <td style="width:7rem;">
               {% if a.removable %}
-              <form method="post" action="{{ url_for('admin_revoke') }}" onsubmit="return confirm('Revoke staff access for {{ a.label or a.discord_id }}?');" style="display:inline;">
+              <form method="post" action="{{ url_for('admin_revoke') }}" onsubmit="return confirm('Revoke staff access for {{ a.label or a.discord_id }}?{% if a.is_master %}\n\nThey are a MASTER — this also takes away the authority to publish an award.{% endif %}');" style="display:inline;">
                 <input type="hidden" name="discord_id" value="{{ a.discord_id }}"><button type="submit">Revoke</button>
               </form>
               {% endif %}

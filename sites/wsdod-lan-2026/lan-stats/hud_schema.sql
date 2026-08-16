@@ -150,25 +150,7 @@ CREATE TABLE IF NOT EXISTS hud_spawns (
   KEY ix_hs_class (class_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- RETIRED 2026-08-14 -- NOT the production gate, and never was. Nothing has
--- ever read this table, both audit columns are still NULL, and lan-web cannot
--- reach it anyway: the app connects as ktp_lan and this lives in hlstatsx_lan.
--- The live gate is lan_settings.stats_published, in ktp_lan, via /admin/publish.
--- Kept only so an existing deployment does not lose a table. When per-match
--- gating lands, rebuild the per-scope idea in ktp_lan rather than granting
--- cross-database access to this one.
---
--- Its default was right and is worth carrying forward: a new dataset starts
--- unpublished, because a page that defaults to visible eventually leaks
--- something nobody meant to release.
-CREATE TABLE IF NOT EXISTS lan_stats_publication (
-  scope       VARCHAR(32) NOT NULL,     -- 'all' | a match_id | a date
-  published   TINYINT(1)  NOT NULL DEFAULT 0,
-  published_by VARCHAR(32) NULL,
-  published_at DATETIME   NULL,
-  note        VARCHAR(255) NULL,
-  PRIMARY KEY (scope)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-INSERT IGNORE INTO lan_stats_publication (scope, published, note)
-VALUES ('all', 0, 'Philly LAN 2026 — unpublished by default; flip deliberately.');
+-- TOMBSTONE -- lan_stats_publication was never the gate; do not re-add it here.
+-- The gate is lan_settings.stats_published, in ktp_lan, which is the only schema
+-- lan-web has a grant on. Rationale, drop DDL and the per-scope successor design:
+-- retire_lan_stats_publication.sql (deliberately unapplied).

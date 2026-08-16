@@ -191,6 +191,9 @@ def api_award_close(request: Request, award_id: int):
     if not aw["is_open"]:
         return {"ok": True, "slug": aw["slug"], "already_closed": True}
     db.execute("UPDATE lan_awards SET is_open=0 WHERE id=%s AND is_open=1", (award_id,))
+    # One-way and it publishes a result, so it is the action that most needs a
+    # record. Logged only on the real transition -- a repeat close returns above.
+    admin_audit.log_request(request, "award_close", aw["slug"], 1, 0)
     return {"ok": True, "slug": aw["slug"], "already_closed": False}
 
 

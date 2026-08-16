@@ -49,7 +49,10 @@ class Settings:
 
 
 def _parse_ids(raw: str) -> frozenset:
-    return frozenset(int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit())
+    # isascii() because isdigit() is true for '²' and int() then raises — which
+    # here would be a startup crash in the admin allowlist.
+    return frozenset(int(x) for x in raw.replace(",", " ").split()
+                     if x.strip().isascii() and x.strip().isdigit())
 
 
 # Env-driven so a wrong id is a config change rather than a redeploy. An unset
