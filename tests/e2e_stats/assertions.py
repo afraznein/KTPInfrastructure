@@ -527,6 +527,27 @@ def check_headshots_carried(db, *, emitted: int) -> dict:
             "rows": rows, "detail": f"{rows}/{emitted} carried"}
 
 
+def check_frag_context_claimed(db) -> dict:
+    """Every stock frag is enriched exactly once by its context marker."""
+    rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
+    if rows == 0:
+        return {"code": "frag_context_claimed", "status": "not_exercised",
+                "rows": 0, "unclaimed": 0, "detail": "no frag rows to check"}
+
+    unclaimed = db.count(
+        "SELECT COUNT(*) FROM hlstats_Events_Frags "
+        "WHERE frag_context_recorded = 0"
+    )
+    if unclaimed:
+        return {"code": "frag_context_claimed", "status": "pipeline",
+                "rows": rows, "unclaimed": unclaimed, "detail":
+                f"{unclaimed}/{rows} frag row(s) were never claimed by a "
+                "frag_context marker"}
+    return {"code": "frag_context_claimed", "status": "ok",
+            "rows": rows, "unclaimed": 0, "detail":
+            f"all {rows} frag row(s) received context exactly once"}
+
+
 def check_damage_ledger(db, *, emitted: int) -> dict:
     """Did every emitted `damage` marker land in `ktp_damage_events`, and is
     `damage_capped` actually capped?
