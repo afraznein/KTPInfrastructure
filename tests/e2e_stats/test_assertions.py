@@ -147,6 +147,28 @@ def test_match_stats_cache_mismatch_fails():
     assert "canonical events" in verdict["detail"]
 
 
+class FragContextDb:
+    def __init__(self, rows, unclaimed):
+        self.rows = rows
+        self.unclaimed = unclaimed
+
+    def count(self, query):
+        return self.unclaimed if "frag_context_recorded" in query else self.rows
+
+
+def test_every_frag_context_is_claimed_once():
+    verdict = assertions.check_frag_context_claimed(
+        FragContextDb(rows=48, unclaimed=0))
+    assert verdict["status"] == "ok"
+
+
+def test_unclaimed_frag_context_fails_the_lane():
+    verdict = assertions.check_frag_context_claimed(
+        FragContextDb(rows=48, unclaimed=1))
+    assert verdict["status"] == "pipeline"
+    assert "1/48" in verdict["detail"]
+
+
 def test_nothing_emitted_but_rows_present_still_flags_the_flag_inversion():
     """The flag invariant is about configuration, not volume, so it is checked
     even when the run exercised nothing."""

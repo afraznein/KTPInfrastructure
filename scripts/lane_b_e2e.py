@@ -628,6 +628,7 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_frag_context_claimed(db),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
             assertions.check_flag_captures(
                 db, emitted=report["emitted"]["flag_capture"]),

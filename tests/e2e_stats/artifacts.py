@@ -125,6 +125,7 @@ class ArtifactSet:
             "sql/migrate_009_disable_connect_announcements.sql",
             "sql/migrate_010_flag_captures.sql",
             "sql/migrate_011_match_player_identity_width.sql",
+            "sql/migrate_012_frag_context_correlation.sql",
         ),
         seed_files: tuple[str, ...] = (
             "sql/migrate_003_assist_action.sql",
