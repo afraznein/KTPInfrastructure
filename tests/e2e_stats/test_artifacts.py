@@ -16,7 +16,13 @@ import subprocess
 
 import pytest
 
-from .artifacts import ArtifactSet, BuildError, extract, resolve_ref
+from .artifacts import (
+    ArtifactSet,
+    BuildError,
+    DEFAULT_SCHEMA_FILES,
+    extract,
+    resolve_ref,
+)
 
 
 def _git(repo, *args):
@@ -94,6 +100,11 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.hlstats_pl.is_file()
     assert len(arts.schema_sql) == 9
     assert len(arts.seed_sql) == 2
+
+
+def test_default_schema_sequence_includes_frag_context_correlation():
+    assert DEFAULT_SCHEMA_FILES[-1] == \
+        "sql/migrate_012_frag_context_correlation.sql"
 
 
 def test_sma_and_inc_land_in_the_same_directory(amxx_repo, daemon_repo, tmp_path):

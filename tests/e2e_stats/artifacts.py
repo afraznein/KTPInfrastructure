@@ -51,6 +51,19 @@ class BuildError(RuntimeError):
     'run anyway with whatever is on disk'."""
 
 
+DEFAULT_SCHEMA_FILES = (
+    "sql/ktp_schema.sql",
+    "sql/migrate_005_frag_context_columns.sql",
+    "sql/migrate_006_damage_ledger.sql",
+    "sql/migrate_007_break_context.sql",
+    "sql/migrate_008_position_samples.sql",
+    "sql/migrate_009_disable_connect_announcements.sql",
+    "sql/migrate_010_flag_captures.sql",
+    "sql/migrate_011_match_player_identity_width.sql",
+    "sql/migrate_012_frag_context_correlation.sql",
+)
+
+
 def _md5(path: Path) -> str:
     h = hashlib.md5()
     with path.open("rb") as f:
@@ -116,17 +129,7 @@ class ArtifactSet:
         daemon_repo: Path,
         daemon_ref: str,
         include_plugin: bool = True,
-        schema_files: tuple[str, ...] = (
-            "sql/ktp_schema.sql",
-            "sql/migrate_005_frag_context_columns.sql",
-            "sql/migrate_006_damage_ledger.sql",
-            "sql/migrate_007_break_context.sql",
-            "sql/migrate_008_position_samples.sql",
-            "sql/migrate_009_disable_connect_announcements.sql",
-            "sql/migrate_010_flag_captures.sql",
-            "sql/migrate_011_match_player_identity_width.sql",
-            "sql/migrate_012_frag_context_correlation.sql",
-        ),
+        schema_files: tuple[str, ...] = DEFAULT_SCHEMA_FILES,
         seed_files: tuple[str, ...] = (
             "sql/migrate_003_assist_action.sql",
             "sql/migrate_004_cap_break_action.sql",
