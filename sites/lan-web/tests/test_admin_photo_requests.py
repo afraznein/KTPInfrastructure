@@ -46,6 +46,7 @@ def test_queue_lists_pending_requests(client, page_db):
 
 def test_marking_handled_stamps_the_actor(client, page_db):
     page_db.add("FROM lan_admins", [{"discord_id": DID, "label": "nein"}])
+    page_db.add("SELECT id FROM lan_photo_removal_requests", {"id": 4})
     sign_in(client, DID)
     r = client.post("/admin/photo-requests/handled", data={"request_id": "4"},
                     follow_redirects=False)

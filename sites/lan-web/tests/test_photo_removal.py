@@ -112,10 +112,11 @@ def test_reason_can_never_fire_a_mass_ping(client, photo_db, relay):
 
 
 def test_payload_pins_parse_empty_regardless_of_ping():
-    for ping in ("218890328273321984", "", "not-an-id"):
+    """'²' is in the list because isdigit() calls it an id and Discord does not."""
+    for ping in ("218890328273321984", "", "not-an-id", "²", "1٢3"):
         m = notify.relay_payload("1", "@everyone", ping)["allowed_mentions"]
         assert m["parse"] == []
-        assert m["users"] == ([ping] if ping.isdigit() else [])
+        assert m["users"] == ([ping] if ping.isascii() and ping.isdigit() else [])
 
 
 def test_repeat_from_the_same_person_is_refused_and_not_announced(client, fake_db, relay):

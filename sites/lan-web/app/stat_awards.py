@@ -109,21 +109,21 @@ def vote_state(edition: str, slug: str, match_key: str, voter) -> bool:
     return r is not None
 
 
-def set_vote(edition: str, slug: str, match_key: str, voted: bool, voter) -> None:
+def set_vote_stmt(edition: str, slug: str, match_key: str, voted: bool, voter):
     """The row's presence is the vote, so un-voting deletes rather than writing
-    a false there is no later pass to reconcile."""
+    a false there is no later pass to reconcile. Unexecuted, for callers pairing
+    this with an audit row in one transaction."""
     if not voted:
-        db.execute(
-            "DELETE FROM lan_award_staff_votes "
-            "WHERE edition=%s AND award_slug=%s AND match_key=%s AND voter=%s",
-            (edition, slug, match_key, int(voter)),
-        )
-        return
-    db.execute(
-        "INSERT INTO lan_award_staff_votes (edition, award_slug, match_key, voter) "
-        "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE voted_at=voted_at",
-        (edition, slug, match_key, int(voter)),
-    )
+        return ("DELETE FROM lan_award_staff_votes "
+                "WHERE edition=%s AND award_slug=%s AND match_key=%s AND voter=%s",
+                (edition, slug, match_key, int(voter)))
+    return ("INSERT INTO lan_award_staff_votes (edition, award_slug, match_key, voter) "
+            "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE voted_at=voted_at",
+            (edition, slug, match_key, int(voter)))
+
+
+def set_vote(edition: str, slug: str, match_key: str, voted: bool, voter) -> None:
+    db.execute(*set_vote_stmt(edition, slug, match_key, voted, voter))
 
 
 def group_of(scope: str, kind: str, render: str) -> str:
@@ -259,21 +259,27 @@ def selection_state(edition: str, slug: str, match_key: str = WEEKEND) -> bool:
     return bool(r and r["selected"])
 
 
+def set_selected_stmt(edition: str, slug: str, match_key: str, selected: bool, actor):
+    """Unexecuted, for callers pairing this with an audit row in one transaction."""
+    return ("INSERT INTO lan_award_selections "
+            "(edition, award_slug, match_key, selected, selected_by, selected_at) "
+            "VALUES (%s,%s,%s,%s,%s,NOW()) "
+            "ON DUPLICATE KEY UPDATE selected=VALUES(selected), "
+            "selected_by=VALUES(selected_by), selected_at=VALUES(selected_at)",
+            (edition, slug, match_key, 1 if selected else 0, int(actor)))
+
+
 def set_selected(edition: str, slug: str, match_key: str, selected: bool, actor) -> None:
-    db.execute(
-        "INSERT INTO lan_award_selections "
-        "(edition, award_slug, match_key, selected, selected_by, selected_at) "
-        "VALUES (%s,%s,%s,%s,%s,NOW()) "
-        "ON DUPLICATE KEY UPDATE selected=VALUES(selected), "
-        "selected_by=VALUES(selected_by), selected_at=VALUES(selected_at)",
-        (edition, slug, match_key, 1 if selected else 0, int(actor)),
-    )
+    db.execute(*set_selected_stmt(edition, slug, match_key, selected, actor))
+
+
+def rename_stmt(slug: str, title: str | None, sting: str | None, actor):
+    """Global to the award type, so next year's edition inherits it. NULL means
+    "use the generated default", which is how a retitle is cleared. Unexecuted,
+    for callers pairing this with an audit row in one transaction."""
+    return ("UPDATE lan_award_types SET title=%s, sting=%s, updated_by=%s WHERE slug=%s",
+            (title, sting, int(actor), slug))
 
 
 def rename(slug: str, title: str | None, sting: str | None, actor) -> None:
-    """Global to the award type, so next year's edition inherits it. NULL means
-    "use the generated default", which is how a retitle is cleared."""
-    db.execute(
-        "UPDATE lan_award_types SET title=%s, sting=%s, updated_by=%s WHERE slug=%s",
-        (title, sting, int(actor), slug),
-    )
+    db.execute(*rename_stmt(slug, title, sting, actor))

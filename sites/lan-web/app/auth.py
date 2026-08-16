@@ -11,7 +11,7 @@ from typing import Optional
 from authlib.integrations.starlette_client import OAuth
 from fastapi import HTTPException, Request
 
-from . import db
+from . import db, parse
 from .config import settings
 
 oauth = OAuth()
@@ -118,8 +118,8 @@ def is_owner(request: Request) -> bool:
     """The single account allowed to end a vote. Not the admin list — closing a
     category is final for everyone, so it must not widen as staff are added."""
     did = request.session.get(SESSION_ID)
-    owner = (settings.owner_discord_id or "").strip()
-    return bool(did) and owner.isdigit() and int(did) == int(owner)
+    owner = parse.snowflake(settings.owner_discord_id)
+    return bool(did) and owner is not None and int(did) == owner
 
 
 def require_owner(request: Request) -> int:
