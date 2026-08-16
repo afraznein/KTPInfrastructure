@@ -88,6 +88,57 @@ def test_missing_lane_b_weaponstats_is_a_pipeline_failure():
     assert "compile flag" in v["detail"]
 
 
+class MatchStatsDb:
+    def __init__(self, *, rows=12, mismatches=0, total_mismatches=0,
+                 statsme=0, attributed=0):
+        self.rows = rows
+        self.mismatches = mismatches
+        self.total_mismatches = total_mismatches
+        self.statsme = statsme
+        self.attributed = attributed
+
+    def count(self, query):
+        if "lane_b_match_stats_source_mismatch" in query:
+            return self.mismatches
+        if "lane_b_match_stats_total_mismatch" in query:
+            return self.total_mismatches
+        if "ktp_match_stats" in query:
+            return self.rows
+        if "WHERE match_id" in query and "Events_Statsme" in query:
+            return self.attributed
+        if "Events_Statsme" in query:
+            return self.statsme
+        return 0
+
+
+def test_statsme_requires_match_attribution_when_context_is_supplied():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(statsme=64, attributed=0), weaponstats_lines=64,
+        match_id="test-match", half=1)
+    assert verdict["status"] == "pipeline"
+    assert "flush before KTP_MATCH_END" in verdict["detail"]
+
+
+def test_statsme_attribution_passes_when_every_row_is_tagged():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(statsme=64, attributed=64), weaponstats_lines=64,
+        match_id="test-match", half=1)
+    assert verdict["status"] == "ok"
+
+
+def test_match_stats_cache_reconciles_with_canonical_events():
+    verdict = assertions.check_match_stats_reconciled(
+        MatchStatsDb(), match_id="test-match")
+    assert verdict["status"] == "ok"
+
+
+def test_match_stats_cache_mismatch_fails():
+    verdict = assertions.check_match_stats_reconciled(
+        MatchStatsDb(mismatches=1), match_id="test-match")
+    assert verdict["status"] == "pipeline"
+    assert "canonical events" in verdict["detail"]
+
+
 def test_nothing_emitted_but_rows_present_still_flags_the_flag_inversion():
     """The flag invariant is about configuration, not volume, so it is checked
     even when the run exercised nothing."""

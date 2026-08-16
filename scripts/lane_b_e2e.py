@@ -652,7 +652,10 @@ def main() -> int:
             carried += assertions.check_match_tagging(
                 db, match_id=m["match_id"], half=m["half"])
             carried.append(assertions.check_statsme_flushed(
-                db, weaponstats_lines=log_text.count(chr(34) + "weaponstats" + chr(34))))
+                db, weaponstats_lines=log_text.count(chr(34) + "weaponstats" + chr(34)),
+                match_id=m["match_id"], half=m["half"]))
+            carried.append(assertions.check_match_stats_reconciled(
+                db, match_id=m["match_id"]))
             # The window comes from the log's own KTP_MATCH_START/END markers,
             # not from sampling a counter around the play window. Sampling is
             # off by whatever lands between the state machine going live and
