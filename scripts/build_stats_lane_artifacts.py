@@ -50,7 +50,11 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from tests.e2e_stats.artifacts import ArtifactSet, BuildError  # noqa: E402
+from tests.e2e_stats.artifacts import (  # noqa: E402
+    ArtifactSet,
+    BuildError,
+    DEFAULT_SCHEMA_FILES,
+)
 
 
 def main() -> int:
@@ -78,16 +82,7 @@ def main() -> int:
     ap.add_argument("--define", action="append", default=[],
                     help="Compile-time NAME=VALUE passed to amxxpc; repeatable")
 
-    ap.add_argument("--schema", nargs="*", default=[
-                        "sql/ktp_schema.sql",
-                        "sql/migrate_005_frag_context_columns.sql",
-                        "sql/migrate_006_damage_ledger.sql",
-                        "sql/migrate_007_break_context.sql",
-                        "sql/migrate_008_position_samples.sql",
-                        "sql/migrate_009_disable_connect_announcements.sql",
-                        "sql/migrate_010_flag_captures.sql",
-                        "sql/migrate_011_match_player_identity_width.sql",
-                    ],
+    ap.add_argument("--schema", nargs="*", default=list(DEFAULT_SCHEMA_FILES),
                     help="Schema files, repo-relative, in apply order")
     ap.add_argument("--seed", nargs="*",
                     default=["sql/migrate_003_assist_action.sql",
