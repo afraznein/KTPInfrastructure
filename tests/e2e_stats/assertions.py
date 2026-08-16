@@ -527,25 +527,30 @@ def check_headshots_carried(db, *, emitted: int) -> dict:
             "rows": rows, "detail": f"{rows}/{emitted} carried"}
 
 
-def check_frag_context_claimed(db) -> dict:
-    """Every stock frag is enriched exactly once by its context marker."""
+def check_frag_context_claimed(db, *, emitted: int, unmatched: int) -> dict:
+    """Every context that found a stock frag claimed exactly one row."""
     rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
-    if rows == 0:
-        return {"code": "frag_context_claimed", "status": "not_exercised",
-                "rows": 0, "unclaimed": 0, "detail": "no frag rows to check"}
-
-    unclaimed = db.count(
+    claimed = db.count(
         "SELECT COUNT(*) FROM hlstats_Events_Frags "
-        "WHERE frag_context_recorded = 0"
+        "WHERE frag_context_recorded = 1"
     )
-    if unclaimed:
+    if emitted == 0:
+        return {"code": "frag_context_claimed", "status": "not_exercised",
+                "rows": rows, "claimed": claimed, "detail":
+                "no frag_context markers to check"}
+    expected = emitted - unmatched
+    if expected < 0 or claimed != expected:
         return {"code": "frag_context_claimed", "status": "pipeline",
-                "rows": rows, "unclaimed": unclaimed, "detail":
-                f"{unclaimed}/{rows} frag row(s) were never claimed by a "
-                "frag_context marker"}
+                "rows": rows, "claimed": claimed, "emitted": emitted,
+                "unmatched": unmatched, "detail":
+                f"{emitted} context marker(s) minus {unmatched} deliberately "
+                f"unmatched marker(s) should claim {expected} row(s), but "
+                f"{claimed} were marked"}
     return {"code": "frag_context_claimed", "status": "ok",
-            "rows": rows, "unclaimed": 0, "detail":
-            f"all {rows} frag row(s) received context exactly once"}
+            "rows": rows, "claimed": claimed, "emitted": emitted,
+            "unmatched": unmatched, "detail":
+            f"{claimed}/{emitted} context marker(s) claimed a row; "
+            f"{unmatched} orphan diagnostic marker(s) were safely rejected"}
 
 
 def check_damage_ledger(db, *, emitted: int) -> dict:
