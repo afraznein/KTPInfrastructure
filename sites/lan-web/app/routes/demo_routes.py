@@ -7,7 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from .. import auth, common, db, demos
+from .. import auth, common, db, demos, parse
 from ..config import settings
 from ..templating import templates
 
@@ -22,8 +22,9 @@ def _parse_match(raw: str):
     written straight into an ENUM column, and an out-of-range value would be a
     STRICT_TRANS_TABLES error on insert."""
     raw = (raw or "").strip()
-    if raw.startswith("sat:") and raw[4:].isdigit():
-        return int(raw[4:]), None, "match"
+    sched_id = parse.as_int(raw[4:]) if raw.startswith("sat:") else None
+    if sched_id is not None:
+        return sched_id, None, "match"
     if raw.startswith("bkt:") and raw[4:]:
         return None, raw[4:][:8], "match"
     if raw.startswith("gen:") and raw[4:] in demos.GENERIC:

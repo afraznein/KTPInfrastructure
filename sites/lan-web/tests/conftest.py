@@ -19,6 +19,7 @@ class FakeDB:
     def __init__(self):
         self.rules = []
         self.writes = []
+        self.txns = []
 
     def add(self, needle, result):
         """result may be a callable taking the query params."""
@@ -42,6 +43,22 @@ class FakeDB:
         self.writes.append((" ".join(sql.split()), params))
         return len(self.writes)
 
+    def execute_all(self, statements):
+        """One transaction in the app; here, the same writes list in order, and
+        `txns` records the grouping — that is the property under test.
+
+        Dispatches through db.execute rather than self.execute so a test that
+        wraps the module function to model side effects still sees every write,
+        whichever route wrote it."""
+        stmts = list(statements)
+        self.txns.append([" ".join(s.split()) for s, _ in stmts])
+        first = None
+        for sql, params in stmts:
+            n = db.execute(sql, params)
+            if first is None:
+                first = n
+        return first
+
 
 @pytest.fixture
 def fake_db(monkeypatch):
@@ -49,6 +66,7 @@ def fake_db(monkeypatch):
     monkeypatch.setattr(db, "query_one", f.query_one)
     monkeypatch.setattr(db, "query_all", f.query_all)
     monkeypatch.setattr(db, "execute", f.execute)
+    monkeypatch.setattr(db, "execute_all", f.execute_all)
     return f
 
 

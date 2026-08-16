@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, bracket, common, db, notify, seeding
+from .. import auth, bracket, common, db, notify, parse, seeding
 from .. import schedule as sched
 from ..templating import templates
 
@@ -195,8 +195,7 @@ async def set_station(request: Request):
     mkey = f.get("mkey", "")
     if not db.query_one("SELECT 1 FROM lan_bracket WHERE mkey=%s", (mkey,)):
         raise HTTPException(404, "No such bracket match.")
-    raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
+    station = parse.bounded(f.get("station"), 1, 5)
     bracket.set_station(mkey, station)
     if station:
         row = db.query_one(

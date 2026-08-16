@@ -1,7 +1,13 @@
 """Post-event awards — one ballot per voter per category, players or teams.
 
 Results stay hidden from the public until a category is closed (so live tallies
-don't sway voting); staff always see them."""
+don't sway voting); staff always see them.
+
+Not stat_awards.py, and the /awards page it serves is not the generated awards
+board: this is the players' ballot over lan_awards, that is the staff-decided
+board over lan_award_*, rendered only by the static site from
+GET /api/awards/candidates. Editing this template to fix the board is the
+mistake the shared word invites."""
 from __future__ import annotations
 
 from . import db

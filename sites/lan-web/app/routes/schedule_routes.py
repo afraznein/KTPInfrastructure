@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, common, db, notify, seeding, standings
+from .. import auth, common, db, notify, parse, seeding, standings
 from .. import schedule as sched
 from ..templating import templates
 
@@ -92,8 +92,7 @@ async def set_station(request: Request):
         match_id = int(f["match_id"])
     except (KeyError, ValueError):
         raise HTTPException(400, "match id required")
-    raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
+    station = parse.bounded(f.get("station"), 1, 5)
     sched.set_station(match_id, station)
     if station:  # ping both captains: you're up on Server N
         m = db.query_one(

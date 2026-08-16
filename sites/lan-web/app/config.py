@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .parse import as_int
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -49,7 +51,9 @@ class Settings:
 
 
 def _parse_ids(raw: str) -> frozenset:
-    return frozenset(int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit())
+    # A bad id in here used to be a startup crash in the admin allowlist.
+    ids = (as_int(x) for x in raw.replace(",", " ").split())
+    return frozenset(n for n in ids if n is not None)
 
 
 # Env-driven so a wrong id is a config change rather than a redeploy. An unset

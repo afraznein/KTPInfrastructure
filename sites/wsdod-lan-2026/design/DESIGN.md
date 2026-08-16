@@ -243,7 +243,14 @@ server-set attribute — stripping the data without it yields an empty board tha
 vanishing; the nav link no longer hides with it.
 
 *(Corrected 2026-08-14: this named `lan_stats_publication.published`, which is a table in
-`hlstatsx_lan` that nothing has ever read and that lan-web has no privilege to reach.)*
+`hlstatsx_lan` that nothing has ever read and that lan-web has no privilege to reach. Its DDL
+came out of `hud_schema.sql` on 2026-08-15 so a fresh LAN cannot inherit it —
+`lan-stats/retire_lan_stats_publication.sql` carries the evidence and an unapplied drop.)*
+
+Per-scope publication — a match, a day — is still wanted, and only the address was wrong.
+It belongs in `ktp_lan` as a lan-web migration, with `lan_settings.stats_published` as its
+`scope='all'` row so the two cannot disagree. Default unpublished: a page that defaults to
+visible eventually leaks something nobody meant to release.
 
 Everything else on the page is written to stand without it: Results
 carries the match log, the hero tiles are event facts (match/demo counts), and no copy
