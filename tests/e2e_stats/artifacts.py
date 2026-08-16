@@ -61,6 +61,7 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_010_flag_captures.sql",
     "sql/migrate_011_match_player_identity_width.sql",
     "sql/migrate_012_frag_context_correlation.sql",
+    "sql/migrate_013_ktp_table_collation.sql",
 )
 
 
