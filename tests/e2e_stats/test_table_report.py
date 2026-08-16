@@ -1,4 +1,4 @@
-from tests.e2e_stats.table_report import (changed_table_samples,
+from tests.e2e_stats.table_report import (_select_list, changed_table_samples,
                                           render_markdown, table_counts)
 
 
@@ -35,6 +35,19 @@ def test_changed_table_samples_reports_only_growth():
     }]
 
 
+def test_wide_legacy_player_table_uses_operator_facing_projection():
+    selection = _select_list("hlstats_Players")
+    assert "`playerId`" in selection
+    assert "`kills`" in selection
+    assert "`last_skill_change`" in selection
+    for legacy_profile_column in ("email", "homepage", "fullName", "icq"):
+        assert legacy_profile_column not in selection
+
+
+def test_event_tables_remain_unabridged_by_default():
+    assert _select_list("hlstats_Events_Frags") == "*"
+
+
 def test_render_markdown_includes_summary_and_samples():
     report = {
         "map": "dod_anzio",
@@ -57,5 +70,6 @@ def test_render_markdown_includes_summary_and_samples():
     body = render_markdown(report)
     assert "| PASS | dod_anzio | 20260814-TEST" in body
     assert "| Kills/frags | 12 | 12 |" in body
+    assert "SQL `NULL` / not applicable" in body
     assert "`hlstats_Events_Frags`" in body
     assert "garand\\|scoped" in body

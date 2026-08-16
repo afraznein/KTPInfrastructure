@@ -352,7 +352,9 @@ def check_untagged_after_match(db, *, match_id: str, kills_before_match: int,
             "tagged": tagged, "total": total}
 
 
-def check_statsme_flushed(db, *, weaponstats_lines: int) -> dict:
+def check_statsme_flushed(db, *, weaponstats_lines: int,
+                          match_id: str | None = None,
+                          half: int | None = None) -> dict:
     """Assert Lane B's test-only bot weaponstats reach StatsMe.
 
     The full lane compiles ``stats_logging.sma`` with
@@ -371,8 +373,98 @@ def check_statsme_flushed(db, *, weaponstats_lines: int) -> dict:
                     f"{weaponstats_lines} `weaponstats` line(s) in the game log "
                     f"but 0 rows in hlstats_Events_Statsme — the daemon is "
                     f"dropping them."}
+    if match_id is not None and half is not None:
+        attributed = db.count(
+            "SELECT COUNT(*) FROM hlstats_Events_Statsme "
+            f"WHERE match_id = '{match_id}' AND half = {int(half)}"
+        )
+        if attributed != rows:
+            return {"code": "statsme", "status": "pipeline", "rows": rows,
+                    "attributed": attributed, "detail":
+                    f"{rows} weaponstats row(s) landed, but only {attributed} "
+                    f"carry match_id={match_id} half={half}. StatsMe must flush "
+                    "before KTP_MATCH_END clears daemon match context."}
     return {"code": "statsme", "status": "ok", "rows": rows,
-            "detail": f"{rows} weaponstats row(s) from {weaponstats_lines} line(s)"}
+            "detail": f"{rows} weaponstats row(s) from {weaponstats_lines} line(s)"
+                      + (f", all tagged {match_id} half={half}"
+                         if match_id is not None and half is not None else "")}
+
+
+def check_match_stats_reconciled(db, *, match_id: str) -> dict:
+    """Verify the materialized match cache against canonical event facts.
+
+    ``ktp_match_stats`` is intentionally retained for consumers and for the
+    score field, but kills/deaths/headshots/teamkills/suicides/damage must not
+    become a competing source of truth. Damage is capped per hit by design.
+    """
+    rows = db.count(
+        "SELECT COUNT(*) FROM ktp_match_stats "
+        f"WHERE match_id = '{match_id}' AND half > 0"
+    )
+    if rows == 0:
+        return {"code": "match_stats_reconciled", "status": "pipeline",
+                "rows": 0, "mismatches": 0, "detail":
+                f"no per-half ktp_match_stats rows for {match_id}"}
+
+    mismatches = db.count(f"""
+        /* lane_b_match_stats_source_mismatch */
+        SELECT COUNT(*) FROM ktp_match_stats ms
+        WHERE ms.match_id = '{match_id}' AND ms.half > 0 AND (
+          ms.kills <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
+            WHERE f.match_id=ms.match_id AND f.half=ms.half
+              AND f.killerId=ms.player_id)
+          OR ms.deaths <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
+            WHERE f.match_id=ms.match_id AND f.half=ms.half
+              AND f.victimId=ms.player_id)
+          OR ms.headshots <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
+            WHERE f.match_id=ms.match_id AND f.half=ms.half
+              AND f.killerId=ms.player_id AND f.headshot=1)
+          OR ms.team_kills <> (SELECT COUNT(*) FROM hlstats_Events_Teamkills tk
+            WHERE tk.match_id=ms.match_id AND tk.half=ms.half
+              AND tk.killerId=ms.player_id)
+          OR ms.suicides <> (SELECT COUNT(*) FROM hlstats_Events_Suicides s
+            WHERE s.match_id=ms.match_id AND s.half=ms.half
+              AND s.playerId=ms.player_id)
+          OR ms.damage <> COALESCE((SELECT SUM(de.damage_capped)
+            FROM ktp_damage_events de
+            WHERE de.match_id=ms.match_id AND de.half=ms.half
+              AND de.attacker_id=ms.player_id), 0)
+        )
+    """)
+    total_mismatches = db.count(f"""
+        /* lane_b_match_stats_total_mismatch */
+        SELECT COUNT(*) FROM ktp_match_stats total
+        WHERE total.match_id = '{match_id}' AND total.half = 0 AND (
+          total.kills <> (SELECT COALESCE(SUM(part.kills),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+          OR total.deaths <> (SELECT COALESCE(SUM(part.deaths),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+          OR total.headshots <> (SELECT COALESCE(SUM(part.headshots),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+          OR total.team_kills <> (SELECT COALESCE(SUM(part.team_kills),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+          OR total.suicides <> (SELECT COALESCE(SUM(part.suicides),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+          OR total.damage <> (SELECT COALESCE(SUM(part.damage),0)
+            FROM ktp_match_stats part WHERE part.match_id=total.match_id AND part.half>0
+              AND part.player_id=total.player_id)
+        )
+    """)
+    if mismatches or total_mismatches:
+        return {"code": "match_stats_reconciled", "status": "pipeline",
+                "rows": rows, "mismatches": mismatches,
+                "total_mismatches": total_mismatches, "detail":
+                f"{mismatches} per-half cache row(s) disagree with canonical "
+                f"events and {total_mismatches} total row(s) disagree with "
+                "their half sums"}
+    return {"code": "match_stats_reconciled", "status": "ok", "rows": rows,
+            "mismatches": 0, "total_mismatches": 0, "detail":
+            f"all {rows} per-half cache row(s) match canonical events; totals reconcile"}
 
 
 def assert_baseline_still_flows(db) -> dict:

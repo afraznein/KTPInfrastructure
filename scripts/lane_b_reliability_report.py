@@ -46,7 +46,7 @@ def judge(report: dict) -> list[str]:
         "flag_captures", "flag_positions", "position_samples",
         "capture_buffer_drops", "projectile_killer_not_assister",
         "match_players", "match_frags_tagged", "match_half_set",
-        "match_context_cleared", "kill_switch",
+        "match_context_cleared", "match_stats_reconciled", "kill_switch",
     )
     for code in required:
         verdict = _verdict(report, code)

@@ -12,6 +12,32 @@ import re
 from typing import Any
 
 
+# The database contains the stock HLstatsX schema, including profile and
+# compatibility columns that KTP does not populate. Keep the JSON/Markdown
+# report focused on fields an operator can actually validate. Event tables not
+# listed here remain unabridged because their nullable context columns are
+# useful evidence (for example, a NULL match_id can expose a boundary bug).
+REPORT_COLUMNS = {
+    "hlstats_Events_Admin": (
+        "id", "eventTime", "serverId", "map", "type", "message", "match_id",
+    ),
+    "hlstats_PlayerUniqueIds": ("playerId", "uniqueId", "game"),
+    "hlstats_Players": (
+        "playerId", "lastName", "kills", "deaths", "suicides", "headshots",
+        "teamkills", "shots", "hits", "skill", "last_skill_change",
+        "kill_streak", "death_streak", "connection_time", "last_event",
+        "activity", "createdate",
+    ),
+}
+
+
+def _select_list(table: str) -> str:
+    columns = REPORT_COLUMNS.get(table)
+    if not columns:
+        return "*"
+    return ", ".join(f"`{column}`" for column in columns)
+
+
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -56,7 +82,9 @@ def changed_table_samples(db, before: dict[str, int], *, limit: int = 10) -> lis
         order = ""
         if keys:
             order = " ORDER BY " + ", ".join(f"`{key}` DESC" for key in keys)
-        rows = _lines(db.sql(f"SELECT * FROM `{table}`{order} LIMIT {int(limit)}"))
+        rows = _lines(db.sql(
+            f"SELECT {_select_list(table)} FROM `{table}`{order} LIMIT {int(limit)}"
+        ))
         result.append({
             "table": table,
             "before": old,
@@ -70,6 +98,8 @@ def changed_table_samples(db, before: dict[str, int], *, limit: int = 10) -> lis
 
 
 def _cell(value: Any, limit: int = 160) -> str:
+    if value == "NULL":
+        return "—"
     text = str(value).replace("\r", " ").replace("\n", " ").replace("|", "\\|")
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
@@ -139,6 +169,8 @@ def render_markdown(report: dict) -> str:
         )
     if not samples:
         out.append("| — | 0 | 0 | No inserted match rows detected |")
+
+    out += ["", "`—` means SQL `NULL` / not applicable for that event."]
 
     for sample in samples:
         out += ["", f"### `{sample['table']}` — top {len(sample['rows'])} rows", ""]
