@@ -131,7 +131,7 @@ def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
                        include_dir=include_dir)
 
 
-def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
+def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path, plugin: Path, config_dir: Path,
                server_cfg_fixture: Path, break_drive: Path | None = None,
                assist_drive: Path | None = None,
                matchhandler: Path | None = None) -> tuple[EphemeralTree, list[str]]:
@@ -145,6 +145,7 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, plugin: Path, config_dir: Path,
     tree = EphemeralTree.in_place(hlds)
     dll = "dod/addons/ktpamx/dlls/ktpamx_i386.so"
     tree.overlay_file(ktpamx_so, dll)
+    tree.overlay_file(dodx_so, "dod/addons/ktpamx/modules/dodx_ktp_i386.so")
 
     # The runtime base image ships no modules.ini/plugins.ini — production's
     # entrypoint mounts them. Without these AMXX loads zero modules and zero
@@ -364,6 +365,8 @@ def main() -> int:
     ap.add_argument("--serverfiles", type=Path, default=Path("/opt/hlds"))
     ap.add_argument("--ktpamx-so", type=Path, required=True,
                     help="ktpamx built with KTP_LANE_B_FAKECLIENTS=1")
+    ap.add_argument("--dodx-so", type=Path, required=True,
+                    help="DODX module built with KTP_LANE_B_FAKECLIENTS=1")
     ap.add_argument("--plugin", type=Path, required=True,
                     help="compiled stats_logging.amxx from the branch under test")
     ap.add_argument("--config-dir", type=Path, required=True,
@@ -477,6 +480,7 @@ def main() -> int:
             print(f"compiled {assist_drive_amxx.name}", flush=True)
 
         tree, dropped = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
+                                   dodx_so=args.dodx_so,
                                    plugin=args.plugin, config_dir=args.config_dir,
                                    server_cfg_fixture=args.server_cfg,
                                    break_drive=drive_amxx,

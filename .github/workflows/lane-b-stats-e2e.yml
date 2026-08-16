@@ -271,6 +271,7 @@ jobs:
             -w /work ktp-lane-b:ci \
             python3 -u scripts/lane_b_e2e.py \
               --ktpamx-so /work/build/ktpamx_i386.so \
+              --dodx-so /work/build/dodx_ktp_i386.so \
               --plugin /work/build/artifacts/stats_logging.amxx \
               --config-dir /work/config/local \
               --hlstats /work/build/daemon/hlstats.pl \

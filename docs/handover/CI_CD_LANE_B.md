@@ -49,7 +49,7 @@ resolve refs
 
 ## Tasks
 
-### 1. Wire in the cached ktpamx — already done, just use it
+### 1. Wire in the cached Lane B core and DODX module
 
 `.github/actions/build-ktpamx-laneb/action.yml` exists and is tested locally in
 both directions (cache hit on an unchanged recipe, miss when the recipe
@@ -64,14 +64,18 @@ changes).
     out: build/lane-b-artifacts/ktpamx_i386.so
 ```
 
-The key is `ktpamx-laneb-<os>-<sha>-<hash of scripts/build_ktpamx_laneb.sh>`.
+The action produces both `ktpamx_i386.so` and `dodx_ktp_i386.so`; the latter
+must replace the base image's production DODX module so bot shot/hit counters
+are available to `get_user_wstats()`. The key is
+`ktpamx-laneb-<os>-<sha>-<hash of scripts/build_ktpamx_laneb.sh>`.
 The script hash is in there on purpose: it carries the toolchain image and the
 configure flags, so a recipe change with no source change must not restore a
 binary that no longer matches how it would be built today.
 
-**Do not add a fallback that continues without the binary.** The action fails
-hard if it is missing or if its stamp disagrees with the resolved ref, because
-a lane that cannot see bots goes green having measured nothing.
+**Do not add a fallback that continues without either binary.** The action
+fails hard if one is missing or if the stamp disagrees with the resolved ref,
+because a lane with the core but the production DODX module sees bots while
+silently recording no bot weapon counters.
 
 ### 2. Assemble the daemon tree
 

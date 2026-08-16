@@ -54,6 +54,9 @@ outputs:
   so-path:
     description: Absolute path to the built ktpamx_i386.so
     value: ${{ steps.paths.outputs.so }}
+  dodx-so-path:
+    description: Absolute path to the Lane B-built dodx_ktp_i386.so
+    value: ${{ steps.paths.outputs.dodx }}
   sha:
     description: KTPAMXX commit the binary was built from
     value: ${{ steps.resolve.outputs.sha }}
@@ -88,7 +91,9 @@ runs:
         set -euo pipefail
         out='${{ inputs.out }}'
         mkdir -p "$(dirname "$out")"
-        echo "so=$(cd "$(dirname "$out")" && pwd)/$(basename "$out")" >> "$GITHUB_OUTPUT"
+        out_dir="$(cd "$(dirname "$out")" && pwd)"
+        echo "so=$out_dir/$(basename "$out")" >> "$GITHUB_OUTPUT"
+        echo "dodx=$out_dir/dodx_ktp_i386.so" >> "$GITHUB_OUTPUT"
         echo "dir=$(dirname "$out")" >> "$GITHUB_OUTPUT"
 
     - name: Restore cached binary
@@ -101,6 +106,7 @@ runs:
         path: |
           ${{ steps.paths.outputs.so }}
           ${{ steps.paths.outputs.so }}.sha
+          ${{ steps.paths.outputs.dodx }}
         key: ktpamx-laneb-${{ runner.os }}-${{ steps.resolve.outputs.sha }}-${{ hashFiles('scripts/build_ktpamx_laneb.sh') }}
 
     - name: Build
@@ -111,6 +117,7 @@ runs:
         LANEB_SRC: ${{ inputs.repo }}
         LANEB_REF: ${{ steps.resolve.outputs.sha }}
         LANEB_OUT: ${{ steps.paths.outputs.so }}
+        LANEB_DODX_OUT: ${{ steps.paths.outputs.dodx }}
       run: |
         set -euo pipefail
         chmod +x scripts/build_ktpamx_laneb.sh
@@ -121,12 +128,15 @@ runs:
       run: |
         set -euo pipefail
         so='${{ steps.paths.outputs.so }}'
-        if [ ! -s "$so" ]; then
-          echo "::error::$so is missing or empty after "
-          echo "cache-hit=${{ steps.cache.outputs.cache-hit }}. Lane B cannot"
-          echo "see bots without it and would report an empty server as a pass."
-          exit 1
-        fi
+        dodx='${{ steps.paths.outputs.dodx }}'
+        for artifact in "$so" "$dodx"; do
+          if [ ! -s "$artifact" ]; then
+            echo "::error::$artifact is missing or empty after "
+            echo "cache-hit=${{ steps.cache.outputs.cache-hit }}. Lane B needs"
+            echo "both its core and DODX module to observe bot weapon stats."
+            exit 1
+          fi
+        done
         # A restored-but-wrong binary is the failure this catches: the cache key
         # and the stamp are computed independently, so a mismatch means one of
         # them is lying.
@@ -136,4 +146,6 @@ runs:
           exit 1
         fi
         echo "ktpamx_i386.so: $(stat -c%s "$so") bytes, from ${want:0:12}" \
+          | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "dodx_ktp_i386.so: $(stat -c%s "$dodx") bytes, from ${want:0:12}" \
           | tee -a "$GITHUB_STEP_SUMMARY"
