@@ -120,9 +120,20 @@ class BreakDriver:
         """Current flag state, as the plugin sees it."""
         mark = len(self._read())
         self.handle.rcon("ktp_bd_scan")
-        time.sleep(1.0)
+        # Do not burn a fixed second here. A DoD capture can begin and finish
+        # in only a few seconds, and that delay was enough for the positive
+        # scenario to observe capping=1 but reach the kill command after the
+        # capture had already completed. The scan terminator is emitted after
+        # every flag row, so it is also the precise readiness signal we need.
+        deadline = time.monotonic() + 1.5
+        tail = ""
+        while time.monotonic() < deadline:
+            tail = _tail(self._read(), mark)
+            if "[BD] scan done flags=" in tail:
+                break
+            time.sleep(0.05)
         out = []
-        for m in _SCAN_RE.finditer(_tail(self._read(), mark)):
+        for m in _SCAN_RE.finditer(tail):
             f, name, owner, capping, capteam, allies, axis = m.groups()
             out.append({"flag": int(f), "name": name, "owner": int(owner),
                         "capping": int(capping), "capteam": int(capteam),
@@ -144,23 +155,20 @@ class BreakDriver:
             time.sleep(poll)
         return None
 
-    def _fire_when_capturing(self, cmd: str, *, timeout: float = 60.0,
+    def _fire_when_capturing(self, cmd_template: str, *, timeout: float = 60.0,
                              poll: float = 1.5) -> bool:
-        """Wait for a capture to start, then fire `cmd` in the same instant.
+        """Wait for a capture, then fire at the exact flag just observed.
 
-        `ktp_bd_kill`/`ktp_bd_walkoff` resolve `auto` when the rcon lands, on
-        the theory that selecting a flag ahead of time just moved the race
-        rather than closing it — which was true, but not the whole story.
-        DoD's active-capture window turned out to be short enough that firing
-        blind on a fixed outer schedule (an rcon every ~10s) mostly missed it
-        anyway: a scan caught one flag go from `capping=1` to a flipped owner
-        in under 8 seconds. `find_capturing_flag` already existed to watch for
-        this and went unused, on the reasoning above — reused here as the gate
-        it should have been from the start, immediately followed by the fire.
+        Earlier versions either fired blind on a fixed outer schedule or used
+        `auto` after observing a capture. DoD's active-capture window can be
+        only a few seconds, so both approaches raced the capture completing.
+        The scan is now the gate and its exact flag is carried into the command.
 
-        There is still a small gap between the poll that sees `capping=1` and
-        the rcon actually landing, but it is one scan's worth (~1s) rather
-        than one retry cycle's worth (~10s), which is most of the fix.
+        `cmd_template` contains a ``{flag}`` placeholder. Passing the observed
+        flag closes a second race where the plugin was asked to rediscover an
+        arbitrary capturing flag after the scan had already identified one.
+        Combined with scan-completion polling, the remaining gap is the RCON
+        round trip rather than a fixed one-second sleep plus rediscovery.
         """
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -169,7 +177,7 @@ class BreakDriver:
                     occupants = (flag["allies"] if flag["capteam"] == TEAM_ALLIES
                                  else flag["axis"])
                     if occupants >= 1:
-                        self.handle.rcon(cmd)
+                        self.handle.rcon(cmd_template.format(flag=flag["flag"]))
                         return True
             time.sleep(poll)
         return False
@@ -181,7 +189,7 @@ class BreakDriver:
         name the killer we injected."""
         s = Scenario("positive_kill_on_point")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill auto near"):
+        if not self._fire_when_capturing("ktp_bd_kill {flag} near"):
             s.detail = "no cap started within the wait"
             return s
         time.sleep(self.SETTLE)
@@ -247,7 +255,7 @@ class BreakDriver:
         """
         s = Scenario("negative_off_point_kill")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill auto far"):
+        if not self._fire_when_capturing("ktp_bd_kill {flag} far"):
             s.detail = "no cap started within the wait"
             return s
         time.sleep(self.SETTLE)
@@ -445,7 +453,7 @@ class BreakDriver:
         """
         s = Scenario("negative_round_restart")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill auto far"):
+        if not self._fire_when_capturing("ktp_bd_kill {flag} far"):
             s.detail = "no cap started within the wait to queue a candidate against"
             return s
         time.sleep(2.0)

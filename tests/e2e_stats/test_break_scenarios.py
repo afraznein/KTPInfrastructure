@@ -178,6 +178,34 @@ class _FakeHandle:
         self.fired.append(cmd)
 
 
+class _FakeLog:
+    def __init__(self, reads):
+        self.reads = list(reads)
+        self.index = 0
+
+    def read_text(self, **_kwargs):
+        i = min(self.index, len(self.reads) - 1)
+        self.index += 1
+        return self.reads[i]
+
+
+def test_scan_returns_as_soon_as_terminator_arrives(monkeypatch):
+    prefix = "existing log\n"
+    response = (prefix +
+                "[BD] flag 3 name=POINT_ANZIO_PLAZA owner=1 capping=1 "
+                "capteam=2 allies=0 axis=2\n[BD] scan done flags=5\n")
+    log = _FakeLog([prefix, prefix, response])
+    driver = bs.BreakDriver(_FakeHandle([]), log)
+    sleeps = []
+    monkeypatch.setattr(bs.time, "sleep", sleeps.append)
+
+    assert driver.scan() == [{
+        "flag": 3, "name": "POINT_ANZIO_PLAZA", "owner": 1,
+        "capping": 1, "capteam": 2, "allies": 0, "axis": 2,
+    }]
+    assert sleeps == [0.05]
+
+
 def test_fire_when_capturing_waits_then_fires(monkeypatch):
     """The gate must not fire immediately — it should poll until a capture is
     actually seen, matching the fix for the bug where blind firing on a fixed
@@ -203,9 +231,9 @@ def test_fire_when_capturing_waits_then_fires(monkeypatch):
     monkeypatch.setattr(driver, "scan", fake_scan)
     monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
 
-    ok = driver._fire_when_capturing("ktp_bd_kill auto near", timeout=5.0, poll=0.01)
+    ok = driver._fire_when_capturing("ktp_bd_kill {flag} near", timeout=5.0, poll=0.01)
     assert ok is True
-    assert handle.fired == ["ktp_bd_kill auto near"]
+    assert handle.fired == ["ktp_bd_kill 3 near"]
     assert calls["n"] == 3, "must not fire before capping=1 is actually observed"
 
 
@@ -220,6 +248,6 @@ def test_fire_when_capturing_times_out_without_firing(monkeypatch):
     monkeypatch.setattr(bs.time, "sleep", lambda s: t.__setitem__("now", t["now"] + s))
     monkeypatch.setattr(bs.time, "monotonic", lambda: t["now"])
 
-    ok = driver._fire_when_capturing("ktp_bd_kill auto near", timeout=0.05, poll=0.02)
+    ok = driver._fire_when_capturing("ktp_bd_kill {flag} near", timeout=0.05, poll=0.02)
     assert ok is False
     assert handle.fired == []
