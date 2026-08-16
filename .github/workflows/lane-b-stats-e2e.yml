@@ -326,6 +326,7 @@ jobs:
             > build/lane-b-artifacts/base-schema.sql
           test "$(grep -c '^INSERT' build/lane-b-artifacts/base-schema.sql || true)" -eq 0
           test "$(grep -c '^CREATE TABLE' build/lane-b-artifacts/base-schema.sql)" -gt 0
+          set +e
           docker run --rm \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
@@ -346,7 +347,19 @@ jobs:
                        /work/build/artifacts/sql/migrate_012_frag_context_correlation.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
-                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql
+                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
+            2>&1 | tee build/lane-b-artifacts/corpus-replay.out
+          corpus_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$corpus_status" -ne 0 ]; then
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              line=${line//$'\n'/'%0A'}
+              echo "::error title=Corpus replay::$line"
+            done < <(tail -n 40 build/lane-b-artifacts/corpus-replay.out)
+          fi
+          exit "$corpus_status"
 
       - name: Upload reports
         if: always()
@@ -358,6 +371,7 @@ jobs:
             build/lane-b-artifacts/lane-b-e2e.json
             build/lane-b-artifacts/lane-b-e2e.log
             build/lane-b-artifacts/hlstats-e2e.out
+            build/lane-b-artifacts/corpus-replay.out
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
           if-no-files-found: warn
