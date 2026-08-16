@@ -583,6 +583,7 @@ def main() -> int:
             failures.append(daemon.died_early)
 
         log_text = args.log.read_text(errors="replace")
+        daemon_text = daemon.stdout_path.read_text(errors="replace")
         report["emitted"] = {
             "kills": log_text.count('" killed "'),
             "assist": log_text.count('triggered "assist"'),
@@ -592,6 +593,7 @@ def main() -> int:
             # `(headshot "1")` as one property on the unconditional
             # "frag_context" marker every kill now emits.
             "headshot": log_text.count('(headshot "1")'),
+            "frag_context": log_text.count('triggered "frag_context"'),
             "damage": log_text.count('triggered "damage"'),
             "flag_capture": sum(
                 1 for line in log_text.splitlines()
@@ -628,7 +630,11 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
-            assertions.check_frag_context_claimed(db),
+            assertions.check_frag_context_claimed(
+                db,
+                emitted=report["emitted"]["frag_context"],
+                unmatched=daemon_text.count(
+                    "KTP_NO_ROW_MATCHED: frag_context:")),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
             assertions.check_flag_captures(
                 db, emitted=report["emitted"]["flag_capture"]),
