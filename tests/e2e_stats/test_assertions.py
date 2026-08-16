@@ -96,8 +96,10 @@ class MatchStatsDb:
         self.total_mismatches = total_mismatches
         self.statsme = statsme
         self.attributed = attributed
+        self.queries = []
 
     def count(self, query):
+        self.queries.append(query)
         if "lane_b_match_stats_source_mismatch" in query:
             return self.mismatches
         if "lane_b_match_stats_total_mismatch" in query:
@@ -127,9 +129,15 @@ def test_statsme_attribution_passes_when_every_row_is_tagged():
 
 
 def test_match_stats_cache_reconciles_with_canonical_events():
-    verdict = assertions.check_match_stats_reconciled(
-        MatchStatsDb(), match_id="test-match")
+    db = MatchStatsDb()
+    verdict = assertions.check_match_stats_reconciled(db, match_id="test-match")
     assert verdict["status"] == "ok"
+    source_query = next(
+        query for query in db.queries
+        if "lane_b_match_stats_source_mismatch" in query
+    )
+    assert "match_id=ms.match_id" not in source_query
+    assert source_query.count("match_id='test-match'") == 6
 
 
 def test_match_stats_cache_mismatch_fails():

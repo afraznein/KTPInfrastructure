@@ -411,23 +411,23 @@ def check_match_stats_reconciled(db, *, match_id: str) -> dict:
         SELECT COUNT(*) FROM ktp_match_stats ms
         WHERE ms.match_id = '{match_id}' AND ms.half > 0 AND (
           ms.kills <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
-            WHERE f.match_id=ms.match_id AND f.half=ms.half
+            WHERE f.match_id='{match_id}' AND f.half=ms.half
               AND f.killerId=ms.player_id)
           OR ms.deaths <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
-            WHERE f.match_id=ms.match_id AND f.half=ms.half
+            WHERE f.match_id='{match_id}' AND f.half=ms.half
               AND f.victimId=ms.player_id)
           OR ms.headshots <> (SELECT COUNT(*) FROM hlstats_Events_Frags f
-            WHERE f.match_id=ms.match_id AND f.half=ms.half
+            WHERE f.match_id='{match_id}' AND f.half=ms.half
               AND f.killerId=ms.player_id AND f.headshot=1)
           OR ms.team_kills <> (SELECT COUNT(*) FROM hlstats_Events_Teamkills tk
-            WHERE tk.match_id=ms.match_id AND tk.half=ms.half
+            WHERE tk.match_id='{match_id}' AND tk.half=ms.half
               AND tk.killerId=ms.player_id)
           OR ms.suicides <> (SELECT COUNT(*) FROM hlstats_Events_Suicides s
-            WHERE s.match_id=ms.match_id AND s.half=ms.half
+            WHERE s.match_id='{match_id}' AND s.half=ms.half
               AND s.playerId=ms.player_id)
           OR ms.damage <> COALESCE((SELECT SUM(de.damage_capped)
             FROM ktp_damage_events de
-            WHERE de.match_id=ms.match_id AND de.half=ms.half
+            WHERE de.match_id='{match_id}' AND de.half=ms.half
               AND de.attacker_id=ms.player_id), 0)
         )
     """)
