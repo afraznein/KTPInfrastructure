@@ -31,6 +31,7 @@
 #   LANEB_SRC     KTPAMXX source (path or git URL)    (default: GitHub)
 #   LANEB_REF     ref to build                        (default: preprod)
 #   LANEB_OUT     where to write ktpamx_i386.so       (default: $HOME/lane-b-out/ktpamx_i386.so)
+#   LANEB_DODX_OUT where to write dodx_ktp_i386.so     (default: beside LANEB_OUT)
 #   LANEB_DOCKER  docker binary                       (default: docker)
 set -euo pipefail
 
@@ -41,10 +42,11 @@ W="${LANEB_WORK:-$HOME/ktp}"
 SRC="${LANEB_SRC:-https://github.com/afraznein/KTPAMXX.git}"
 REF="${LANEB_REF:-preprod}"
 OUT="${LANEB_OUT:-$HOME/lane-b-out/ktpamx_i386.so}"
+DODX_OUT="${LANEB_DODX_OUT:-$(dirname "$OUT")/dodx_ktp_i386.so}"
 DOCKER="${LANEB_DOCKER:-docker}"
 HLSDK_URL="${LANEB_HLSDK_URL:-https://github.com/afraznein/KTPhlsdk.git}"
 
-mkdir -p "$W" "$(dirname "$OUT")"
+mkdir -p "$W" "$(dirname "$OUT")" "$(dirname "$DODX_OUT")"
 
 # ---------------------------------------------------------------------------
 # Cache check, before anything expensive.
@@ -78,7 +80,7 @@ if [ -z "$SHA" ]; then
 fi
 STAMP="${SHA}-$(recipe_hash)"
 
-if [ "$FORCE" -eq 0 ] && [ -f "$OUT" ] && [ -f "$OUT.sha" ] \
+if [ "$FORCE" -eq 0 ] && [ -f "$OUT" ] && [ -f "$DODX_OUT" ] && [ -f "$OUT.sha" ] \
    && [ "$(cat "$OUT.sha")" = "$STAMP" ]; then
     echo "cache hit: $OUT already built from ${SHA:0:12} with this recipe"
     echo "  ($(stat -c%s "$OUT") bytes; pass --force to rebuild)"
@@ -163,14 +165,21 @@ fi
     ' 2>&1 | tail -25
 
 BUILT="$(find "$CHECKOUT/obj-linux" -name 'ktpamx_i386.so' | head -1)"
+BUILT_DODX="$(find "$CHECKOUT/obj-linux" -name 'dodx_ktp_i386.so' | head -1)"
 if [ -z "$BUILT" ]; then
     echo "build produced no ktpamx_i386.so" >&2
     exit 1
 fi
+if [ -z "$BUILT_DODX" ]; then
+    echo "build produced no dodx_ktp_i386.so" >&2
+    exit 1
+fi
 
 cp "$BUILT" "$OUT"
+cp "$BUILT_DODX" "$DODX_OUT"
 # Stamp last, and only on success: a stamp written next to a failed or partial
 # copy would make every later run a false cache hit.
 echo "$STAMP" > "$OUT.sha"
 echo
 echo "wrote $OUT ($(stat -c%s "$OUT") bytes) from ${SHA:0:12}"
+echo "wrote $DODX_OUT ($(stat -c%s "$DODX_OUT") bytes) from ${SHA:0:12}"
