@@ -19,6 +19,7 @@ import argparse
 import csv
 import gzip
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,7 @@ from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 
 INTEGER_COLUMNS = {
@@ -48,6 +49,7 @@ INTEGER_COLUMNS = {
     "invalid_half_frags", "damage_events", "invalid_half_damage",
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
     "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
+    "legacy_damage_dealt",
 }
 FLOAT_COLUMNS = {
     "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
@@ -88,7 +90,10 @@ def _value(name: str, raw: str) -> Any:
 def tsv_rows(output: str) -> list[dict[str, Any]]:
     if not output.strip():
         return []
-    reader = csv.DictReader(output.splitlines(), delimiter="\t")
+    # mysql --batch --raw emits TSV, not CSV. Quote characters are ordinary
+    # field data (a malformed historical match_id contains them), so enabling
+    # csv's default quote handling silently changes identifiers.
+    reader = csv.DictReader(output.splitlines(), delimiter="\t", quoting=csv.QUOTE_NONE)
     return [
         {name: _value(name, raw) for name, raw in row.items()}
         for row in reader
@@ -133,6 +138,43 @@ def discover_match_ids(db: EphemeralMysql) -> list[str]:
     return [str(row["match_id"]) for row in rows]
 
 
+def source_capabilities(db: EphemeralMysql) -> dict[str, bool]:
+    """Inventory source support before any local compatibility objects exist."""
+    rows = tsv_rows(db.sql("""
+SELECT
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_damage_events')
+    AS per_hit_damage,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_captures')
+    AS capture_credits,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_position_samples')
+    AS positions,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme')
+    AS statsme,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme2')
+    AS statsme2,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_match_stats')
+    AS legacy_match_cache,
+  EXISTS(SELECT 1 FROM hlstats_Actions
+    WHERE game = 'dod' AND code = 'assist')
+    AS assists
+"""))
+    if not rows:
+        raise RuntimeError("could not inventory analytics source capabilities")
+    return {name: bool(int(value)) for name, value in rows[0].items()}
+
+
+def install_legacy_compatibility(db: EphemeralMysql) -> None:
+    """Install empty optional tables only in the caller's ephemeral database."""
+    compatibility = REPO / "sql" / "compatibility" / "legacy_optional_sources.sql"
+    db.sql(compatibility.read_text(encoding="utf-8"))
+
+
 def check(level: str, code: str, message: str, **evidence: Any) -> dict[str, Any]:
     return {"level": level, "code": code, "message": message, "evidence": evidence}
 
@@ -142,9 +184,23 @@ def evaluate_quality(
     match: dict[str, Any] | None,
     players: list[dict[str, Any]],
     inventory: dict[str, Any],
+    sources: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
     """Return transparent checks; never repair a source mismatch here."""
     checks: list[dict[str, Any]] = []
+    sources = sources or {
+        "per_hit_damage": True, "capture_credits": True, "positions": True,
+        "statsme": True, "statsme2": True, "legacy_match_cache": True,
+        "assists": True,
+    }
+    checks.append(check(
+        "PASS" if re.fullmatch(r"\d+-KTP\d+|[A-Za-z0-9._-]+-TEST", match_id) else "FAIL",
+        "match_id_shape",
+        "Match identifier has a recognized production or test shape."
+        if re.fullmatch(r"\d+-KTP\d+|[A-Za-z0-9._-]+-TEST", match_id)
+        else "Match identifier is malformed; preserve it for source-data investigation.",
+        match_id=match_id,
+    ))
     if match is None:
         checks.append(check("FAIL", "missing_match", "No ktp_matches row exists."))
     else:
@@ -204,9 +260,14 @@ def evaluate_quality(
             fact_deaths=fact_deaths, cached_deaths=inventory["cached_deaths"],
         ))
 
-    dealt = sum(p["damage_dealt"] for p in players)
-    taken = sum(p["damage_taken"] for p in players)
-    if inventory.get("damage_events", 0) == 0:
+    dealt = sum(p.get("damage_dealt") or 0 for p in players)
+    taken = sum(p.get("damage_taken") or 0 for p in players)
+    if not sources["per_hit_damage"]:
+        checks.append(check(
+            "WARN", "damage_source_not_captured",
+            "This archive predates per-hit damage; legacy aggregate damage is shown.",
+        ))
+    elif inventory.get("damage_events", 0) == 0:
         checks.append(check("WARN", "damage_missing", "No per-hit damage rows exist."))
     else:
         checks.append(check(
@@ -215,6 +276,12 @@ def evaluate_quality(
             if dealt == taken else "Opponent damage dealt and taken do not balance.",
             damage_dealt=dealt, damage_taken=taken,
         ))
+
+    checks.append(check(
+        "PASS" if sources["assists"] else "WARN", "assist_source_coverage",
+        "Assist event support is present." if sources["assists"]
+        else "This archive predates the assist action; zero does not mean no assists occurred.",
+    ))
 
     statsme_rows = inventory.get("statsme_rows", 0)
     statsme2_rows = inventory.get("statsme2_rows", 0)
@@ -243,7 +310,10 @@ def evaluate_quality(
     credits = inventory.get("capture_credits", 0)
     events = inventory.get("unique_capture_events", 0)
     checks.append(check(
-        "PASS" if credits >= events else "FAIL", "capture_grouping",
+        "WARN" if not sources["capture_credits"] else
+        ("PASS" if credits >= events else "FAIL"), "capture_grouping",
+        "This archive predates dedicated capture credits; zero is unavailable."
+        if not sources["capture_credits"] else
         "Capture credits group into plausible unique capture events."
         if credits >= events else "Unique capture count exceeds player credits.",
         capture_credits=credits, unique_capture_events=events,
@@ -251,7 +321,10 @@ def evaluate_quality(
 
     positions = inventory.get("position_samples", 0)
     checks.append(check(
-        "PASS" if positions > 0 else "WARN", "aggregate_position_coverage",
+        "PASS" if sources["positions"] and positions > 0 else "WARN",
+        "aggregate_position_coverage",
+        "This archive predates aggregate position samples."
+        if not sources["positions"] else
         "Aggregate positional coverage is present and remains internal."
         if positions > 0 else "No position samples exist.",
         aggregate_samples=positions,
@@ -310,7 +383,13 @@ def team_summary(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for field in additive:
             row[field] += player.get(field, 0) or 0
     for row in teams.values():
-        row["damage_differential"] = row["damage_dealt"] - row["damage_taken"]
+        has_taken = all(p.get("damage_taken") is not None
+                        for p in players if p.get("team") == row["team"])
+        if not has_taken:
+            row["damage_taken"] = None
+        row["damage_differential"] = (
+            row["damage_dealt"] - row["damage_taken"] if has_taken else None
+        )
         row["raw_accuracy"] = (
             round(row["hits"] / row["shots"], 3) if row["shots"] else None
         )
@@ -344,6 +423,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Map: `{md(match.get('map_name'))}`  ",
         f"Halves: {md(match.get('halves_played'))}  ",
         f"Live duration: {md(match.get('duration_seconds'))} seconds  ",
+        "", "## Source coverage", "",
+        "| Source | Captured |", "|---|---|",
+    ]
+    for source, captured in report.get("source_coverage", {}).items():
+        out.append(f"| `{source}` | {'yes' if captured else 'no'} |")
+    out += [
+        "", "Uncaptured sources are reported as unavailable, not as observed zeroes. "
+        "For legacy archives, Damage uses `ktp_match_stats`; damage taken and +/- remain unavailable.",
         "", "## Team summary", "",
         markdown_table(report["teams"], [
             ("team_name", "Team"), ("kills", "K"), ("deaths", "D"),
@@ -405,25 +492,51 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
-def build_report(db: EphemeralMysql, match_id: str, fixture: Path) -> dict[str, Any]:
+def build_report(
+    db: EphemeralMysql,
+    match_id: str,
+    fixture: Path,
+    sources: dict[str, bool] | None = None,
+) -> dict[str, Any]:
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
-    assists = query_rows(db, "assist_fact.sql", match_id)
-    credits = query_rows(db, "capture_credit_fact.sql", match_id)
-    events = query_rows(db, "capture_event_fact.sql", match_id)
+    assists = (query_rows(db, "assist_fact.sql", match_id)
+               if sources is None or sources.get("assists", True) else [])
+    credits = (query_rows(db, "capture_credit_fact.sql", match_id)
+               if sources is None or sources.get("capture_credits", True) else [])
+    events = (query_rows(db, "capture_event_fact.sql", match_id)
+              if sources is None or sources.get("capture_credits", True) else [])
     inventory_rows = query_rows(db, "quality_inventory.sql", match_id)
     inventory = inventory_rows[0] if inventory_rows else {}
     match = match_rows[0] if match_rows else None
-    quality = evaluate_quality(match_id, match, players, inventory)
+    sources = sources or source_capabilities(db)
+    if not sources["per_hit_damage"]:
+        cached = {
+            row["player_id"]: row["legacy_damage_dealt"]
+            for row in query_rows(db, "legacy_player_cache.sql", match_id)
+        }
+        duration = (match or {}).get("duration_seconds", 0) or 0
+        for player in players:
+            damage = cached.get(player["player_id"])
+            player["damage_dealt"] = damage
+            player["damage_taken"] = None
+            player["damage_differential"] = None
+            player["damage_per_minute"] = (
+                round(damage * 60.0 / duration, 2)
+                if damage is not None and duration else None
+            )
+    quality = evaluate_quality(match_id, match, players, inventory, sources)
     players_public = public_players(players)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_fixture": fixture.name,
+        "source_coverage": sources,
         "match_id": match_id,
         "match": match,
         "quality": quality,
+        "source_inventory": inventory,
         "teams": team_summary(players_public),
         "players": players_public,
         "assists": with_team_names(assists),
@@ -450,6 +563,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     with EphemeralMysql.start(keep=args.keep_db) as db:
         load_fixture(db, args.fixture)
+        sources = source_capabilities(db)
+        if not all((sources["per_hit_damage"], sources["capture_credits"],
+                    sources["positions"])):
+            install_legacy_compatibility(db)
         match_ids = discover_match_ids(db)
         if args.match_id:
             if args.match_id not in match_ids:
@@ -462,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"fixture contains {len(match_ids)} matches; pass --match-id. "
                 f"Available: {match_ids}"
             )
-        report = build_report(db, match_id, args.fixture)
+        report = build_report(db, match_id, args.fixture, sources)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / f"{match_id}.json"

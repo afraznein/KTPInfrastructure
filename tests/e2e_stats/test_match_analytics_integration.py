@@ -31,3 +31,13 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
     assert sum(player["kills"] for player in report["players"]) == 12
     assert sum(player["damage_dealt"] for player in report["players"]) == 1080
     assert sum(player["damage_taken"] for player in report["players"]) == 1080
+    assert report["source_coverage"] == {
+        "per_hit_damage": True,
+        "capture_credits": True,
+        "positions": True,
+        "statsme": True,
+        "statsme2": True,
+        "legacy_match_cache": True,
+        "assists": True,
+    }
+    assert report["schema_version"] == 2
