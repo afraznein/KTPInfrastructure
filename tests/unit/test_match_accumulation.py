@@ -106,6 +106,36 @@ def test_scenarios_reward_enemy_pressure_active_contest_and_last_flag_kill():
     assert points[8]["position_points"] == 4.5
 
 
+def test_reviewed_per_team_flag_multiplier_overrides_generic_role_weight():
+    profile = {
+        **PROFILE,
+        "position": {**PROFILE["position"], "max_points_per_half": 100.0},
+        "scenarios": {"middle_multiplier": 9.0},
+    }
+    opponent = player(
+        player_id=8, steam_id="STEAM_1:0:8", player_name_at_match="Opponent",
+        team=2, team_name="Axis",
+    )
+    samples = [
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 5},
+        {"player_id": 8, "team": 2, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 10},
+    ]
+    flags = [{"flag_index": 3, "flag_name": "middle",
+              "origin_x": 0, "origin_y": 0}]
+    topology = {
+        "middle": "middle",
+        "team1_flag_multipliers": {"middle": 1.4},
+        "team2_flag_multipliers": {"middle": 1.1},
+    }
+    points, _ = derive_private_positions(
+        [player(), opponent], samples, flags, profile, topology
+    )
+    assert points[7]["position_points"] == 7.0
+    assert points[8]["position_points"] == 5.5
+
+
 def test_last_flag_defense_has_its_own_subcap():
     profile = {
         **PROFILE,

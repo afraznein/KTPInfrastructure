@@ -18,3 +18,21 @@ double_caps = ["POINT_BRIDGE", "POINT_ANZIO_PLAZA"]
 # pooled private heatmaps, but the personal heatmaps themselves stay private.
 high_contest = ["POINT_ANZIO_STREET"]
 
+# Base location value is reviewed per team and flag. These values override the
+# generic first/second/middle role multipliers in the accumulation profile.
+# Anzio middle is intentionally asymmetric: holding Street is currently judged
+# harder for Allies than Axis. Real match control rates should refine these
+# provisional values over time.
+[maps.dod_anzio.team1_flag_multipliers]
+POINT_ANZIO_LAUNDRY = 0.50
+POINT_ANZIO_PLAZA = 0.80
+POINT_ANZIO_STREET = 1.40
+POINT_BRIDGE = 1.75
+POINT_ANZIO_HILL = 2.25
+
+[maps.dod_anzio.team2_flag_multipliers]
+POINT_ANZIO_HILL = 0.50
+POINT_BRIDGE = 0.80
+POINT_ANZIO_STREET = 1.10
+POINT_ANZIO_PLAZA = 1.75
+POINT_ANZIO_LAUNDRY = 2.25

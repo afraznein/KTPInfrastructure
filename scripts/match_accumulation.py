@@ -112,6 +112,20 @@ def _flag_role(flag_name: str, team: int, topology: dict[str, Any]) -> str:
     return inverse.get(team1.get(flag_name, "uncategorized"), "uncategorized")
 
 
+def _flag_multiplier(
+    flag_name: str,
+    team: int,
+    topology: dict[str, Any],
+    scenario: dict[str, Any],
+) -> float:
+    """Return a reviewed map/team/flag value, with role weights as fallback."""
+    explicit = topology.get(f"team{team}_flag_multipliers", {})
+    if flag_name in explicit:
+        return float(explicit[flag_name])
+    role = _flag_role(flag_name, team, topology)
+    return float(scenario.get(f"{role}_multiplier", 1.0))
+
+
 def derive_private_positions(
     players: list[dict[str, Any]],
     samples: list[dict[str, Any]],
@@ -188,9 +202,9 @@ def derive_private_positions(
                 raw_points = interval * rate * proximity
                 flag_name = str(nearest["flag_name"])
                 role = _flag_role(flag_name, int(sample["team"]), topology)
-                territory_multiplier = float(scenario.get(
-                    f"{role}_multiplier", 1.0
-                ))
+                territory_multiplier = _flag_multiplier(
+                    flag_name, int(sample["team"]), topology, scenario
+                )
                 base_points = raw_points * min(territory_multiplier, 1.0)
                 territory_bonus = raw_points * max(territory_multiplier - 1.0, 0.0)
                 state["base_position_points"] += base_points

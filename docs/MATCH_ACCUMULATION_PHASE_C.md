@@ -93,8 +93,9 @@ per second, the per-half positional ceiling from 100 to 150, and confirmed
 last-flag defensive kills from 15 to 30 points with a 60-point sub-cap. The
 scenario multipliers and radii are unchanged from v1.
 
-Across the current five Anzio bot matches, this produced 5,905.29 positional
-points beside 49,278.30 event points: a **10.70% share of combined points**.
+Across the current five Anzio bot matches, the per-map version produced
+5,870.98 positional points beside 49,278.30 event points: a **10.65% share of
+combined points**.
 Ten of 60 player-match rows reached the 150-point ceiling. Compared with v1,
 12 rows changed rank and none moved more than one place. This is a useful
 provisional shadow target, not a human-match calibration or a production KTPR
@@ -114,18 +115,55 @@ base_tick = 5 seconds * 0.50 points/second * proximity
 A sample farther than 512 units from every flag earns zero. At the flag origin,
 the base tick is 2.5 points; halfway to the radius edge it is 1.25.
 
-The tick is then multiplied by the nearest flag's territory value: own first
-`0.50x`, own second `0.80x`, middle `1.25x`, enemy second `1.75x`, or enemy
-first `2.25x`. Applicable evidence multipliers stack: `1.25x` for a double-cap
-flag, `1.20x` for a reviewed high-contest area, and `1.75x` when an opponent is
-within 768 units in that same tick. For example, standing exactly on contested
-Anzio middle produces `2.5 * 1.25 * 1.20 * 1.75 = 6.5625` points for the tick.
+The tick is then multiplied by the reviewed value of that exact flag for the
+player's team. Anzio currently assigns Allied and Axis players different
+Street values (`1.40x` and `1.10x` respectively), because Allied control is
+judged harder. Generic own-first (`0.50x`), own-second (`0.80x`), middle
+(`1.25x`), enemy-second (`1.75x`), and enemy-first (`2.25x`) values are only a
+fallback for maps or flags without a reviewed override.
+
+Applicable evidence multipliers stack: `1.25x` for a double-cap flag, `1.20x`
+for a reviewed high-contest area, and `1.75x` when an opponent is within 768
+units in that same tick. For example, an Allied player standing exactly on
+actively contested Anzio middle produces
+`2.5 * 1.40 * 1.20 * 1.75 = 7.35` points for the tick. An Axis player in the
+same circumstances produces `2.5 * 1.10 * 1.20 * 1.75 = 5.775`.
 
 Confirmed kills defending the team's only remaining flag add 30 points each,
 capped at 60 per half. All proximity and defensive-kill points are summed and
 then capped at 150 times the player's recorded halves. Only the final derived
 components leave the private workspace; coordinates, cells, paths, flag
 identities, distances, and personal heatmaps do not.
+
+### Map-specific calibration
+
+Flag order does not imply equal map geometry. Each reviewed map therefore owns
+two explicit multiplier tables in `map_objectives.toml`: one value for every
+flag from Team 1's perspective and one from Team 2's. This supports:
+
+- equal weights for Harrington's lateral first/second objectives;
+- asymmetric Anzio middle weights;
+- a more even Lennon middle; and
+- Saints' genuinely linear increase into enemy territory.
+
+Only verified Anzio identifiers are configured today. Other maps must not be
+added from assumed flag order: first verify their canonical flag names and
+orientation, then seed provisional weights from map knowledge. Once real match
+data exists, compare side-specific control time, capture probability, hold
+duration, and conversion to the next capture or capout. A flag routinely held
+by the opposing team should generally decrease in value for that side; a rare,
+sustained hold should increase, with sample-size limits and manual review so a
+single season or team does not cause unstable weights.
+
+Until the ownership timeline is available, these are technically
+**location/pressure weights**, not proof that the player's team owned or held
+the nearby flag. The initial map configuration can encode reviewed competitive
+knowledge, but automatic prevalence-based calibration must wait for ownership
+state. A suitable later calibration statistic is the attacking side's share of
+eligible time controlling each flag: common offensive control lowers the flag
+value and rare sustained control raises it. That estimate should be pooled over
+enough matches, separated by side, shrunk toward the reviewed starting value,
+and versioned rather than rewritten continuously.
 
 ## Run locally
 
