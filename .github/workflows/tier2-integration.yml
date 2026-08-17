@@ -208,6 +208,14 @@ jobs:
           ref: 01de0750b51b20bf0d861365fafa336b81942ecd
           path: .tier2/KTPMatchHandler
 
+      - name: Checkout reviewed KTPAMXX preprod includes
+        if: steps.changes.outputs.run == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/KTPAMXX
+          ref: dfe1c8959f754e7757e3c443671240a9ef42c8db
+          path: .tier2/KTPAMXX
+
       - name: Build + install reviewed KTPMatchHandler test artifact
         if: steps.changes.outputs.run == '1'
         env:
@@ -221,6 +229,10 @@ jobs:
 
           mkdir -p "$WORK/include"
           cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
+          # Current MatchHandler consumes DODX aim-stat natives that predate
+          # the runner's compiler bundle. Overlay only the reviewed source
+          # includes; the runner's known-good native compiler remains in use.
+          cp "$GITHUB_WORKSPACE/.tier2/KTPAMXX/plugins/include/"*.inc "$WORK/include/"
           cp "$SRC"/*.inc "$WORK/" 2>/dev/null || true
           tr -d '\r' < "$SRC/KTPMatchHandler.sma" > "$WORK/KTPMatchHandler.sma"
           printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' \
