@@ -7,14 +7,16 @@
 # was decided on win count alone. Nothing ran it, and nothing would have caught
 # the fixture either.
 #
-# Needs pytest and nothing else. app/__init__.py is empty and the tested modules
-# import only fractions/itertools/json, so none of requirements.txt is reachable
-# from the tests — verified by running the suite with fastapi, starlette, pymysql,
-# jinja2, authlib, httpx, itsdangerous and uvicorn blocked at the import hook:
-# 43 passed. No database, no fixtures, no network.
+# Installs requirements.txt, not a hand-picked subset. The suite outgrew
+# "pure functions" when the route-level tests landed: conftest.py imports the
+# real app, so the app's own manifest IS the test manifest and a subset here
+# would drift out of sync silently. That is not hypothetical — this job ran
+# `pip install pytest` alone and went red on every push for a day, collecting
+# zero of 135 tests, while the site it gates was being deployed.
 #
 # Covers: standings tiebreak ladder, bracket slot resolution, seeding, veto
-# sequence, map-skip tally, schedule, publish gate.
+# sequence, map-skip tally, schedule, publish gate, and the JSON API routes
+# (uploads, takedowns, feedback, award voting) against a fake db.
 
 name: Tier 1 lan-web Tests
 
@@ -65,9 +67,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install pytest
+      - name: Install test dependencies
         if: steps.changes.outputs.run == '1'
-        run: pip install pytest
+        working-directory: sites/lan-web
+        run: pip install -r requirements.txt pytest
 
       - name: Run lan-web tests
         if: steps.changes.outputs.run == '1'
@@ -84,7 +87,7 @@ jobs:
           set -e
           n=$(python -m pytest tests/ --collect-only -q 2>/dev/null | grep -cE '::test_')
           echo "collected $n tests"
-          if [ "$n" -lt 40 ]; then
-            echo "::error::Only $n tests collected (expected 40+). Tests were lost, not fixed."
+          if [ "$n" -lt 120 ]; then
+            echo "::error::Only $n tests collected (expected 120+). Tests were lost, not fixed."
             exit 1
           fi

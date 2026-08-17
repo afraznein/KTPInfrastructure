@@ -8,11 +8,15 @@ from ..templating import templates
 
 router = APIRouter()
 
+SESSION_NEXT = "post_login_next"
+
 
 @router.get("/login", name="login")
-async def login(request: Request):
+async def login(request: Request, next: str | None = None):
     if not settings.discord_client_id:
         raise HTTPException(503, "Discord OAuth not configured (set DISCORD_CLIENT_ID/SECRET).")
+    # Discord owns the callback's query string, so the return path rides the session.
+    request.session[SESSION_NEXT] = common.safe_next(next) or ""
     redirect_uri = settings.discord_redirect_uri or str(request.url_for("auth_callback"))
     return await auth.oauth.discord.authorize_redirect(request, redirect_uri)
 
@@ -24,13 +28,15 @@ async def auth_callback(request: Request):
     profile = resp.json()
     request.session[auth.SESSION_ID] = int(profile["id"])
     request.session[auth.SESSION_NAME] = profile.get("global_name") or profile.get("username")
-    return RedirectResponse(url=request.url_for("me_page"))
+    dest = common.safe_next(request.session.pop(SESSION_NEXT, "")) or str(request.url_for("me_page"))
+    return RedirectResponse(url=dest)
 
 
 @router.get("/logout", name="logout")
-async def logout(request: Request):
+async def logout(request: Request, next: str | None = None):
+    dest = common.safe_next(next) or common.home_url(request)
     request.session.clear()
-    return RedirectResponse(url=request.url_for("index"))
+    return RedirectResponse(url=dest)
 
 
 @router.get("/me", name="me_page")
