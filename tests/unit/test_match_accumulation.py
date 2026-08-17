@@ -99,6 +99,7 @@ def test_scenarios_reward_enemy_pressure_active_contest_and_last_flag_kill():
         "enemy_pressure_points": 5.0,
         "contested_points": 10.0,
         "double_cap_points": 0.0,
+        "ownership_adjustment_points": 0.0,
         "last_flag_defense_points": 15.0,
         "position_points": 35.0,
     }
@@ -136,6 +137,68 @@ def test_reviewed_per_team_flag_multiplier_overrides_generic_role_weight():
     assert points[8]["position_points"] == 5.5
 
 
+def test_ownership_timeline_classifies_hold_then_attack_and_adjusts_points():
+    profile = {
+        **PROFILE,
+        "position": {**PROFILE["position"], "max_points_per_half": 100.0},
+        "scenarios": {
+            "holding_multiplier": 1.0,
+            "attacking_multiplier": 2.0,
+        },
+    }
+    samples = [
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 5},
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 10},
+    ]
+    flags = [{"flag_index": 3, "flag_name": "middle",
+              "origin_x": 0, "origin_y": 0}]
+    states = [
+        {"half": 1, "flag_index": 3, "game_time": 0, "owner_team": 1},
+        {"half": 1, "flag_index": 3, "game_time": 8, "owner_team": 2},
+    ]
+    points, private = derive_private_positions(
+        [player()], samples, flags, profile, flag_states=states
+    )
+    assert points[7]["base_position_points"] == 10.0
+    assert points[7]["ownership_adjustment_points"] == 5.0
+    assert points[7]["position_points"] == 15.0
+    assert private[0]["ownership_state_counts"] == {
+        "last_flag_holding": 1, "attacking": 1
+    }
+
+
+def test_complete_timeline_adds_small_passive_last_flag_hold_premium():
+    profile = {
+        **PROFILE,
+        "position": {**PROFILE["position"], "max_points_per_half": 100.0},
+        "scenarios": {
+            "holding_multiplier": 1.0,
+            "last_flag_holding_multiplier": 1.1,
+        },
+    }
+    samples = [
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 5},
+    ]
+    flags = [
+        {"flag_index": 0, "flag_name": "last", "origin_x": 0, "origin_y": 0},
+        {"flag_index": 1, "flag_name": "enemy", "origin_x": 1000, "origin_y": 0},
+    ]
+    states = [
+        {"half": 1, "flag_index": 0, "game_time": 0, "owner_team": 1},
+        {"half": 1, "flag_index": 1, "game_time": 0, "owner_team": 2},
+    ]
+    points, private = derive_private_positions(
+        [player()], samples, flags, profile, flag_states=states
+    )
+    assert points[7]["base_position_points"] == 5.0
+    assert points[7]["ownership_adjustment_points"] == 0.5
+    assert points[7]["position_points"] == 5.5
+    assert private[0]["ownership_state_counts"] == {"last_flag_holding": 1}
+
+
 def test_last_flag_defense_has_its_own_subcap():
     profile = {
         **PROFILE,
@@ -169,6 +232,7 @@ def test_private_directory_cannot_be_nested_under_shareable(tmp_path):
     "heatmap_cells", "pos_x", "nearest_flag", "flag_breakdown", "position_samples",
     "sample_count", "observed_seconds", "within_radius_samples", "raw_position_points",
     "active_contest_samples", "scenario_points", "last_flag_defense_kills",
+    "ownership_state_counts", "owner_team", "flag_state_events",
 ])
 def test_privacy_guard_rejects_personal_position_details(key):
     with pytest.raises(ValueError, match="private positional key leaked"):

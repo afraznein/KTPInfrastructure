@@ -4,7 +4,7 @@ from scripts.lane_b_reliability_report import judge, render
 def _report():
     codes = (
         "assist", "cap_break", "suicide", "headshot", "damage_ledger",
-        "flag_captures", "flag_positions", "position_samples",
+        "flag_captures", "flag_positions", "flag_states", "position_samples",
         "capture_buffer_drops", "projectile_killer_not_assister",
         "match_players", "match_frags_tagged", "match_half_set",
         "match_context_cleared", "match_stats_reconciled", "kill_switch",
@@ -14,7 +14,8 @@ def _report():
         "coverage_gaps": ["statsme: bots are skipped"],
         "sql_errors": [],
         "emitted": {"kills": 10, "assist": 2, "cap_break": 1,
-                    "damage": 20, "flag_capture": 3, "position_sample": 40},
+                    "damage": 20, "flag_capture": 3, "flag_state": 8,
+                    "position_sample": 40},
         "rows": {"match_players": 16},
         "carried": [{"code": code, "status": "ok", "detail": "ok"}
                     for code in codes],

@@ -67,18 +67,20 @@ and Plaza are the two-player capture points. Other maps receive only base
 proximity until their topology is reviewed; guessing orientation would award
 deep-pressure points to the wrong team.
 
-### Last-flag holding without kills
+### Ownership and last-flag holding
 
-The capture layer already marks a kill made while defending the only remaining
-flag, so v1 can score active last-flag defense exactly. It cannot yet prove that
-a player spent a no-kill interval holding the team's only remaining flag:
-periodic player positions are stored, but periodic flag ownership is not.
+Migration 015 adds an event-based `ktp_flag_state_events` timeline. The plugin
+emits one baseline row per flag when match context becomes available and then
+only owner changes. Joining each position sample to the most recent preceding
+state for its nearest flag distinguishes holding, attacking, neutral presence,
+and defense under pressure without storing ownership every five seconds.
 
-That passive state should eventually receive non-zero but lower credit than an
-active contest, matching the distinction between a team merely flooding its
-last Harrington flag and actually holding it under kills/pressure. Implement it
-only after a compact ownership-state timeline is persisted or reliably
-reconstructed. Do not infer it from proximity alone.
+When a complete baseline proves that a team owns exactly one flag, passive
+nearby holding receives a small `1.10x` premium. A nearby opponent raises an
+owned-flag tick to `1.15x` before the existing active-contest multiplier, and a
+confirmed defensive kill remains the stronger 30-point event. If even one flag
+lacks known ownership, last-flag classification fails closed rather than
+mistaking an incomplete timeline for a last stand.
 
 The defensive-kill sub-cap is intentional. Early testing at 50 points per kill
 made last-flag defense consume 2,778 of 3,514 positional points and pushed 25 of
@@ -124,10 +126,11 @@ fallback for maps or flags without a reviewed override.
 
 Applicable evidence multipliers stack: `1.25x` for a double-cap flag, `1.20x`
 for a reviewed high-contest area, and `1.75x` when an opponent is within 768
-units in that same tick. For example, an Allied player standing exactly on
-actively contested Anzio middle produces
-`2.5 * 1.40 * 1.20 * 1.75 = 7.35` points for the tick. An Axis player in the
-same circumstances produces `2.5 * 1.10 * 1.20 * 1.75 = 5.775`.
+units in that same tick. Captured ownership adds `1.10x` while attacking,
+`1.15x` while defending an owned flag under pressure, and another `1.10x` for
+a proven last-flag hold. Ordinary holding and neutral presence remain `1.00x`.
+When no ownership timeline exists, every ownership factor is `1.00x`, exactly
+preserving the pre-migration score.
 
 Confirmed kills defending the team's only remaining flag add 30 points each,
 capped at 60 per half. All proximity and defensive-kill points are summed and
@@ -155,13 +158,10 @@ by the opposing team should generally decrease in value for that side; a rare,
 sustained hold should increase, with sample-size limits and manual review so a
 single season or team does not cause unstable weights.
 
-Until the ownership timeline is available, these are technically
-**location/pressure weights**, not proof that the player's team owned or held
-the nearby flag. The initial map configuration can encode reviewed competitive
-knowledge, but automatic prevalence-based calibration must wait for ownership
-state. A suitable later calibration statistic is the attacking side's share of
+The new timeline makes ownership-based calibration possible once real matches
+have populated it. A suitable statistic is the attacking side's share of
 eligible time controlling each flag: common offensive control lowers the flag
-value and rare sustained control raises it. That estimate should be pooled over
+value and rare sustained control raises it. The estimate must be pooled over
 enough matches, separated by side, shrunk toward the reviewed starting value,
 and versioned rather than rewritten continuously.
 
@@ -186,14 +186,25 @@ baseline.
 Review the shareable Markdown first. The private JSON exists only to audit how
 the positional point term was produced.
 
+Generate the non-player flag catalog, control-duration table, and reviewable
+map-weight draft with:
+
+```powershell
+python scripts/flag_ownership_report.py build/hlstatsx-fixture.sql `
+  --match-id MATCH-ID --output build/FLAG_OWNERSHIP_REPORT.md
+```
+
+This report is aggregate-only and contains no player coordinates or personal
+heatmaps.
+
 ## Next slices
 
 1. Run the v2 profile over real matches and recalibrate its target share,
    radius, point rate, and per-half cap by map, side, and role.
 2. Add event timelines for fast multi-kills, trades, reversals, and objective
    conversion without folding them into points immediately.
-3. Capture or reconstruct ownership/contested state so proximity can become a
-   genuine holding/defending term rather than a location proxy.
+3. Validate migration 015 baselines and transitions in Lane B, then compare
+   ownership-derived hold/attack durations against capture events.
 4. Compare accumulation rankings to current KTPR and match outcomes in shadow.
 5. Keep all individual heatmaps private even if aggregate league/map heatmaps
    are introduced later.

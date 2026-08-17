@@ -32,5 +32,13 @@ double_cap_multiplier = 1.25
 high_contest_area_multiplier = 1.20
 active_contest_radius_units = 768.0
 active_contest_multiplier = 1.75
+# Applied only when migration 015 ownership evidence exists. Unknown ownership
+# preserves the pre-timeline score exactly.
+holding_multiplier = 1.00
+neutral_flag_multiplier = 1.00
+attacking_multiplier = 1.10
+defending_under_pressure_multiplier = 1.15
+attacking_under_pressure_multiplier = 1.10
+last_flag_holding_multiplier = 1.10
 last_flag_defense_kill_points = 30.0
 last_flag_defense_max_per_half = 60.0

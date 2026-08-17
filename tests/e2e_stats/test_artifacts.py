@@ -82,6 +82,7 @@ def daemon_repo(tmp_path):
         (12, "frag_context_correlation"),
         (13, "ktp_table_collation"),
         (14, "match_type_retention"),
+        (15, "flag_state_events"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -100,14 +101,14 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_sma.is_file()
     assert arts.plugin_inc.is_file()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 11
+    assert len(arts.schema_sql) == 12
     assert len(arts.seed_sql) == 2
 
 
-def test_default_schema_sequence_includes_match_type_retention():
+def test_default_schema_sequence_includes_retention_then_flag_state():
     assert DEFAULT_SCHEMA_FILES[-2:] == (
-        "sql/migrate_013_ktp_table_collation.sql",
         "sql/migrate_014_match_type_retention.sql",
+        "sql/migrate_015_flag_state_events.sql",
     )
 
 
@@ -195,7 +196,8 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_011_match_player_identity_width.sql",
                  "migrate_012_frag_context_correlation.sql",
                  "migrate_013_ktp_table_collation.sql",
-                 "migrate_014_match_type_retention.sql"):
+                 "migrate_014_match_type_retention.sql",
+                 "migrate_015_flag_state_events.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 

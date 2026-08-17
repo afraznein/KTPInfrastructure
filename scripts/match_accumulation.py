@@ -35,7 +35,8 @@ PRIVATE_KEYS = {
     "flag_breakdown", "position_samples", "sample_count", "observed_seconds",
     "within_radius_samples", "raw_position_points", "awarded_position_points",
     "raw_points", "active_contest_samples", "scenario_points",
-    "last_flag_defense_kills",
+    "last_flag_defense_kills", "ownership_state_counts", "owner_team",
+    "flag_state_events",
 }
 
 
@@ -92,6 +93,21 @@ GROUP BY killerId
             for row in rows}
 
 
+def load_flag_state_facts(
+    db: EphemeralMysql, match_id: str, available: bool
+) -> list[dict[str, Any]]:
+    if not available:
+        return []
+    match = analytics.sql_literal(match_id)
+    return _query(db, f"""
+SELECT id, half, flag_index, flag_name, owner_team, is_initial,
+       game_time, event_time
+FROM ktp_flag_state_events
+WHERE match_id = {match} AND half > 0
+ORDER BY half, flag_index, game_time, id
+""")
+
+
 def _flag_role(flag_name: str, team: int, topology: dict[str, Any]) -> str:
     if not topology:
         return "uncategorized"
@@ -126,6 +142,17 @@ def _flag_multiplier(
     return float(scenario.get(f"{role}_multiplier", 1.0))
 
 
+def _owner_at(
+    timeline: list[tuple[float, int]], game_time: float
+) -> int | None:
+    owner = None
+    for changed_at, candidate_owner in timeline:
+        if changed_at > game_time:
+            break
+        owner = candidate_owner
+    return owner
+
+
 def derive_private_positions(
     players: list[dict[str, Any]],
     samples: list[dict[str, Any]],
@@ -133,6 +160,7 @@ def derive_private_positions(
     profile: dict[str, Any],
     topology: dict[str, Any] | None = None,
     last_flag_kills: dict[int, int] | None = None,
+    flag_states: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[int, dict[str, float]], list[dict[str, Any]]]:
     """Return player positional points and private heatmap working records."""
     cfg = profile["position"]
@@ -144,10 +172,18 @@ def derive_private_positions(
     scenario = profile.get("scenarios", {})
     topology = topology or {}
     last_flag_kills = last_flag_kills or {}
+    flag_states = flag_states or []
     contest_radius = float(scenario.get("active_contest_radius_units", 0))
     double_caps = set(topology.get("double_caps", []))
     high_contest = set(topology.get("high_contest", []))
     by_player: dict[int, dict[str, Any]] = {}
+    ownership_timeline: dict[tuple[int, int], list[tuple[float, int]]] = defaultdict(list)
+    for flag_state in flag_states:
+        ownership_timeline[
+            (int(flag_state["half"]), int(flag_state["flag_index"]))
+        ].append((float(flag_state["game_time"]), int(flag_state["owner_team"])))
+    for timeline in ownership_timeline.values():
+        timeline.sort()
     player_context = {int(p["player_id"]): p for p in players}
     sample_buckets: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
     for sample in samples:
@@ -178,7 +214,9 @@ def derive_private_positions(
             "enemy_pressure_points": 0.0,
             "contested_points": 0.0,
             "double_cap_points": 0.0,
+            "ownership_adjustment_points": 0.0,
             "last_flag_defense_points": 0.0,
+            "ownership_state_counts": defaultdict(int),
             "heatmap": defaultdict(lambda: {"samples": 0, "seconds": 0.0}),
             "flag_breakdown": defaultdict(lambda: {
                 "samples": 0, "within_radius_samples": 0,
@@ -239,6 +277,66 @@ def derive_private_positions(
                         ) <= contest_radius:
                             actively_contested = True
                             break
+
+                sample_game_time = float(sample["game_time"])
+                timeline = ownership_timeline.get(
+                    (int(sample["half"]), int(nearest["flag_index"])), []
+                )
+                owner_team = _owner_at(timeline, sample_game_time)
+
+                ownership_state = "unknown"
+                ownership_multiplier = 1.0
+                if owner_team == 0:
+                    ownership_state = "neutral"
+                    ownership_multiplier = float(
+                        scenario.get("neutral_flag_multiplier", 1.0)
+                    )
+                elif owner_team == int(sample["team"]):
+                    ownership_state = (
+                        "defending_under_pressure" if actively_contested else "holding"
+                    )
+                    key = (
+                        "defending_under_pressure_multiplier" if actively_contested
+                        else "holding_multiplier"
+                    )
+                    ownership_multiplier = float(scenario.get(key, 1.0))
+
+                    # Last-flag status is safe only when every configured flag
+                    # has a known owner at this sample. An incomplete baseline
+                    # must not accidentally look like a one-flag defense.
+                    owners = [
+                        _owner_at(
+                            ownership_timeline.get(
+                                (int(sample["half"]), int(flag["flag_index"])), []
+                            ),
+                            sample_game_time,
+                        )
+                        for flag in flags
+                    ]
+                    if (owners and all(value is not None for value in owners)
+                            and owners.count(int(sample["team"])) == 1):
+                        ownership_state = (
+                            "last_flag_defending_under_pressure"
+                            if actively_contested else "last_flag_holding"
+                        )
+                        ownership_multiplier *= float(
+                            scenario.get("last_flag_holding_multiplier", 1.0)
+                        )
+                elif owner_team is not None:
+                    ownership_state = (
+                        "attacking_under_pressure" if actively_contested else "attacking"
+                    )
+                    key = (
+                        "attacking_under_pressure_multiplier" if actively_contested
+                        else "attacking_multiplier"
+                    )
+                    ownership_multiplier = float(scenario.get(key, 1.0))
+
+                ownership_bonus = running * (ownership_multiplier - 1.0)
+                state["ownership_adjustment_points"] += ownership_bonus
+                state["ownership_state_counts"][ownership_state] += 1
+                running += ownership_bonus
+
                 if actively_contested:
                     bonus = running * (
                         float(scenario.get("active_contest_multiplier", 1.0)) - 1.0
@@ -253,7 +351,8 @@ def derive_private_positions(
 
     point_fields = (
         "base_position_points", "enemy_pressure_points", "contested_points",
-        "double_cap_points", "last_flag_defense_points",
+        "double_cap_points", "ownership_adjustment_points",
+        "last_flag_defense_points",
     )
     points_by_player: dict[int, dict[str, float]] = {}
     private_players: list[dict[str, Any]] = []
@@ -265,7 +364,7 @@ def derive_private_positions(
             "team": player.get("team"), "sample_count": 0,
             "observed_seconds": 0.0, "raw_position_points": 0.0,
             **{field: 0.0 for field in point_fields},
-            "heatmap": {}, "flag_breakdown": {},
+            "heatmap": {}, "flag_breakdown": {}, "ownership_state_counts": {},
         })
         defense_kills = last_flag_kills.get(player_id, 0)
         defense_points = defense_kills * float(
@@ -371,8 +470,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Individual positional heatmaps, cells, flag histories, distances, and raw "
         "coordinates are excluded. `Position` is the capped point result calculated "
         "from private working data.", "",
-        "| Player | Team | Events | Base pos. | Enemy pressure | Contested | Double-cap | Last-flag D | Position | Total |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Player | Team | Events | Base pos. | Enemy pressure | Contested | Double-cap | Ownership | Last-flag D | Position | Total |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for player in report["players"]:
         lines.append(
@@ -382,6 +481,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"{player.get('enemy_pressure_points', 0.0):.2f} | "
             f"{player.get('contested_points', 0.0):.2f} | "
             f"{player.get('double_cap_points', 0.0):.2f} | "
+            f"{player.get('ownership_adjustment_points', 0.0):.2f} | "
             f"{player.get('last_flag_defense_points', 0.0):.2f} | "
             f"{player['position_points']:.2f} | "
             f"{player['total_points']:.2f} |"
@@ -390,7 +490,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         "", "## Interpretation", "",
         "This is an accumulation ledger, not a rating. Position points combine "
         "objective proximity with explicitly captured scenario evidence. Proximity "
-        "alone does not prove holding, ownership, or line of sight. The positional "
+        "alone does not prove holding or line of sight; ownership classification is "
+        "used only when a captured flag-state timeline is available. The positional "
         "term is capped per half so passive presence cannot dominate event production.", "",
     ]
     return "\n".join(lines)
@@ -451,13 +552,18 @@ def main(argv: list[str] | None = None) -> int:
             args.map_objectives, str(match.get("map_name") or "")
         )
         last_flag_kills = load_last_flag_defense_kills(db, match_id)
+        flag_states = load_flag_state_facts(
+            db, match_id, sources.get("flag_ownership", False)
+        )
         points, private_players = derive_private_positions(
-            base["players"], samples, flags, profile, topology, last_flag_kills
+            base["players"], samples, flags, profile, topology, last_flag_kills,
+            flag_states
         )
 
     empty_position = {
         "base_position_points": 0.0, "enemy_pressure_points": 0.0,
         "contested_points": 0.0, "double_cap_points": 0.0,
+        "ownership_adjustment_points": 0.0,
         "last_flag_defense_points": 0.0, "position_points": 0.0,
     }
     players = [accumulate_player(
@@ -487,6 +593,7 @@ def main(argv: list[str] | None = None) -> int:
         "profile": profile,
         "map_topology": topology,
         "flags": flags,
+        "flag_state_events": flag_states,
         "players": private_players,
     }
     args.output_dir.mkdir(parents=True, exist_ok=True)

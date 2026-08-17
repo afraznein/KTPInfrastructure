@@ -604,6 +604,7 @@ def main() -> int:
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
+            "flag_state": log_text.count("KTP_FLAG_STATE "),
             "position_sample": log_text.count('triggered "position_sample"'),
         }
         report["lines_fed"] = daemon.lines_fed
@@ -646,6 +647,8 @@ def main() -> int:
                 db, emitted=report["emitted"]["flag_position"]),
             assertions.check_position_samples(
                 db, emitted=report["emitted"]["position_sample"]),
+            assertions.check_flag_states(
+                db, emitted=report["emitted"]["flag_state"]),
             assertions.check_capture_buffer(log_text),
         ]
         if report.get("assist_scenario"):

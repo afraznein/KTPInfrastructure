@@ -661,6 +661,26 @@ def check_position_samples(db, *, emitted: int) -> dict:
                               table="ktp_position_samples", emitted=emitted)
 
 
+def check_flag_states(db, *, emitted: int) -> dict:
+    carried = _check_direct_rows(
+        db, code="flag_states", table="ktp_flag_state_events", emitted=emitted
+    )
+    if carried["status"] != "ok":
+        return carried
+    bad_owners = db.count(
+        "SELECT COUNT(*) FROM ktp_flag_state_events WHERE owner_team NOT IN (0,1,2)"
+    )
+    initial = db.count(
+        "SELECT COUNT(*) FROM ktp_flag_state_events WHERE is_initial = 1"
+    )
+    if bad_owners or initial == 0:
+        return {"code": "flag_states", "status": "pipeline", "emitted": emitted,
+                "rows": carried["rows"], "detail":
+                f"ownership rows invalid: initial={initial}, bad_owners={bad_owners}"}
+    return {**carried, "initial": initial,
+            "detail": f"{carried['rows']}/{emitted} carried; {initial} baseline row(s)"}
+
+
 def check_capture_buffer(log_text: str) -> dict:
     dropped = [line for line in log_text.splitlines()
                if "[KTP-STATS] dropped" in line]
@@ -719,6 +739,7 @@ def summarise(db) -> dict:
         "flag_captures": db.count("SELECT COUNT(*) FROM ktp_flag_captures"),
         "flag_positions": db.count("SELECT COUNT(*) FROM ktp_flag_positions"),
         "position_samples": db.count("SELECT COUNT(*) FROM ktp_position_samples"),
+        "flag_states": db.count("SELECT COUNT(*) FROM ktp_flag_state_events"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),
     }

@@ -152,6 +152,9 @@ SELECT
     WHERE table_schema = DATABASE() AND table_name = 'ktp_position_samples')
     AS positions,
   EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_state_events')
+    AS flag_ownership,
+  EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme')
     AS statsme,
   EXISTS(SELECT 1 FROM information_schema.tables
@@ -191,6 +194,7 @@ def evaluate_quality(
     checks: list[dict[str, Any]] = []
     sources = sources or {
         "per_hit_damage": True, "capture_credits": True, "positions": True,
+        "flag_ownership": True,
         "statsme": True, "statsme2": True, "legacy_match_cache": True,
         "assists": True,
     }
