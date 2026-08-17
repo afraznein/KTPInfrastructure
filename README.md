@@ -152,6 +152,7 @@ KTPInfrastructure/
 │
 ├── monitoring/                  # Monitoring daemons + alerting
 │   ├── ktp-server-monitor.py    # RCON stats poll + Discord alerting (data-server cron)
+│   ├── hlstatsx-ingest-monitor.py # Hourly HLStatsX ingest reconciliation → Discord on a finding
 │   ├── crashreporter/           # gdb-wrapped core-dump → #ktp-crashes embed (per game host)
 │   ├── fleet-health/            # Per-host process-count heartbeat alerter
 │   └── fps_baselines/           # Fleet FPS snapshots for A/B comparisons
