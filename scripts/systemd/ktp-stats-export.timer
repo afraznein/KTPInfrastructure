@@ -1,0 +1,14 @@
+[Unit]
+Description=Export KTP match box scores every 10 minutes
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+# Ten minutes against a 48-hour window: the POST is idempotent (staging upserts
+# on (source, game_match_id)), so overlapping sweeps are free and the timer can
+# be down for two days without losing a match.
+OnCalendar=*:0/10
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

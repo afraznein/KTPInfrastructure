@@ -4,6 +4,406 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `tests`: cover StatsMe in the all-bot Lane B match (2026-08-15)
+
+- Full Lane B builds `stats_logging.amxx` with the test-only
+  `KTP_LANE_B_BOT_WEAPONSTATS=1` define and records that define in artifact
+  provenance. Local Lane B uses the same build shape.
+- Missing bot `weaponstats` emission is now a pipeline failure. Emitted lines
+  must produce `hlstats_Events_Statsme` rows through the real HLStatsX parser.
+- Production KTPAMXX builds omit the define and continue excluding bots.
+
+### `tests`: Lane B scaffolding — bot-driven stats-capture e2e, Phase 0 (2026-08-09)
+
+The stats-capture branches (assists / cap breaks / positions, see
+`docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md`) cannot be covered by the existing
+Tier 2 lane, and the reason is structural rather than a gap to fill in. Every
+emit path in `ktp_stats_capture.inc` is gated on `is_user_connected()`, and the
+cap-break detector's only input is a 0.5s poll of `dodx_area_get_data(...)`
+zone occupancy. So `dodx_test_dispatch_client_death(1, 2, …)` on an empty
+server returns at the first guard and emits nothing — **a synthetic-dispatch
+test of this code would pass while proving nothing.** The four negatives the
+deployment plan asks for (completed capture, off-point kill, voluntary
+walk-off, round restart) are timing behaviours of real bodies in real zones,
+and they are the ones that catch false-positive breaks, which silently inflate
+a player's objective rating.
+
+This lands the scaffolding and the spike, and deliberately **no assertions
+yet** — see the last bullet.
+
+- **`tests/integration/STATS_CAPTURE_E2E_DESIGN.md`** — two-lane model. Lane A
+  (existing, deterministic, dispatch primitives) gates merges; Lane B (new,
+  bot-driven, asserts on MySQL rows) runs nightly and never gates. Neither can
+  do the other's job: a non-deterministic lane that blocks merges becomes the
+  "disable the integration test to merge the urgent fix" antipattern the test
+  plan already warns about.
+- **Sturmbot is not usable here** — its current release (1.9) is a Windows
+  installer only, and the legacy Linux build targets DoD 3.1B rather than 1.3
+  and does not load against modern glibc. Per sturmbot.org's own Linux guide
+  the viable DoD 1.3 bots are **Marine Bot** (primary) and **new_bot**
+  (fallback, converts Sturmbot waypoints), both Metamod plugins loaded via
+  `+localinfo mm_gamedll`. `tests/e2e_stats/bot_driver.py` isolates the choice
+  behind a `BotSpec`, so swapping is a flag.
+- **`tests/e2e_stats/ephemeral_tree.py`** — per-run serverfiles copy, because
+  `help.md` requires the runner tree to match the fleet and a bot `.so` in it
+  is exactly the tripwired drift. Hardlink copies make this fast and also
+  dangerous: a bare `open(path, "w")` on a hardlinked path writes THROUGH to
+  the fleet-matching tree. Every write unlinks first, and teardown re-hashes
+  every shadowed source file and fails loudly if one changed. 11 unit tests
+  cover it; the guard was mutation-checked (removing the unlink fails two
+  tests, including the integrity backstop).
+- **`tests/e2e_stats/ephemeral_mysql.py`** — "ephemeral MySQL" as a second
+  `mysqld` on a private datadir/socket/port, not a container, because the
+  Tier 2 runner is deliberately Docker-free and also runs production HLStatsX.
+  Loopback-only and `--no-defaults`, so it cannot inherit the `~/.my.cnf` that
+  on that box points at the **live** server. `prepare()` loads schema +
+  migrations + seeds before the daemon may start, encoding the ordering trap
+  that lost every objective capture at the Philly LAN as fixture order rather
+  than as a note someone has to remember.
+- **`scripts/spike_bot_lane.py`** — Phase 0. Answers, stopping at the first
+  "no": does the bot load without displacing amxxcurl/reapi/dodx, which
+  add-bot command works, do bots join a team and spawn (where `addbot` failed),
+  do they fight, do they contest flags, what is the event volume per minute,
+  and can a private mysqld apply the migration SQL to an empty database.
+- **Assertions are deliberately not written yet.** This repo has already paid
+  for the alternative: `DODX_FORWARD_FIRING_DESIGN.md` Phase 2 was written on
+  the belief that `addbot` yields a playing bot, three tests shipped on it, and
+  they were skip-marked a day later (1.5.25) when the first real run showed DoD
+  ships no bot AI. Everything downstream of "the bots actually play" is cheap
+  to write and worthless if that premise is wrong, so the spike answers it
+  first. Lane B also inherits conftest's fail-don't-skip rule — a
+  configured-but-broken bot is a failure, not a skip.
+
+Quarantine, per the operator's requirement that the bot never reach
+production: bot kit lives outside any fleet-matching tree, is `.gitignore`d, is
+in no deploy manifest, loads from the **command line** rather than
+`plugins.ini` (so a copy of the tree booted normally has no bot), and the
+ephemeral tree is deleted on teardown.
+
+Bot decision confirmed with the operator: **Marine Bot primary, new_bot
+fallback** — Sturmbot is not available for Linux at all, so the substitution is
+forced by the platform rather than chosen.
+
+#### Build + daemon steps (same series)
+
+- **`tests/e2e_stats/artifacts.py`** + **`scripts/build_stats_lane_artifacts.py`**
+  — the build step. Extracts `stats_logging.sma`, `ktp_stats_capture.inc`,
+  `hlstats.pl` and the SQL from **branch refs via `git show`**, never from a
+  working tree: "Lane B passed on this branch" must not silently mean "passed
+  on whatever was lying around on the runner". Writes a manifest of SHAs and
+  md5s so a run is traceable to exact bytes, the same way the deployment plan
+  verifies deploys by md5 rather than by console banner. Three plugin sources
+  supported — compile with `--amxxpc`, adopt a Docker/CI build with
+  `--prebuilt-plugin`, or `--no-plugin` for the toolchain-free daemon+SQL half.
+  Encodes two constraints instead of documenting them: the `.sma`/`.inc`
+  sibling requirement (the production Dockerfile needed a dedicated `COPY` for
+  it), and **compile failures are fatal** — unlike `build/plugins/Dockerfile`,
+  which ends each compile with `|| echo "WARNING: …"` and so does not fail on a
+  broken plugin. A test lane that proceeds against a stale artifact reports on
+  the wrong thing.
+- **`tests/e2e_stats/hlstats_daemon.py`** — runs `hlstats.pl` in its
+  **`--stdin` mode** (hlstats.pl:1971), fed by a thread tailing the ephemeral
+  server's log. Stdin mode disables the UDP listener *and* sets `$g_rcon = 0`,
+  so the test daemon cannot rcon the server under test; feeding the log
+  directly also removes UDP loss and reordering from a test whose whole purpose
+  is attribution. Enforces both silent-failure prerequisites: the
+  `hlstats_Servers` row the daemon resolves lines against (hlstats.pl:815), and
+  seeds-before-daemon-start. `drain()` waits past the plugin's own 5s
+  `KSC_BUF_FLUSH_SECS` — asserting before that flush looks identical to the
+  capture being broken.
+
+Unverified and flagged in code: whether stdin mode wants the engine's
+`L <date> - <time>: ` line prefix intact, and whether `--timestamp` belongs on
+the command line. Both are config switches with a documented default, settled
+by Phase 0.
+
+#### Containerised, on a GitHub-hosted runner (same series)
+
+The operator asked whether the stack already runs as a Docker image and whether
+the lane could just live there. Largely yes, and it supersedes much of the
+host-based design above.
+
+What the stack actually is: Docker is the **build system** plus the Tier 1 test
+runtime (`ktp-runtime-test-base`, a complete ~2 GB image rebuilt nightly by
+`publish-base-image.yml`); the **production fleet is bare metal**, artifacts
+staged as `.new` and swapped at the 03:00 ET restart (`docs/DEPLOYING.md`).
+
+- **`build/lane-b/Dockerfile`** — `FROM ktp-runtime-test-base` plus MariaDB, the
+  Perl DBI stack, and the 32-bit bot runtime. Four things it fixes: `amxxpc` is
+  **already in the base image** and `smoke-callable.yml:324` already compiles
+  plugins by `docker run`-ing it (the toolchain blocker was self-inflicted); the
+  container filesystem is ephemeral so there is no fleet-matching tree to
+  contaminate; glibc is pinned to Ubuntu 22.04's **2.35**, below the 2.41
+  threshold where the loader rejects shared objects needing an executable stack
+  — the likeliest failure mode for a 20-year-old bot `.so`; and it runs nowhere
+  near the data server, which hosts production HLStatsX and is deliberately
+  Docker-free.
+- **`EphemeralTree.in_place()`** — writes to `/opt/hlds` directly, no copy.
+  Copying 2 GB inside a container that is itself thrown away buys nothing. The
+  shadow-hash integrity check is disabled in this mode (there is no pristine
+  source, and recording hashes of files about to be overwritten would guarantee
+  a spurious `TreeIntegrityError`), and it refuses a tree without `hlds_linux`.
+  `build()` remains the default outside the container.
+- **`.github/workflows/lane-b-stats-e2e.yml`** — `ubuntu-latest`,
+  `workflow_dispatch` + 06:00 UTC nightly, deliberately slotted between the
+  base-image rebuild (04:30) and Tier 2's nightly (09:00) so two hlds-booting
+  suites never overlap. **No `pull_request` trigger and not a required check** —
+  bot AI is non-deterministic and a flakeable lane must not gate merges.
+- **Bug fixed before it could bite:** `mysqld`/`mariadbd` refuse to start as uid
+  0 without `--user=root`, and containers run as root by default, so the whole
+  image path would have died at startup. Both the initialiser and the server
+  invocation now pass it when euid is 0.
+- **The bot is not baked into the image** — third-party, not ours to
+  redistribute, and a GHCR push would publish it. Mounted at run time; CI fetches
+  it from a secret-held private URL. If that secret is missing on a `full` run
+  the workflow **fails with an explanatory error** rather than skipping, because
+  a skip is indistinguishable from coverage.
+
+Recorded in both the design doc and the README: the image is a
+**reconstruction** of the fleet built from repo refs, so green here means "this
+branch works against this branch's stack", not "works against what is deployed".
+That second question still belongs to the Tier 2 runner's fleet-matching tree
+and its drift tripwire; neither is retired by this.
+
+#### First real run of the image — five bugs, one blocker (same series)
+
+Docker turned out to be installed as a **snap inside WSL** (invisible to
+`dpkg -l`, `/snap/bin` off PATH), so the image finally got built and run. Every
+one of these failed in a way that pointed somewhere other than the cause:
+
+1. **`ENTRYPOINT` inherited from the base image.** The runtime base sets
+   `ENTRYPOINT ["/entrypoint.sh"]`, which boots `hlds_linux` — so
+   `docker run … bash -c "python3 …"` appended the whole command line to the
+   game server's argv and never ran it. `docker top` showed python's arguments
+   hanging off `hlds_linux`. `smoke-callable.yml` sidesteps this per-invocation
+   with `--entrypoint bash`; the Lane B image now clears it with
+   `ENTRYPOINT []` so callers cannot forget.
+2. **`amxxpc` must run from its own directory.** It `dlopen`s `amxxpc32.so` by
+   bare name, so the loader searches the CWD: "compiler failed to instantiate:
+   amxxpc32.so: cannot open shared object file". Both existing build paths
+   already `cd` to the compiler dir; `compile_plugin()` now does too.
+3. **`--no-defaults` must be MariaDB's first argument.** It is a pre-option;
+   anywhere later, the server completes a full InnoDB startup and *then* aborts
+   with `unknown option '--no-defaults'`, which reads as a mysterious late
+   crash. It is load-bearing, not hygiene — without it the server reads
+   `~/.my.cnf`, which on the data server points at the **live** database.
+4. **`sql()` always selected a schema**, including for the `CREATE DATABASE`
+   that creates it — `ERROR 1049 Unknown database` before the statement was
+   ever sent. Now `database=None` connects without selecting one.
+5. **`git` and `pytest` were missing from the image**, and git refused the
+   bind-mounted repos with "detected dubious ownership" (host uid vs container
+   root). Added via apt — `python3-pytest`, not pip, because Ubuntu 24.04
+   enforces PEP 668 — plus a `safe.directory '*'` waiver, justified in the
+   Dockerfile: the alternatives break `/opt/hlds` writes and the
+   mysqld-as-root path, and the mounts are read-only in a throwaway container.
+
+**What is now proven rather than reasoned:** the image builds on a **public**
+base (no GHCR auth needed) that is **Ubuntu 24.04.4 / glibc 2.39** — *not* the
+22.04/2.35 previously claimed here, which is `build/base/Dockerfile`, a
+different image; **`stats_logging.amxx` compiles** from `feat/stats-positions`
+with the capture include, **0 warnings**, md5
+`018b17442ef4ef352623428eebe93200` — retiring open verification debt #2 in
+`CONTINUATION_NOTES.md` ("Nothing is compiled"); the private `mysqld` starts and
+serves; and the unit suite passes **40/40 inside the image** (Linux path).
+Artifact md5s match byte-for-byte between Windows and Linux.
+
+**Blocker found, not a bug:** `sql/ktp_schema.sql` is an **overlay, not a
+schema** — 8 `ALTER TABLE`, 3 `CREATE TABLE IF NOT EXISTS`, 4 indexes, all
+assuming stock HLStatsX tables exist. On an empty database it dies at
+`ERROR 1146 … 'hlstats_Events_Frags' doesn't exist`. That is the file behaving
+as documented (its header warns fresh installs are the hazard), but it means
+**Lane B cannot build a database from this repo alone** — it needs a base
+schema, ideally a `mysqldump --no-data` of production. Options and trade-offs
+are in `tests/e2e_stats/README.md`.
+
+- **`scripts/lane_b_local.sh`** — local driver, and the place three
+  environment traps are written down so they are not rediscovered: Git Bash
+  rewrites POSIX paths in `-v` arguments when invoking `wsl.exe`/`docker.exe`
+  (a mount silently pointed at `G:\GIT\scripts`, so the directory came up empty
+  and python reported a missing file); the docker **snap has a private `/tmp`**,
+  so `-v /tmp/out:…` writes into its own namespace and every artifact vanishes
+  on exit — a green-looking run that produced nothing; and WSL shuts the distro
+  down between commands, taking `dockerd` with it.
+
+#### Database half green, and it caught a real MySQL incompatibility (same series)
+
+With ssh access to the data server, Lane B took a schema-only dump of
+production and the database half now passes 5/5:
+
+```
+[PASS] mysqld-private-instance  (MySQL 8.0.46 — same version string as production)
+[PASS] schema-load              1 schema + 2 seed files onto an empty database
+[PASS] schema-tables            64 tables
+[PASS] seed-assist              for_PlayerActions=0 for_PlayerPlayerActions=1, reward 0
+[PASS] seed-cap_break           for_PlayerActions=1 for_PlayerPlayerActions=0, reward 0
+```
+
+The last two are `KTPR_DEPLOYMENT_PLAN.md`'s most dangerous check — flags the
+wrong way round record every event twice and double-apply the reward — now
+verified automatically rather than by hand.
+
+- **Switched the image from MariaDB to MySQL**, and this is load-bearing rather
+  than tidiness. `sql/ktp_schema.sql` uses `ADD COLUMN IF NOT EXISTS` /
+  `CREATE INDEX IF NOT EXISTS`, which is MariaDB-only; production is MySQL
+  8.0.46 and rejects it with `ERROR 1064`, aborting before every later
+  statement. The file's own header documents exactly this and warns that a
+  *fresh* install — LAN data-server provisioning — is where it "silently
+  applies almost nothing". **On the MariaDB build the run passed.** A
+  MariaDB-backed lane would have gone green on the one migration hazard already
+  written down in the repo. Standing item for the project: `ktp_schema.sql`
+  still needs porting to plain `ALTER`s before a fresh MySQL install relies on
+  it.
+- **`scripts/fetch_base_schema.sh`** — read-only, repeatable production schema
+  dump (`--no-data --single-transaction --skip-lock-tables --no-tablespaces`).
+  Verified against production: **64 tables, 0 INSERTs**. Needed because no repo
+  contains a base schema — `ktp_schema.sql` is an ALTER-only overlay, so an
+  empty database cannot be built from source, which is the same reason a fresh
+  LAN provision is the documented hazard.
+- Two grant limitations, handled rather than routed around: **`hlstats_Servers`
+  is denied** to the read-only account (HLStatsX keeps per-server rcon
+  configuration there), so the table is reconstructed from `information_schema`
+  metadata — types, nullability, defaults, indexes — reading no values; and
+  **views are denied** (`SHOW VIEW`), which aborts mysqldump mid-run, so the
+  table list is enumerated explicitly rather than left to its own discovery.
+- **`--no-defaults` also has to be first on the *initialiser*.** Without it
+  MySQL reads Ubuntu's `mysqld.cnf`, drops to the `mysql` user, and then cannot
+  read a root-owned `0700` datadir — surfacing as
+  `[MY-013276] Failed to set datadir … (OS errno: 13)`, which reads as a
+  filesystem permissions problem rather than as "it read a config we did not
+  want".
+- A production-derived base already carries `match_id`, `half` and `pos_x/y/z`,
+  so `ktp_schema.sql` is redundant on top of it and is no longer applied by
+  default; `LANE_B_APPLY_KTP_SCHEMA=1` reproduces its MySQL failure on purpose.
+
+#### new_bot installed by the image — and a Metamod blocker found (same series)
+
+The Lane B image now downloads and installs **new_bot 0.2.2** at build time
+from the installer page, **SHA-256 pinned** (`8f659fe1…`) so a replaced upstream
+artifact fails the build rather than silently swapping the bot under a lane
+whose whole job is trusting what it ran. `NEW_BOT_URL` is overridable for a
+vendored copy when the Google Drive link rots or the host is offline.
+
+Verified in the built image: `dod/new_bot/new_bot_mm.so` (442 KB, chmod 0755)
+plus **93 waypoint files** covering the real KTP pool — anzio, avalanche, jagd,
+donner, flash, kalt, caen, merderet, charlie, sturm. Upstream changelog dated
+13-07-2026; this is maintained software.
+
+**`BotSpec.NEW_BOT` now holds facts, not guesses**, read from the shipped
+`_README.txt` / `_COMMANDS.txt`: `addbot {team} {class} {skill} {name}` (team
+accepts allies/axis), `target_players {0-32}` to fill, and the objective knobs
+`flag_priority_percent` / `wait_for_cap_percent` (defaults 70/75, raised to 100
+so bots go to flags and stay on them — which is what cap-break capture needs).
+Two prior guesses were wrong: the binary is `new_bot_mm.so`, not `new_bot.so`,
+and it lives at `dod/new_bot/`, not `dod/addons/`.
+
+**⛔ It cannot be activated.** new_bot's `_mm` suffix is literal — its README
+says it is a Metamod plugin and "will crash" if loaded any other way. The KTP
+stack is **Metamod-free**, confirmed inside the image: `dod/addons/` holds only
+`extensions.ini` + `ktpamx`, `extensions.ini` points at
+`addons/ktpamx/dlls/ktpamx_i386.so`, `liblist.gam` still has
+`gamedll_linux "dlls/dod.so"`, and `find -iname "*metamod*"` returns nothing.
+AMXX loads through ReHLDS's extension mechanism — the same reason
+`CreateFakeClient` is unavailable and the DODX tests needed dispatch
+primitives. There is no plugin loader for new_bot to register with.
+
+Files are therefore installed but **deliberately not activated**, and
+`BotKit.activation_blocker()` reports the reason as a fact so a Phase 0 run
+explains itself instead of timing out. Activating it means installing Metamod
+between the engine and `dlls/dod.so` while `ktpamx` still loads via
+`extensions.ini`; whether those coexist is unverified, and it would give the bot
+lane a different loader topology than production. That is a decision about the
+stack under test, not a build detail, so it is not taken here.
+
+Note: the image now contains a third-party binary that is not ours to
+redistribute, so **it must not be pushed to a public registry**. It is a
+local/CI artifact; the fleet consumes no images at all.
+
+#### Bots run. Phase 0's premise is verified. (same series)
+
+The question that has gated this work since the beginning — *can we get real
+players into the world?* — is answered yes.
+
+`scripts/spike_metamod_ab.py --split-layers` returns **8/8, exit 0**: both
+topologies show 3 modules and the same plugin count, `amxxcurl + reapi + dodx`
+present under both, and **zero differences**. And in ~60s of bot play on
+`dod_anzio`: 12 bots entered / joined a team / picked a role, **10 kills** with
+real weapons (thompson, luger, mp40, k43), **10 `triggered` events including
+`dod_control_point` captures** on HILL / LAUNDRY / STREET / PLAZA, and 692
+waypoints loaded.
+
+Bots fight *and* capture flags — the two inputs the capture code needs: kills
+drive assist attribution and cap-break candidacy, flag contention drives the
+`dodx_area_get_data` zone poll. This retires the "24-player synthetic load —
+requires bot tooling" non-goal in `TEST_INFRASTRUCTURE_PLAN.md` and the
+`BOT_AI_REQUIRED_REASON` skips from 1.5.25.
+
+- **The topology that works is `--split-layers`**: ktpamx keeps loading via
+  `extensions.ini` exactly as production does, and Metamod hosts **only** the
+  bot. Each loads once, at its own hook point, and ktpamx still logs "Running
+  without Metamod - using ReHLDS hookchains". The obvious topology — Metamod
+  hosting both — **segfaults 3 of 3**, because ktpamx reports "ReHLDS extension
+  mode detected" even when Metamod loads it and so installs ReHLDS hookchains
+  from inside Metamod's chain.
+- **The bot cannot live inside KTPAMXX**, which is worth recording because it
+  looks plausible. AMX Mod X is not a fork of Metamod, it is a Metamod *plugin*
+  — hence `Meta_Attach` in `ktpamx_i386.so`. `CModule::queryModule()` checks
+  modules for `Meta_Attach` only to label them `"amxx&mm"`; it still requires
+  `AMXX_Query`. `new_bot_mm.so` has 0 of the former and 1 of the latter, and the
+  engine says `[AMXX] Couldn't find "AMXX_Query"`.
+- **The fingerprint now reads the server log, not rcon.** `amxx modules` /
+  `amxx plugins` return *nothing* over rcon in extension mode — verified
+  directly: with the server fully up, `status` returned 230 characters while
+  `amxx version` and `amxx modules` both returned 0, and the log meanwhile
+  showed "Completed initialization" and "SV_ActivateServer". AMXX is fine; its
+  console commands just do not emit into rcon's redirect buffer when it is
+  loaded as a ReHLDS extension. The log carries the same facts and does not
+  depend on command registration, so it is now the primary source with rcon
+  supplementary.
+
+#### Verification (container path)
+
+- `pytest tests/e2e_stats/` — **39 passed, 1 skipped**; full repo suite
+  **202 passed, 70 skipped, 0 failed**.
+- Both new YAML files parse; the workflow resolves to 1 job / 10 steps with
+  `workflow_dispatch` + `schedule` triggers only (no `pull_request`, as intended).
+- ~~The image has NOT been built.~~ **Superseded** — see "First real run of the
+  image" above. It builds, the plugin compiles, mysqld serves, and the unit
+  suite passes inside it. The prediction that the first build would need
+  iteration held: it took five fixes.
+- Still unrun: the bot half (no bot kit yet) and the daemon (`hlstats.pl` needs
+  a populated database, which is blocked on the base-schema question). The
+  `docker-compose.lane-b.yml` path is also still unexercised — all real runs so
+  far went through `scripts/lane_b_local.sh`.
+
+#### Verification (build + daemon)
+
+- `pytest tests/e2e_stats/` — **35 passed, 1 skipped**.
+- The build step was run for real against the actual branches:
+  `--amxx-ref feat/stats-positions` (`5f0e5379`) and
+  `--daemon-ref feat/seed-cap-break-action` (`a8c9a97`) — SHAs match
+  `KTPR_DEPLOYMENT_PLAN.md`, all four daemon-side artifacts extracted, manifest
+  written with md5s.
+- Incidental finding, now documented in `artifacts.py`: `git show` may emit LF
+  even where the working tree is CRLF, depending on `core.autocrlf` /
+  `.gitattributes`. The CRLF normalisation before amxxpc is therefore
+  unconditional rather than guarded on "looks like CRLF".
+- Compile paths are covered by monkeypatched-compiler tests (failing rc,
+  exit-0-writes-nothing, CRLF normalisation) rather than a real amxxpc — no
+  AMXX toolchain on the authoring machine.
+
+#### Verification
+
+- `pytest tests/e2e_stats/` — 11 passed, 1 skipped (symlink case needs
+  privileges on Windows).
+- Mutation check on the write-through guard: disabling the unlink fails
+  `test_write_text_does_not_touch_source[hardlink]` and
+  `test_overlay_file_shadowing_an_existing_file_leaves_source_intact`.
+- Full collection clean at 232 tests — the new package does not disturb the
+  existing suites.
+- `scripts/spike_bot_lane.py --help` resolves all imports, exit 0.
+- Not yet run against a real bot or a real mysqld; that is Phase 0's own job
+  on the runner.
+
 ### `ops`: disk-usage trend sampling in ktp-data-server-health (2026-08-02)
 
 Three misconfigured systemd units wrote `/var/log/syslog` at 14.8 GiB/day from

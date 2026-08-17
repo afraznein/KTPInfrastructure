@@ -82,6 +82,20 @@ HOST = os.environ.get("KTP_TIER2_SSH_HOST", "")
 USER = os.environ.get("KTP_TIER2_SSH_USER", "root")
 TREE = os.environ.get("KTP_TIER2_TREE", "/opt/ktp-tier2-runner/serverfiles")
 PLUGIN_DIR = "dod/addons/ktpamx/plugins"
+MODULE_DIR = "dod/addons/ktpamx/modules"
+
+
+def artifact_dir(name: str) -> str:
+    """Where an artifact lives, by kind.
+
+    The manifest has always tracked modules alongside plugins -- dodx was
+    restaged by hand and its entry says so -- but every path here was built
+    from PLUGIN_DIR, so `--show` looked for a .so among the plugins, found
+    nothing, and printed ABSENT for a file that was present and correct.
+    A tool that reports a missing artifact when the artifact is fine is worse
+    than one that reports nothing.
+    """
+    return MODULE_DIR if name.endswith(".so") else PLUGIN_DIR
 MANIFEST = os.environ.get(
     "KTP_TIER2_MANIFEST", posixpath.join(posixpath.dirname(TREE), "stage-manifest.json")
 )
@@ -133,14 +147,14 @@ def show(ssh):
     print(f"Runner {USER}@{HOST}")
     print(f"  tree     {TREE}")
     print(f"  manifest {MANIFEST}{'' if man else '  (absent or empty)'}\n")
-    paths = " ".join(f"'{TREE}/{PLUGIN_DIR}/{n}'" for n in names)
+    paths = " ".join(f"'{TREE}/{artifact_dir(n)}/{n}'" for n in names)
     out, _ = run(ssh, f"md5sum {paths} 2>/dev/null")
     on_disk = {}
     for ln in out.splitlines():
         p = ln.split()
         if len(p) == 2:
             on_disk[posixpath.basename(p[1])] = p[0].lower()
-    print(f"{'plugin':<26} {'version':<12} {'manifest md5':<34} on-disk")
+    print(f"{'artifact':<26} {'version':<12} {'manifest md5':<34} on-disk")
     for n in names:
         e = man.get(n, {})
         disk = on_disk.get(n, "ABSENT")
@@ -224,7 +238,7 @@ def main():
     if not args.expect:
         print(f"WARNING: not md5-pinned (no --expect): {args.as_name}")
 
-    remote = f"{TREE}/{PLUGIN_DIR}/{args.as_name}"
+    remote = f"{TREE}/{artifact_dir(args.as_name)}/{args.as_name}"
     print(f"Stage {args.file}\n   -> {USER}@{HOST or '<unset>'}:{remote}")
     print(f"   version {version} ({version_src})  md5 {md5}\n")
 
