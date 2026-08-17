@@ -1,9 +1,11 @@
 import pytest
 
 from scripts.match_accumulation import (
+    DEFAULT_PROFILE,
     accumulate_player,
     assert_shareable_safe,
     derive_private_positions,
+    load_profile,
     validate_output_separation,
 )
 
@@ -32,6 +34,18 @@ def player(**overrides):
     }
     row.update(overrides)
     return row
+
+
+def test_default_shadow_profile_targets_ten_percent_corpus_settings():
+    profile = load_profile(DEFAULT_PROFILE)
+    assert profile["profile"] == {
+        "name": "accumulation_v2_target10",
+        "status": "provisional_shadow_default",
+    }
+    assert profile["position"]["points_per_second_at_flag"] == 0.50
+    assert profile["position"]["max_points_per_half"] == 150.0
+    assert profile["scenarios"]["last_flag_defense_kill_points"] == 30.0
+    assert profile["scenarios"]["last_flag_defense_max_per_half"] == 60.0
 
 
 def test_private_heatmap_drives_capped_shareable_points():

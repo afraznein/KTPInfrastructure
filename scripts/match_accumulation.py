@@ -27,7 +27,7 @@ from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = REPO / "config" / "analytics" / "accumulation_v1.toml"
+DEFAULT_PROFILE = REPO / "config" / "analytics" / "accumulation_v2_target10.toml"
 DEFAULT_OBJECTIVES = REPO / "config" / "analytics" / "map_objectives.toml"
 PRIVATE_KEYS = {
     "heatmap", "heatmap_cells", "cell_x", "cell_y", "pos_x", "pos_y", "pos_z",
