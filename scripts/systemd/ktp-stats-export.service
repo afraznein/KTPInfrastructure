@@ -1,0 +1,16 @@
+[Unit]
+Description=Export KTP match box scores to ktpleague.gg
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-stats-export.py --hours 48
+# Exits non-zero on an HTTP or transport failure, which fails the unit, which
+# fires the existing ktp-systemd-alert OnFailure wiring. A silent exporter is
+# the same defect as the empty stats pages it exists to fill.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target
