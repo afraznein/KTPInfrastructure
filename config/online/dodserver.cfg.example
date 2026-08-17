@@ -79,14 +79,26 @@ tracerspeed 6250
 //               Netcode & Rates
 //-----------------------------------------------
 sv_unlag 1
-sv_maxunlag 0.5  // 500ms max rewind window
-sv_unlagsamples 1  // Engine default. Raising it widens the SV_CalcClientTime jitter guard, so one ping spike can silently zero out lag comp for that shot — do not raise
-sv_minupdaterate 100
+sv_maxunlag 0.3  // 300ms max rewind window. Fleet-canonical (operator, 2026-08-11); the example said 0.5 while all 24 ran 0.3
+sv_unlagsamples 1  // ⚠️ ABSENT from all 24 live configs — kept here DELIBERATELY, and this is the one place the
+                   // example intentionally exceeds the fleet. The effective value is 1 either way because that
+                   // is the engine default (rehlds/engine/sv_user.cpp:71), so stating it changes no behaviour.
+                   // Raising it widens the SV_CalcClientTime jitter guard: one ping spike in N packets returns
+                   // latency 0.0 and silently zeroes lag comp for that shot — the prime suspect for the
+                   // "random hitreg" reports at the old value of 20. DO NOT RAISE. Written explicitly so the
+                   // protection rests on a line with a rationale rather than on an engine default nobody sees.
+sv_minupdaterate 90   // Fleet-canonical (operator, 2026-08-11); the example said 100 while all 24 ran 90
 sv_maxupdaterate 120
 sv_mincmdrate 100
 sv_maxcmdrate 500
 sv_minrate 100000
-sv_maxrate 100000  // Locked equal to sv_minrate — identical client bandwidth budgets; do not raise without a fleet decision
+sv_maxrate 1000000  // Server-side CEILING only, deliberately above sv_minrate. Fleet-canonical (operator, 2026-08-11).
+                    // ⚠️ This previously read "locked equal to sv_minrate — identical client bandwidth budgets",
+                    // which named the WRONG MECHANISM and was false on all 24 servers. Identical budgets are
+                    // enforced by KTPCvarChecker, which locks every connected client at rate 100000
+                    // (gs_calvalues: rate 100000, cl_updaterate 100, cl_cmdrate 100, ex_interp 0.009) —
+                    // NOT by the sv_min/maxrate pair. The ceiling is moot because no client may approach it.
+                    // If you need to change client bandwidth, change KTPCvarChecker, not this line.
 fakelag 0
 fakeloss 0
 
@@ -162,7 +174,9 @@ sv_rcon_banpenalty 10
 log on
 sv_logbans 1
 sv_logecho 1                        // legacy/no-op on ReHLDS (not a real cvar); mp_logecho is the live one
-mp_logecho 0                        // no console echo of log events -> no qconsole game-thread sync write (L-log + UDP logaddress unaffected)
+mp_logecho 0                        // ⚠️ ABSENT from all 24 live configs; kept here deliberately, same reasoning as
+                                    // sv_unlagsamples above. No console echo of log events -> no qconsole
+                                    // game-thread sync write (L-log + UDP logaddress unaffected).
 sv_logfile 1
 sv_log_onefile 0
 dodstats_pause 0

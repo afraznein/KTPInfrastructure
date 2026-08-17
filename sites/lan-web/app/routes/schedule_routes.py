@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, common, db, notify, seeding, standings
+from .. import auth, common, db, notify, parse, seeding, standings
 from .. import schedule as sched
 from ..templating import templates
 
@@ -43,12 +43,13 @@ def schedule_page(request: Request):
 async def report(request: Request):
     ident = auth.require_login(request)
     form = await request.form()
-    try:
-        match_id = int(form["match_id"]); sa = int(form["score_a"]); sb = int(form["score_b"])
-    except (KeyError, ValueError):
-        raise HTTPException(400, "Match id and both scores required.")
-    if sa < 0 or sb < 0:
-        raise HTTPException(400, "Scores must be non-negative.")
+    # as_int takes digits only, so a negative score is rejected here rather than
+    # by a separate check.
+    match_id = parse.as_int(form.get("match_id"))
+    sa = parse.as_int(form.get("score_a"))
+    sb = parse.as_int(form.get("score_b"))
+    if match_id is None or sa is None or sb is None:
+        raise HTTPException(400, "Match id and both scores required, as non-negative numbers.")
     m = db.query_one("SELECT team_a_id, team_b_id FROM lan_schedule WHERE id=%s", (match_id,))
     if not m:
         raise HTTPException(404, "No such match.")
@@ -88,12 +89,10 @@ async def set_draw(request: Request):
 async def set_station(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    try:
-        match_id = int(f["match_id"])
-    except (KeyError, ValueError):
+    match_id = parse.as_int(f.get("match_id"))
+    if match_id is None:
         raise HTTPException(400, "match id required")
-    raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
+    station = parse.bounded(f.get("station"), 1, 5)
     sched.set_station(match_id, station)
     if station:  # ping both captains: you're up on Server N
         m = db.query_one(
@@ -115,9 +114,8 @@ async def set_station(request: Request):
 async def set_round_map(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    try:
-        rnd = int(f["round"])
-    except (KeyError, ValueError):
+    rnd = parse.as_int(f.get("round"))
+    if rnd is None:
         raise HTTPException(400, "round required")
     sched.set_round_map(rnd, (f.get("map") or "").strip()[:48] or None)
     return RedirectResponse(url=request.url_for("schedule"), status_code=303)

@@ -50,7 +50,18 @@ CRITICAL_SERVICES=(
 # Timers that must be enabled + scheduled
 CRITICAL_TIMERS=(
     hltv-restart.timer
+    # Renders the central ban list into the distribute tree. A stopped timer is
+    # silent: the last-published file stays in place and reads as healthy.
+    ktp-render-banlist.timer
 )
+
+# Central ban-list renderer. Checked on three independent legs because each one
+# hides the others: the file can be absent, the timer can have stopped, or it can
+# be running every minute and failing — the 2026-08-12 case, whose exit timestamp
+# stays fresh, so staleness alone misses it.
+BANLIST_FILE="/home/dod/distribute/addons/ktpamx/configs/ktp_ac_bans.ini"
+BANLIST_UNIT="ktp-render-banlist.service"
+BANLIST_STALE_SEC=900
 
 [ -f /etc/ktp/discord-relay.conf ] && source /etc/ktp/discord-relay.conf
 
@@ -73,6 +84,38 @@ for t in "${CRITICAL_TIMERS[@]}"; do
         down+=("$t=${state}/${enabled}")
     fi
 done
+
+# Keyed on the UNIT's last exit, never on the file's mtime or the renderer's log.
+# Both of those go permanently quiet once the list stops changing — which is the
+# healthy steady state — so either would read as `stale` forever and get tuned out.
+banlist_load=$(systemctl show "$BANLIST_UNIT" -p LoadState --value 2>/dev/null || true)
+if [ "$banlist_load" != "loaded" ]; then
+    # A nonexistent unit answers Result=success and exits 0, so a Result-only
+    # check calls a typo healthy. LoadState is the mandatory guard.
+    down+=("$BANLIST_UNIT=not-loaded")
+else
+    banlist_result=$(systemctl show "$BANLIST_UNIT" -p Result --value 2>/dev/null || true)
+    if [ "$banlist_result" != "success" ]; then
+        down+=("$BANLIST_UNIT=render-failed")
+    fi
+    banlist_last=$(systemctl show "$BANLIST_UNIT" -p ExecMainExitTimestamp --value 2>/dev/null || true)
+    if [ -z "$banlist_last" ]; then
+        # `date -d ''` SUCCEEDS, returning midnight today, so an empty timestamp
+        # must be caught here rather than handed to date.
+        down+=("$BANLIST_UNIT=never-ran")
+    else
+        banlist_epoch=$(date -d "$banlist_last" +%s 2>/dev/null || echo 0)
+        if [ "$banlist_epoch" -eq 0 ] || \
+           [ $(( $(date +%s) - banlist_epoch )) -gt "$BANLIST_STALE_SEC" ]; then
+            down+=("$BANLIST_UNIT=stale")
+        fi
+    fi
+fi
+# Tokens above are fixed strings, never an age — the report is a set-diff against
+# the previous run, so a ticking value would look like a new failure every hour.
+if [ ! -f "$BANLIST_FILE" ]; then
+    down+=("ktp_ac_bans.ini=absent")
+fi
 
 # HLTV instance coverage — check each port in the expected set,
 # skipping intentionally-excluded ones.

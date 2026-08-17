@@ -1,2059 +1,2051 @@
 {
- "_source": [
-  "Player uploads from the old LAN site (lan-web), attributed by Discord login.",
-  "Discord IDs and uploader IPs are deliberately NOT exported -- display name only.",
-  "Files live on the data server at /var/lib/lan-web/{demos,photos}."
- ],
- "demos": [
-  {
-   "id": 1,
-   "alias": "kev.de",
-   "team": "Uncle Rico's Time Machine",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "dod.rar",
-   "stored_name": "000001.zip",
-   "size_bytes": 100319293,
-   "note": "DRAFT",
-   "uploader": "kev.de",
-   "uploaded_at": "2026-07-31 17:43:47",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 2,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "armory_axis.dem",
-   "stored_name": "000002.zip",
-   "size_bytes": 28920994,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 14:17:26",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 3,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "armory_allies.dem",
-   "stored_name": "000003.zip",
-   "size_bytes": 28883029,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 14:18:05",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 4,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 63,
-   "bracket_mkey": null,
-   "original_filename": "match1nato2.dem",
-   "stored_name": "000004.zip",
-   "size_bytes": 25504050,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 14:19:29",
-   "map": "armory_b6",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "Best Buds"
-   ],
-   "score": [
-    194,
-    159
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 5,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "lanarmoryvsnato2nd.dem",
-   "stored_name": "000005.zip",
-   "size_bytes": 26006332,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 14:19:43",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 6,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 63,
-   "bracket_mkey": null,
-   "original_filename": "lanarmoryvsnato2nd.dem",
-   "stored_name": "000006.zip",
-   "size_bytes": 26006332,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 14:19:56",
-   "map": "armory_b6",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "Best Buds"
-   ],
-   "score": [
-    194,
-    159
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 7,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 63,
-   "bracket_mkey": null,
-   "original_filename": "match1nato1.dem",
-   "stored_name": "000007.zip",
-   "size_bytes": 27233787,
-   "note": "NATO",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 14:20:06",
-   "map": "armory_b6",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "Best Buds"
-   ],
-   "score": [
-    194,
-    159
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 8,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 63,
-   "bracket_mkey": null,
-   "original_filename": "lanarmoryvsnato1st.dem",
-   "stored_name": "000008.zip",
-   "size_bytes": 27147173,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 14:20:22",
-   "map": "armory_b6",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "Best Buds"
-   ],
-   "score": [
-    194,
-    159
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 9,
-   "alias": "dorito",
-   "team": "onLAN thunder",
-   "schedule_id": 64,
-   "bracket_mkey": null,
-   "original_filename": "dorito-rr-game1-bteam-armory-axis.dem",
-   "stored_name": "000009.zip",
-   "size_bytes": 22488705,
-   "note": null,
-   "uploader": "dorito",
-   "uploaded_at": "2026-08-01 14:23:59",
-   "map": "armory_b6",
-   "matchup": [
-    "onLAN thunder",
-    "b Team"
-   ],
-   "score": [
-    389,
-    66
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 10,
-   "alias": "dorito",
-   "team": "onLAN thunder",
-   "schedule_id": 64,
-   "bracket_mkey": null,
-   "original_filename": "dorito-rr-game1-bteam-armory-axis.dem",
-   "stored_name": "000010.zip",
-   "size_bytes": 22488705,
-   "note": null,
-   "uploader": "dorito",
-   "uploaded_at": "2026-08-01 14:24:37",
-   "map": "armory_b6",
-   "matchup": [
-    "onLAN thunder",
-    "b Team"
-   ],
-   "score": [
-    389,
-    66
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 11,
-   "alias": "dorito",
-   "team": "onLAN thunder",
-   "schedule_id": 64,
-   "bracket_mkey": null,
-   "original_filename": "dorito-rr-game1-bteam-armory-allies.dem",
-   "stored_name": "000011.zip",
-   "size_bytes": 24685244,
-   "note": null,
-   "uploader": "dorito",
-   "uploaded_at": "2026-08-01 14:25:01",
-   "map": "armory_b6",
-   "matchup": [
-    "onLAN thunder",
-    "b Team"
-   ],
-   "score": [
-    389,
-    66
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 12,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "dicevprice-armory-axis.dem",
-   "stored_name": "000012.zip",
-   "size_bytes": 23591939,
-   "note": null,
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 14:28:23",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 13,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "dicevprice-armory-allies.dem",
-   "stored_name": "000013.zip",
-   "size_bytes": 23662521,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 14:29:00",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 14,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "dicevprice-armory-axis.dem",
-   "stored_name": "000014.zip",
-   "size_bytes": 23591939,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 14:29:16",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 15,
-   "alias": "kroD",
-   "team": "Arrested Development",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "wsdod_match1_armory_allies_2.dem",
-   "stored_name": "000015.zip",
-   "size_bytes": 26058372,
-   "note": null,
-   "uploader": "kroD",
-   "uploaded_at": "2026-08-01 14:30:56",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 16,
-   "alias": "incite[bc]",
-   "team": "Arrested Development",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "2026LAN.Bluth.vs.NoSo.Axis.Half1.dem",
-   "stored_name": "000016.zip",
-   "size_bytes": 29487934,
-   "note": null,
-   "uploader": "incite[bc]",
-   "uploaded_at": "2026-08-01 14:31:19",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 17,
-   "alias": "kroD",
-   "team": "Arrested Development",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "wsdod_match1_armory_axis_1.dem",
-   "stored_name": "000017.zip",
-   "size_bytes": 26125256,
-   "note": null,
-   "uploader": "kroD",
-   "uploaded_at": "2026-08-01 14:31:33",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 18,
-   "alias": "incite[bc]",
-   "team": "Arrested Development",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "2026LAN.Bluth.vs.NoSo.Allies.half2.dem",
-   "stored_name": "000018.zip",
-   "size_bytes": 32854970,
-   "note": null,
-   "uploader": "incite[bc]",
-   "uploaded_at": "2026-08-01 14:32:18",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 19,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "match2price1.dem",
-   "stored_name": "000019.zip",
-   "size_bytes": 31686992,
-   "note": "pir",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 15:26:10",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 20,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "match2price2.dem",
-   "stored_name": "000020.zip",
-   "size_bytes": 28285013,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 15:27:02",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 21,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-1-nosoul_arresteddevelopment-1-armory_allies.dem",
-   "stored_name": "000021.zip",
-   "size_bytes": 27867615,
-   "note": "M1 Garand (Allies): 3-15-27",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 15:31:33",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 22,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-1-nosoul_arresteddevelopment-2-armory_axis.dem",
-   "stored_name": "000022.zip",
-   "size_bytes": 28497190,
-   "note": "K43 (Axis): 6-19-25",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 15:32:39",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 23,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 68,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-2-nosoul_nato-1-thunder2_axis.dem",
-   "stored_name": "000023.zip",
-   "size_bytes": 29729812,
-   "note": "K43 (Axis): 4-23-29",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 15:33:26",
-   "map": "thunder2",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "NoSoul"
-   ],
-   "score": [
-    139,
-    73
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 24,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 68,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-2-nosoul_nato-2-thunder2_allies.dem",
-   "stored_name": "000024.zip",
-   "size_bytes": 30660337,
-   "note": "M1 Garand (Allies): 4-9-31",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 15:34:08",
-   "map": "thunder2",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "NoSoul"
-   ],
-   "score": [
-    139,
-    73
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 25,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "match1PIRarmoryallies.dem",
-   "stored_name": "000025.zip",
-   "size_bytes": 29710310,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 15:34:40",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 26,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "match1PIRarmoryaxis.dem",
-   "stored_name": "000026.zip",
-   "size_bytes": 27157753,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 15:35:04",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 27,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "match2ADthunderallies.dem",
-   "stored_name": "000027.zip",
-   "size_bytes": 30281440,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 15:35:58",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 28,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "philly-m1-price-armory-allies.dem",
-   "stored_name": "000028.zip",
-   "size_bytes": 30697526,
-   "note": null,
-   "uploader": "element",
-   "uploaded_at": "2026-08-01 15:36:17",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 29,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "match2ADthunderaxis.dem",
-   "stored_name": "000029.zip",
-   "size_bytes": 30406091,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 15:36:30",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 30,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "philly-m1-price-armory-allies.dem",
-   "stored_name": "000030.zip",
-   "size_bytes": 30697526,
-   "note": null,
-   "uploader": "element",
-   "uploaded_at": "2026-08-01 15:36:43",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 31,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "thunder_allies.dem",
-   "stored_name": "000031.zip",
-   "size_bytes": 32252749,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 15:39:17",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 32,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "philly-m1-price-armory-axis.dem",
-   "stored_name": "000032.zip",
-   "size_bytes": 30289001,
-   "note": null,
-   "uploader": "element",
-   "uploaded_at": "2026-08-01 15:39:39",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 33,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "thunder_axis.dem",
-   "stored_name": "000033.zip",
-   "size_bytes": 27656678,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 15:39:52",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 34,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "philly-m2-AD-thunder-allies.dem",
-   "stored_name": "000034.zip",
-   "size_bytes": 31104802,
-   "note": null,
-   "uploader": "element",
-   "uploaded_at": "2026-08-01 15:40:21",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 35,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "philly-m2-AD-thunder-axis.dem",
-   "stored_name": "000035.zip",
-   "size_bytes": 31328059,
-   "note": null,
-   "uploader": "element",
-   "uploaded_at": "2026-08-01 15:40:52",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 36,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "lanthundervsprice1st.dem",
-   "stored_name": "000036.zip",
-   "size_bytes": 28132694,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 16:18:37",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 37,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 70,
-   "bracket_mkey": null,
-   "original_filename": "lanthundervsprice2nd.dem",
-   "stored_name": "000037.zip",
-   "size_bytes": 27718631,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 16:18:57",
-   "map": "thunder2",
-   "matchup": [
-    "Best Buds",
-    "Price is Right"
-   ],
-   "score": [
-    244,
-    56
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 38,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 74,
-   "bracket_mkey": null,
-   "original_filename": "match3thunder1.dem",
-   "stored_name": "000038.zip",
-   "size_bytes": 28301954,
-   "note": "thunder",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 16:33:57",
-   "map": "lennon5_b1",
-   "matchup": [
-    "onLAN thunder",
-    "Best Buds"
-   ],
-   "score": [
-    268,
-    388
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 39,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 74,
-   "bracket_mkey": null,
-   "original_filename": "match3thunder2.dem",
-   "stored_name": "000039.zip",
-   "size_bytes": 25326534,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 16:34:39",
-   "map": "lennon5_b1",
-   "matchup": [
-    "onLAN thunder",
-    "Best Buds"
-   ],
-   "score": [
-    268,
-    388
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 40,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 71,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-3-nosoul_dice-1-lennon5_allies.dem",
-   "stored_name": "000040.zip",
-   "size_bytes": 27303978,
-   "note": "M1 Garand (Allies): 11-15-24",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 16:35:54",
-   "map": "lennon5_b1",
-   "matchup": [
-    "dicE",
-    "NoSoul"
-   ],
-   "score": [
-    471,
-    183
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 41,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 71,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-3-nosoul_dice-2-lennon5_axis.dem",
-   "stored_name": "000041.zip",
-   "size_bytes": 25407602,
-   "note": "K43 (Axis): 11-20-28",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 16:36:37",
-   "map": "lennon5_b1",
-   "matchup": [
-    "dicE",
-    "NoSoul"
-   ],
-   "score": [
-    471,
-    183
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 42,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "dicevbluth-thunder-allies.dem",
-   "stored_name": "000042.zip",
-   "size_bytes": 24959574,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:43:15",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 43,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "dicevbluth-thunder-axis.dem",
-   "stored_name": "000043.zip",
-   "size_bytes": 27441666,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:43:28",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 44,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "dicevbluth-thunder-axis.dem",
-   "stored_name": "000044.zip",
-   "size_bytes": 27441666,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:43:39",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 45,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "dicevprice-armory-axis.dem",
-   "stored_name": "000045.zip",
-   "size_bytes": 23591939,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:43:49",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 46,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 71,
-   "bracket_mkey": null,
-   "original_filename": "dicevsoul-lennon-allies.dem",
-   "stored_name": "000046.zip",
-   "size_bytes": 24185136,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:43:59",
-   "map": "lennon5_b1",
-   "matchup": [
-    "dicE",
-    "NoSoul"
-   ],
-   "score": [
-    471,
-    183
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 47,
-   "alias": "element",
-   "team": "dicE",
-   "schedule_id": 71,
-   "bracket_mkey": null,
-   "original_filename": "dicevsoul-lennon-axis.dem",
-   "stored_name": "000047.zip",
-   "size_bytes": 25421141,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 16:44:10",
-   "map": "lennon5_b1",
-   "matchup": [
-    "dicE",
-    "NoSoul"
-   ],
-   "score": [
-    471,
-    183
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 48,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 75,
-   "bracket_mkey": null,
-   "original_filename": "lennon_allies.dem",
-   "stored_name": "000048.zip",
-   "size_bytes": 27507789,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 17:57:59",
-   "map": "lennon5_b1",
-   "matchup": [
-    "b Team",
-    "Price is Right"
-   ],
-   "score": [
-    280,
-    308
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 49,
-   "alias": "Nein",
-   "team": "Price is Right",
-   "schedule_id": 75,
-   "bracket_mkey": null,
-   "original_filename": "lennon_axis.dem",
-   "stored_name": "000049.zip",
-   "size_bytes": 25824279,
-   "note": null,
-   "uploader": "Nein",
-   "uploaded_at": "2026-08-01 17:58:40",
-   "map": "lennon5_b1",
-   "matchup": [
-    "b Team",
-    "Price is Right"
-   ],
-   "score": [
-    280,
-    308
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 50,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": 79,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-4-nosoul_priceisright-1-saints2_allies.dem",
-   "stored_name": "000050.zip",
-   "size_bytes": 28161475,
-   "note": "M1 Garand (Allies): 2-25-25",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 19:00:10",
-   "map": "saints2_b3e",
-   "matchup": [
-    "NoSoul",
-    "Price is Right"
-   ],
-   "score": [
-    169,
-    94
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 51,
-   "alias": "khoi",
-   "team": "NoSoul",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "khoi-groupstage-4-nosoul_priceisright-2-saints2_axis.dem",
-   "stored_name": "000051.zip",
-   "size_bytes": 27830678,
-   "note": "K43 (Axis): 3-17-29",
-   "uploader": "khoi",
-   "uploaded_at": "2026-08-01 19:00:46",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 52,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 76,
-   "bracket_mkey": null,
-   "original_filename": "match4THUNDERsaintsallies.dem",
-   "stored_name": "000052.zip",
-   "size_bytes": 30960785,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 19:12:58",
-   "map": "saints2_b3e",
-   "matchup": [
-    "dicE",
-    "onLAN thunder"
-   ],
-   "score": [
-    123,
-    131
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 53,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 76,
-   "bracket_mkey": null,
-   "original_filename": "match4THUNDERsaintsaxis.dem",
-   "stored_name": "000053.zip",
-   "size_bytes": 28171330,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 19:13:22",
-   "map": "saints2_b3e",
-   "matchup": [
-    "dicE",
-    "onLAN thunder"
-   ],
-   "score": [
-    123,
-    131
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 54,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 78,
-   "bracket_mkey": null,
-   "original_filename": "match4nicholson1.dem",
-   "stored_name": "000054.zip",
-   "size_bytes": 27938407,
-   "note": "development",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 19:14:15",
-   "map": "saints2_b3e",
-   "matchup": [
-    "Arrested Development",
-    "Best Buds"
-   ],
-   "score": [
-    115,
-    112
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 55,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "match4nicholson2.dem",
-   "stored_name": "000055.zip",
-   "size_bytes": 32967530,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 19:14:55",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 56,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 81,
-   "bracket_mkey": null,
-   "original_filename": "match5NATOharringtonallies.dem",
-   "stored_name": "000056.zip",
-   "size_bytes": 25845730,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 20:25:14",
-   "map": "harrington",
-   "matchup": [
-    "dicE",
-    "North Atlantic Treaty Org"
-   ],
-   "score": [
-    257,
-    193
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 57,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 81,
-   "bracket_mkey": null,
-   "original_filename": "match5NATOharringtonaxis.dem",
-   "stored_name": "000057.zip",
-   "size_bytes": 27419809,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 20:25:44",
-   "map": "harrington",
-   "matchup": [
-    "dicE",
-    "North Atlantic Treaty Org"
-   ],
-   "score": [
-    257,
-    193
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 58,
-   "alias": "warchyld[dd]",
-   "team": "dicE",
-   "schedule_id": 81,
-   "bracket_mkey": null,
-   "original_filename": "dicevnmato-harry-axis.dem",
-   "stored_name": "000058.zip",
-   "size_bytes": 23396581,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 20:26:53",
-   "map": "harrington",
-   "matchup": [
-    "dicE",
-    "North Atlantic Treaty Org"
-   ],
-   "score": [
-    257,
-    193
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 59,
-   "alias": "warchyld[dd]",
-   "team": "dicE",
-   "schedule_id": 81,
-   "bracket_mkey": null,
-   "original_filename": "dicevnmato-harry-allies.dem",
-   "stored_name": "000059.zip",
-   "size_bytes": 24808785,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 20:27:05",
-   "map": "harrington",
-   "matchup": [
-    "dicE",
-    "North Atlantic Treaty Org"
-   ],
-   "score": [
-    257,
-    193
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 60,
-   "alias": "warchyld[dd]",
-   "team": "dicE",
-   "schedule_id": 76,
-   "bracket_mkey": null,
-   "original_filename": "dicevbluth-thunder-allies.dem",
-   "stored_name": "000060.zip",
-   "size_bytes": 24959574,
-   "note": "warchyldd",
-   "uploader": "warchyld[dd]",
-   "uploaded_at": "2026-08-01 20:27:26",
-   "map": "saints2_b3e",
-   "matchup": [
-    "dicE",
-    "onLAN thunder"
-   ],
-   "score": [
-    123,
-    131
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 61,
-   "alias": "bromley",
-   "team": "Best Buds",
-   "schedule_id": 84,
-   "bracket_mkey": null,
-   "original_filename": "HARRYNOSOULALLIES.dem",
-   "stored_name": "000061.zip",
-   "size_bytes": 31189696,
-   "note": "Heavy",
-   "uploader": "bromley",
-   "uploaded_at": "2026-08-01 20:38:16",
-   "map": "harrington",
-   "matchup": [
-    "Best Buds",
-    "NoSoul"
-   ],
-   "score": [
-    521,
-    182
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 62,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 86,
-   "bracket_mkey": null,
-   "original_filename": "match6ICYanzioallies.dem",
-   "stored_name": "000062.zip",
-   "size_bytes": 26213483,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 21:35:21",
-   "map": "anzio",
-   "matchup": [
-    "dicE",
-    "icyHOT"
-   ],
-   "score": [
-    387,
-    535
-   ],
-   "round": 6,
-   "on_disk": true
-  },
-  {
-   "id": 63,
-   "alias": "stealthlol",
-   "team": "dicE",
-   "schedule_id": 86,
-   "bracket_mkey": null,
-   "original_filename": "match6ICYanzioaxis.dem",
-   "stored_name": "000063.zip",
-   "size_bytes": 27257431,
-   "note": null,
-   "uploader": "stealthlol",
-   "uploaded_at": "2026-08-01 21:35:55",
-   "map": "anzio",
-   "matchup": [
-    "dicE",
-    "icyHOT"
-   ],
-   "score": [
-    387,
-    535
-   ],
-   "round": 6,
-   "on_disk": true
-  },
-  {
-   "id": 64,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 89,
-   "bracket_mkey": null,
-   "original_filename": "lananziovsbteeam2nd.dem",
-   "stored_name": "000064.zip",
-   "size_bytes": 27103832,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 21:37:35",
-   "map": "anzio",
-   "matchup": [
-    "Best Buds",
-    "b Team"
-   ],
-   "score": [
-    760,
-    173
-   ],
-   "round": 6,
-   "on_disk": true
-  },
-  {
-   "id": 65,
-   "alias": "3sidedquarter",
-   "team": "Best Buds",
-   "schedule_id": 63,
-   "bracket_mkey": null,
-   "original_filename": "lanarmoryvsnato1st.dem",
-   "stored_name": "000065.zip",
-   "size_bytes": 27147173,
-   "note": null,
-   "uploader": "3sidedquarter",
-   "uploaded_at": "2026-08-01 21:37:49",
-   "map": "armory_b6",
-   "matchup": [
-    "North Atlantic Treaty Org",
-    "Best Buds"
-   ],
-   "score": [
-    194,
-    159
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 66,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": 89,
-   "bracket_mkey": null,
-   "original_filename": "match6bteam1.dem",
-   "stored_name": "000066.zip",
-   "size_bytes": 24664168,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 21:55:39",
-   "map": "anzio",
-   "matchup": [
-    "Best Buds",
-    "b Team"
-   ],
-   "score": [
-    760,
-    173
-   ],
-   "round": 6,
-   "on_disk": true
-  },
-  {
-   "id": 67,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "match6bteam2.dem",
-   "stored_name": "000067.zip",
-   "size_bytes": 27682500,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-01 21:56:10",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 68,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 65,
-   "bracket_mkey": null,
-   "original_filename": "ArmoryVSNoSoul-_Saturday.zip",
-   "stored_name": "000068.zip",
-   "size_bytes": 69434316,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:03:41",
-   "map": "armory_b6",
-   "matchup": [
-    "Arrested Development",
-    "NoSoul"
-   ],
-   "score": [
-    176,
-    105
-   ],
-   "round": 1,
-   "on_disk": true
-  },
-  {
-   "id": 69,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 66,
-   "bracket_mkey": null,
-   "original_filename": "ThunderVSDice_-_Saturday.zip",
-   "stored_name": "000069.zip",
-   "size_bytes": 75181989,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:05:20",
-   "map": "thunder2",
-   "matchup": [
-    "dicE",
-    "Arrested Development"
-   ],
-   "score": [
-    118,
-    57
-   ],
-   "round": 2,
-   "on_disk": true
-  },
-  {
-   "id": 70,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 72,
-   "bracket_mkey": null,
-   "original_filename": "LennonVSICY_-_Saturday.zip",
-   "stored_name": "000070.zip",
-   "size_bytes": 61470058,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:08:04",
-   "map": "lennon5_b1",
-   "matchup": [
-    "icyHOT",
-    "Arrested Development"
-   ],
-   "score": [
-    481,
-    164
-   ],
-   "round": 3,
-   "on_disk": true
-  },
-  {
-   "id": 71,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 78,
-   "bracket_mkey": null,
-   "original_filename": "SaintsVSBBS_-_Saturday.zip",
-   "stored_name": "000071.zip",
-   "size_bytes": 69191198,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:10:18",
-   "map": "saints2_b3e",
-   "matchup": [
-    "Arrested Development",
-    "Best Buds"
-   ],
-   "score": [
-    115,
-    112
-   ],
-   "round": 4,
-   "on_disk": true
-  },
-  {
-   "id": 72,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 83,
-   "bracket_mkey": null,
-   "original_filename": "HarringtonVSBTeam_-_Saturday.zip",
-   "stored_name": "000072.zip",
-   "size_bytes": 72433269,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:12:41",
-   "map": "harrington",
-   "matchup": [
-    "Arrested Development",
-    "b Team"
-   ],
-   "score": [
-    373,
-    193
-   ],
-   "round": 5,
-   "on_disk": true
-  },
-  {
-   "id": 73,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": 88,
-   "bracket_mkey": null,
-   "original_filename": "AnzioVSPrice_-_Saturday.zip",
-   "stored_name": "000073.zip",
-   "size_bytes": 63515937,
-   "note": null,
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-01 22:17:19",
-   "map": "anzio",
-   "matchup": [
-    "Arrested Development",
-    "Price is Right"
-   ],
-   "score": [
-    515,
-    185
-   ],
-   "round": 6,
-   "on_disk": true
-  },
-  {
-   "id": 74,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "QF2",
-   "original_filename": "playoffs1nicholson1.dem",
-   "stored_name": "000074.zip",
-   "size_bytes": 29504870,
-   "note": "piff",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 13:24:48",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 75,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "QF2",
-   "original_filename": "playoffs1nicholson2.dem",
-   "stored_name": "000075.zip",
-   "size_bytes": 25149555,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 13:25:25",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 76,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "QF2",
-   "original_filename": "playoffs2nicholsson1.dem",
-   "stored_name": "000076.zip",
-   "size_bytes": 30757590,
-   "note": "lost by 1",
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 14:47:09",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 77,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "playoffs2nicholsson2.dem",
-   "stored_name": "000077.zip",
-   "size_bytes": 30478414,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 14:47:36",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 78,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "QF2",
-   "original_filename": "playoffs2nicholsson2.dem",
-   "stored_name": "000078.zip",
-   "size_bytes": 30478414,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 14:47:50",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 79,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "LS1",
-   "original_filename": "lowerplayoff1pir1.dem",
-   "stored_name": "000079.zip",
-   "size_bytes": 28214389,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 16:41:49",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 80,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "LS1",
-   "original_filename": "lowerplayoff2pir1.dem",
-   "stored_name": "000080.zip",
-   "size_bytes": 32712465,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 17:20:26",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 81,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "LS1",
-   "original_filename": "lowerplayoff1pir2.dem",
-   "stored_name": "000081.zip",
-   "size_bytes": 25335180,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 17:22:43",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 82,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "LS1",
-   "original_filename": "lowerplayoff2pir2.dem",
-   "stored_name": "000082.zip",
-   "size_bytes": 28505341,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 17:48:52",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 83,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "P56",
-   "original_filename": "dod_railroad2_s9a0000.bmp",
-   "stored_name": "000083.zip",
-   "size_bytes": 2209830,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 19:21:17",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 84,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": null,
-   "original_filename": "lowerfinal1.dem",
-   "stored_name": "000084.zip",
-   "size_bytes": 24756588,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 19:21:38",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 85,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "LS1",
-   "original_filename": "lowerfinal1.dem",
-   "stored_name": "000085.zip",
-   "size_bytes": 24756588,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 19:21:50",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 86,
-   "alias": "piff",
-   "team": "Best Buds",
-   "schedule_id": null,
-   "bracket_mkey": "P56",
-   "original_filename": "lowerfinal2.dem",
-   "stored_name": "000086.zip",
-   "size_bytes": 26482703,
-   "note": null,
-   "uploader": "piff",
-   "uploaded_at": "2026-08-02 19:23:19",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 87,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": null,
-   "bracket_mkey": "QF2",
-   "original_filename": "SundayVSBestBuds.zip",
-   "stored_name": "000087.zip",
-   "size_bytes": 152499764,
-   "note": "2 matches",
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-02 20:56:00",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 88,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": null,
-   "bracket_mkey": "SF1",
-   "original_filename": "SundayVSICYHOT.zip",
-   "stored_name": "000088.zip",
-   "size_bytes": 141900733,
-   "note": "2 matches",
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-02 20:56:35",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 89,
-   "alias": "Nicholson",
-   "team": "Arrested Development",
-   "schedule_id": null,
-   "bracket_mkey": "P34",
-   "original_filename": "SundayVSDICE.zip",
-   "stored_name": "000089.zip",
-   "size_bytes": 107181933,
-   "note": "2 matches",
-   "uploader": "Nicholson",
-   "uploaded_at": "2026-08-02 21:00:29",
-   "map": null,
-   "matchup": null,
-   "score": null,
-   "round": null,
-   "on_disk": true
-  },
-  {
-   "id": 90,
-   "alias": "m00cat",
-   "team": "dicE",
-   "schedule_id": 61,
-   "bracket_mkey": null,
-   "original_filename": "wsod26_grp1_h1_m00cat.dem",
-   "stored_name": "000090.zip",
-   "size_bytes": 22932404,
-   "note": "Allies",
-   "uploader": "m00cat",
-   "uploaded_at": "2026-08-06 21:23:22",
-   "map": "armory_b6",
-   "matchup": [
-    "dicE",
-    "Price is Right"
-   ],
-   "score": [
-    387,
-    84
-   ],
-   "round": 1,
-   "on_disk": true
-  }
- ],
- "photos": [
-  {
-   "id": 1,
-   "stored_name": "000001.jpeg",
-   "caption": "sik-yayme-khoi-bausch",
-   "uploader": "Khoi",
-   "uploaded_at": "2026-07-30 16:34:30",
-   "on_disk": true
-  },
-  {
-   "id": 2,
-   "stored_name": "000002.jpeg",
-   "caption": "sik-yayme-khoi-bausch",
-   "uploader": "Khoi",
-   "uploaded_at": "2026-07-30 16:35:13",
-   "on_disk": true
-  },
-  {
-   "id": 3,
-   "stored_name": "000003.jpeg",
-   "caption": "arachnid-khoi-bausch-yayme",
-   "uploader": "Khoi",
-   "uploaded_at": "2026-07-30 21:37:34",
-   "on_disk": true
-  },
-  {
-   "id": 4,
-   "stored_name": "000004.webp",
-   "caption": "Sz, nightmare, Sq, NoName, baiko, h00li",
-   "uploader": "baiko",
-   "uploaded_at": "2026-08-01 12:42:11",
-   "on_disk": true
-  }
- ]
+  "_source": [
+    "Player uploads from the old LAN site (lan-web), attributed by Discord login.",
+    "Discord IDs and uploader IPs are deliberately NOT exported -- display name only.",
+    "Files live on the data server at /var/lib/lan-web/{demos,photos}."
+  ],
+  "demos": [
+    {
+      "id": 1,
+      "alias": "kev.de",
+      "team": "Uncle Rico's Time Machine",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "dod.rar",
+      "stored_name": "000001.zip",
+      "size_bytes": 100319293,
+      "note": "DRAFT",
+      "uploader": "kev.de",
+      "uploaded_at": "2026-07-31 17:43:47",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 2,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "armory_axis.dem",
+      "stored_name": "000002.zip",
+      "size_bytes": 28920994,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 14:17:26",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 3,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "armory_allies.dem",
+      "stored_name": "000003.zip",
+      "size_bytes": 28883029,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 14:18:05",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 4,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 63,
+      "bracket_mkey": null,
+      "original_filename": "match1nato2.dem",
+      "stored_name": "000004.zip",
+      "size_bytes": 25504050,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 14:19:29",
+      "map": "armory_b6",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "Best Buds"
+      ],
+      "score": [
+        194,
+        159
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 5,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "lanarmoryvsnato2nd.dem",
+      "stored_name": "000005.zip",
+      "size_bytes": 26006332,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 14:19:43",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 6,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 63,
+      "bracket_mkey": null,
+      "original_filename": "lanarmoryvsnato2nd.dem",
+      "stored_name": "000006.zip",
+      "size_bytes": 26006332,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 14:19:56",
+      "map": "armory_b6",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "Best Buds"
+      ],
+      "score": [
+        194,
+        159
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 7,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 63,
+      "bracket_mkey": null,
+      "original_filename": "match1nato1.dem",
+      "stored_name": "000007.zip",
+      "size_bytes": 27233787,
+      "note": "NATO",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 14:20:06",
+      "map": "armory_b6",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "Best Buds"
+      ],
+      "score": [
+        194,
+        159
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 8,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 63,
+      "bracket_mkey": null,
+      "original_filename": "lanarmoryvsnato1st.dem",
+      "stored_name": "000008.zip",
+      "size_bytes": 27147173,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 14:20:22",
+      "map": "armory_b6",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "Best Buds"
+      ],
+      "score": [
+        194,
+        159
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 9,
+      "alias": "dorito",
+      "team": "onLAN thunder",
+      "schedule_id": 64,
+      "bracket_mkey": null,
+      "original_filename": "dorito-rr-game1-bteam-armory-axis.dem",
+      "stored_name": "000009.zip",
+      "size_bytes": 22488705,
+      "note": null,
+      "uploader": "dorito",
+      "uploaded_at": "2026-08-01 14:23:59",
+      "map": "armory_b6",
+      "matchup": [
+        "onLAN thunder",
+        "b Team"
+      ],
+      "score": [
+        389,
+        66
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 10,
+      "alias": "dorito",
+      "team": "onLAN thunder",
+      "schedule_id": 64,
+      "bracket_mkey": null,
+      "original_filename": "dorito-rr-game1-bteam-armory-axis.dem",
+      "stored_name": "000010.zip",
+      "size_bytes": 22488705,
+      "note": null,
+      "uploader": "dorito",
+      "uploaded_at": "2026-08-01 14:24:37",
+      "map": "armory_b6",
+      "matchup": [
+        "onLAN thunder",
+        "b Team"
+      ],
+      "score": [
+        389,
+        66
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 11,
+      "alias": "dorito",
+      "team": "onLAN thunder",
+      "schedule_id": 64,
+      "bracket_mkey": null,
+      "original_filename": "dorito-rr-game1-bteam-armory-allies.dem",
+      "stored_name": "000011.zip",
+      "size_bytes": 24685244,
+      "note": null,
+      "uploader": "dorito",
+      "uploaded_at": "2026-08-01 14:25:01",
+      "map": "armory_b6",
+      "matchup": [
+        "onLAN thunder",
+        "b Team"
+      ],
+      "score": [
+        389,
+        66
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 12,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "dicevprice-armory-axis.dem",
+      "stored_name": "000012.zip",
+      "size_bytes": 23591939,
+      "note": null,
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 14:28:23",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 13,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "dicevprice-armory-allies.dem",
+      "stored_name": "000013.zip",
+      "size_bytes": 23662521,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 14:29:00",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 14,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "dicevprice-armory-axis.dem",
+      "stored_name": "000014.zip",
+      "size_bytes": 23591939,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 14:29:16",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 15,
+      "alias": "kroD",
+      "team": "Arrested Development",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "wsdod_match1_armory_allies_2.dem",
+      "stored_name": "000015.zip",
+      "size_bytes": 26058372,
+      "note": null,
+      "uploader": "kroD",
+      "uploaded_at": "2026-08-01 14:30:56",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 16,
+      "alias": "incite[bc]",
+      "team": "Arrested Development",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "2026LAN.Bluth.vs.NoSo.Axis.Half1.dem",
+      "stored_name": "000016.zip",
+      "size_bytes": 29487934,
+      "note": null,
+      "uploader": "incite[bc]",
+      "uploaded_at": "2026-08-01 14:31:19",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 17,
+      "alias": "kroD",
+      "team": "Arrested Development",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "wsdod_match1_armory_axis_1.dem",
+      "stored_name": "000017.zip",
+      "size_bytes": 26125256,
+      "note": null,
+      "uploader": "kroD",
+      "uploaded_at": "2026-08-01 14:31:33",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 18,
+      "alias": "incite[bc]",
+      "team": "Arrested Development",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "2026LAN.Bluth.vs.NoSo.Allies.half2.dem",
+      "stored_name": "000018.zip",
+      "size_bytes": 32854970,
+      "note": null,
+      "uploader": "incite[bc]",
+      "uploaded_at": "2026-08-01 14:32:18",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 19,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "match2price1.dem",
+      "stored_name": "000019.zip",
+      "size_bytes": 31686992,
+      "note": "pir",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 15:26:10",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 20,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "match2price2.dem",
+      "stored_name": "000020.zip",
+      "size_bytes": 28285013,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 15:27:02",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 21,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-1-nosoul_arresteddevelopment-1-armory_allies.dem",
+      "stored_name": "000021.zip",
+      "size_bytes": 27867615,
+      "note": "M1 Garand (Allies): 3-15-27",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 15:31:33",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 22,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-1-nosoul_arresteddevelopment-2-armory_axis.dem",
+      "stored_name": "000022.zip",
+      "size_bytes": 28497190,
+      "note": "K43 (Axis): 6-19-25",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 15:32:39",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 23,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 68,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-2-nosoul_nato-1-thunder2_axis.dem",
+      "stored_name": "000023.zip",
+      "size_bytes": 29729812,
+      "note": "K43 (Axis): 4-23-29",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 15:33:26",
+      "map": "thunder2",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "NoSoul"
+      ],
+      "score": [
+        139,
+        73
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 24,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 68,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-2-nosoul_nato-2-thunder2_allies.dem",
+      "stored_name": "000024.zip",
+      "size_bytes": 30660337,
+      "note": "M1 Garand (Allies): 4-9-31",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 15:34:08",
+      "map": "thunder2",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "NoSoul"
+      ],
+      "score": [
+        139,
+        73
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 25,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "match1PIRarmoryallies.dem",
+      "stored_name": "000025.zip",
+      "size_bytes": 29710310,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 15:34:40",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 26,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "match1PIRarmoryaxis.dem",
+      "stored_name": "000026.zip",
+      "size_bytes": 27157753,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 15:35:04",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 27,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "match2ADthunderallies.dem",
+      "stored_name": "000027.zip",
+      "size_bytes": 30281440,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 15:35:58",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 28,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "philly-m1-price-armory-allies.dem",
+      "stored_name": "000028.zip",
+      "size_bytes": 30697526,
+      "note": null,
+      "uploader": "element",
+      "uploaded_at": "2026-08-01 15:36:17",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 29,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "match2ADthunderaxis.dem",
+      "stored_name": "000029.zip",
+      "size_bytes": 30406091,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 15:36:30",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 30,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "philly-m1-price-armory-allies.dem",
+      "stored_name": "000030.zip",
+      "size_bytes": 30697526,
+      "note": null,
+      "uploader": "element",
+      "uploaded_at": "2026-08-01 15:36:43",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 31,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "thunder_allies.dem",
+      "stored_name": "000031.zip",
+      "size_bytes": 32252749,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 15:39:17",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 32,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "philly-m1-price-armory-axis.dem",
+      "stored_name": "000032.zip",
+      "size_bytes": 30289001,
+      "note": null,
+      "uploader": "element",
+      "uploaded_at": "2026-08-01 15:39:39",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 33,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "thunder_axis.dem",
+      "stored_name": "000033.zip",
+      "size_bytes": 27656678,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 15:39:52",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 34,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "philly-m2-AD-thunder-allies.dem",
+      "stored_name": "000034.zip",
+      "size_bytes": 31104802,
+      "note": null,
+      "uploader": "element",
+      "uploaded_at": "2026-08-01 15:40:21",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 35,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "philly-m2-AD-thunder-axis.dem",
+      "stored_name": "000035.zip",
+      "size_bytes": 31328059,
+      "note": null,
+      "uploader": "element",
+      "uploaded_at": "2026-08-01 15:40:52",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 36,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "lanthundervsprice1st.dem",
+      "stored_name": "000036.zip",
+      "size_bytes": 28132694,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 16:18:37",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 37,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 70,
+      "bracket_mkey": null,
+      "original_filename": "lanthundervsprice2nd.dem",
+      "stored_name": "000037.zip",
+      "size_bytes": 27718631,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 16:18:57",
+      "map": "thunder2",
+      "matchup": [
+        "Best Buds",
+        "Price is Right"
+      ],
+      "score": [
+        244,
+        56
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 38,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 74,
+      "bracket_mkey": null,
+      "original_filename": "match3thunder1.dem",
+      "stored_name": "000038.zip",
+      "size_bytes": 28301954,
+      "note": "thunder",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 16:33:57",
+      "map": "lennon5_b1",
+      "matchup": [
+        "onLAN thunder",
+        "Best Buds"
+      ],
+      "score": [
+        268,
+        388
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 39,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 74,
+      "bracket_mkey": null,
+      "original_filename": "match3thunder2.dem",
+      "stored_name": "000039.zip",
+      "size_bytes": 25326534,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 16:34:39",
+      "map": "lennon5_b1",
+      "matchup": [
+        "onLAN thunder",
+        "Best Buds"
+      ],
+      "score": [
+        268,
+        388
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 40,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 71,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-3-nosoul_dice-1-lennon5_allies.dem",
+      "stored_name": "000040.zip",
+      "size_bytes": 27303978,
+      "note": "M1 Garand (Allies): 11-15-24",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 16:35:54",
+      "map": "lennon5_b1",
+      "matchup": [
+        "dicE",
+        "NoSoul"
+      ],
+      "score": [
+        471,
+        183
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 41,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 71,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-3-nosoul_dice-2-lennon5_axis.dem",
+      "stored_name": "000041.zip",
+      "size_bytes": 25407602,
+      "note": "K43 (Axis): 11-20-28",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 16:36:37",
+      "map": "lennon5_b1",
+      "matchup": [
+        "dicE",
+        "NoSoul"
+      ],
+      "score": [
+        471,
+        183
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 42,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "dicevbluth-thunder-allies.dem",
+      "stored_name": "000042.zip",
+      "size_bytes": 24959574,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:43:15",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 43,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "dicevbluth-thunder-axis.dem",
+      "stored_name": "000043.zip",
+      "size_bytes": 27441666,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:43:28",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 44,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "dicevbluth-thunder-axis.dem",
+      "stored_name": "000044.zip",
+      "size_bytes": 27441666,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:43:39",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 45,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "dicevprice-armory-axis.dem",
+      "stored_name": "000045.zip",
+      "size_bytes": 23591939,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:43:49",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 46,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 71,
+      "bracket_mkey": null,
+      "original_filename": "dicevsoul-lennon-allies.dem",
+      "stored_name": "000046.zip",
+      "size_bytes": 24185136,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:43:59",
+      "map": "lennon5_b1",
+      "matchup": [
+        "dicE",
+        "NoSoul"
+      ],
+      "score": [
+        471,
+        183
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 47,
+      "alias": "element",
+      "team": "dicE",
+      "schedule_id": 71,
+      "bracket_mkey": null,
+      "original_filename": "dicevsoul-lennon-axis.dem",
+      "stored_name": "000047.zip",
+      "size_bytes": 25421141,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 16:44:10",
+      "map": "lennon5_b1",
+      "matchup": [
+        "dicE",
+        "NoSoul"
+      ],
+      "score": [
+        471,
+        183
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 48,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 75,
+      "bracket_mkey": null,
+      "original_filename": "lennon_allies.dem",
+      "stored_name": "000048.zip",
+      "size_bytes": 27507789,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 17:57:59",
+      "map": "lennon5_b1",
+      "matchup": [
+        "b Team",
+        "Price is Right"
+      ],
+      "score": [
+        280,
+        308
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 49,
+      "alias": "Nein",
+      "team": "Price is Right",
+      "schedule_id": 75,
+      "bracket_mkey": null,
+      "original_filename": "lennon_axis.dem",
+      "stored_name": "000049.zip",
+      "size_bytes": 25824279,
+      "note": null,
+      "uploader": "Nein",
+      "uploaded_at": "2026-08-01 17:58:40",
+      "map": "lennon5_b1",
+      "matchup": [
+        "b Team",
+        "Price is Right"
+      ],
+      "score": [
+        280,
+        308
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 50,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": 79,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-4-nosoul_priceisright-1-saints2_allies.dem",
+      "stored_name": "000050.zip",
+      "size_bytes": 28161475,
+      "note": "M1 Garand (Allies): 2-25-25",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 19:00:10",
+      "map": "saints2_b3e",
+      "matchup": [
+        "NoSoul",
+        "Price is Right"
+      ],
+      "score": [
+        169,
+        94
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 51,
+      "alias": "khoi",
+      "team": "NoSoul",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "khoi-groupstage-4-nosoul_priceisright-2-saints2_axis.dem",
+      "stored_name": "000051.zip",
+      "size_bytes": 27830678,
+      "note": "K43 (Axis): 3-17-29",
+      "uploader": "khoi",
+      "uploaded_at": "2026-08-01 19:00:46",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 52,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 76,
+      "bracket_mkey": null,
+      "original_filename": "match4THUNDERsaintsallies.dem",
+      "stored_name": "000052.zip",
+      "size_bytes": 30960785,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 19:12:58",
+      "map": "saints2_b3e",
+      "matchup": [
+        "dicE",
+        "onLAN thunder"
+      ],
+      "score": [
+        123,
+        131
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 53,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 76,
+      "bracket_mkey": null,
+      "original_filename": "match4THUNDERsaintsaxis.dem",
+      "stored_name": "000053.zip",
+      "size_bytes": 28171330,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 19:13:22",
+      "map": "saints2_b3e",
+      "matchup": [
+        "dicE",
+        "onLAN thunder"
+      ],
+      "score": [
+        123,
+        131
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 54,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 78,
+      "bracket_mkey": null,
+      "original_filename": "match4nicholson1.dem",
+      "stored_name": "000054.zip",
+      "size_bytes": 27938407,
+      "note": "development",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 19:14:15",
+      "map": "saints2_b3e",
+      "matchup": [
+        "Arrested Development",
+        "Best Buds"
+      ],
+      "score": [
+        115,
+        112
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 55,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "match4nicholson2.dem",
+      "stored_name": "000055.zip",
+      "size_bytes": 32967530,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 19:14:55",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 56,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 81,
+      "bracket_mkey": null,
+      "original_filename": "match5NATOharringtonallies.dem",
+      "stored_name": "000056.zip",
+      "size_bytes": 25845730,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 20:25:14",
+      "map": "harrington",
+      "matchup": [
+        "dicE",
+        "North Atlantic Treaty Org"
+      ],
+      "score": [
+        257,
+        193
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 57,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 81,
+      "bracket_mkey": null,
+      "original_filename": "match5NATOharringtonaxis.dem",
+      "stored_name": "000057.zip",
+      "size_bytes": 27419809,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 20:25:44",
+      "map": "harrington",
+      "matchup": [
+        "dicE",
+        "North Atlantic Treaty Org"
+      ],
+      "score": [
+        257,
+        193
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 58,
+      "alias": "warchyld[dd]",
+      "team": "dicE",
+      "schedule_id": 81,
+      "bracket_mkey": null,
+      "original_filename": "dicevnmato-harry-axis.dem",
+      "stored_name": "000058.zip",
+      "size_bytes": 23396581,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 20:26:53",
+      "map": "harrington",
+      "matchup": [
+        "dicE",
+        "North Atlantic Treaty Org"
+      ],
+      "score": [
+        257,
+        193
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 59,
+      "alias": "warchyld[dd]",
+      "team": "dicE",
+      "schedule_id": 81,
+      "bracket_mkey": null,
+      "original_filename": "dicevnmato-harry-allies.dem",
+      "stored_name": "000059.zip",
+      "size_bytes": 24808785,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 20:27:05",
+      "map": "harrington",
+      "matchup": [
+        "dicE",
+        "North Atlantic Treaty Org"
+      ],
+      "score": [
+        257,
+        193
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 60,
+      "alias": "warchyld[dd]",
+      "team": "dicE",
+      "schedule_id": 76,
+      "bracket_mkey": null,
+      "original_filename": "dicevbluth-thunder-allies.dem",
+      "stored_name": "000060.zip",
+      "size_bytes": 24959574,
+      "note": "warchyldd",
+      "uploader": "warchyld[dd]",
+      "uploaded_at": "2026-08-01 20:27:26",
+      "map": "saints2_b3e",
+      "matchup": [
+        "dicE",
+        "onLAN thunder"
+      ],
+      "score": [
+        123,
+        131
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 61,
+      "alias": "bromley",
+      "team": "Best Buds",
+      "schedule_id": 84,
+      "bracket_mkey": null,
+      "original_filename": "HARRYNOSOULALLIES.dem",
+      "stored_name": "000061.zip",
+      "size_bytes": 31189696,
+      "note": "Heavy",
+      "uploader": "bromley",
+      "uploaded_at": "2026-08-01 20:38:16",
+      "map": "harrington",
+      "matchup": [
+        "Best Buds",
+        "NoSoul"
+      ],
+      "score": [
+        521,
+        182
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 62,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 86,
+      "bracket_mkey": null,
+      "original_filename": "match6ICYanzioallies.dem",
+      "stored_name": "000062.zip",
+      "size_bytes": 26213483,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 21:35:21",
+      "map": "anzio",
+      "matchup": [
+        "dicE",
+        "icyHOT"
+      ],
+      "score": [
+        387,
+        535
+      ],
+      "round": 6,
+      "on_disk": true
+    },
+    {
+      "id": 63,
+      "alias": "stealthlol",
+      "team": "dicE",
+      "schedule_id": 86,
+      "bracket_mkey": null,
+      "original_filename": "match6ICYanzioaxis.dem",
+      "stored_name": "000063.zip",
+      "size_bytes": 27257431,
+      "note": null,
+      "uploader": "stealthlol",
+      "uploaded_at": "2026-08-01 21:35:55",
+      "map": "anzio",
+      "matchup": [
+        "dicE",
+        "icyHOT"
+      ],
+      "score": [
+        387,
+        535
+      ],
+      "round": 6,
+      "on_disk": true
+    },
+    {
+      "id": 64,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 89,
+      "bracket_mkey": null,
+      "original_filename": "lananziovsbteeam2nd.dem",
+      "stored_name": "000064.zip",
+      "size_bytes": 27103832,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 21:37:35",
+      "map": "anzio",
+      "matchup": [
+        "Best Buds",
+        "b Team"
+      ],
+      "score": [
+        760,
+        173
+      ],
+      "round": 6,
+      "on_disk": true
+    },
+    {
+      "id": 65,
+      "alias": "3sidedquarter",
+      "team": "Best Buds",
+      "schedule_id": 63,
+      "bracket_mkey": null,
+      "original_filename": "lanarmoryvsnato1st.dem",
+      "stored_name": "000065.zip",
+      "size_bytes": 27147173,
+      "note": null,
+      "uploader": "3sidedquarter",
+      "uploaded_at": "2026-08-01 21:37:49",
+      "map": "armory_b6",
+      "matchup": [
+        "North Atlantic Treaty Org",
+        "Best Buds"
+      ],
+      "score": [
+        194,
+        159
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 66,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": 89,
+      "bracket_mkey": null,
+      "original_filename": "match6bteam1.dem",
+      "stored_name": "000066.zip",
+      "size_bytes": 24664168,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 21:55:39",
+      "map": "anzio",
+      "matchup": [
+        "Best Buds",
+        "b Team"
+      ],
+      "score": [
+        760,
+        173
+      ],
+      "round": 6,
+      "on_disk": true
+    },
+    {
+      "id": 67,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "match6bteam2.dem",
+      "stored_name": "000067.zip",
+      "size_bytes": 27682500,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-01 21:56:10",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 68,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 65,
+      "bracket_mkey": null,
+      "original_filename": "ArmoryVSNoSoul-_Saturday.zip",
+      "stored_name": "000068.zip",
+      "size_bytes": 69434316,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:03:41",
+      "map": "armory_b6",
+      "matchup": [
+        "Arrested Development",
+        "NoSoul"
+      ],
+      "score": [
+        176,
+        105
+      ],
+      "round": 1,
+      "on_disk": true
+    },
+    {
+      "id": 69,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 66,
+      "bracket_mkey": null,
+      "original_filename": "ThunderVSDice_-_Saturday.zip",
+      "stored_name": "000069.zip",
+      "size_bytes": 75181989,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:05:20",
+      "map": "thunder2",
+      "matchup": [
+        "dicE",
+        "Arrested Development"
+      ],
+      "score": [
+        118,
+        57
+      ],
+      "round": 2,
+      "on_disk": true
+    },
+    {
+      "id": 70,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 72,
+      "bracket_mkey": null,
+      "original_filename": "LennonVSICY_-_Saturday.zip",
+      "stored_name": "000070.zip",
+      "size_bytes": 61470058,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:08:04",
+      "map": "lennon5_b1",
+      "matchup": [
+        "icyHOT",
+        "Arrested Development"
+      ],
+      "score": [
+        481,
+        164
+      ],
+      "round": 3,
+      "on_disk": true
+    },
+    {
+      "id": 71,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 78,
+      "bracket_mkey": null,
+      "original_filename": "SaintsVSBBS_-_Saturday.zip",
+      "stored_name": "000071.zip",
+      "size_bytes": 69191198,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:10:18",
+      "map": "saints2_b3e",
+      "matchup": [
+        "Arrested Development",
+        "Best Buds"
+      ],
+      "score": [
+        115,
+        112
+      ],
+      "round": 4,
+      "on_disk": true
+    },
+    {
+      "id": 72,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 83,
+      "bracket_mkey": null,
+      "original_filename": "HarringtonVSBTeam_-_Saturday.zip",
+      "stored_name": "000072.zip",
+      "size_bytes": 72433269,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:12:41",
+      "map": "harrington",
+      "matchup": [
+        "Arrested Development",
+        "b Team"
+      ],
+      "score": [
+        373,
+        193
+      ],
+      "round": 5,
+      "on_disk": true
+    },
+    {
+      "id": 73,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": 88,
+      "bracket_mkey": null,
+      "original_filename": "AnzioVSPrice_-_Saturday.zip",
+      "stored_name": "000073.zip",
+      "size_bytes": 63515937,
+      "note": null,
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-01 22:17:19",
+      "map": "anzio",
+      "matchup": [
+        "Arrested Development",
+        "Price is Right"
+      ],
+      "score": [
+        515,
+        185
+      ],
+      "round": 6,
+      "on_disk": true
+    },
+    {
+      "id": 74,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "QF2",
+      "original_filename": "playoffs1nicholson1.dem",
+      "stored_name": "000074.zip",
+      "size_bytes": 29504870,
+      "note": "piff",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 13:24:48",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 75,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "QF2",
+      "original_filename": "playoffs1nicholson2.dem",
+      "stored_name": "000075.zip",
+      "size_bytes": 25149555,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 13:25:25",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 76,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "QF2",
+      "original_filename": "playoffs2nicholsson1.dem",
+      "stored_name": "000076.zip",
+      "size_bytes": 30757590,
+      "note": "lost by 1",
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 14:47:09",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 77,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "playoffs2nicholsson2.dem",
+      "stored_name": "000077.zip",
+      "size_bytes": 30478414,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 14:47:36",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 78,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "QF2",
+      "original_filename": "playoffs2nicholsson2.dem",
+      "stored_name": "000078.zip",
+      "size_bytes": 30478414,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 14:47:50",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 79,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "LS1",
+      "original_filename": "lowerplayoff1pir1.dem",
+      "stored_name": "000079.zip",
+      "size_bytes": 28214389,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 16:41:49",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 80,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "LS1",
+      "original_filename": "lowerplayoff2pir1.dem",
+      "stored_name": "000080.zip",
+      "size_bytes": 32712465,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 17:20:26",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 81,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "LS1",
+      "original_filename": "lowerplayoff1pir2.dem",
+      "stored_name": "000081.zip",
+      "size_bytes": 25335180,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 17:22:43",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 82,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "LS1",
+      "original_filename": "lowerplayoff2pir2.dem",
+      "stored_name": "000082.zip",
+      "size_bytes": 28505341,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 17:48:52",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 83,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "P56",
+      "original_filename": "dod_railroad2_s9a0000.bmp",
+      "stored_name": "000083.zip",
+      "size_bytes": 2209830,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 19:21:17",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 84,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": null,
+      "original_filename": "lowerfinal1.dem",
+      "stored_name": "000084.zip",
+      "size_bytes": 24756588,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 19:21:38",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 85,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "LS1",
+      "original_filename": "lowerfinal1.dem",
+      "stored_name": "000085.zip",
+      "size_bytes": 24756588,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 19:21:50",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 86,
+      "alias": "piff",
+      "team": "Best Buds",
+      "schedule_id": null,
+      "bracket_mkey": "P56",
+      "original_filename": "lowerfinal2.dem",
+      "stored_name": "000086.zip",
+      "size_bytes": 26482703,
+      "note": null,
+      "uploader": "piff",
+      "uploaded_at": "2026-08-02 19:23:19",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 87,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": null,
+      "bracket_mkey": "QF2",
+      "original_filename": "SundayVSBestBuds.zip",
+      "stored_name": "000087.zip",
+      "size_bytes": 152499764,
+      "note": "2 matches",
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-02 20:56:00",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 88,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": null,
+      "bracket_mkey": "SF1",
+      "original_filename": "SundayVSICYHOT.zip",
+      "stored_name": "000088.zip",
+      "size_bytes": 141900733,
+      "note": "2 matches",
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-02 20:56:35",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 89,
+      "alias": "Nicholson",
+      "team": "Arrested Development",
+      "schedule_id": null,
+      "bracket_mkey": "P34",
+      "original_filename": "SundayVSDICE.zip",
+      "stored_name": "000089.zip",
+      "size_bytes": 107181933,
+      "note": "2 matches",
+      "uploader": "Nicholson",
+      "uploaded_at": "2026-08-02 21:00:29",
+      "map": null,
+      "matchup": null,
+      "score": null,
+      "round": null,
+      "on_disk": true
+    },
+    {
+      "id": 90,
+      "alias": "m00cat",
+      "team": "dicE",
+      "schedule_id": 61,
+      "bracket_mkey": null,
+      "original_filename": "wsod26_grp1_h1_m00cat.dem",
+      "stored_name": "000090.zip",
+      "size_bytes": 22932404,
+      "note": "Allies",
+      "uploader": "m00cat",
+      "uploaded_at": "2026-08-06 21:23:22",
+      "map": "armory_b6",
+      "matchup": [
+        "dicE",
+        "Price is Right"
+      ],
+      "score": [
+        387,
+        84
+      ],
+      "round": 1,
+      "on_disk": true
+    }
+  ],
+  "photos": [
+    {
+      "id": 1,
+      "stored_name": "000001.jpeg",
+      "caption": "sik-yayme-khoi-bausch",
+      "uploader": "Khoi",
+      "uploaded_at": "2026-07-30 16:34:30",
+      "on_disk": true
+    },
+    {
+      "id": 2,
+      "stored_name": "000002.jpeg",
+      "caption": "sik-yayme-khoi-bausch",
+      "uploader": "Khoi",
+      "uploaded_at": "2026-07-30 16:35:13",
+      "on_disk": true
+    },
+    {
+      "id": 3,
+      "stored_name": "000003.jpeg",
+      "caption": "arachnid-khoi-bausch-yayme",
+      "uploader": "Khoi",
+      "uploaded_at": "2026-07-30 21:37:34",
+      "on_disk": true
+    }
+  ]
 }

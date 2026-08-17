@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .parse import as_int
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -20,7 +22,19 @@ class Settings:
     discord_bot_token: str
     discord_webhook_url: str
     discord_announce_role_id: str
+    discord_relay_url: str
+    discord_relay_auth: str
+    photo_report_channel_id: str
+    photo_report_ping_user_id: str
+    feedback_channel_id: str
+    site_dir: str
+    site_mount: str
+    site_at_root: bool
+    match_slugs_path: str
+    owner_discord_id: str
+    photo_thumb_px: int
     admin_discord_ids: frozenset
+    master_admin_discord_ids: frozenset
     db_host: str
     db_port: int
     db_user: str
@@ -37,7 +51,15 @@ class Settings:
 
 
 def _parse_ids(raw: str) -> frozenset:
-    return frozenset(int(x) for x in raw.replace(",", " ").split() if x.strip().isdigit())
+    # A bad id in here used to be a startup crash in the admin allowlist.
+    ids = (as_int(x) for x in raw.replace(",", " ").split())
+    return frozenset(n for n in ids if n is not None)
+
+
+# Env-driven so a wrong id is a config change rather than a redeploy. An unset
+# variable falls back rather than emptying: no masters means nobody can publish
+# an award at all.
+MASTER_ADMINS = "218890328273321984,143944554440163328,749415733393621101"
 
 
 def load() -> Settings:
@@ -54,7 +76,33 @@ def load() -> Settings:
         discord_bot_token=os.getenv("LAN_DISCORD_BOT_TOKEN", ""),
         discord_webhook_url=os.getenv("LAN_DISCORD_WEBHOOK_URL", ""),
         discord_announce_role_id=os.getenv("LAN_DISCORD_ANNOUNCE_ROLE_ID", "1343215543175352392"),
+        # The relay URL already carries its /reply path — appending it again 404s.
+        discord_relay_url=os.getenv("LAN_DISCORD_RELAY_URL", ""),
+        discord_relay_auth=os.getenv("LAN_DISCORD_RELAY_AUTH", ""),
+        photo_report_channel_id=os.getenv("LAN_PHOTO_REPORT_CHANNEL_ID", "1535106233877663744"),
+        photo_report_ping_user_id=os.getenv("LAN_PHOTO_REPORT_PING_USER_ID", "218890328273321984"),
+        feedback_channel_id=os.getenv("LAN_FEEDBACK_CHANNEL_ID", "1535106233877663744"),
+        site_dir=os.getenv("LAN_SITE_DIR", ""),
+        site_mount=os.getenv("LAN_SITE_MOUNT", "/2026"),
+        # Serve the WSDoD site at "/" as well, and move the LAN briefing to
+        # /lan. Off by default so deploying this is a no-op and the switch is
+        # an env change plus a restart — which is also the rollback.
+        site_at_root=os.getenv("LAN_SITE_AT_ROOT", "").lower() in ("1", "true", "yes"),
+        # The build's frozen key → slug map, read at runtime. Defaults to the
+        # repo layout; a standalone deploy sets the path. Absent is survivable —
+        # the raw-key redirect 404s and every slug URL is unaffected.
+        match_slugs_path=os.getenv(
+            "LAN_MATCH_SLUGS",
+            str(Path(__file__).resolve().parents[2] / "wsdod-lan-2026" /
+                "lan-stats" / "match-slugs.json"),
+        ),
+        # Deliberately one id, not the admin list: closing a vote ends it for
+        # everyone, so it does not widen when staff are added.
+        owner_discord_id=os.getenv("LAN_OWNER_DISCORD_ID", "218890328273321984"),
+        photo_thumb_px=int(os.getenv("LAN_PHOTO_THUMB_PX", "480")),
         admin_discord_ids=_parse_ids(os.getenv("LAN_ADMIN_DISCORD_IDS", "")),
+        master_admin_discord_ids=_parse_ids(
+            os.getenv("LAN_MASTER_ADMIN_DISCORD_IDS", "") or MASTER_ADMINS),
         db_host=os.getenv("LAN_DB_HOST", "127.0.0.1"),
         db_port=int(os.getenv("LAN_DB_PORT", "3306")),
         db_user=os.getenv("LAN_DB_USER", "ktp_lan"),

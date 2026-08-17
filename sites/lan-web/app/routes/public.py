@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from .. import auth, bracket as bkt
 from .. import common, db, ics, seeding
 from .. import schedule as sched
+from ..config import settings
 from ..templating import templates
 
 router = APIRouter()
@@ -60,7 +61,9 @@ def get_rosters() -> list[dict]:
     return teams
 
 
-@router.get("/", name="index")
+# Keep the route NAME whatever the path is: base.html's nav and the post-OAuth
+# redirect both resolve it via url_for("index"), so they follow this on their own.
+@router.get("/lan" if settings.site_at_root else "/", name="index")
 def index(request: Request):
     ctx = common.base_ctx(request, "briefing")
     try:

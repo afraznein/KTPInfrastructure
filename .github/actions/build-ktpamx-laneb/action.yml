@@ -1,0 +1,151 @@
+# Build (or restore from cache) the Lane B ktpamx binary.
+#
+# ## Why this is cached rather than rebuilt nightly
+#
+# The build is a full 32-bit C++ compile — roughly ten minutes. Its input is
+# KTPAMXX `preprod`, so the test-only core stays synchronized with every AMXX
+# change under validation instead of drifting on a long-lived feature branch.
+# The SHA-keyed cache still avoids rebuilding an unchanged preprod tip.
+#
+# ## What the key covers, and why it covers more than the commit
+#
+#     ktpamx-laneb-<os>-<KTPAMXX sha>-<hash of the build script>
+#
+# The build script hash is in the key deliberately. It carries the toolchain
+# image, the configure flags and the submodule handling, so a recipe change
+# with no source change would otherwise restore a binary that no longer matches
+# how it would be built today — a stale artifact that looks fresh. The script
+# applies the same rule locally via its `.sha` stamp, so both paths invalidate
+# on the same conditions.
+#
+# ## Failure posture
+#
+# A cache miss is slow, not broken. A build FAILURE is fatal and must not be
+# swallowed: without this binary AMXX cannot see bots, every capture path is
+# gated on `is_user_connected()`, and the lane would run to green having
+# measured an empty server. The script itself refuses to build if the
+# `KTP_LANE_B_FAKECLIENTS` define is absent from the source, which is the same
+# hazard one step earlier.
+
+name: Build Lane B ktpamx
+description: >-
+  Build ktpamx_i386.so with KTP_LANE_B_FAKECLIENTS, cached on the source commit
+  and the build recipe. Required by Lane B — without it the lane cannot see bots.
+
+inputs:
+  repo:
+    description: KTPAMXX repository URL
+    required: false
+    default: https://github.com/afraznein/KTPAMXX.git
+  ref:
+    description: KTPAMXX ref carrying the compile-gated Lane B core support
+    required: false
+    default: preprod
+  out:
+    description: Path to write ktpamx_i386.so to
+    required: false
+    default: build/lane-b-artifacts/ktpamx_i386.so
+  token:
+    description: Token for a private KTPAMXX; omit for public
+    required: false
+    default: ''
+
+outputs:
+  so-path:
+    description: Absolute path to the built ktpamx_i386.so
+    value: ${{ steps.paths.outputs.so }}
+  dodx-so-path:
+    description: Absolute path to the Lane B-built dodx_ktp_i386.so
+    value: ${{ steps.paths.outputs.dodx }}
+  sha:
+    description: KTPAMXX commit the binary was built from
+    value: ${{ steps.resolve.outputs.sha }}
+  cache-hit:
+    description: 'true when restored from cache rather than built'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the ref to a commit
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        url='${{ inputs.repo }}'
+        if [ -n '${{ inputs.token }}' ]; then
+          url="https://x-access-token:${{ inputs.token }}@${url#https://}"
+        fi
+        sha="$(git ls-remote "$url" '${{ inputs.ref }}' | awk '{print $1; exit}')"
+        if [ -z "$sha" ]; then
+          echo "::error::cannot resolve '${{ inputs.ref }}' in ${{ inputs.repo }}"
+          exit 1
+        fi
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "resolved ${{ inputs.ref }} -> ${sha:0:12}"
+
+    - name: Compute paths
+      id: paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        out='${{ inputs.out }}'
+        mkdir -p "$(dirname "$out")"
+        out_dir="$(cd "$(dirname "$out")" && pwd)"
+        echo "so=$out_dir/$(basename "$out")" >> "$GITHUB_OUTPUT"
+        echo "dodx=$out_dir/dodx_ktp_i386.so" >> "$GITHUB_OUTPUT"
+        echo "dir=$(dirname "$out")" >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached binary
+      id: cache
+      uses: actions/cache@v4
+      with:
+        # The stamp is cached alongside the binary so a restore keeps the local
+        # short-circuit working too — otherwise the script would rebuild a
+        # binary the cache had just handed it.
+        path: |
+          ${{ steps.paths.outputs.so }}
+          ${{ steps.paths.outputs.so }}.sha
+          ${{ steps.paths.outputs.dodx }}
+        key: ktpamx-laneb-${{ runner.os }}-${{ steps.resolve.outputs.sha }}-${{ hashFiles('scripts/build_ktpamx_laneb.sh') }}
+
+    - name: Build
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        LANEB_WORK: ${{ runner.temp }}/ktp
+        LANEB_SRC: ${{ inputs.repo }}
+        LANEB_REF: ${{ steps.resolve.outputs.sha }}
+        LANEB_OUT: ${{ steps.paths.outputs.so }}
+        LANEB_DODX_OUT: ${{ steps.paths.outputs.dodx }}
+      run: |
+        set -euo pipefail
+        chmod +x scripts/build_ktpamx_laneb.sh
+        ./scripts/build_ktpamx_laneb.sh
+
+    - name: Verify the artifact
+      shell: bash
+      run: |
+        set -euo pipefail
+        so='${{ steps.paths.outputs.so }}'
+        dodx='${{ steps.paths.outputs.dodx }}'
+        for artifact in "$so" "$dodx"; do
+          if [ ! -s "$artifact" ]; then
+            echo "::error::$artifact is missing or empty after "
+            echo "cache-hit=${{ steps.cache.outputs.cache-hit }}. Lane B needs"
+            echo "both its core and DODX module to observe bot weapon stats."
+            exit 1
+          fi
+        done
+        # A restored-but-wrong binary is the failure this catches: the cache key
+        # and the stamp are computed independently, so a mismatch means one of
+        # them is lying.
+        want="${{ steps.resolve.outputs.sha }}"
+        if [ -f "$so.sha" ] && ! grep -q "^$want" "$so.sha"; then
+          echo "::error::$so.sha says $(cat "$so.sha") but the ref resolved to $want"
+          exit 1
+        fi
+        echo "ktpamx_i386.so: $(stat -c%s "$so") bytes, from ${want:0:12}" \
+          | tee -a "$GITHUB_STEP_SUMMARY"
+        echo "dodx_ktp_i386.so: $(stat -c%s "$dodx") bytes, from ${want:0:12}" \
+          | tee -a "$GITHUB_STEP_SUMMARY"

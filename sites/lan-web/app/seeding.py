@@ -96,12 +96,15 @@ def get_setting(key: str, default=None):
     return row["v"] if row else default
 
 
+def set_setting_stmt(key: str, value):
+    """Unexecuted, for callers pairing this with an audit row in one transaction."""
+    return ("INSERT INTO lan_settings (k, v) VALUES (%s, %s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+            (key, str(value)))
+
+
 def set_setting(key: str, value):
     from . import db
-    db.execute(
-        "INSERT INTO lan_settings (k, v) VALUES (%s, %s) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-        (key, str(value)),
-    )
+    db.execute(*set_setting_stmt(key, value))
 
 
 def poll_is_open() -> bool:
@@ -119,6 +122,10 @@ PUBLISH_FLAGS = frozenset({
     "map_skip_results_published",
     "schedule_sat_published",
     "schedule_sun_published",
+    # Post-event, and independent of each other: the numbers can go public
+    # while staff are still deciding which awards to tick.
+    "stats_published",
+    "awards_published",
 })
 
 

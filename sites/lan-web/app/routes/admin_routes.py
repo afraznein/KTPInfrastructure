@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import audit, auth, bracket, common, db, mapskip, notify, seeding
+from .. import (admin_audit, audit, auth, bracket, common, db, mapskip, notify,
+                parse, seeding)
 from .. import schedule as sched
 from ..config import settings
 from ..templating import templates
@@ -30,6 +31,25 @@ def _norm_steam(raw: str) -> str | None:
     return "STEAM_" + s if s.count(":") == 2 else s
 
 
+def _player_note(display, steam, discord) -> str:
+    """One readable line of what a roster row holds, for the audit log. The
+    Discord id is in it because rewriting one silently re-attributes every
+    grant that took its label from the roster."""
+    return f"{display or '?'} / {steam or '-'} / discord {discord or '-'}"
+
+
+def _team_note(name, tag) -> str:
+    return f"{name or '?'} [{tag or '-'}]"
+
+
+def _effective_masters(exclude: int | None = None) -> set:
+    """Masters who are also staff. is_master_admin is conjoined with is_admin,
+    so a master holding neither an env grant nor a lan_admins row can publish
+    nothing — counting the master list alone would overstate it."""
+    staff = set(settings.admin_discord_ids) | auth.db_admin_ids()
+    return set(settings.master_admin_discord_ids) & (staff - {exclude})
+
+
 def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
     """Returns (current admins, promotable players).
 
@@ -46,6 +66,7 @@ def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
     }
     db_rows = {int(r["discord_id"]): r for r in auth.list_db_admins()}
     env_ids = set(settings.admin_discord_ids)
+    master_ids = set(settings.master_admin_discord_ids)
     admins = []
     for did in sorted(env_ids | set(db_rows)):
         rp = roster.get(did)
@@ -57,8 +78,18 @@ def _staff_view(me: int) -> tuple[list[dict], list[dict]]:
             "label": label,
             "team": rp["team"] if rp else None,
             "source": "config" if is_env else "web",
+            # Masters alone can tick an award onto the public board, and the row
+            # looked identical to ordinary staff. Env-only, so there is nothing
+            # to grant here — it is reported, not editable.
+            "is_master": did in master_ids,
+            # Only the when; who granted it is a bare snowflake here and a named
+            # actor in the staff action log.
+            "granted_at": row.get("added_at") if row else None,
             "is_self": did == me,
             "removable": (not is_env) and did != me,
+            # A config admin who also has a table row: the row does nothing,
+            # and /staff/remove refuses env ids, so nothing else can clear it.
+            "stale_row": is_env and did in db_rows,
         })
     taken = env_ids | set(db_rows)
     candidates = [
@@ -99,6 +130,8 @@ def admin_home(request: Request):
         map_skip_published=seeding.is_published("map_skip_results_published"),
         schedule_sat_published=seeding.is_published("schedule_sat_published"),
         schedule_sun_published=seeding.is_published("schedule_sun_published"),
+        stats_published=seeding.is_published("stats_published"),
+        awards_published=seeding.is_published("awards_published"),
     )
     return templates.TemplateResponse(request, "admin.html", ctx)
 
@@ -113,9 +146,16 @@ async def admin_publish(request: Request):
     flag = (f.get("flag") or "").strip()
     if flag not in seeding.PUBLISH_FLAGS:
         raise HTTPException(400, "Unknown publish target.")
-    seeding.set_setting(flag, "1" if f.get("publish") else "0")
-    nxt = (f.get("next") or "").strip()
-    target = nxt if nxt.startswith("/") and not nxt.startswith("//") else str(request.url_for("admin"))
+    was = seeding.is_published(flag)
+    now = bool(f.get("publish"))
+    stmts = [seeding.set_setting_stmt(flag, "1" if now else "0")]
+    # Every individual award tick is logged; "made the whole board public" is the
+    # larger act and was the one with no record. The read is not atomic with the
+    # write, so simultaneous posts can still each log the same flip.
+    if now != was:
+        stmts.append(admin_audit.stmt_request(request, "publish_flag", flag, int(was), int(now)))
+    db.execute_all(stmts)
+    target = common.safe_next(f.get("next")) or str(request.url_for("admin"))
     return RedirectResponse(target, status_code=303)
 
 
@@ -133,7 +173,13 @@ async def admin_announce(request: Request):
     f = await request.form()
     text = (f.get("announcement") or "").strip()[:240].strip()
     previous = (seeding.get_setting("announcement") or "").strip()
-    seeding.set_setting("announcement", text)
+    stmts = [seeding.set_setting_stmt("announcement", text)]
+    # The strip is on every page, so setting or clearing it is a site-wide act.
+    # A re-save of the same words is not a decision and gets no row.
+    if text != previous:
+        stmts.append(admin_audit.stmt_request(request, "announce", "announcement",
+                                              previous or None, text or None))
+    db.execute_all(stmts)
     target = str(request.url_for("admin"))
     if text and f.get("crosspost"):
         if text == previous:
@@ -175,30 +221,109 @@ def audit_view(request: Request):
 async def audit_undo(request: Request):
     me = auth.require_admin(request)
     f = await request.form()
+    aid = parse.as_int(f.get("audit_id"))
+    if aid is None:
+        raise HTTPException(400, "An audit id is required.")
     try:
-        audit.undo(int(f["audit_id"]), int(me))
+        audit.undo(aid, int(me))
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return RedirectResponse(request.url_for("audit_log"), status_code=303)
+
+
+AUDIT_PAGE = 50
+
+
+@router.get("/admin/audit-log", name="admin_audit_log")
+def admin_audit_log(request: Request, page: int = 1, action: str = "", target: str = ""):
+    """Staff decisions — award ticks, retitles, staff grants — newest first.
+
+    Filterable because it is not evenly interesting: one weekend of award ticks
+    buries every staff grant, so the rare decisions are the ones that fall off
+    the first page.
+
+    A different record from /admin/audit, which is match results and carries an
+    undo; nothing here is reversible, so it is read-only by design."""
+    auth.require_admin(request)
+    page = max(1, page)
+    action = (action or "").strip()[:48]
+    target = (target or "").strip()[:160]
+    total = admin_audit.count(action, target)
+    ctx = common.base_ctx(request, "admin")
+    ctx.update(
+        rows=admin_audit.recent(AUDIT_PAGE, (page - 1) * AUDIT_PAGE, action, target),
+        page=page,
+        pages=max(1, -(-total // AUDIT_PAGE)),
+        total=total,
+        action_counts=admin_audit.action_counts(),
+        f_action=action,
+        f_target=target,
+        filtered=bool(action or target),
+    )
+    return templates.TemplateResponse(request, "admin_audit.html", ctx)
+
+
+@router.get("/admin/photo-requests", name="photo_requests")
+def photo_requests(request: Request):
+    """Photo takedown queue — pending first, handled kept for the record."""
+    auth.require_admin(request)
+    rows = db.query_all(
+        "SELECT r.*, ph.stored_name, ph.caption "
+        "FROM lan_photo_removal_requests r LEFT JOIN lan_photos ph ON ph.id = r.photo_id "
+        "ORDER BY r.status = 'handled', r.created_at DESC"
+    )
+    ctx = common.base_ctx(request, "admin")
+    ctx["rows"] = rows
+    ctx["pending"] = sum(1 for r in rows if r["status"] == "pending")
+    return templates.TemplateResponse(request, "photo_requests.html", ctx)
+
+
+@router.post("/admin/photo-requests/handled", name="photo_request_handled")
+async def photo_request_handled(request: Request):
+    me = auth.require_admin(request)
+    f = await request.form()
+    req_id = parse.as_int(f.get("request_id"))
+    if req_id is None:
+        raise HTTPException(400, "A request id is required.")
+    # Closing a takedown request is a decision about someone else's photo, so it
+    # gets a record. Re-posting the button on one already handled changes
+    # nothing and must not log that it did.
+    if not db.query_one(
+        "SELECT id FROM lan_photo_removal_requests WHERE id=%s AND status='pending'",
+        (req_id,),
+    ):
+        return RedirectResponse(request.url_for("photo_requests"), status_code=303)
+    db.execute_all([
+        ("UPDATE lan_photo_removal_requests SET status='handled', handled_by=%s, "
+         "handled_at=NOW() WHERE id=%s AND status='pending'", (int(me), req_id)),
+        admin_audit.stmt_request(request, "photo_request_handled", f"request:{req_id}",
+                                 "pending", "handled"),
+    ])
+    return RedirectResponse(request.url_for("photo_requests"), status_code=303)
 
 
 @router.post("/admin/staff/add", name="admin_grant")
 async def admin_grant(request: Request):
     granter = auth.require_admin(request)
     f = await request.form()
-    raw = (f.get("discord_id") or "").strip()
-    if not raw.isdigit():
+    did = parse.snowflake(f.get("discord_id"))
+    if did is None:
         raise HTTPException(400, "A numeric Discord ID is required.")
-    did = int(raw)
+    # A row for an env admin grants nothing and cannot be revoked here, so
+    # creating one only leaves something stuck in the table.
+    if did in settings.admin_discord_ids:
+        raise HTTPException(400, "Already staff from the server environment — "
+                                 "there is nothing to grant here.")
     label = (f.get("label") or "").strip() or None
     if not label:  # fall back to the roster alias, if this id is on a team
         rp = db.query_one("SELECT display_name FROM lan_players WHERE discord_id=%s LIMIT 1", (did,))
         label = rp["display_name"] if rp else None
-    db.execute(
-        "INSERT INTO lan_admins (discord_id, label, added_by) VALUES (%s, %s, %s) "
-        "ON DUPLICATE KEY UPDATE label = COALESCE(VALUES(label), label)",
-        (did, label, int(granter)),
-    )
+    db.execute_all([
+        ("INSERT INTO lan_admins (discord_id, label, added_by) VALUES (%s, %s, %s) "
+         "ON DUPLICATE KEY UPDATE label = COALESCE(VALUES(label), label)",
+         (did, label, int(granter))),
+        admin_audit.stmt_request(request, "staff_add", did, None, label),
+    ])
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
@@ -206,11 +331,57 @@ async def admin_grant(request: Request):
 async def admin_revoke(request: Request):
     me = auth.require_admin(request)
     f = await request.form()
-    did = int(f["discord_id"])
+    did = parse.snowflake(f.get("discord_id"))
+    if did is None:
+        raise HTTPException(400, "A numeric Discord ID is required.")
     if did == int(me):
         raise HTTPException(400, "You can't revoke your own staff access.")
-    # Config (env) admins aren't in this table, so this can't touch them.
-    db.execute("DELETE FROM lan_admins WHERE discord_id=%s", (did,))
+    # Config (env) admins aren't in this table, so the DELETE could never touch
+    # them — but it also could not say so, and audited the refusal as a
+    # revocation. Refuse loudly instead; the lockout guard is unchanged.
+    if did in settings.admin_discord_ids:
+        raise HTTPException(400, "Config admins are set in the server environment "
+                                 "and can't be revoked here.")
+    prior = db.query_one("SELECT label FROM lan_admins WHERE discord_id=%s", (did,))
+    if prior is None:  # nothing to revoke; an audit row here asserts a change that never happened
+        return RedirectResponse(request.url_for("admin"), status_code=303)
+    # Master authority rides on staff access, so revoking the last effective one
+    # leaves nobody able to publish an award and no web path back. Only that
+    # terminal state is refused — every other master stays revocable, and this
+    # changes no one's authority over anyone.
+    if did in settings.master_admin_discord_ids and not _effective_masters(exclude=did):
+        raise HTTPException(400, "That is the last master admin — revoking it would "
+                                 "leave nobody able to publish an award.")
+    db.execute_all([
+        ("DELETE FROM lan_admins WHERE discord_id=%s", (did,)),
+        admin_audit.stmt_request(request, "staff_remove", did, prior["label"], None),
+    ])
+    return RedirectResponse(request.url_for("admin"), status_code=303)
+
+
+@router.post("/admin/staff/clear-row", name="admin_clear_stale_row")
+async def admin_clear_stale_row(request: Request):
+    """Delete a lan_admins row belonging to someone who is ALSO a config admin.
+
+    Not a revocation and it must not read as one — the env grant is what makes
+    them staff and is untouched. The row is a leftover from before their id went
+    into LAN_ADMIN_DISCORD_IDS; /staff/remove refuses env ids outright, so
+    without this there is no way to clear it."""
+    auth.require_admin(request)
+    f = await request.form()
+    did = parse.snowflake(f.get("discord_id"))
+    if did is None:
+        raise HTTPException(400, "A numeric Discord ID is required.")
+    if did not in settings.admin_discord_ids:
+        raise HTTPException(400, "That id is not a config admin — Revoke is the "
+                                 "control for a web grant.")
+    prior = db.query_one("SELECT label FROM lan_admins WHERE discord_id=%s", (did,))
+    if prior is None:  # nothing there; a row here would assert a delete that never ran
+        return RedirectResponse(request.url_for("admin"), status_code=303)
+    db.execute_all([
+        ("DELETE FROM lan_admins WHERE discord_id=%s", (did,)),
+        admin_audit.stmt_request(request, "staff_row_clear", did, prior["label"], None),
+    ])
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
@@ -223,7 +394,11 @@ async def team_add(request: Request):
         raise HTTPException(400, "Team name required.")
     tag = (f.get("tag") or "").strip() or None
     try:
-        db.execute("INSERT INTO lan_teams (name, tag) VALUES (%s, %s)", (name, tag))
+        db.execute_all([
+            ("INSERT INTO lan_teams (name, tag) VALUES (%s, %s)", (name, tag)),
+            admin_audit.stmt_request(request, "team_add", f"team:{name}",
+                                     None, _team_note(name, tag)),
+        ])
     except Exception:
         raise HTTPException(400, f"Could not add team (name {name!r} may already exist).")
     return RedirectResponse(request.url_for("admin"), status_code=303)
@@ -233,13 +408,22 @@ async def team_add(request: Request):
 async def team_edit(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    team_id = int(f["team_id"])
+    team_id = parse.as_int(f.get("team_id"))
+    if team_id is None:
+        raise HTTPException(400, "A team id is required.")
     name = (f.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Team name required.")
     tag = (f.get("tag") or "").strip() or None
+    prior = db.query_one("SELECT name, tag FROM lan_teams WHERE id=%s", (team_id,))
+    before = _team_note(prior["name"], prior["tag"]) if prior else None
+    after = _team_note(name, tag)
+    stmts = [("UPDATE lan_teams SET name=%s, tag=%s WHERE id=%s", (name, tag, team_id))]
+    if before is not None and before != after:
+        stmts.append(admin_audit.stmt_request(request, "team_edit", f"team:{team_id}",
+                                              before, after))
     try:
-        db.execute("UPDATE lan_teams SET name=%s, tag=%s WHERE id=%s", (name, tag, team_id))
+        db.execute_all(stmts)
     except Exception:
         raise HTTPException(400, f"Could not rename (name {name!r} may already be taken).")
     return RedirectResponse(request.url_for("admin"), status_code=303)
@@ -249,7 +433,24 @@ async def team_edit(request: Request):
 async def team_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    db.execute("DELETE FROM lan_teams WHERE id=%s", (int(f["team_id"]),))  # players cascade
+    team_id = parse.as_int(f.get("team_id"))
+    if team_id is None:
+        raise HTTPException(400, "A team id is required.")
+    prior = db.query_one("SELECT name, tag FROM lan_teams WHERE id=%s", (team_id,))
+    if prior is None:  # nothing to delete; a row here asserts a change that never happened
+        return RedirectResponse(request.url_for("admin"), status_code=303)
+    # The roster goes with the team and leaves no trace of its own, so the names
+    # are in the row: this is the only record that those players were ever here.
+    roster = db.query_all(
+        "SELECT display_name FROM lan_players WHERE team_id=%s ORDER BY display_name",
+        (team_id,))
+    note = _team_note(prior["name"], prior["tag"])
+    if roster:
+        note += " · " + ", ".join(p["display_name"] or "?" for p in roster)
+    db.execute_all([
+        ("DELETE FROM lan_teams WHERE id=%s", (team_id,)),  # players cascade
+        admin_audit.stmt_request(request, "team_delete", f"team:{team_id}", note, None),
+    ])
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
@@ -257,24 +458,28 @@ async def team_delete(request: Request):
 async def player_add(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    team_id = int(f["team_id"])
+    team_id = parse.as_int(f.get("team_id"))
+    if team_id is None:
+        raise HTTPException(400, "A team id is required.")
     display = (f.get("display_name") or "").strip()
     if not display:
         raise HTTPException(400, "Player alias required.")
     steam = _norm_steam(f.get("steam_id"))
     if not steam:
         raise HTTPException(400, "Player Steam ID required.")
-    raw_discord = (f.get("discord_id") or "").strip()
-    discord = int(raw_discord) if raw_discord.isdigit() else None
+    discord = parse.snowflake(f.get("discord_id"))
     is_cap = 1 if f.get("is_captain") else 0
+    stmts = []
+    if is_cap:  # one captain per team
+        stmts.append(("UPDATE lan_players SET is_captain=0 WHERE team_id=%s", (team_id,)))
+    stmts.append(
+        ("INSERT INTO lan_players (team_id, display_name, discord_id, steam_id, is_captain) "
+         "VALUES (%s, %s, %s, %s, %s)",
+         (team_id, display, discord, steam, is_cap)))
+    stmts.append(admin_audit.stmt_request(request, "player_add", f"team:{team_id}",
+                                          None, _player_note(display, steam, discord)))
     try:
-        if is_cap:  # one captain per team
-            db.execute("UPDATE lan_players SET is_captain=0 WHERE team_id=%s", (team_id,))
-        db.execute(
-            "INSERT INTO lan_players (team_id, display_name, discord_id, steam_id, is_captain) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (team_id, display, discord, steam, is_cap),
-        )
+        db.execute_all(stmts)
     except Exception:
         raise HTTPException(400, "Could not add player (that Discord ID may already be linked elsewhere).")
     return RedirectResponse(request.url_for("admin"), status_code=303)
@@ -285,18 +490,26 @@ async def player_edit(request: Request):
     """Edit an existing player's alias / Steam ID / Discord link."""
     auth.require_admin(request)
     f = await request.form()
-    pid = int(f["player_id"])
+    pid = parse.as_int(f.get("player_id"))
+    if pid is None:
+        raise HTTPException(400, "A player id is required.")
     display = (f.get("display_name") or "").strip()
     if not display:
         raise HTTPException(400, "Player alias required.")
     steam = _norm_steam(f.get("steam_id"))
-    raw_discord = (f.get("discord_id") or "").strip()
-    discord = int(raw_discord) if raw_discord.isdigit() else None
+    discord = parse.snowflake(f.get("discord_id"))
+    prior = db.query_one(
+        "SELECT display_name, steam_id, discord_id FROM lan_players WHERE id=%s", (pid,))
+    before = _player_note(prior["display_name"], prior["steam_id"],
+                          prior["discord_id"]) if prior else None
+    after = _player_note(display, steam, discord)
+    stmts = [("UPDATE lan_players SET display_name=%s, steam_id=%s, discord_id=%s WHERE id=%s",
+              (display, steam, discord, pid))]
+    if before is not None and before != after:
+        stmts.append(admin_audit.stmt_request(request, "player_edit", f"player:{pid}",
+                                              before, after))
     try:
-        db.execute(
-            "UPDATE lan_players SET display_name=%s, steam_id=%s, discord_id=%s WHERE id=%s",
-            (display, steam, discord, pid),
-        )
+        db.execute_all(stmts)
     except Exception:
         raise HTTPException(400, "Could not save (that Discord ID may already be linked elsewhere).")
     return RedirectResponse(request.url_for("admin"), status_code=303)
@@ -306,7 +519,19 @@ async def player_edit(request: Request):
 async def player_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    db.execute("DELETE FROM lan_players WHERE id=%s", (int(f["player_id"]),))
+    pid = parse.as_int(f.get("player_id"))
+    if pid is None:
+        raise HTTPException(400, "A player id is required.")
+    prior = db.query_one(
+        "SELECT display_name, steam_id, discord_id FROM lan_players WHERE id=%s", (pid,))
+    if prior is None:  # nothing to delete; a row here asserts a change that never happened
+        return RedirectResponse(request.url_for("admin"), status_code=303)
+    db.execute_all([
+        ("DELETE FROM lan_players WHERE id=%s", (pid,)),
+        admin_audit.stmt_request(request, "player_delete", f"player:{pid}",
+                                 _player_note(prior["display_name"], prior["steam_id"],
+                                              prior["discord_id"]), None),
+    ])
     return RedirectResponse(request.url_for("admin"), status_code=303)
 
 
@@ -314,7 +539,24 @@ async def player_delete(request: Request):
 async def player_captain(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    team_id = int(f["team_id"])
-    db.execute("UPDATE lan_players SET is_captain=0 WHERE team_id=%s", (team_id,))
-    db.execute("UPDATE lan_players SET is_captain=1 WHERE id=%s", (int(f["player_id"]),))
+    team_id = parse.as_int(f.get("team_id"))
+    pid = parse.as_int(f.get("player_id"))
+    if team_id is None or pid is None:
+        raise HTTPException(400, "A team id and a player id are required.")
+    # Off-team or missing player: the clear-then-set pair would have stripped the
+    # team's captain and set the badge on somebody else's roster row.
+    prior = db.query_one(
+        "SELECT display_name, is_captain FROM lan_players WHERE id=%s AND team_id=%s",
+        (pid, team_id))
+    if prior is None or prior["is_captain"]:
+        return RedirectResponse(request.url_for("admin"), status_code=303)
+    outgoing = db.query_one(
+        "SELECT display_name FROM lan_players WHERE team_id=%s AND is_captain=1", (team_id,))
+    db.execute_all([
+        ("UPDATE lan_players SET is_captain=0 WHERE team_id=%s", (team_id,)),
+        ("UPDATE lan_players SET is_captain=1 WHERE id=%s", (pid,)),
+        admin_audit.stmt_request(request, "player_captain", f"team:{team_id}",
+                                 outgoing["display_name"] if outgoing else None,
+                                 prior["display_name"]),
+    ])
     return RedirectResponse(request.url_for("admin"), status_code=303)

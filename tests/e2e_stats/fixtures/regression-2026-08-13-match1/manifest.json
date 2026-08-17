@@ -1,0 +1,83 @@
+{
+  "log": "/work/build/match1-recovered.log",
+  "emitted": {
+    "kills": 352,
+    "assist": 57,
+    "cap_break": 3,
+    "suicide": 15,
+    "headshot": 41,
+    "damage": 877
+  },
+  "lines_fed": 4845,
+  "sql_errors": [
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 560.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 560.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 582.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 582.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 596.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 596.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 601.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 636.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 645.",
+    "2026-08-13 12:33:44:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | ",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 671.",
+    "2026-08-13 12:33:45:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 | "
+  ],
+  "rows": {
+    "assist": {
+      "code": "assist",
+      "ppa": 57,
+      "pa": 0
+    },
+    "cap_break": {
+      "code": "cap_break",
+      "ppa": 0,
+      "pa": 3
+    },
+    "ppa_rows_total": 57,
+    "pa_rows_total": 3,
+    "suicides": 15,
+    "suicide_weapons": "weapon\tCOUNT(*)\ngrenade\t4\ngrenade2\t4\nworld\t6\npschreck\t1",
+    "actions_seeded": "id\tcode\tfor_PlayerActions\tfor_PlayerPlayerActions\n722\tassist\t0\t1\n723\tcap_break\t1\t0",
+    "action_ids_seen": "actionId\tCOUNT(*)\n723\t3\n722\t57",
+    "frags": 352,
+    "players": 17,
+    "bots": 17,
+    "assist_positions": {
+      "rows": 57,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 56,
+      "max_abs": 3119
+    },
+    "break_positions": {
+      "rows": 3,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 3,
+      "max_abs": 1534
+    }
+  },
+  "log_invariants": {
+    "kills": 352,
+    "assists": 57,
+    "breaks": 3,
+    "headshot_markers": 41,
+    "damage_markers": 877,
+    "assist_violations": [],
+    "break_violations": []
+  },
+  "dump": {
+    "path": "/work/build/recovered-fixture/hlstatsx-fixture.sql",
+    "bytes": 656950,
+    "inserts": 1731
+  }
+}
