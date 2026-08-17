@@ -498,13 +498,13 @@ def suite_post_restart() -> SuiteResult:
       - Plugin/.so missing on a host → deploy never reached this region
       - Extra plugins/.so not in reference → stale leftover from old plugin
 
-    Wraps `/usr/local/bin/ktp-verify-deploy --out /tmp/verify_deploy_<ts>.json`
+    Wraps `/usr/local/bin/ktp-verify-deploy --include-engine --out /tmp/verify_deploy_<ts>.json`
     and rolls the per-instance status into the suite's check rows.
     """
     result = SuiteResult(suite="post-restart")
     out_path = f"/tmp/verify_deploy_{int(datetime.now().timestamp())}.json"
     rc, _, err = sh(
-        f"/usr/local/bin/ktp-verify-deploy --out {out_path} 2>&1", timeout=300
+        f"/usr/local/bin/ktp-verify-deploy --include-engine --out {out_path} 2>&1", timeout=300
     )
 
     try:
