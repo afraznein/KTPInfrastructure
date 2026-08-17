@@ -60,6 +60,7 @@ Thumbs.db
 
 # Build artifacts
 artifacts/
+build/match-analytics/
 
 # Local dev environment (user-specific plugins, runtime state)
 /local/
