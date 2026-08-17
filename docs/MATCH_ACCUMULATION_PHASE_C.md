@@ -40,6 +40,52 @@ visibility, role, spawn-wave, and flag-ownership context.
 The values in `config/analytics/accumulation_v0.toml` are experimental starting
 values for sensitivity analysis. They are not production KTPR weights.
 
+## v1 scenario-aware position points
+
+`accumulation_v1` keeps the same 100-point per-half positional ceiling but
+changes how proximity earns points inside it:
+
+| Scenario | Treatment |
+|---|---|
+| Enemy first flag | Highest proximity multiplier (`2.25x`). This is the deepest pressure, nearest the enemy spawn. |
+| Enemy second flag | High proximity multiplier (`1.75x`). |
+| Middle | Elevated base (`1.25x`) and an additional reviewed-hotspot multiplier (`1.20x`). |
+| Double-cap flag | Additional `1.25x` while close enough to contribute. |
+| Active contest | Additional `1.75x` when an opposing player is sampled within 768 units in the same five-second tick. |
+| Own second | Reduced base (`0.80x`). |
+| Own first, without confirmed pressure | Low base (`0.50x`) so empty camping receives some credit but less than active play. |
+| Confirmed last-flag defensive kill | 15 contextual points per kill, capped at 45 per half and still inside the overall positional ceiling. |
+
+Multipliers are applied to the distance-decayed tick, not to the player's whole
+score. The active-contest bonus is deliberately stronger than the static
+hotspot bonus: an historically busy area should matter, but direct evidence
+that both teams are there matters more.
+
+Anzio's reviewed topology currently maps Laundry/Plaza to the Allies' first and
+second, Street to middle, and Bridge/Hill to the Axis second and first. Bridge
+and Plaza are the two-player capture points. Other maps receive only base
+proximity until their topology is reviewed; guessing orientation would award
+deep-pressure points to the wrong team.
+
+### Last-flag holding without kills
+
+The capture layer already marks a kill made while defending the only remaining
+flag, so v1 can score active last-flag defense exactly. It cannot yet prove that
+a player spent a no-kill interval holding the team's only remaining flag:
+periodic player positions are stored, but periodic flag ownership is not.
+
+That passive state should eventually receive non-zero but lower credit than an
+active contest, matching the distinction between a team merely flooding its
+last Harrington flag and actually holding it under kills/pressure. Implement it
+only after a compact ownership-state timeline is persisted or reliably
+reconstructed. Do not infer it from proximity alone.
+
+The defensive-kill sub-cap is intentional. Early testing at 50 points per kill
+made last-flag defense consume 2,778 of 3,514 positional points and pushed 25 of
+60 player-match rows to the overall ceiling. Fifteen points with a 45-point
+per-half maximum preserves the active-defense premium while keeping sustained
+enemy-first/enemy-second pressure as the highest positional opportunity.
+
 ## Run locally
 
 Run in the network-disabled Lane B image so the fixture is restored only to an
@@ -52,6 +98,10 @@ docker run --rm --network none -v "${PWD}:/work" -w /work ktp-lane-b:dev `
   --output-dir build/accumulation/shareable `
   --private-output-dir build/accumulation/private
 ```
+
+The command defaults to `accumulation_v1`. Pass
+`--profile config/analytics/accumulation_v0.toml` for the flat-proximity
+baseline.
 
 Review the shareable Markdown first. The private JSON exists only to audit how
 the positional point term was produced.
@@ -67,4 +117,3 @@ the positional point term was produced.
 4. Compare accumulation rankings to current KTPR and match outcomes in shadow.
 5. Keep all individual heatmaps private even if aggregate league/map heatmaps
    are introduced later.
-

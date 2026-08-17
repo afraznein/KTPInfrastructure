@@ -27,13 +27,15 @@ from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = REPO / "config" / "analytics" / "accumulation_v0.toml"
+DEFAULT_PROFILE = REPO / "config" / "analytics" / "accumulation_v1.toml"
+DEFAULT_OBJECTIVES = REPO / "config" / "analytics" / "map_objectives.toml"
 PRIVATE_KEYS = {
     "heatmap", "heatmap_cells", "cell_x", "cell_y", "pos_x", "pos_y", "pos_z",
     "nearest_flag", "nearest_flag_index", "nearest_flag_distance",
     "flag_breakdown", "position_samples", "sample_count", "observed_seconds",
     "within_radius_samples", "raw_position_points", "awarded_position_points",
-    "raw_points",
+    "raw_points", "active_contest_samples", "scenario_points",
+    "last_flag_defense_kills",
 }
 
 
@@ -44,6 +46,12 @@ def load_profile(path: Path) -> dict[str, Any]:
         if section not in profile:
             raise ValueError(f"accumulation profile is missing [{section}]")
     return profile
+
+
+def load_map_objectives(path: Path, map_name: str) -> dict[str, Any]:
+    with path.open("rb") as source:
+        maps = tomllib.load(source).get("maps", {})
+    return maps.get(map_name, {})
 
 
 def _query(db: EphemeralMysql, sql: str) -> list[dict[str, Any]]:
@@ -70,12 +78,48 @@ ORDER BY flag_index
     return samples, flags
 
 
+def load_last_flag_defense_kills(
+    db: EphemeralMysql, match_id: str
+) -> dict[int, int]:
+    match = analytics.sql_literal(match_id)
+    rows = _query(db, f"""
+SELECT killerId AS player_id, COUNT(*) AS last_flag_defense_kills
+FROM hlstats_Events_Frags
+WHERE match_id = {match} AND is_last_flag_defense = 1
+GROUP BY killerId
+""")
+    return {int(row["player_id"]): int(row["last_flag_defense_kills"])
+            for row in rows}
+
+
+def _flag_role(flag_name: str, team: int, topology: dict[str, Any]) -> str:
+    if not topology:
+        return "uncategorized"
+    team1 = {
+        topology.get("team1_first"): "own_first",
+        topology.get("team1_second"): "own_second",
+        topology.get("middle"): "middle",
+        topology.get("team2_second"): "enemy_second",
+        topology.get("team2_first"): "enemy_first",
+    }
+    if team == 1:
+        return team1.get(flag_name, "uncategorized")
+    inverse = {
+        "own_first": "enemy_first", "own_second": "enemy_second",
+        "middle": "middle", "enemy_second": "own_second",
+        "enemy_first": "own_first",
+    }
+    return inverse.get(team1.get(flag_name, "uncategorized"), "uncategorized")
+
+
 def derive_private_positions(
     players: list[dict[str, Any]],
     samples: list[dict[str, Any]],
     flags: list[dict[str, Any]],
     profile: dict[str, Any],
-) -> tuple[dict[int, float], list[dict[str, Any]]]:
+    topology: dict[str, Any] | None = None,
+    last_flag_kills: dict[int, int] | None = None,
+) -> tuple[dict[int, dict[str, float]], list[dict[str, Any]]]:
     """Return player positional points and private heatmap working records."""
     cfg = profile["position"]
     interval = float(cfg["sample_seconds"])
@@ -83,8 +127,18 @@ def derive_private_positions(
     rate = float(cfg["points_per_second_at_flag"])
     grid = int(cfg["grid_size_units"])
     cap_per_half = float(cfg["max_points_per_half"])
+    scenario = profile.get("scenarios", {})
+    topology = topology or {}
+    last_flag_kills = last_flag_kills or {}
+    contest_radius = float(scenario.get("active_contest_radius_units", 0))
+    double_caps = set(topology.get("double_caps", []))
+    high_contest = set(topology.get("high_contest", []))
     by_player: dict[int, dict[str, Any]] = {}
     player_context = {int(p["player_id"]): p for p in players}
+    sample_buckets: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
+    for sample in samples:
+        bucket = (int(sample["half"]), round(float(sample["game_time"]) / interval))
+        sample_buckets[bucket].append(sample)
 
     for sample in samples:
         player_id = int(sample["player_id"])
@@ -106,10 +160,16 @@ def derive_private_positions(
             "sample_count": 0,
             "observed_seconds": 0.0,
             "raw_position_points": 0.0,
+            "base_position_points": 0.0,
+            "enemy_pressure_points": 0.0,
+            "contested_points": 0.0,
+            "double_cap_points": 0.0,
+            "last_flag_defense_points": 0.0,
             "heatmap": defaultdict(lambda: {"samples": 0, "seconds": 0.0}),
             "flag_breakdown": defaultdict(lambda: {
                 "samples": 0, "within_radius_samples": 0,
-                "observed_seconds": 0.0, "raw_points": 0.0,
+                "active_contest_samples": 0, "observed_seconds": 0.0,
+                "raw_points": 0.0, "scenario_points": 0.0,
             }),
         })
         state["sample_count"] += 1
@@ -125,17 +185,93 @@ def derive_private_positions(
             flag_state["observed_seconds"] += interval
             if nearest_distance <= radius:
                 proximity = 1.0 - (nearest_distance / radius)
-                points = interval * rate * proximity
-                flag_state["within_radius_samples"] += 1
-                flag_state["raw_points"] += points
-                state["raw_position_points"] += points
+                raw_points = interval * rate * proximity
+                flag_name = str(nearest["flag_name"])
+                role = _flag_role(flag_name, int(sample["team"]), topology)
+                territory_multiplier = float(scenario.get(
+                    f"{role}_multiplier", 1.0
+                ))
+                base_points = raw_points * min(territory_multiplier, 1.0)
+                territory_bonus = raw_points * max(territory_multiplier - 1.0, 0.0)
+                state["base_position_points"] += base_points
+                if role in ("enemy_first", "enemy_second"):
+                    state["enemy_pressure_points"] += territory_bonus
+                else:
+                    state["contested_points"] += territory_bonus
+                running = base_points + territory_bonus
 
-    points_by_player: dict[int, float] = {}
+                if flag_name in double_caps:
+                    bonus = running * (
+                        float(scenario.get("double_cap_multiplier", 1.0)) - 1.0
+                    )
+                    state["double_cap_points"] += bonus
+                    running += bonus
+                if flag_name in high_contest:
+                    bonus = running * (
+                        float(scenario.get("high_contest_area_multiplier", 1.0)) - 1.0
+                    )
+                    state["contested_points"] += bonus
+                    running += bonus
+
+                bucket = (int(sample["half"]),
+                          round(float(sample["game_time"]) / interval))
+                actively_contested = False
+                if contest_radius > 0:
+                    for other in sample_buckets[bucket]:
+                        if int(other["team"]) == int(sample["team"]):
+                            continue
+                        if math.hypot(
+                            x - int(other["pos_x"]), y - int(other["pos_y"])
+                        ) <= contest_radius:
+                            actively_contested = True
+                            break
+                if actively_contested:
+                    bonus = running * (
+                        float(scenario.get("active_contest_multiplier", 1.0)) - 1.0
+                    )
+                    state["contested_points"] += bonus
+                    running += bonus
+                    flag_state["active_contest_samples"] += 1
+                flag_state["within_radius_samples"] += 1
+                flag_state["raw_points"] += raw_points
+                flag_state["scenario_points"] += running
+                state["raw_position_points"] += running
+
+    point_fields = (
+        "base_position_points", "enemy_pressure_points", "contested_points",
+        "double_cap_points", "last_flag_defense_points",
+    )
+    points_by_player: dict[int, dict[str, float]] = {}
     private_players: list[dict[str, Any]] = []
-    for player_id, state in sorted(by_player.items()):
+    for player_id in sorted(player_context):
+        player = player_context[player_id]
+        state = by_player.setdefault(player_id, {
+            "player_id": player_id, "steam_id": player.get("steam_id"),
+            "player_name_at_match": player.get("player_name_at_match"),
+            "team": player.get("team"), "sample_count": 0,
+            "observed_seconds": 0.0, "raw_position_points": 0.0,
+            **{field: 0.0 for field in point_fields},
+            "heatmap": {}, "flag_breakdown": {},
+        })
+        defense_kills = last_flag_kills.get(player_id, 0)
+        defense_points = defense_kills * float(
+            scenario.get("last_flag_defense_kill_points", 0.0)
+        )
+        defense_cap = float(
+            scenario.get("last_flag_defense_max_per_half", float("inf"))
+        ) * max(1, int(player_context[player_id].get("halves_played") or 1))
+        defense_points = min(defense_points, defense_cap)
+        state["last_flag_defense_points"] += defense_points
+        state["raw_position_points"] += defense_points
         halves = max(1, int(player_context[player_id].get("halves_played") or 1))
         awarded = min(state["raw_position_points"], cap_per_half * halves)
-        points_by_player[player_id] = round(awarded, 2)
+        scale = awarded / state["raw_position_points"] if state["raw_position_points"] else 0.0
+        awarded_components = {
+            field: round(state[field] * scale, 2) or 0.0 for field in point_fields
+        }
+        points_by_player[player_id] = {
+            **awarded_components, "position_points": round(awarded, 2) or 0.0,
+        }
         heatmap = [
             {"cell_x": cell_x, "cell_y": cell_y, **values}
             for (cell_x, cell_y), values in sorted(state["heatmap"].items())
@@ -154,7 +290,9 @@ def derive_private_positions(
             for key, value in state.items()
             if key not in ("heatmap", "flag_breakdown")
         } | {
+            "last_flag_defense_kills": defense_kills,
             "awarded_position_points": round(awarded, 2),
+            "awarded_components": awarded_components,
             "heatmap_cells": heatmap,
             "flag_breakdown": flag_breakdown,
         })
@@ -162,9 +300,13 @@ def derive_private_positions(
 
 
 def accumulate_player(
-    player: dict[str, Any], position_points: float, profile: dict[str, Any]
+    player: dict[str, Any], position: float | dict[str, float], profile: dict[str, Any]
 ) -> dict[str, Any]:
     weights = profile["events"]
+    position_components = (
+        position if isinstance(position, dict)
+        else {"position_points": float(position)}
+    )
     components = {
         "kill_points": player.get("kills", 0) * float(weights["kill"]),
         "assist_points": player.get("assists", 0) * float(weights["assist"]),
@@ -173,8 +315,14 @@ def accumulate_player(
         "break_points": player.get("cap_breaks", 0) * float(weights["cap_break"]),
         "team_kill_points": player.get("team_kills", 0) * float(weights["team_kill"]),
         "suicide_points": player.get("suicides", 0) * float(weights["suicide"]),
-        "position_points": position_points,
+        **position_components,
     }
+    event_keys = (
+        "kill_points", "assist_points", "damage_points", "capture_points",
+        "break_points", "team_kill_points", "suicide_points",
+    )
+    event_total = sum(components[key] for key in event_keys)
+    position_total = components.get("position_points", 0.0)
     rounded = {key: round(value, 2) or 0.0 for key, value in components.items()}
     return {
         "player_id": player["player_id"],
@@ -186,9 +334,8 @@ def accumulate_player(
         "penalty_points": round(
             components["team_kill_points"] + components["suicide_points"], 2
         ) or 0.0,
-        "event_points": round(sum(value for key, value in components.items()
-                                  if key != "position_points"), 2),
-        "total_points": round(sum(components.values()), 2),
+        "event_points": round(event_total, 2),
+        "total_points": round(event_total + position_total, 2),
     }
 
 
@@ -210,23 +357,26 @@ def render_markdown(report: dict[str, Any]) -> str:
         "Individual positional heatmaps, cells, flag histories, distances, and raw "
         "coordinates are excluded. `Position` is the capped point result calculated "
         "from private working data.", "",
-        "| Player | Team | Kill | Assist | Damage | Caps | Breaks | Penalty | Position | Total |",
+        "| Player | Team | Events | Base pos. | Enemy pressure | Contested | Double-cap | Last-flag D | Position | Total |",
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for player in report["players"]:
         lines.append(
             f"| {player['player_name_at_match']} | {player['team_name']} | "
-            f"{player['kill_points']:.2f} | {player['assist_points']:.2f} | "
-            f"{player['damage_points']:.2f} | {player['capture_points']:.2f} | "
-            f"{player['break_points']:.2f} | {player['penalty_points']:.2f} | "
+            f"{player['event_points']:.2f} | "
+            f"{player.get('base_position_points', player['position_points']):.2f} | "
+            f"{player.get('enemy_pressure_points', 0.0):.2f} | "
+            f"{player.get('contested_points', 0.0):.2f} | "
+            f"{player.get('double_cap_points', 0.0):.2f} | "
+            f"{player.get('last_flag_defense_points', 0.0):.2f} | "
             f"{player['position_points']:.2f} | "
             f"{player['total_points']:.2f} |"
         )
     lines += [
         "", "## Interpretation", "",
-        "This is an accumulation ledger, not a rating. Position points use objective "
-        "proximity as an initial measurable proxy; they do not claim the player was "
-        "holding, defending, contesting, or visible to an opponent. The positional "
+        "This is an accumulation ledger, not a rating. Position points combine "
+        "objective proximity with explicitly captured scenario evidence. Proximity "
+        "alone does not prove holding, ownership, or line of sight. The positional "
         "term is capped per half so passive presence cannot dominate event production.", "",
     ]
     return "\n".join(lines)
@@ -255,6 +405,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("fixture", type=Path)
     parser.add_argument("--match-id")
     parser.add_argument("--profile", type=Path, default=DEFAULT_PROFILE)
+    parser.add_argument("--map-objectives", type=Path, default=DEFAULT_OBJECTIVES)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--private-output-dir", type=Path, required=True,
                         help="separate local-only directory for player heatmap working data")
@@ -282,11 +433,21 @@ def main(argv: list[str] | None = None) -> int:
         samples, flags = load_position_facts(
             db, match_id, int(match.get("server_id") or 0), str(match.get("map_name") or "")
         )
+        topology = load_map_objectives(
+            args.map_objectives, str(match.get("map_name") or "")
+        )
+        last_flag_kills = load_last_flag_defense_kills(db, match_id)
         points, private_players = derive_private_positions(
-            base["players"], samples, flags, profile
+            base["players"], samples, flags, profile, topology, last_flag_kills
         )
 
-    players = [accumulate_player(p, points.get(int(p["player_id"]), 0.0), profile)
+    empty_position = {
+        "base_position_points": 0.0, "enemy_pressure_points": 0.0,
+        "contested_points": 0.0, "double_cap_points": 0.0,
+        "last_flag_defense_points": 0.0, "position_points": 0.0,
+    }
+    players = [accumulate_player(
+                   p, points.get(int(p["player_id"]), empty_position), profile)
                for p in base["players"]]
     players.sort(key=lambda row: (-row["total_points"], row["player_name_at_match"] or ""))
     shareable = {
@@ -310,6 +471,7 @@ def main(argv: list[str] | None = None) -> int:
         "redistribution": "prohibited",
         "match_id": match_id,
         "profile": profile,
+        "map_topology": topology,
         "flags": flags,
         "players": private_players,
     }

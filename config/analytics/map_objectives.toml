@@ -1,0 +1,20 @@
+# Reviewed map topology for accumulation scenarios.
+# Add a map only after its flag names, team orientation, and multi-cap points
+# have been verified. Unknown maps fall back to uncategorized base proximity.
+
+[maps.dod_anzio]
+# Team 1 = Allies, team 2 = Axis.
+team1_first = "POINT_ANZIO_LAUNDRY"
+team1_second = "POINT_ANZIO_PLAZA"
+middle = "POINT_ANZIO_STREET"
+team2_second = "POINT_BRIDGE"
+team2_first = "POINT_ANZIO_HILL"
+
+# Bridge and Plaza repeatedly emit two player capture-credit rows for one
+# event in the Lane B corpus, matching their two-player capture requirement.
+double_caps = ["POINT_BRIDGE", "POINT_ANZIO_PLAZA"]
+
+# Initial reviewed hotspot. Later profiles can learn this from sufficiently
+# pooled private heatmaps, but the personal heatmaps themselves stay private.
+high_contest = ["POINT_ANZIO_STREET"]
+

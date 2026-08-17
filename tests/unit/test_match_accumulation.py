@@ -44,10 +44,68 @@ def test_private_heatmap_drives_capped_shareable_points():
     flags = [{"flag_index": 1, "flag_name": "mid", "origin_x": 0, "origin_y": 0}]
     points, private = derive_private_positions([player()], samples, flags, PROFILE)
     # Raw is 5 + 2.5, but the per-half presence cap is 6.
-    assert points == {7: 6.0}
+    assert points[7]["position_points"] == 6.0
+    assert points[7]["base_position_points"] == 6.0
     assert private[0]["awarded_position_points"] == 6.0
     assert private[0]["heatmap_cells"]
     assert private[0]["flag_breakdown"][0]["nearest_flag"] == "mid"
+
+
+def test_scenarios_reward_enemy_pressure_active_contest_and_last_flag_kill():
+    profile = {
+        **PROFILE,
+        "position": {**PROFILE["position"], "max_points_per_half": 100.0},
+        "scenarios": {
+            "own_first_multiplier": 0.5,
+            "enemy_first_multiplier": 2.0,
+            "active_contest_radius_units": 100.0,
+            "active_contest_multiplier": 2.0,
+            "last_flag_defense_kill_points": 15.0,
+            "last_flag_defense_max_per_half": 45.0,
+        },
+    }
+    opponent = player(
+        player_id=8, steam_id="STEAM_1:0:8", player_name_at_match="Opponent",
+        team=2, team_name="Axis",
+    )
+    samples = [
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": 5},
+        {"player_id": 8, "team": 2, "half": 1, "pos_x": 10, "pos_y": 0,
+         "pos_z": 0, "game_time": 5},
+    ]
+    flags = [{"flag_index": 4, "flag_name": "axis_first",
+              "origin_x": 0, "origin_y": 0}]
+    topology = {"team1_first": "allies_first", "team2_first": "axis_first"}
+    points, _ = derive_private_positions(
+        [player(), opponent], samples, flags, profile, topology, {7: 1}
+    )
+    assert points[7] == {
+        "base_position_points": 5.0,
+        "enemy_pressure_points": 5.0,
+        "contested_points": 10.0,
+        "double_cap_points": 0.0,
+        "last_flag_defense_points": 15.0,
+        "position_points": 35.0,
+    }
+    # The same active fight near Axis's own first is useful but worth less.
+    assert points[8]["position_points"] == 4.5
+
+
+def test_last_flag_defense_has_its_own_subcap():
+    profile = {
+        **PROFILE,
+        "position": {**PROFILE["position"], "max_points_per_half": 100.0},
+        "scenarios": {
+            "last_flag_defense_kill_points": 15.0,
+            "last_flag_defense_max_per_half": 45.0,
+        },
+    }
+    points, _ = derive_private_positions(
+        [player()], [], [], profile, {}, {7: 10}
+    )
+    assert points[7]["last_flag_defense_points"] == 45.0
+    assert points[7]["position_points"] == 45.0
 
 
 def test_shareable_accumulation_contains_points_not_heatmap():
@@ -66,6 +124,7 @@ def test_private_directory_cannot_be_nested_under_shareable(tmp_path):
 @pytest.mark.parametrize("key", [
     "heatmap_cells", "pos_x", "nearest_flag", "flag_breakdown", "position_samples",
     "sample_count", "observed_seconds", "within_radius_samples", "raw_position_points",
+    "active_contest_samples", "scenario_points", "last_flag_defense_kills",
 ])
 def test_privacy_guard_rejects_personal_position_details(key):
     with pytest.raises(ValueError, match="private positional key leaked"):
