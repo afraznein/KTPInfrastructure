@@ -106,6 +106,31 @@ def test_public_player_rows_remove_individual_position_coverage():
     public = analytics.public_players(_players())
     assert len(public) == 12
     assert all("position_samples" not in player for player in public)
+    assert [player["team_name"] for player in public[:7]] == [
+        "Allies", "Allies", "Allies", "Allies", "Allies", "Allies", "Axis"
+    ]
+
+
+def test_team_summary_adds_only_additive_match_facts():
+    teams = analytics.team_summary(analytics.public_players(_players()))
+    assert teams == [
+        {
+            "team": 1, "team_name": "Allies", "players": 6,
+            "kills": 6, "deaths": 6, "assists": 0,
+            "damage_dealt": 600, "damage_taken": 600,
+            "team_damage": 0, "self_damage": 0, "capture_credits": 0,
+            "cap_breaks": 0, "shots": 60, "hits": 18,
+            "damage_differential": 0, "raw_accuracy": 0.3,
+        },
+        {
+            "team": 2, "team_name": "Axis", "players": 6,
+            "kills": 6, "deaths": 6, "assists": 0,
+            "damage_dealt": 600, "damage_taken": 600,
+            "team_damage": 0, "self_damage": 0, "capture_credits": 0,
+            "cap_breaks": 0, "shots": 60, "hits": 18,
+            "damage_differential": 0, "raw_accuracy": 0.3,
+        },
+    ]
 
 
 def test_markdown_states_positional_privacy_without_player_locations():
@@ -113,6 +138,7 @@ def test_markdown_states_positional_privacy_without_player_locations():
         "match_id": "phase-a-TEST",
         "match": {"map_name": "dod_anzio", "halves_played": 1, "duration_seconds": 600},
         "quality": {"status": "PASS", "checks": []},
+        "teams": analytics.team_summary(analytics.public_players(_players())),
         "players": analytics.public_players(_players()[:1]),
         "weapons": [],
         "capture_credits": [],

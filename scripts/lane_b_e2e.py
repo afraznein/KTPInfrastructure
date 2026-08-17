@@ -415,6 +415,10 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
     ap.add_argument("--summary-out", type=Path,
                     default=Path("/work/build/lane-b-summary.md"))
+    ap.add_argument("--database-dump", type=Path, default=None,
+                    help="optional local mysqldump written before the isolated "
+                         "database is destroyed; intended for read-only "
+                         "post-match analytics")
     args = ap.parse_args()
 
     report: dict = {"map": args.map, "play_seconds": args.play_seconds}
@@ -716,6 +720,25 @@ def main() -> int:
             )
 
         report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
+        if args.database_dump is not None:
+            args.database_dump.parent.mkdir(parents=True, exist_ok=True)
+            dump_args = [
+                "mysqldump", "--no-defaults", f"--socket={db.socket_path}",
+                "-u", "root", "--complete-insert", "--skip-extended-insert",
+                "--no-tablespaces", db.database,
+            ]
+            with args.database_dump.open("wb") as dump_file:
+                dumped = subprocess.run(
+                    dump_args, stdout=dump_file, stderr=subprocess.PIPE,
+                    text=False)
+            if dumped.returncode != 0:
+                raise SystemExit(
+                    "mysqldump failed: "
+                    + dumped.stderr.decode(errors="replace")[-1200:])
+            report["database_dump"] = {
+                "path": str(args.database_dump),
+                "bytes": args.database_dump.stat().st_size,
+            }
 
     report["failures"] = failures
     print("\n=== emitted in log vs recorded in db ===")

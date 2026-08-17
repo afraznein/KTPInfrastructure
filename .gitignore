@@ -61,6 +61,7 @@ Thumbs.db
 # Build artifacts
 artifacts/
 build/match-analytics/
+build/fresh-phase-a/
 
 # Local dev environment (user-specific plugins, runtime state)
 /local/

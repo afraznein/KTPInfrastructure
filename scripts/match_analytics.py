@@ -34,6 +34,7 @@ from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
 SCHEMA_VERSION = 1
+TEAM_NAMES = {1: "Allies", 2: "Axis"}
 
 INTEGER_COLUMNS = {
     "server_id", "player_id", "team", "duration_seconds", "halves_played",
@@ -272,10 +273,48 @@ def evaluate_quality(
 
 def public_players(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove individual positional coverage from shareable player records."""
-    return [
-        {key: value for key, value in player.items() if key != "position_samples"}
-        for player in players
-    ]
+    public = []
+    for player in players:
+        row = {key: value for key, value in player.items()
+               if key != "position_samples"}
+        row["team_name"] = TEAM_NAMES.get(row.get("team"), "Unknown")
+        public.append(row)
+    return public
+
+
+def with_team_names(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    named = []
+    for source in rows:
+        row = dict(source)
+        row["team_name"] = TEAM_NAMES.get(row.get("team"), "Unknown")
+        named.append(row)
+    return named
+
+
+def team_summary(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    additive = (
+        "kills", "deaths", "assists", "damage_dealt", "damage_taken",
+        "team_damage", "self_damage", "capture_credits", "cap_breaks",
+        "shots", "hits",
+    )
+    teams: dict[int, dict[str, Any]] = {}
+    for player in players:
+        team = player.get("team")
+        if team not in TEAM_NAMES:
+            continue
+        row = teams.setdefault(team, {
+            "team": team, "team_name": TEAM_NAMES[team], "players": 0,
+            **{field: 0 for field in additive},
+        })
+        row["players"] += 1
+        for field in additive:
+            row[field] += player.get(field, 0) or 0
+    for row in teams.values():
+        row["damage_differential"] = row["damage_dealt"] - row["damage_taken"]
+        row["raw_accuracy"] = (
+            round(row["hits"] / row["shots"], 3) if row["shots"] else None
+        )
+    return [teams[key] for key in sorted(teams)]
 
 
 def md(value: Any) -> str:
@@ -305,9 +344,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Map: `{md(match.get('map_name'))}`  ",
         f"Halves: {md(match.get('halves_played'))}  ",
         f"Live duration: {md(match.get('duration_seconds'))} seconds  ",
+        "", "## Team summary", "",
+        markdown_table(report["teams"], [
+            ("team_name", "Team"), ("kills", "K"), ("deaths", "D"),
+            ("assists", "A"), ("damage_dealt", "Damage"),
+            ("damage_taken", "Taken"), ("damage_differential", "+/-"),
+            ("capture_credits", "Caps"), ("cap_breaks", "Breaks"),
+            ("raw_accuracy", "Raw acc."),
+        ]),
         "", "## Box score", "",
         markdown_table(report["players"], [
-            ("player_name_at_match", "Player"), ("team", "Team"),
+            ("player_name_at_match", "Player"), ("team_name", "Team"),
             ("kills", "K"), ("deaths", "D"), ("assists", "A"),
             ("kd_ratio", "K/D"), ("damage_dealt", "Damage"),
             ("damage_taken", "Taken"), ("damage_differential", "+/-"),
@@ -328,7 +375,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "", "## Capture credits", "",
         markdown_table(report["capture_credits"], [
-            ("player_name_at_match", "Player"), ("team", "Team"),
+            ("player_name_at_match", "Player"), ("team_name", "Team"),
             ("flag_name", "Flag"), ("capture_credits", "Credits"),
         ]),
         "", "## Unique capture events", "",
@@ -360,6 +407,7 @@ def build_report(db: EphemeralMysql, match_id: str, fixture: Path) -> dict[str, 
     inventory = inventory_rows[0] if inventory_rows else {}
     match = match_rows[0] if match_rows else None
     quality = evaluate_quality(match_id, match, players, inventory)
+    players_public = public_players(players)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -367,9 +415,10 @@ def build_report(db: EphemeralMysql, match_id: str, fixture: Path) -> dict[str, 
         "match_id": match_id,
         "match": match,
         "quality": quality,
-        "players": public_players(players),
-        "weapons": weapons,
-        "capture_credits": credits,
+        "teams": team_summary(players_public),
+        "players": players_public,
+        "weapons": with_team_names(weapons),
+        "capture_credits": with_team_names(credits),
         "capture_events": events,
         "positional": {
             "privacy": "aggregate_only",
