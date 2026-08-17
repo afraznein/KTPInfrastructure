@@ -10,6 +10,8 @@ output.
 from __future__ import annotations
 
 from pathlib import Path
+import threading
+import time
 
 import pytest
 
@@ -245,6 +247,39 @@ def test_drain_returns_immediately_when_nothing_is_feeding(tmp_path):
     d = _daemon(tmp_path)
     got = d.drain(quiet_for=0.5, timeout=10.0)
     assert got == 0
+
+
+def test_log_pump_follows_truncated_file_from_the_beginning(tmp_path):
+    """A retried HLDS truncates its console log; keeping the old offset loses
+    every match event even though the host path continues to look healthy.
+
+    Production also handles atomic replacement. Truncation exercises the same
+    reopen path and remains portable to Windows, which prevents replacing a
+    file while the pump has it open.
+    """
+    log = tmp_path / "game.log"
+    log.write_text("old boot noise\n", encoding="utf-8")
+    d = _daemon(tmp_path, log_source=log)
+    fed = []
+    d._feed = fed.append
+    pump = threading.Thread(target=d._pump_log)
+    pump.start()
+    time.sleep(0.3)
+
+    with log.open("a", encoding="utf-8") as out:
+        out.write("first server line\n")
+    deadline = time.monotonic() + 3
+    while "first server line" not in fed and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    log.write_text("replacement starts here\n", encoding="utf-8")
+    deadline = time.monotonic() + 3
+    while "replacement starts here" not in fed and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    d._stop.set()
+    pump.join(timeout=3)
+    assert fed == ["first server line", "replacement starts here"]
 
 
 # -- SQL error classification ----------------------------------------------

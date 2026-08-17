@@ -359,14 +359,61 @@ class HlstatsDaemon:
             time.sleep(0.2)
         if self._stop.is_set():
             return
-        with self.log_source.open("r", encoding="utf-8", errors="replace") as f:
-            f.seek(0, os.SEEK_END)
+        f = None
+        identity = None
+        first_open = True
+        try:
             while not self._stop.is_set():
-                line = f.readline()
-                if not line:
+                if f is None:
+                    try:
+                        f = self.log_source.open(
+                            "r", encoding="utf-8", errors="replace")
+                    except FileNotFoundError:
+                        time.sleep(0.2)
+                        continue
+                    # Only the initial attachment skips existing boot noise.
+                    # A replacement file belongs to the active/retried server
+                    # and must be consumed from its beginning.
+                    f.seek(0, os.SEEK_END if first_open else os.SEEK_SET)
+                    stat = os.fstat(f.fileno())
+                    identity = (stat.st_dev, stat.st_ino)
+                    first_open = False
+
+                try:
+                    line = f.readline()
+                except OSError:
+                    # Docker Desktop bind mounts can briefly return ENODATA
+                    # while HLDS turns the console log over. Treat it like a
+                    # replacement and follow the path again.
+                    f.close()
+                    f = None
+                    identity = None
                     time.sleep(0.2)
                     continue
-                self._feed(line.rstrip("\r\n"))
+                if line:
+                    self._feed(line.rstrip("\r\n"))
+                    continue
+
+                # HLDS opens the configured console log with truncation on a
+                # retry/map lifecycle. Following the old file descriptor then
+                # loses the whole match while the host path keeps growing.
+                # Detect replacement or truncation and follow the path again.
+                try:
+                    path_stat = self.log_source.stat()
+                    replaced = (path_stat.st_dev, path_stat.st_ino) != identity
+                    truncated = path_stat.st_size < f.tell()
+                except OSError:
+                    replaced = True
+                    truncated = False
+                if replaced or truncated:
+                    f.close()
+                    f = None
+                    identity = None
+                    continue
+                time.sleep(0.2)
+        finally:
+            if f is not None:
+                f.close()
 
     def _feed(self, line: str) -> None:
         if not line:

@@ -88,7 +88,9 @@ def choose_representatives(reports: list[dict[str, Any]]) -> dict[str, str]:
              and r["source_inventory"].get("frags", 0) > 0)
     take("substitute_or_reconnect", lambda r: r["source_inventory"].get("roster_players", 0) > 12)
     canonical = lambda r: bool(re.fullmatch(r"\d+-KTP\d+", r["match_id"]))
-    take("malformed_or_orphan_id", lambda r: not canonical(r))
+    take("test_match_id", lambda r: r["match_id"].endswith("-TEST"))
+    take("malformed_or_orphan_id", lambda r:
+         not canonical(r) and not r["match_id"].endswith("-TEST"))
     take("missing_roster", lambda r: canonical(r) and r["source_inventory"].get("roster_players", 0) == 0)
     take("missing_aggregate_cache", lambda r: canonical(r) and r["source_inventory"].get("cached_player_totals", 0) == 0)
     take("overtime_or_extra_half", lambda r: (r.get("match") or {}).get("halves_played", 0) > 2)
@@ -103,6 +105,7 @@ def render_summary(
     representatives: dict[str, str],
     match_ids_by_source: dict[str, set[str]],
     table_counts: dict[str, dict[str, int]],
+    source_mode: str,
 ) -> str:
     statuses = Counter(r["quality"]["status"] for r in reports)
     maps = Counter((r.get("match") or {}).get("map_name") or "unknown" for r in reports)
@@ -118,19 +121,22 @@ def render_summary(
         for key in ("frags", "statsme_rows", "statsme2_rows", "roster_players")
     }
     out = [
-        "# Phase B real-match shadow validation", "",
+        "# Phase B local shadow validation", "",
         f"Generated: {datetime.now(timezone.utc).isoformat()}", "",
         f"Local source: `{fixture.name}` ({valid_ids} canonical match IDs; "
-        f"{len(reports) - valid_ids} additional malformed/orphan IDs preserved for audit)", "",
+        f"{len(reports) - valid_ids} additional noncanonical/test IDs preserved for audit)", "",
+        f"Source mode: `{source_mode}`. "
+        + ("Replay event facts are valid, but original duration and per-minute metrics are unavailable."
+           if source_mode == "replay" else "Database timing is retained."), "",
         "No website, rating, production, or preprod writes were performed.", "",
         "## Result", "",
         f"Quality counts: PASS {statuses['PASS']}, WARN {statuses['WARN']}, FAIL {statuses['FAIL']}.", "",
-        "A WARN can be expected for telemetry that this historical archive never captured. "
-        "A FAIL is a source discrepancy or incomplete match shape to inspect; the exporter does not repair it.", "",
+        "A WARN records a known limitation of the source corpus. A FAIL is a source "
+        "discrepancy or incomplete match shape to inspect; the exporter does not repair it.", "",
         "Canonical-match totals represented below: "
         f"{totals['frags']:,} frags, {totals['statsme_rows']:,} StatsMe rows, "
         f"{totals['statsme2_rows']:,} StatsMe2 rows, and {totals['roster_players']:,} roster rows.", "",
-        "Malformed/orphan-ID telemetry retained separately: "
+        "Noncanonical/test-ID telemetry retained separately: "
         f"{anomaly_totals['frags']:,} frags, {anomaly_totals['statsme_rows']:,} StatsMe rows, "
         f"{anomaly_totals['statsme2_rows']:,} StatsMe2 rows, and "
         f"{anomaly_totals['roster_players']:,} roster rows.", "",
@@ -151,7 +157,7 @@ def render_summary(
     out += [
         "", "Untagged rows remain outside match analytics; they are shown here so corpus totals are auditable.", "",
         "## Source coverage", "",
-        "| Source | Captured in archive |", "|---|---|",
+        "| Source | Captured in source |", "|---|---|",
     ]
     labels = {
         "assists": "Assists", "capture_credits": "Capture credits",
@@ -184,13 +190,22 @@ def render_summary(
             f"{inv.get('frags', 0)} | {inv.get('statsme_rows', 0)} | "
             f"{inv.get('cached_player_totals', 0)} | {report['quality']['status']} | {failures} |"
         )
-    out += [
-        "", "## Interpretation boundary", "",
-        "This archive is real-match validation for kills, deaths, headshots, teamkills, suicides, "
-        "rosters, halves, maps, weapon totals, hit locations, and legacy aggregate damage. It "
-        "cannot validate assists, objectives, per-hit damage/taken, or aggregate position sampling. "
-        "Those require the first completed real match captured after the new schema is deployed.", "",
-    ]
+    new_sources = ("assists", "capture_credits", "per_hit_damage", "positions")
+    if all(sources.get(key) for key in new_sources):
+        boundary = (
+            "This corpus validates the presence and internal consistency of kills, deaths, assists, "
+            "objectives, per-hit damage/taken, aggregate position samples, weapon totals, and hit "
+            "locations. A `-TEST` bot match validates the full capture path but does not replace the "
+            "post-deployment human-match review needed to judge gameplay-derived metrics."
+        )
+    else:
+        boundary = (
+            "This historical corpus validates kills, deaths, headshots, teamkills, suicides, rosters, "
+            "halves, maps, weapon totals, hit locations, and legacy aggregate damage. Sources marked "
+            "not captured remain unavailable; they require a match recorded after the new telemetry "
+            "schema is deployed."
+        )
+    out += ["", "## Interpretation boundary", "", boundary, ""]
     return "\n".join(out)
 
 
@@ -200,6 +215,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=REPO / "build" / "phase-b-real")
     parser.add_argument("--all-markdown", action="store_true", help="render Markdown for every match")
     parser.add_argument("--keep-db", action="store_true", help="keep isolated DB for debugging")
+    parser.add_argument("--source-mode", choices=("database", "replay"),
+                        default="database",
+                        help="replay suppresses invalid time-normalized metrics")
     return parser.parse_args(argv)
 
 
@@ -215,7 +233,9 @@ def main(argv: list[str] | None = None) -> int:
         if not all((sources["per_hit_damage"], sources["capture_credits"], sources["positions"])):
             analytics.install_legacy_compatibility(db)
         for match_id in match_ids:
-            reports.append(analytics.build_report(db, match_id, args.fixture, sources))
+            reports.append(analytics.build_report(
+                db, match_id, args.fixture, sources, args.source_mode
+            ))
 
     reports_dir = args.output_dir / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     summary.write_text(
         render_summary(
             args.fixture, reports, sources, representatives,
-            match_ids_by_source, table_counts,
+            match_ids_by_source, table_counts, args.source_mode,
         ),
         encoding="utf-8",
     )

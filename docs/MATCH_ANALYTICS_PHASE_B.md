@@ -46,6 +46,31 @@ every match, and writes Markdown for representative shapes.
 
 Primary output: `build/phase-b-real/PHASE_B_VALIDATION.md`.
 
+## Synthetic latest-preprod validation
+
+A completed `.testmatch` database dump exercises the new telemetry before any
+shared deployment. Run it through the same batch with database timing retained:
+
+```powershell
+docker run --rm --network none -v "${PWD}:/work" -w /work ktp-lane-b:dev `
+  python3 scripts/match_analytics_batch.py `
+  build/lane-b/hlstatsx-fixture.sql `
+  --source-mode database `
+  --output-dir build/phase-b-bot `
+  --all-markdown
+```
+
+If a game log must be replayed through the daemon to recover a database, pass
+`--source-mode replay`. Event counts and relationships remain valid, but replay
+uses ingestion-time timestamps. Reports therefore warn with
+`replay_timing_compressed` and suppress damage-per-minute rather than presenting
+a misleading duration-derived value.
+
+`-TEST` IDs are reported as synthetic matches, not malformed IDs. `.testmatch`
+uses official match semantics (`match_type=0`) while its suffix lets retention
+remove it independently from real official matches. Explicit scrim and 12man
+types remain available for their separate retention policy.
+
 ## Legacy compatibility boundary
 
 `sql/compatibility/legacy_optional_sources.sql` creates empty compatibility tables

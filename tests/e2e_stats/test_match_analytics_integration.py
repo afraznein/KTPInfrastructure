@@ -41,3 +41,17 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "assists": True,
     }
     assert report["schema_version"] == 2
+
+
+def test_replay_report_suppresses_time_normalized_metrics(tmp_path):
+    with EphemeralMysql.start(parent=tmp_path) as db:
+        analytics.load_fixture(db, FIXTURE)
+        report = analytics.build_report(
+            db, "phase-a-contract-TEST", FIXTURE, source_mode="replay"
+        )
+
+    assert report["quality"]["status"] == "WARN"
+    assert report["temporal_metrics_valid"] is False
+    assert all(player["damage_per_minute"] is None for player in report["players"])
+    assert any(check["code"] == "replay_timing_compressed"
+               for check in report["quality"]["checks"])

@@ -185,6 +185,7 @@ def evaluate_quality(
     players: list[dict[str, Any]],
     inventory: dict[str, Any],
     sources: dict[str, bool] | None = None,
+    source_mode: str = "database",
 ) -> dict[str, Any]:
     """Return transparent checks; never repair a source mismatch here."""
     checks: list[dict[str, Any]] = []
@@ -201,6 +202,12 @@ def evaluate_quality(
         else "Match identifier is malformed; preserve it for source-data investigation.",
         match_id=match_id,
     ))
+    if source_mode == "replay":
+        checks.append(check(
+            "WARN", "replay_timing_compressed",
+            "Replay preserves event facts but not original match duration; "
+            "per-minute metrics are unavailable.",
+        ))
     if match is None:
         checks.append(check("FAIL", "missing_match", "No ktp_matches row exists."))
     else:
@@ -420,6 +427,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     out = [
         f"# Match analytics — {report['match_id']}", "",
         f"Quality: **{quality['status']}**", "",
+        f"Source mode: `{report.get('source_mode', 'database')}`  ",
+        f"Temporal metrics valid: "
+        f"{'yes' if report.get('temporal_metrics_valid', True) else 'no'}  ",
         f"Map: `{md(match.get('map_name'))}`  ",
         f"Halves: {md(match.get('halves_played'))}  ",
         f"Live duration: {md(match.get('duration_seconds'))} seconds  ",
@@ -497,6 +507,7 @@ def build_report(
     match_id: str,
     fixture: Path,
     sources: dict[str, bool] | None = None,
+    source_mode: str = "database",
 ) -> dict[str, Any]:
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
@@ -526,12 +537,19 @@ def build_report(
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
             )
-    quality = evaluate_quality(match_id, match, players, inventory, sources)
+    if source_mode == "replay":
+        for player in players:
+            player["damage_per_minute"] = None
+    quality = evaluate_quality(
+        match_id, match, players, inventory, sources, source_mode
+    )
     players_public = public_players(players)
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_fixture": fixture.name,
+        "source_mode": source_mode,
+        "temporal_metrics_valid": source_mode != "replay",
         "source_coverage": sources,
         "match_id": match_id,
         "match": match,
@@ -556,6 +574,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--match-id", help="required only when a dump has multiple matches")
     parser.add_argument("--output-dir", type=Path, default=REPO / "build" / "match-analytics")
     parser.add_argument("--keep-db", action="store_true", help="keep isolated DB for debugging")
+    parser.add_argument("--source-mode", choices=("database", "replay"),
+                        default="database",
+                        help="replay suppresses invalid time-normalized metrics")
     return parser.parse_args(argv)
 
 
@@ -579,7 +600,9 @@ def main(argv: list[str] | None = None) -> int:
                 f"fixture contains {len(match_ids)} matches; pass --match-id. "
                 f"Available: {match_ids}"
             )
-        report = build_report(db, match_id, args.fixture, sources)
+        report = build_report(
+            db, match_id, args.fixture, sources, args.source_mode
+        )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     json_path = args.output_dir / f"{match_id}.json"

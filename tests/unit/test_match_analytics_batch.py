@@ -34,3 +34,9 @@ def test_representatives_do_not_hide_malformed_or_valid_missing_roster():
     assert selected["malformed_or_orphan_id"] == ") (map dod_harrington"
     assert selected["missing_roster"] == "1785526923-KTP5"
     assert selected["complete:dod_anzio"] == "1785527247-KTP2"
+
+
+def test_test_match_id_is_not_labeled_malformed():
+    selected = choose_representatives([report("1786978609-TEST", halves=1)])
+    assert selected["test_match_id"] == "1786978609-TEST"
+    assert "malformed_or_orphan_id" not in selected
