@@ -8,6 +8,7 @@ rating, or publish positional data.
 
 - canonical player-match box score (`JSON` and Markdown)
 - additive Allies/Axis team summary above the player box score
+- dedicated assister/victim breakdown (no inferred weapon attribution)
 - per-player/per-weapon descriptive facts
 - capture credits, separately from unique capture events
 - explicit `PASS`, `WARN`, or `FAIL` source-quality checks

@@ -47,7 +47,7 @@ INTEGER_COLUMNS = {
     "match_halves", "roster_players", "distinct_roster_players", "frags",
     "invalid_half_frags", "damage_events", "invalid_half_damage",
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
-    "cached_player_totals", "cached_kills", "cached_deaths",
+    "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
 }
 FLOAT_COLUMNS = {
     "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
@@ -347,7 +347,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "", "## Team summary", "",
         markdown_table(report["teams"], [
             ("team_name", "Team"), ("kills", "K"), ("deaths", "D"),
-            ("assists", "A"), ("damage_dealt", "Damage"),
+            ("assists", "Assists"), ("damage_dealt", "Damage"),
             ("damage_taken", "Taken"), ("damage_differential", "+/-"),
             ("capture_credits", "Caps"), ("cap_breaks", "Breaks"),
             ("raw_accuracy", "Raw acc."),
@@ -355,7 +355,7 @@ def render_markdown(report: dict[str, Any]) -> str:
         "", "## Box score", "",
         markdown_table(report["players"], [
             ("player_name_at_match", "Player"), ("team_name", "Team"),
-            ("kills", "K"), ("deaths", "D"), ("assists", "A"),
+            ("kills", "K"), ("deaths", "D"), ("assists", "Assists"),
             ("kd_ratio", "K/D"), ("damage_dealt", "Damage"),
             ("damage_taken", "Taken"), ("damage_differential", "+/-"),
             ("headshots", "HS"), ("capture_credits", "Caps"),
@@ -364,6 +364,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
+        "", "## Assists", "",
+        markdown_table(report["assists"], [
+            ("player_name_at_match", "Assister"), ("team_name", "Team"),
+            ("victim_name_at_match", "Assisted against"),
+            ("assists", "Assists"),
+        ]),
+        "Assist weapon is not reported because the assist event does not carry "
+        "one; nearby damage is not treated as a safe substitute.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -401,6 +409,7 @@ def build_report(db: EphemeralMysql, match_id: str, fixture: Path) -> dict[str, 
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
+    assists = query_rows(db, "assist_fact.sql", match_id)
     credits = query_rows(db, "capture_credit_fact.sql", match_id)
     events = query_rows(db, "capture_event_fact.sql", match_id)
     inventory_rows = query_rows(db, "quality_inventory.sql", match_id)
@@ -417,6 +426,7 @@ def build_report(db: EphemeralMysql, match_id: str, fixture: Path) -> dict[str, 
         "quality": quality,
         "teams": team_summary(players_public),
         "players": players_public,
+        "assists": with_team_names(assists),
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
         "capture_events": events,

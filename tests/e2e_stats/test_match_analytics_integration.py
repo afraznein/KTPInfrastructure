@@ -20,6 +20,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
     assert report["quality"]["status"] == "PASS"
     assert [team["team_name"] for team in report["teams"]] == ["Allies", "Axis"]
     assert len(report["players"]) == 12
+    assert sum(row["assists"] for row in report["assists"]) == 3
     assert len(report["weapons"]) == 12
     assert len(report["capture_events"]) == 2
     assert report["positional"] == {

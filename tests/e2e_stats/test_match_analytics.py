@@ -140,6 +140,7 @@ def test_markdown_states_positional_privacy_without_player_locations():
         "quality": {"status": "PASS", "checks": []},
         "teams": analytics.team_summary(analytics.public_players(_players())),
         "players": analytics.public_players(_players()[:1]),
+        "assists": [],
         "weapons": [],
         "capture_credits": [],
         "capture_events": [],
