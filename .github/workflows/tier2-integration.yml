@@ -195,6 +195,59 @@ jobs:
           # (operators run `allure serve <downloaded-results>` locally).
           pip install pytest==9.0.3 pytest-rerunfailures==15.0 allure-pytest==2.13.5
 
+      # Match type retention spans KTPMatchHandler and KTPInfrastructure. Pin
+      # the already-reviewed preprod merge rather than testing whichever
+      # hand-staged MatchHandler binary happens to be left on the persistent
+      # runner. This is a test-mode artifact only; it never enters a fleet
+      # staging path.
+      - name: Checkout reviewed KTPMatchHandler preprod build
+        if: steps.changes.outputs.run == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/KTPMatchHandler
+          ref: 01de0750b51b20bf0d861365fafa336b81942ecd
+          path: .tier2/KTPMatchHandler
+
+      - name: Checkout reviewed KTPAMXX preprod includes
+        if: steps.changes.outputs.run == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/KTPAMXX
+          ref: dfe1c8959f754e7757e3c443671240a9ef42c8db
+          path: .tier2/KTPAMXX
+
+      - name: Build + install reviewed KTPMatchHandler test artifact
+        if: steps.changes.outputs.run == '1'
+        env:
+          TOOLCHAIN: /opt/ktp-tier2-runner/toolchain
+        run: |
+          set -euo pipefail
+          SRC="$GITHUB_WORKSPACE/.tier2/KTPMatchHandler"
+          SF="$KTP_HLDS_SERVERFILES"
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "$WORK"' EXIT
+
+          mkdir -p "$WORK/include"
+          cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
+          # Current MatchHandler consumes DODX aim-stat natives that predate
+          # the runner's compiler bundle. Overlay only the reviewed source
+          # includes; the runner's known-good native compiler remains in use.
+          cp "$GITHUB_WORKSPACE/.tier2/KTPAMXX/plugins/include/"*.inc "$WORK/include/"
+          cp "$SRC"/*.inc "$WORK/" 2>/dev/null || true
+          tr -d '\r' < "$SRC/KTPMatchHandler.sma" > "$WORK/KTPMatchHandler.sma"
+          printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' \
+            "$(git -C "$SRC" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%MZ)" \
+            > "$WORK/include/build_info.inc"
+
+          ( cd "$WORK" && \
+            LD_LIBRARY_PATH="$TOOLCHAIN" "$TOOLCHAIN/amxxpc" \
+              KTPMatchHandler.sma -i"$WORK/include" -i"$WORK" \
+              -oKTPMatchHandler.amxx KTP_TEST_MODE=1 )
+          install -D "$WORK/KTPMatchHandler.amxx" \
+            "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"
+          echo "KTP_EXPECTED_MATCHHANDLER_VERSION=0.10.161" >> "$GITHUB_ENV"
+          echo "Installed reviewed KTPMatchHandler 0.10.161 test build ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
+
       # Re-landed 2026-08-04 from the closed-unmerged PR #33. The runner's copy
       # had drifted a MONTH (staged Jul 3) because it was hand-staged and nothing
       # refreshed it -- and the belief that this workflow already recompiled was

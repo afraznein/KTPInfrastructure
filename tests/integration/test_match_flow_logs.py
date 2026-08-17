@@ -97,7 +97,7 @@ def test_7_fwd_match_start_log_event_after_advance_live(hlds):
 # ---------------------------------------------------------------------------
 
 def test_8_ktp_match_start_log_message_line(hlds):
-    """KTPMatchHandler emits `KTP_MATCH_START (matchid "...") (map "...") (half "1st")`
+    """KTPMatchHandler emits `KTP_MATCH_START ... (half "1st") (type "0")`
     via `log_message()` for the HLStatsX daemon. log_message writes to BOTH
     the AMXX L*.log file AND the engine's UDP HLStatsX address; we observe
     via L*.log.
@@ -130,9 +130,12 @@ def test_8_ktp_match_start_log_message_line(hlds):
         timeout=LOG_POLL_TIMEOUT,
         after_offset=log_baseline,
     )
-    # Production format: KTP_MATCH_START (matchid "...") (map "...") (half "1st")
+    # Match type is persisted by HLStatsX and drives fail-closed retention.
     assert "(half \"1st\")" in line, (
         f"KTP_MATCH_START line missing half=1st: {line!r}"
+    )
+    assert "(type \"0\")" in line, (
+        f"KTP_MATCH_START line missing competitive type=0: {line!r}"
     )
     # Also assert the companion log_ktp event line surfaces
     event_line = wait_for_log_event(
@@ -142,6 +145,9 @@ def test_8_ktp_match_start_log_message_line(hlds):
     )
     assert "matchid=" in event_line, (
         f"ROUNDLIVE_MATCH_START_LOG line malformed: {event_line!r}"
+    )
+    assert "type=0" in event_line, (
+        f"ROUNDLIVE_MATCH_START_LOG line missing type=0: {event_line!r}"
     )
 
 

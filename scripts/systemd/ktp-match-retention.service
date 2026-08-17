@@ -1,0 +1,14 @@
+[Unit]
+Description=Purge expired scrim, 12man, and test-match analytics
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-match-retention.py --apply --days 14
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
