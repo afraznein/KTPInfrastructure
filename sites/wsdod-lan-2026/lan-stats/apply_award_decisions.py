@@ -459,5 +459,25 @@ def main() -> int:
     return 0
 
 
+
+# --- RETIRED 2026-08-14 -------------------------------------------------------
+# This script patched awards.json sections that no longer drive anything: the
+# page reads GET /api/awards/candidates, and build_site.py trims decided,
+# positions and single_match out at publish time. Running it would edit dead
+# data and report success.
+#
+# Replaced by: award_catalog.py RETIRED plus build_awards.py, which derives every single-match figure rather than recording a corrected one.
+#
+# Kept rather than deleted because the reasoning above -- which award was cut and
+# what measurement justified it -- is still the record, and it was read while
+# building the replacement.
+_RETIRED = ("apply_award_decisions.py is retired. It patches awards.json sections that no longer "
+            "drive the page. See the note above it for what replaced it.")
+
+
+def _refuse():
+    raise SystemExit(_RETIRED)
+
 if __name__ == "__main__":
+    _refuse()
     raise SystemExit(main())

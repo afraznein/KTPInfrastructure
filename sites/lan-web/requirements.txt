@@ -6,3 +6,6 @@ itsdangerous>=2.1
 pymysql>=1.1
 jinja2>=3.1
 python-multipart>=0.0.9
+# optional: gallery thumbnails. Without it uploads still work, the grid
+# just loads originals (app/photos.py degrades rather than failing).
+pillow>=10.0

@@ -30,9 +30,17 @@ absent. The #lanboard-data block only reaches the 2026 page because build_site
 routes data blocks by its OWNED table; adding a new block id here means adding
 it there too.
 
+A plain run only expects to move the numbers. If the section's markup, prose or
+renderer on the page differs from what this script builds, the board was
+reworked in place and injecting would revert it — so the run prints that diff
+and refuses. Port the change into this file; --force is for when overwriting
+the live board is genuinely what you want.
+
     python inject_season_board.py           # rewrite the section
     python inject_season_board.py --check   # exit 1 if the page is stale
+    python inject_season_board.py --force   # overwrite a page that has drifted
 """
+import difflib
 import json
 import os
 import re
@@ -166,6 +174,11 @@ SCRIPT = """(function () {
         if (!x) return;   // injection-time verification makes this unreachable
         var row = copyRow(r);
         row.ktpr = x[0]; row.tier = x[1]; row.arch = x[2];
+        // the per-match rates are the board figures with no field behind them;
+        // they live on the row so sorting reads them like any other number, and
+        // a zero-match row would otherwise sort as Infinity
+        row.kpm = row.m ? row.k / row.m : 0;
+        row.npm = row.m ? row.nk / row.m : 0;
         out.push(row);
       });
       return out;
@@ -196,6 +209,8 @@ SCRIPT = """(function () {
         row.sk = useA ? (a && a.sk) : b.sk;
         // rates recomputed from the summed totals — never averaged
         row.kd = row.d ? row.k / row.d : row.k;
+        row.kpm = row.m ? row.k / row.m : 0;
+        row.npm = row.m ? row.nk / row.m : 0;
         row.kph = row.h ? row.k / row.h : 0;
         row.fph = row.h ? row.fl / row.h : 0;
         row.prh = row.h ? row.pr / row.h : 0;
@@ -432,18 +447,30 @@ SCRIPT = """(function () {
       c2.appendChild(dl2);
       c2.appendChild(el("p", "hint mt8", "Position: " + row.role + " (" +
         (row.rs === "inferred" ? "read from class play" : "named by staff") + ")"));
+      // Style left the board for the detail panel, and its explanation came
+      // with it — the chip row filters on these words, so they still need a
+      // place that says what they mean.
+      var sp = el("p", "hint mt8");
+      var sbtn = el("button", "sortbtn");
+      sbtn.type = "button";
+      sbtn.appendChild(el("span", "tipcue", "Style"));
+      bindTip(sbtn, styleTip, null);
+      sp.appendChild(sbtn);
+      sp.appendChild(document.createTextNode(": " + row.tier + " " + row.arch));
+      c2.appendChild(sp);
       grid.appendChild(c2);
 
       var c3 = el("div");
       c3.appendChild(el("h4", null, "The rest of the ledger"));
       var dl3 = el("dl", "kvmini");
       [["Matches", row.m + " (" + row.h + " halves)"],
-       ["Kills/half", row.kph.toFixed(1)], ["Flags/half", row.fph.toFixed(2)],
+       ["Flags/half", row.fph.toFixed(2)],
        ["Headshot kills", row.hs],
        ["Hits landed (HUD)", fmt(row.hits)], ["Headshot hits (HUD)", row.hsh],
        ["Flag caps (HUD)", row.caps], ["Objective score (HUD)", row.obj],
-       ["Grenade kills (HUD)", row.nk], ["Gun kills (HUD)", row.gk],
+       ["Gun kills (HUD)", row.gk],
        ["Time prone (HUD)", mmss(row.pr)],
+       ["Prone per half (HUD)", row.prh === undefined ? "—" : mmss(row.prh)],
        ["Times went prone (HUD)", row.pre === undefined ? "\\u2014" : row.pre],
        ["Average prone (HUD)", row.pre ? (row.pr / row.pre).toFixed(1) + "s" : "\\u2014"]
       ].forEach(function (p) {
@@ -482,34 +509,44 @@ SCRIPT = """(function () {
 
     // ---- column model ----
     // Uniform across the three views, so the grid never reshapes on a view
-    // switch. A map sub-filter still drops Streak/Breaks/detail — the per-map
-    // data never carried them (same behaviour the old day boards had).
+    // switch. A map sub-filter drops every column the per-map rows never
+    // carried — the rates, Nades, Breaks and detail (same behaviour the old day
+    // boards had).
+    //
+    // Style, Streak and Prone sit in the detail panel rather than here, and
+    // matches played stayed there: the board is capped by what fits without a
+    // sideways scrollbar at 1280, measured against the widest monospace a
+    // visitor might resolve --mono to. A column added is a column displaced.
     function columns(isMap) {
       var cols = [
         { key: "rank",   label: "#",       type: "rank" },
         { key: "player", label: "Player",  type: "alpha" },
         { key: "role",   label: "Pos",     type: "role" },
         { key: "ktpr",   label: "KTPR",    type: "num", tip: true },
-        { key: "style",  label: "Style",   type: "style", stip: true },
         { key: "kd",     label: "K/D",     type: "num" },
-        { key: "k",      label: "Kills",   type: "num" },
-        { key: "d",      label: "Deaths",  type: "num" },
-        { key: "fl",     label: "Flags",   type: "num" },
-        { key: "hs",     label: "HS",      type: "num",
-          hint: "headshot kills, and their share of that player's kills" },
-        { key: "as",     label: "Assists", type: "num", hud: true },
-        { key: "dm",     label: "Damage",  type: "num" }
+        { key: "k",      label: "Kills",   type: "num" }
       ];
       if (!isMap) {
-        cols.push({ key: "st", label: "Streak", type: "num",
-                    hint: "longest run of kills without dying, from the match record" },
-                  { key: "cb", label: "Breaks", type: "num", hud: true,
-                    hint: "enemy captures broken up" });
+        cols.push({ key: "kpm", label: "K/Match", type: "num",
+                    hint: "kills per match played" },
+                  { key: "kph", label: "K/Half", type: "num",
+                    hint: "kills per half played" });
       }
-      cols.push({ key: "pr", label: "Prone", type: "num", hud: true,
-                  hint: "total time spent on the deck, m:ss \\u2014 each go-prone timed "
-                      + "until the player stood up or died" });
-      if (!isMap) cols.push({ key: "detail", label: "", type: null });
+      cols.push({ key: "d",  label: "Deaths",  type: "num" },
+                { key: "fl", label: "Flags",   type: "num" },
+                { key: "hs", label: "HS",      type: "num",
+                  hint: "headshot kills, and their share of that player's kills" },
+                { key: "as", label: "Assists", type: "num", hud: true },
+                { key: "dm", label: "Damage",  type: "num" });
+      if (!isMap) {
+        cols.push({ key: "nk",  label: "Nades",   type: "num", hud: true,
+                    hint: "kills with a grenade" },
+                  { key: "npm", label: "N/Match", type: "num", hud: true,
+                    hint: "grenade kills per match played" },
+                  { key: "cb",  label: "Breaks",  type: "num", hud: true,
+                    hint: "enemy captures broken up" },
+                  { key: "detail", label: "", type: null });
+      }
       return cols;
     }
 
@@ -522,9 +559,6 @@ SCRIPT = """(function () {
         if (b.ktpr !== a.ktpr) return b.ktpr - a.ktpr;
         return a.n.localeCompare(b.n);
       };
-    }
-    function styleOrd(r) {
-      return TIER_ORDER.indexOf(r.tier) * 10 + ARCH_ORDER.indexOf(r.arch);
     }
     // standings under the current ranking metric, independent of display order —
     // reversing a sort must not move the medals
@@ -544,23 +578,17 @@ SCRIPT = """(function () {
           var d = ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role);
           return d !== 0 ? d : b.ktpr - a.ktpr;
         });
-      } else if (key === "style") {
-        out.sort(function (a, b) {
-          var d = styleOrd(a) - styleOrd(b);
-          return d !== 0 ? d : b.ktpr - a.ktpr;
-        });
       } else if (key === "rank") {
         out.sort(byNumDesc(state.rankKey));
       } else {
         out.sort(byNumDesc(key));
       }
-      var canonicalIsAsc = (key === "player" || key === "role" ||
-                            key === "style" || key === "rank");
+      var canonicalIsAsc = (key === "player" || key === "role" || key === "rank");
       if (canonicalIsAsc ? state.sortDir === "desc" : state.sortDir === "asc") out.reverse();
       return out;
     }
     function clickSort(col) {
-      var firstDir = { num: "desc", alpha: "asc", role: "asc", style: "asc", rank: "asc" };
+      var firstDir = { num: "desc", alpha: "asc", role: "asc", rank: "asc" };
       if (state.sortKey === col.key) {
         state.sortDir = state.sortDir === "desc" ? "asc" : "desc";
       } else {
@@ -675,17 +703,16 @@ SCRIPT = """(function () {
         var th = el("th", col.type === "num" ? "r" : null);
         if (!col.type) { htr.appendChild(th); return; }
         var btn = el("button", "sortbtn");
-        btn.appendChild(el("span", (col.tip || col.stip) ? "tipcue" : null, col.label));
+        btn.appendChild(el("span", col.tip ? "tipcue" : null, col.label));
         if (col.hud) btn.appendChild(el("span", "srcbadge", "HUD"));
         if (state.sortKey === col.key) {
           th.setAttribute("aria-sort", state.sortDir === "desc" ? "descending" : "ascending");
           btn.appendChild(el("span", "dir", state.sortDir === "desc" ? "\\u25bc" : "\\u25b2"));
         }
-        var what = { rank: "rank", alpha: "player name", role: "position", style: "style" }[col.type] || col.label;
+        var what = { rank: "rank", alpha: "player name", role: "position" }[col.type] || col.label;
         btn.title = "Sort by " + what + (col.hint ? " (" + col.hint + ")" : "");
         btn.addEventListener("click", function () { clickSort(col); });
         if (col.tip) bindTip(btn, ktprTip, fillKtprTip);
-        if (col.stip) bindTip(btn, styleTip, null);
         th.appendChild(btn);
         htr.appendChild(th);
       });
@@ -717,9 +744,16 @@ SCRIPT = """(function () {
         tr.appendChild(tdp);
         var tdr = el("td"); tdr.appendChild(rolePill(row)); tr.appendChild(tdr);
         var tdk = el("td"); tdk.appendChild(ktprCell(row.ktpr, maxK)); tr.appendChild(tdk);
-        tr.appendChild(el("td", null, row.tier + " " + row.arch));
         tr.appendChild(el("td", "r", row.kd.toFixed(2)));
         tr.appendChild(el("td", "r", String(row.k)));
+        if (!isMap) {
+          var tdKpm = el("td", "r", row.kpm.toFixed(1));
+          tdKpm.title = row.k + " kills over " + row.m + " matches";
+          tr.appendChild(tdKpm);
+          var tdKph = el("td", "r", row.kph.toFixed(1));
+          tdKph.title = row.k + " kills over " + row.h + " halves";
+          tr.appendChild(tdKph);
+        }
         tr.appendChild(el("td", "r", String(row.d)));
         tr.appendChild(el("td", "r", String(row.fl)));
         // count with its share of that player's kills — 40 headshots off 300
@@ -738,17 +772,11 @@ SCRIPT = """(function () {
         tr.appendChild(el("td", "r", String(row.as)));
         tr.appendChild(el("td", "r", fmt(row.dm)));
         if (!isMap) {
-          tr.appendChild(el("td", "r", String(row.st)));
+          tr.appendChild(el("td", "r", String(row.nk)));
+          var tdNpm = el("td", "r", row.npm.toFixed(1));
+          tdNpm.title = row.nk + " grenade kills over " + row.m + " matches";
+          tr.appendChild(tdNpm);
           tr.appendChild(el("td", "r", String(row.cb)));
-        }
-        var tdPr = el("td", "r", mmss(row.pr));
-        if (row.pre) {
-          tdPr.title = row.pre + " times prone, averaging "
-            + (row.pr / row.pre).toFixed(1) + "s each"
-            + (row.prh ? " \\u00b7 " + mmss(row.prh) + " per half" : "");
-        }
-        tr.appendChild(tdPr);
-        if (!isMap) {
           var tdd = el("td", "r");
           var btn = el("button", "detailbtn", "detail");
           btn.setAttribute("aria-expanded", "false");
@@ -885,6 +913,13 @@ def render(board: dict, names: dict) -> str:
     <div class="sec-head"><h2>Player stats</h2>
       <span class="meta">HLStatsX + broadcast HUD &middot; tournament (.ktp) matches only &middot; one grid, three views</span></div>
 
+    <!-- Same voice as the Awards placeholder (#awards-api's is_staff===false,
+         published===false branch) -- the two gated sections should read as
+         one system, not two authors. -->
+    <p class="stats-placeholder hint">Stats are being compiled. Nothing is
+      public yet — check back once staff have published the board.</p>
+
+    <div class="stats-body">
     <div class="note-box">
       <b>One formula, three fields.</b> Saturday, Sunday and the full weekend are
       views of one board, and every view is scored by the formula KTPR actually
@@ -939,7 +974,7 @@ def render(board: dict, names: dict) -> str:
     </div>
 
     <details class="panel kt-about">
-      <summary>About KTPR &mdash; an experiment, and how it is worked out</summary>
+      <summary>About KTPR &mdash; an experiment, and how its worked out</summary>
       <div class="body">
         <p><b>Philly LAN 2026 is running an experimental KTPR.</b> It leans on
         stats that only exist because the broadcast HUD was watching &mdash;
@@ -1064,9 +1099,9 @@ field counts as pushing rather than failing:</span>
       Heavy, 3rd, Sniper &mdash; finalized with staff after the event (dashed pill =
       read from class play; solid = named by staff). Click any column header to
       sort; rank, and the medal colours with it, recompute within whatever view,
-      filter and sort you're looking at. Hover <b>KTPR</b> or <b>Style</b> for what
-      the numbers and labels mean. Click <b>detail</b> on any row for hitboxes,
-      class spawns and the rest of the ledger. Clan tags are stripped for display
+      filter and sort you're looking at. Hover <b>KTPR</b> for what the rating
+      means. Click <b>detail</b> on any row for hitboxes, class spawns, style,
+      the longest streak, prone time and the rest of the ledger. Clan tags are stripped for display
       &mdash; the full in-game name is on each player cell's title, and a player
       who re-tagged between days appears under the name they played that day.</p>
     <p class="status-foot"><b>Counting basis:</b> kills, deaths, K/D, flags, damage,
@@ -1074,7 +1109,7 @@ field counts as pushing rather than failing:</span>
       scoped to match time. The streak is rebuilt from the frag log rather than read off
       the HUD, which reported it short whenever a run was still going at its last save.
       Everything marked <span class="srcbadge">HUD</span> &mdash; assists, capture
-      breaks, prone, and the HUD rows in the detail panel &mdash; comes from the
+      breaks, grenade kills, and the HUD rows in the detail panel &mdash; comes from the
       broadcast HUD's periodic save, and is pulled in two directions: the save runs
       whenever the server is up, so <b>warmup and knife rounds can land in the
       total</b>, while its final write comes before a half ends, so the tail of each
@@ -1085,7 +1120,8 @@ field counts as pushing rather than failing:</span>
     <p class="status-foot"><b>Map boards</b> (a map chip on a day view) are rated
       against that day's baselines with the breaks term omitted &mdash; breaks aren't
       recorded per map &mdash; and the remaining five weights renormalized; they also
-      drop the streak/breaks columns and the detail panel, which are day-level.
+      drop the per-match and per-half rates, grenade kills, breaks and the detail
+      panel, none of which the per-map rows carry.
       <b>Weights</b> kill_exp {k["kill_exp"]} &middot; kills {k["tw_kill"]} &middot;
       K/D {k["tw_kd"]} &middot; assists {k["tw_assist"]} &middot;
       damage {k["tw_damage"]} &middot; flags {k["tw_flag"]} &middot;
@@ -1096,9 +1132,45 @@ field counts as pushing rather than failing:</span>
     <script>
 {SCRIPT}
     </script>
+    </div>
   </section>
 {END}
 """
+
+
+BLOCK_RE = re.escape(START) + r".*?" + re.escape(END)
+PAYLOAD_RE = re.compile(
+    r'<script id="lanboard-data" type="application/json">.*?</script>', re.S)
+
+
+def page_newline(path: str) -> str:
+    """The file's own line ending. Writing "\\n" into a CRLF page rewrites every
+    line, so the real change lands inside a whole-file conflict."""
+    raw = open(path, "rb").read()
+    crlf = raw.count(b"\r\n")
+    return "\r\n" if crlf > raw.count(b"\n") - crlf else "\n"
+
+
+def structure(block: str) -> str:
+    """The block minus its data payload — markup, prose and renderer."""
+    return PAYLOAD_RE.sub("<lanboard-data/>", block)
+
+
+def drift(page: str, section: str) -> list:
+    """Where the page's board and this script's board disagree on structure.
+
+    A run is meant to move the numbers. Anything else means the board was
+    reworked on the page and injecting would silently revert that work.
+    """
+    cur = re.search(BLOCK_RE, page, re.S)
+    gen = re.search(BLOCK_RE, section, re.S)
+    if not cur or not gen:
+        return []
+    return list(difflib.unified_diff(
+        structure(cur.group(0)).splitlines(),
+        structure(gen.group(0)).splitlines(),
+        fromfile="prototype.html (live)", tofile="inject_season_board.py (would write)",
+        lineterm="", n=1))
 
 
 def main() -> int:
@@ -1111,8 +1183,7 @@ def main() -> int:
     if START in page:
         # lambda replacement: the section carries backslashes and "\\g"-like
         # text a plain re.sub replacement string would mangle
-        new = re.sub(re.escape(START) + r".*?" + re.escape(END) + r"\n?",
-                     lambda m: section, page, flags=re.S)
+        new = re.sub(BLOCK_RE + r"\n?", lambda m: section, page, flags=re.S)
     else:
         if ANCHOR not in page:
             print(f"anchor not found in {PAGE}: {ANCHOR}")
@@ -1129,7 +1200,26 @@ def main() -> int:
     if new == page:
         print("no change")
         return 0
-    with open(PAGE, "w", encoding="utf-8", newline="\n") as f:
+
+    d = drift(page, section)
+    if d:
+        adds = sum(1 for x in d if x[0] == "+" and not x.startswith("+++"))
+        dels = sum(1 for x in d if x[0] == "-" and not x.startswith("---"))
+        bar = "!" * 76
+        print(bar)
+        print("DRIFT — the board on the page is not the board this script renders.")
+        print(f"{dels} line(s) of the live board would be replaced by {adds} from here.")
+        print("Everything below that you did not ask for is shipped work about to go.")
+        print(bar)
+        print("\n".join(d[:120]))
+        if len(d) > 120:
+            print(f"... {len(d) - 120} more diff lines")
+        if "--force" not in sys.argv:
+            print("\nREFUSING. Port the page's changes into this script, or use --force.")
+            return 1
+        print("\n--force given — overwriting the live board.")
+
+    with open(PAGE, "w", encoding="utf-8", newline=page_newline(PAGE)) as f:
         f.write(new)
     n = len(board["views"]["weekend"]["players"])
     print(f"injected unified stats board ({n} players, 3 views) into {PAGE}")

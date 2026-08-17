@@ -1,0 +1,182 @@
+{
+ "generated_for": "Philly LAN 2026",
+ "passed": false,
+ "denominator": "hlstats_Events_Statsme shots for handgrenade_ex, stickgrenade_ex",
+ "numerator": "hlstats_Events_Frags weapon in grenade, grenade2, self-kills excluded",
+ "matches": 56,
+ "cells": 111,
+ "violations": 22,
+ "violation_detail": [
+  {
+   "day": "08-01",
+   "steam_id": "1:64041420",
+   "name": "\u00df\u2113\u03c5\u2020\u043d | nicholson",
+   "kills": 60,
+   "throws": 12
+  },
+  {
+   "day": "08-01",
+   "steam_id": "1:955338590",
+   "name": "uR[TM]* Kevs Dolmetscher",
+   "kills": 42,
+   "throws": 0
+  },
+  {
+   "day": "08-02",
+   "steam_id": "1:18676541",
+   "name": "NoSo ! AlleyWayHandies",
+   "kills": 42,
+   "throws": 0
+  },
+  {
+   "day": "08-01",
+   "steam_id": "1:18676541",
+   "name": "NoSo ! AlleyWayHandies",
+   "kills": 29,
+   "throws": 4
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:281787",
+   "name": "dicE[: :]warchyld[dd]",
+   "kills": 70,
+   "throws": 46
+  },
+  {
+   "day": "08-01",
+   "steam_id": "1:25130574",
+   "name": "uR[TM]* zamp0lit",
+   "kills": 24,
+   "throws": 0
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:72967",
+   "name": "b.   hey hi <3 dustbin",
+   "kills": 28,
+   "throws": 6
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:2996359",
+   "name": "iH.s i k <3 n a t",
+   "kills": 88,
+   "throws": 71
+  },
+  {
+   "day": "08-02",
+   "steam_id": "1:64041420",
+   "name": "\u00df\u2113\u03c5\u2020\u043d | nicholson",
+   "kills": 45,
+   "throws": 28
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:2221518",
+   "name": "[$] hypnotik_ 0_x",
+   "kills": 26,
+   "throws": 10
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:7735372",
+   "name": "uR[TM]* Ke:>^1.de",
+   "kills": 56,
+   "throws": 41
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:2221518",
+   "name": "[$] hypnotik_ 0_x",
+   "kills": 20,
+   "throws": 6
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:4492",
+   "name": "****JTM   sp00kyskull <3 s0v",
+   "kills": 44,
+   "throws": 30
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:281787",
+   "name": "dicE[: :]warchyld[dd]",
+   "kills": 55,
+   "throws": 42
+  },
+  {
+   "day": "08-02",
+   "steam_id": "1:955338590",
+   "name": "uR[TM]* Kevs Dolmetscher",
+   "kills": 13,
+   "throws": 0
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:16983",
+   "name": "iH.vertex",
+   "kills": 88,
+   "throws": 77
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:6291720",
+   "name": "uR[TM]* Jee \uff0322e\uff03minou",
+   "kills": 9,
+   "throws": 0
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:32793027",
+   "name": "[bb] cK- \uff03phillylan2026",
+   "kills": 88,
+   "throws": 80
+  },
+  {
+   "day": "08-02",
+   "steam_id": "1:25130574",
+   "name": "uR[TM]* zamp0lit",
+   "kills": 4,
+   "throws": 0
+  },
+  {
+   "day": "08-02",
+   "steam_id": "0:749715",
+   "name": "b.   \u0442\u03c9\u1f76\ufb90\u0442",
+   "kills": 10,
+   "throws": 7
+  },
+  {
+   "day": "08-01",
+   "steam_id": "0:6291720",
+   "name": "uR[TM]* Jee \uff0322e\uff03minou",
+   "kills": 15,
+   "throws": 13
+  },
+  {
+   "day": "08-02",
+   "steam_id": "1:777438",
+   "name": "[$] tokih",
+   "kills": 2,
+   "throws": 0
+  }
+ ],
+ "throws": 6316,
+ "kills": 3891,
+ "statsme_kills": 4125,
+ "event_percent": 61.61,
+ "per_player_day_rate": {
+  "n": 104,
+  "min": 0.0,
+  "median": 0.534,
+  "max": 7.25
+ },
+ "zero_throw_players": [
+  "0:6291720",
+  "1:18676541",
+  "1:25130574",
+  "1:777438",
+  "1:955338590"
+ ]
+}

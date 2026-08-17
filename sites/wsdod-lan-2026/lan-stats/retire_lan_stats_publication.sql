@@ -1,0 +1,71 @@
+-- UNAPPLIED. Nothing here has been run against a live database, and this file is
+-- not in sites/lan-web/migrations/ on purpose: migrate.py runs that directory on
+-- every deploy, and this DDL targets a different database entirely (hlstatsx_lan,
+-- not ktp_lan). Run it by hand, in an idle window, or never -- an unread table
+-- costs nothing to leave in place.
+--
+-- WHAT THIS RETIRES
+--
+-- lan_stats_publication was documented as the stats publication gate. It never
+-- was one. The gate is lan_settings.stats_published in ktp_lan, flipped from
+-- /admin/publish. Three independent facts, each verified read-only on
+-- 2026-08-15 against the live data server with paired positive and negative
+-- controls:
+--
+--   1. It exists in exactly one schema, hlstatsx_lan. (Control: a nonsense table
+--      name returned nothing; lan_settings returned ktp_lan. A probe that answers
+--      PRESENT for everything is broken rather than informative.)
+--   2. It has never been used -- one row, scope 'all', published_by and
+--      published_at both still NULL.
+--   3. lan-web cannot reach it. ktp_lan@127.0.0.1 holds USAGE ON *.* plus ALL ON
+--      ktp_lan.* and nothing else, so adopting this table would have been a
+--      cross-database grant, not a code change. (Control: the one schema-level
+--      grant that user does have is ktp_lan.)
+--
+-- And the stored value points the wrong way: this table says published=0 while
+-- the live gate says stats_published=1. Wiring the dead one blanks the stats
+-- board and looks deliberate rather than broken -- which is the whole reason the
+-- DDL came out of hud_schema.sql, where a fresh LAN would have inherited it.
+--
+-- WHAT REPLACES IT, WHEN PER-SCOPE GATING LANDS
+--
+-- The idea was sound and only the address was wrong: publication per scope
+-- ('all' | a match_id | a date), defaulting to unpublished, because a page that
+-- defaults to visible eventually leaks something nobody meant to release. Build
+-- that in ktp_lan as a lan-web migration, and make lan_settings.stats_published
+-- its scope='all' row so the two cannot disagree. Do not grant lan-web access to
+-- hlstatsx_lan to revive this one.
+
+-- ---------------------------------------------------------------- VERIFY FIRST
+-- Expect: one row, published_by and published_at NULL. Any other shape means
+-- something started writing here after 2026-08-15 -- stop and find the writer.
+--   SELECT scope, published, published_by, published_at FROM hlstatsx_lan.lan_stats_publication;
+--
+-- Expect: empty. A grant here means an app is reading across databases.
+--   SELECT grantee, table_schema FROM information_schema.schema_privileges
+--    WHERE table_schema LIKE 'hlstatsx%' AND grantee LIKE '%ktp_lan%';
+--
+-- Expect: non-empty, and this is the control -- a query returning nothing for
+-- both is a broken probe, not a clean result.
+--   SELECT grantee, table_schema FROM information_schema.schema_privileges
+--    WHERE grantee LIKE '%ktp_lan%';
+
+-- ------------------------------------------------------------------- ROLLBACK
+-- Take this before the drop; it is the whole rollback, since the table is five
+-- columns and one row.
+--   mysqldump --no-tablespaces hlstatsx_lan lan_stats_publication \
+--     > /root/lan_stats_publication-pre-drop-$(date +%Y%m%d).sql
+-- (--no-tablespaces is not optional: without PROCESS privilege mysqldump errors
+-- on tablespaces, keeps going, and still writes "-- Dump completed".)
+--
+-- Restoring is that file replayed into hlstatsx_lan. Nothing reads the table, so
+-- a restore has no other side effect.
+
+-- ------------------------------------------------------------------ THE CHANGE
+DROP TABLE IF EXISTS hlstatsx_lan.lan_stats_publication;
+
+-- ----------------------------------------------------------------- VERIFY AFTER
+-- Expect: empty for the dropped table, and one row for lan_settings. Both halves
+-- matter -- the second is what proves the query works.
+--   SELECT table_schema, table_name FROM information_schema.tables
+--    WHERE table_name IN ('lan_stats_publication', 'lan_settings');
