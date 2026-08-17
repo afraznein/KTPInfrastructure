@@ -1,0 +1,380 @@
+# KTP Lane B — stats-capture end-to-end (bots + ephemeral MySQL, containerised)
+#
+# Runs on a GITHUB-HOSTED runner, deliberately, not the Tier 2 self-hosted one:
+#
+#   - The Tier 2 runner is on the data server, which also runs production
+#     HLStatsX, and is deliberately Docker-free (TEST_INFRASTRUCTURE_PLAN).
+#   - That box keeps a serverfiles tree that must MATCH THE LIVE FLEET, with a
+#     drift tripwire and a manual-only re-sync. The SHA-pinned new_bot binary is
+#     built only into this job's disposable image, never into that tree.
+#   - GH-hosted has Docker, has no production anything, and cannot reach the
+#     fleet. publish-base-image.yml already builds this 2 GB image here and
+#     smoke-callable.yml already boots the runtime container here, so the shape
+#     is proven.
+#
+# NOT a required status check, and no `pull_request` trigger. Bot AI is
+# non-deterministic; a lane that can flake must never gate a merge, or the
+# result is the "disable the integration test to merge the urgent fix"
+# antipattern TEST_INFRASTRUCTURE_PLAN already warns about. Lane A
+# (tier2-integration.yml) is the gate.
+#
+# ## What this proves, and what it does not
+#
+# The image is a RECONSTRUCTION of the fleet built from repo refs — the real
+# fleet is bare metal with artifacts staged as `.new` and swapped at the 03:00
+# ET restart (docs/DEPLOYING.md). Green here means "this branch's code works
+# against this branch's stack", which is what you want when testing a branch.
+# It does NOT mean "works against what is currently deployed". That question
+# still belongs to the Tier 2 runner's fleet-matching tree.
+#
+# A workflow that exists only on preprod cannot be dispatched through GitHub's
+# UI/API because workflow_dispatch registration comes from the default branch.
+# The lane-b-preprod-* tag trigger is the preprod-safe manual run mechanism:
+# tag the reviewed preprod commit, push the tag, and this file runs from that
+# commit while every repository ref under test remains explicitly preprod.
+
+name: Lane B Stats E2E
+
+on:
+  workflow_call:
+    inputs:
+      amxx_ref:
+        description: KTPAMXX ref under test
+        required: true
+        type: string
+      daemon_ref:
+        description: KTPHLStatsX ref under test
+        required: true
+        type: string
+      lane:
+        description: "'corpus' or 'full'"
+        required: false
+        type: string
+        default: corpus
+      infrastructure_ref:
+        description: KTPInfrastructure ref containing the reusable harness
+        required: false
+        type: string
+        default: preprod
+  workflow_dispatch:
+    inputs:
+      amxx_ref:
+        description: 'KTPAMXX ref under test (e.g. feat/stats-positions)'
+        required: true
+        type: string
+        default: 'preprod'
+      daemon_ref:
+        description: 'KTPHLStatsX ref under test (e.g. feat/seed-cap-break-action)'
+        required: true
+        type: string
+        default: 'preprod'
+      lane:
+        description: >-
+          'full' = 12 bots (6v6) + server + database + assertion suite. 'corpus' =
+          deterministic committed-log replay and is the merge gate.
+        required: false
+        type: choice
+        options: [full, corpus]
+        default: full
+      map_name:
+        description: 'Map to run bots on'
+        required: false
+        type: string
+        default: 'dod_anzio'
+      play_seconds:
+        description: 'How long to let the bots play'
+        required: false
+        type: string
+        default: '240'
+  push:
+    # Manual preprod-only execution. Push events evaluate the workflow in the
+    # tagged commit, so no workflow definition is needed on main.
+    tags: ['lane-b-preprod-*']
+  schedule:
+    # 06:00 UTC. Deliberately between publish-base-image (04:30 UTC — so we
+    # pull a fresh base) and Tier 2's nightly (09:00 UTC — so two hlds-booting
+    # suites never overlap).
+    - cron: '0 6 * * *'
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  # One Lane B at a time. Two concurrent runs would each boot hlds and mariadbd
+  # in their own container, which is fine, but serialising keeps the report
+  # artifact unambiguous.
+  group: lane-b-stats-e2e
+  cancel-in-progress: false
+
+jobs:
+  lane-b:
+    name: Lane B (${{ inputs.lane || 'full' }}, ${{ matrix.target_ref }}, run ${{ matrix.run_index }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      # Scheduled coverage is intentionally preprod-only until the production
+      # (main) leg is explicitly enabled. Called/manual runs retain their
+      # requested infrastructure ref.
+      matrix:
+        target_ref: ${{ (github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/lane-b-preprod-')) && fromJSON('["preprod"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
+        # A series tag fans out five identical disposable jobs. Normal nightly,
+        # manual, and reusable invocations remain one job. The run index is
+        # part of the artifact name so upload-artifact v4 never collides.
+        run_index: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') && fromJSON('[1,2,3,4,5]') || fromJSON('[1]') }}
+
+    env:
+      AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
+      DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
+      LANE: ${{ inputs.lane || 'full' }}
+      MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
+      PLAY_SECONDS: ${{ inputs.play_seconds || '240' }}
+      BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
+
+    steps:
+      - name: Checkout KTPInfrastructure
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/KTPInfrastructure
+          ref: ${{ matrix.target_ref }}
+
+      # Full history: the build step resolves refs with `git show <ref>:<path>`,
+      # so a shallow clone that lacks the branch tip cannot produce artifacts.
+      - name: Checkout KTPAMXX at the ref under test
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/KTPAMXX
+          ref: ${{ env.AMXX_REF }}
+          path: KTPAMXX
+          fetch-depth: 0
+          token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      - name: Checkout KTPHLStatsX at the ref under test
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/KTPHLStatsX
+          ref: ${{ env.DAEMON_REF }}
+          path: KTPHLStatsX
+          fetch-depth: 0
+          token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      - name: Checkout KTPMatchHandler for the test-mode match driver
+        if: ${{ env.LANE == 'full' }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository_owner }}/KTPMatchHandler
+          ref: preprod
+          path: KTPMatchHandler
+          token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      # AMXX normally ignores fake clients in extension mode. This test-only
+      # core build makes the 12 in-container bots visible to the stats plugin.
+      - name: Build/restore Lane B ktpamx
+        if: ${{ env.LANE == 'full' }}
+        id: ktpamx
+        uses: ./.github/actions/build-ktpamx-laneb
+        with:
+          ref: preprod
+          out: build/lane-b-artifacts/ktpamx_i386.so
+          token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull runtime base image
+        run: docker pull "$BASE_IMAGE"
+
+      - name: Build Lane B image
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg "BASE_IMAGE=${BASE_IMAGE}" \
+            -t ktp-lane-b:ci \
+            -f build/lane-b/Dockerfile \
+            build/lane-b
+
+      # Artifacts come out of the COMMITS, not the working trees — see
+      # tests/e2e_stats/artifacts.py. The plugin is compiled by amxxpc inside
+      # the image, the same way smoke-callable.yml does it.
+      - name: Build artifact set from the refs under test
+        run: |
+          set -euo pipefail
+          mkdir -p build/lane-b-artifacts
+          if [ "$LANE" = "corpus" ]; then
+            # Corpus replay exercises committed logs through the daemon. The
+            # current preprod KTPAMXX ref may not yet contain stats capture,
+            # so do not make an unrelated plugin extraction a prerequisite.
+            PLUGIN_ARGS="--no-plugin"
+          else
+            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /opt/hlds/dod/addons/ktpamx/scripting/include --define KTP_LANE_B_BOT_WEAPONSTATS=1"
+          fi
+          docker run --rm \
+            -v "${PWD}/KTPAMXX:/repos/KTPAMXX:ro" \
+            -v "${PWD}/KTPHLStatsX:/repos/KTPHLStatsX:ro" \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build" \
+            -w /work \
+            ktp-lane-b:ci \
+            bash -lc "
+              set -euo pipefail
+              python3 scripts/build_stats_lane_artifacts.py \
+                --amxx-repo   /repos/KTPAMXX      --amxx-ref   '${AMXX_REF}' \
+                --daemon-repo /repos/KTPHLStatsX  --daemon-ref '${DAEMON_REF}' \
+                ${PLUGIN_ARGS} \
+                --out /work/build/artifacts
+            "
+
+      - name: Assemble full-match daemon and base schema
+        if: ${{ env.LANE == 'full' }}
+        run: |
+          set -euo pipefail
+          bash scripts/assemble_daemon_tree.sh \
+            KTPHLStatsX build/lane-b-artifacts/daemon
+          awk '
+            /^-- Dumping data for table / { in_data=1; next }
+            in_data && /^UNLOCK TABLES;/ { in_data=0; next }
+            !in_data { print }
+          ' tests/e2e_stats/fixtures/regression-2026-08-13-match1/hlstatsx-fixture.sql \
+            > build/lane-b-artifacts/base-schema.sql
+          test "$(grep -c '^INSERT' build/lane-b-artifacts/base-schema.sql || true)" -eq 0
+          test "$(grep -c '^CREATE TABLE' build/lane-b-artifacts/base-schema.sql)" -gt 0
+
+      - name: Lane B harness unit tests
+        if: ${{ env.LANE == 'full' }}
+        run: |
+          docker run --rm --network none \
+            -v "${PWD}/.github:/work/.github:ro" \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/scripts:/work/scripts:ro" \
+            -w /work ktp-lane-b:ci \
+            python3 -m pytest tests/e2e_stats -q
+
+      - name: Run full synthetic 6v6 match with 12 bots
+        if: ${{ env.LANE == 'full' }}
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/config:/work/config:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build" \
+            -v "${PWD}/KTPMatchHandler:/src/KTPMatchHandler:ro" \
+            -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
+            -w /work ktp-lane-b:ci \
+            python3 -u scripts/lane_b_e2e.py \
+              --ktpamx-so /work/build/ktpamx_i386.so \
+              --dodx-so /work/build/dodx_ktp_i386.so \
+              --plugin /work/build/artifacts/stats_logging.amxx \
+              --config-dir /work/config/local \
+              --hlstats /work/build/daemon/hlstats.pl \
+              --schema /work/build/base-schema.sql \
+                       /work/build/artifacts/sql/migrate_005_frag_context_columns.sql \
+                       /work/build/artifacts/sql/migrate_006_damage_ledger.sql \
+                       /work/build/artifacts/sql/migrate_007_break_context.sql \
+                       /work/build/artifacts/sql/migrate_008_position_samples.sql \
+                       /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
+                       /work/build/artifacts/sql/migrate_010_flag_captures.sql \
+                       /work/build/artifacts/sql/migrate_011_match_player_identity_width.sql \
+                       /work/build/artifacts/sql/migrate_012_frag_context_correlation.sql \
+                       /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
+              --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
+                     /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
+                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
+              --map "$MAP_NAME" --per-team 6 --play-seconds "$PLAY_SECONDS" \
+              --matchhandler-src /src/KTPMatchHandler \
+              --matchhandler-includes /src/KTPAMXX/plugins/include \
+              --log /work/build/lane-b-e2e.log \
+              --out /work/build/lane-b-e2e.json \
+              --summary-out /work/build/lane-b-summary.md
+
+      - name: Publish match summary
+        if: ${{ always() && env.LANE == 'full' }}
+        run: |
+          if [ -f build/lane-b-artifacts/lane-b-summary.md ]; then
+            cat build/lane-b-artifacts/lane-b-summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '## Lane B did not produce a match summary' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Replay deterministic stats corpus
+        if: ${{ env.LANE == 'corpus' }}
+        run: |
+          set -euo pipefail
+          # KTPHLStatsX is intentionally delta-only. Compose its three fork
+          # files over pinned upstream libraries before replaying; production
+          # has those libraries in /opt/hlstatsx already, a fresh CI container
+          # does not.
+          bash scripts/assemble_daemon_tree.sh \
+            KTPHLStatsX \
+            build/lane-b-artifacts/daemon
+          # The committed regression fixture is a production-derived dump.
+          # Strip every mysqldump data block, leaving DDL only, so the KTP
+          # overlay migrations have their stock HLStatsX base tables. Refuse
+          # to proceed if an INSERT survives the extraction.
+          awk '
+            /^-- Dumping data for table / { in_data=1; next }
+            in_data && /^UNLOCK TABLES;/ { in_data=0; next }
+            !in_data { print }
+          ' tests/e2e_stats/fixtures/regression-2026-08-13-match1/hlstatsx-fixture.sql \
+            > build/lane-b-artifacts/base-schema.sql
+          test "$(grep -c '^INSERT' build/lane-b-artifacts/base-schema.sql || true)" -eq 0
+          test "$(grep -c '^CREATE TABLE' build/lane-b-artifacts/base-schema.sql)" -gt 0
+          set +e
+          docker run --rm \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build:ro" \
+            -w /work \
+            ktp-lane-b:ci \
+            python3 scripts/replay_corpus.py \
+              --hlstats /work/build/daemon/hlstats.pl \
+              --schema /work/build/base-schema.sql \
+                       /work/build/artifacts/sql/ktp_schema.sql \
+                       /work/build/artifacts/sql/migrate_005_frag_context_columns.sql \
+                       /work/build/artifacts/sql/migrate_006_damage_ledger.sql \
+                       /work/build/artifacts/sql/migrate_007_break_context.sql \
+                       /work/build/artifacts/sql/migrate_008_position_samples.sql \
+                       /work/build/artifacts/sql/migrate_009_disable_connect_announcements.sql \
+                       /work/build/artifacts/sql/migrate_010_flag_captures.sql \
+                       /work/build/artifacts/sql/migrate_011_match_player_identity_width.sql \
+                       /work/build/artifacts/sql/migrate_012_frag_context_correlation.sql \
+                       /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
+              --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
+                     /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
+                     /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
+            2>&1 | tee build/lane-b-artifacts/corpus-replay.out
+          corpus_status=${PIPESTATUS[0]}
+          set -e
+          if [ "$corpus_status" -ne 0 ]; then
+            while IFS= read -r line; do
+              line=${line//'%'/'%25'}
+              line=${line//$'\r'/'%0D'}
+              line=${line//$'\n'/'%0A'}
+              echo "::error title=Corpus replay::$line"
+            done < <(tail -n 40 build/lane-b-artifacts/corpus-replay.out)
+          fi
+          exit "$corpus_status"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-b-reports-${{ github.run_id }}-${{ matrix.run_index }}
+          path: |
+            build/lane-b-artifacts/lane-b-summary.md
+            build/lane-b-artifacts/lane-b-e2e.json
+            build/lane-b-artifacts/lane-b-e2e.log
+            build/lane-b-artifacts/hlstats-e2e.out
+            build/lane-b-artifacts/corpus-replay.out
+            build/lane-b-artifacts/artifacts/artifact-manifest.json
+            build/lane-b-artifacts/daemon/PROVENANCE
+          if-no-files-found: warn
+          retention-days: 30

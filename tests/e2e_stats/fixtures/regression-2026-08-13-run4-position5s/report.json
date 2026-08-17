@@ -1,0 +1,237 @@
+{
+  "map": "dod_anzio",
+  "play_seconds": 240,
+  "schema_repairs": {
+    "columns": [],
+    "collation": null
+  },
+  "containment": {
+    "config_keys_checked": [
+      "discord.ini:discord_relay_url",
+      "discord.ini:discord_auth_secret",
+      "hltv_recorder.ini:hltv_api_url",
+      "hltv_recorder.ini:hltv_api_key"
+    ],
+    "plugins_dropped": [
+      "KTPHudObserver.amxx"
+    ]
+  },
+  "boot_attempts": 2,
+  "kill_switch": {
+    "kills_while_off": 7,
+    "assists_while_off": 0
+  },
+  "assists_before_match": 0,
+  "break_scenarios": [
+    {
+      "name": "negative_off_point_kill",
+      "status": "ok",
+      "detail": "kill 3056 units off the point produced no break for Gruntilda",
+      "breaks_seen": 0,
+      "dist": 3056,
+      "count_before": 2,
+      "killer": "Gruntilda",
+      "breakers": [],
+      "attempts": 1
+    },
+    {
+      "name": "negative_voluntary_walkoff",
+      "status": "ok",
+      "detail": "count dropped 2 -> 1 with no death on that team and no break, as required",
+      "breaks_seen": 0,
+      "count_before": 2,
+      "count_after": 1,
+      "mover": "Redfield",
+      "breakers": [],
+      "attempts": 2
+    },
+    {
+      "name": "negative_clean_capture",
+      "status": "ok",
+      "detail": "flag 3 captured cleanly (owner -> 2), no deaths on that team, no break",
+      "breaks_seen": 0,
+      "flag": 3,
+      "new_owner": 2,
+      "breakers": [],
+      "deaths_in_window": 0,
+      "attempts": 2
+    },
+    {
+      "name": "positive_kill_on_point",
+      "status": "ok",
+      "detail": "count 2 -> 1; break credited to the injected killer Gruntilda",
+      "breaks_seen": 1,
+      "count_before": 2,
+      "count_after": 1,
+      "owner_before": 2,
+      "owner_after": 2,
+      "dist": 8,
+      "killer": "Gruntilda",
+      "breakers": [
+        "Gruntilda"
+      ],
+      "attempts": 1
+    },
+    {
+      "name": "negative_round_restart",
+      "status": "ok",
+      "detail": "round restart produced no break for Gruntilda",
+      "breaks_seen": 0,
+      "killer": "Gruntilda",
+      "breakers": [],
+      "attempts": 1
+    }
+  ],
+  "match": {
+    "half": 1,
+    "match_id": "1786660829-TEST",
+    "live_from": 8,
+    "live_to": 156,
+    "kills_during_match": 148,
+    "window": {
+      "found": true,
+      "before": 7,
+      "during": 149,
+      "after": 0,
+      "ended": true
+    }
+  },
+  "emitted": {
+    "kills": 156,
+    "assist": 20,
+    "cap_break": 1,
+    "suicide": 10,
+    "headshot": 13,
+    "damage": 363
+  },
+  "lines_fed": 5879,
+  "sql_errors": [],
+  "sql_errors_benign": [
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 632.\n      ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam IDs are ~19 characters, so production never hits this. Consequence for the lane: ktp_match_players stays empty, so per-match player tracking cannot be asserted here.",
+    "2026-08-13 22:40:34:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 |\n      ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam IDs are ~19 characters, so production never hits this. Consequence for the lane: ktp_match_players stays empty, so per-match player tracking cannot be asserted here.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 632.\n      ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam IDs are ~19 characters, so production never hits this. Consequence for the lane: ktp_match_players stays empty, so per-match player tracking cannot be asserted here.",
+    "2026-08-13 22:40:34:       127.0.0.1:27015 - SQL_ERROR: Query failed: Data too long for column 'steam_id' at row 1 |\n      ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam IDs are ~19 characters, so production never hits this. Consequence for the lane: ktp_match_players stays empty, so per-match player tracking cannot be asserted here.",
+    "DBD::mysql::db do failed: Data too long for column 'steam_id' at row 1 at .//HLstats.plib line 202, <STDIN> line 659.\n      ktp_match_players.steam_id is VARCHAR(32); the daemon gives bots a synthetic 'BOT:' + 32-char md5 uniqueid, which is 36. Real Steam IDs are ~19 characters, so production never hits this. Consequence for the lane: ktp_match_players stays empty, so per-match player tracking cannot be asserted here."
+  ],
+  "rows": {
+    "assist": {
+      "code": "assist",
+      "ppa": 20,
+      "pa": 0
+    },
+    "cap_break": {
+      "code": "cap_break",
+      "ppa": 0,
+      "pa": 1
+    },
+    "ppa_rows_total": 20,
+    "pa_rows_total": 1,
+    "suicides": 10,
+    "suicide_weapons": "weapon\tCOUNT(*)\nworld\t5\ngrenade\t5",
+    "actions_seeded": "id\tcode\tfor_PlayerActions\tfor_PlayerPlayerActions\n724\tassist\t0\t1\n725\tcap_break\t1\t0",
+    "action_ids_seen": "actionId\tCOUNT(*)\n725\t1\n724\t20",
+    "frags": 156,
+    "players": 16,
+    "bots": 16,
+    "assist_positions": {
+      "rows": 20,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 20,
+      "max_abs": 3610
+    },
+    "break_positions": {
+      "rows": 1,
+      "null": 0,
+      "all_zero": 0,
+      "distinct": 1,
+      "max_abs": 1191
+    }
+  },
+  "log_invariants": {
+    "kills": 156,
+    "assists": 20,
+    "breaks": 1,
+    "headshot_markers": 13,
+    "damage_markers": 363,
+    "assist_violations": [],
+    "break_violations": []
+  },
+  "carried": [
+    {
+      "code": "assist",
+      "status": "ok",
+      "emitted": 20,
+      "rows": 20,
+      "detail": "20/20 carried"
+    },
+    {
+      "code": "cap_break",
+      "status": "ok",
+      "emitted": 1,
+      "rows": 1,
+      "detail": "1/1 carried"
+    },
+    {
+      "code": "suicide",
+      "status": "ok",
+      "emitted": 10,
+      "rows": 10,
+      "detail": "10/10 carried"
+    },
+    {
+      "code": "headshot",
+      "status": "pipeline",
+      "emitted": 13,
+      "rows": 12,
+      "detail": "13 headshot marker(s) in the game log but 12 frag row(s) with headshot=1. The marker makes the daemon flush the frag queue and UPDATE the most recent matching frag, so a shortfall is either the marker not arriving or the UPDATE matching no row (killer/victim/weapon mismatch)."
+    },
+    {
+      "code": "damage_ledger",
+      "status": "ok",
+      "emitted": 363,
+      "rows": 363,
+      "cap_violations": 0,
+      "detail": "363/363 carried, cap never violated"
+    },
+    {
+      "code": "match_frags_tagged",
+      "status": "ok",
+      "detail": "149 of 156 frag row(s) tagged 1786660829-TEST",
+      "tagged": 149,
+      "total": 156
+    },
+    {
+      "code": "match_half_set",
+      "status": "ok",
+      "detail": "half values on tagged frags: ['1'] (expected ['1'])",
+      "halves": [
+        "1"
+      ]
+    },
+    {
+      "code": "statsme",
+      "status": "not_exercised",
+      "rows": 0,
+      "detail": "no `weaponstats` lines in the game log. stats_logging.sma skips bots in dod_stats_flush, and every Lane B player is a bot \u2014 so this table is structurally unreachable here. Deployment plan Unit 2 step 6 still needs a human on a server with real clients."
+    },
+    {
+      "code": "match_context_cleared",
+      "status": "not_exercised",
+      "detail": "no kills after the match ended, so nothing could have leaked into it \u2014 this run does not test context clearing.",
+      "tagged": 149
+    },
+    {
+      "code": "kill_switch",
+      "status": "ok",
+      "detail": "7 kills produced 0 assists while off; 20 once re-enabled"
+    }
+  ],
+  "coverage_gaps": [
+    "statsme: no `weaponstats` lines in the game log. stats_logging.sma skips bots in dod_stats_flush, and every Lane B player is a bot \u2014 so this table is structurally unreachable here. Deployment plan Unit 2 step 6 still needs a human on a server with real clients.",
+    "match_context_cleared: no kills after the match ended, so nothing could have leaked into it \u2014 this run does not test context clearing."
+  ],
+  "failures": [
+    "headshot: 13 headshot marker(s) in the game log but 12 frag row(s) with headshot=1. The marker makes the daemon flush the frag queue and UPDATE the most recent matching frag, so a shortfall is either the marker not arriving or the UPDATE matching no row (killer/victim/weapon mismatch)."
+  ]
+}
