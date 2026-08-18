@@ -114,7 +114,17 @@ class BreakDriver:
         self.log_path = log_path
 
     def _read(self) -> str:
-        return self.log_path.read_text(errors="replace")
+        # Docker Desktop can expose a short ENODATA window while HLDS turns a
+        # bind-mounted console log over. The file is readable again almost
+        # immediately; retry instead of aborting a staged scenario.
+        for attempt in range(10):
+            try:
+                return self.log_path.read_text(errors="replace")
+            except OSError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.1)
+        raise AssertionError("unreachable")
 
     def scan(self) -> list[dict]:
         """Current flag state, as the plugin sees it."""

@@ -241,6 +241,22 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
               flush=True)
 
 
+def replay_boot_flag_positions(daemon, log_path: Path) -> int:
+    """Feed static map metadata emitted before the successful boot was ready.
+
+    HLStatsX intentionally starts only after RCON readiness so a failed Steam
+    initialization cannot contaminate event tables. Flag positions are the
+    one useful record emitted during boot. They are idempotent map metadata,
+    so replay only those lines from the successful boot log after the daemon
+    attaches; gameplay and player events remain excluded.
+    """
+    lines = [line for line in log_path.read_text(errors="replace").splitlines()
+             if "KTP_FLAG_POSITION " in line]
+    for line in lines:
+        daemon.feed_line(line)
+    return len(lines)
+
+
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
               per_team: int = 8, before_play=None, during_play=None,
               after_match=None) -> dict:
@@ -415,6 +431,10 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
     ap.add_argument("--summary-out", type=Path,
                     default=Path("/work/build/lane-b-summary.md"))
+    ap.add_argument("--database-dump", type=Path, default=None,
+                    help="optional local mysqldump written before the isolated "
+                         "database is destroyed; intended for read-only "
+                         "post-match analytics")
     args = ap.parse_args()
 
     report: dict = {"map": args.map, "play_seconds": args.play_seconds}
@@ -503,9 +523,6 @@ def main() -> int:
             stdout_path=args.out.with_name("hlstats-e2e.out"),
             debug=1,
         )
-        daemon.start()
-        print("daemon up, tailing the game log", flush=True)
-
         completed = False
         run_error = None
         for attempt in range(1, BOOT_ATTEMPTS + 1):
@@ -520,6 +537,20 @@ def main() -> int:
                     print(f"server up (attempt {attempt})", flush=True)
                     server_started = True
                     report["boot_attempts"] = attempt
+                    # Do not let a transient HLDS boot attempt touch the
+                    # database. Fresh containers commonly fail their first
+                    # SteamAPI_Init and retry with the same console-log path.
+                    # Starting the daemon only after RCON readiness means it
+                    # attaches at the current end of the successful boot log;
+                    # failed-attempt rows can neither be ingested nor mixed
+                    # into the match that follows.
+                    daemon.start()
+                    print("daemon up, tailing the successful boot log", flush=True)
+                    report["boot_flag_positions_replayed"] = (
+                        replay_boot_flag_positions(daemon, args.log))
+                    print("replayed "
+                          f"{report['boot_flag_positions_replayed']} successful-boot "
+                          "flag position marker(s)", flush=True)
                     configure_bots(handle, flag_priority=args.flag_priority,
                                    wait_for_cap=args.wait_for_cap)
                     def _stage_scenarios():
@@ -600,6 +631,7 @@ def main() -> int:
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
+            "flag_state": log_text.count("KTP_FLAG_STATE "),
             "position_sample": log_text.count('triggered "position_sample"'),
         }
         report["lines_fed"] = daemon.lines_fed
@@ -642,6 +674,8 @@ def main() -> int:
                 db, emitted=report["emitted"]["flag_position"]),
             assertions.check_position_samples(
                 db, emitted=report["emitted"]["position_sample"]),
+            assertions.check_flag_states(
+                db, emitted=report["emitted"]["flag_state"]),
             assertions.check_capture_buffer(log_text),
         ]
         if report.get("assist_scenario"):
@@ -716,6 +750,25 @@ def main() -> int:
             )
 
         report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
+        if args.database_dump is not None:
+            args.database_dump.parent.mkdir(parents=True, exist_ok=True)
+            dump_args = [
+                "mysqldump", "--no-defaults", f"--socket={db.socket_path}",
+                "-u", "root", "--complete-insert", "--skip-extended-insert",
+                "--no-tablespaces", db.database,
+            ]
+            with args.database_dump.open("wb") as dump_file:
+                dumped = subprocess.run(
+                    dump_args, stdout=dump_file, stderr=subprocess.PIPE,
+                    text=False)
+            if dumped.returncode != 0:
+                raise SystemExit(
+                    "mysqldump failed: "
+                    + dumped.stderr.decode(errors="replace")[-1200:])
+            report["database_dump"] = {
+                "path": str(args.database_dump),
+                "bytes": args.database_dump.stat().st_size,
+            }
 
     report["failures"] = failures
     print("\n=== emitted in log vs recorded in db ===")

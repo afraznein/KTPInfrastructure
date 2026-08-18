@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -79,6 +80,8 @@ def main() -> int:
     ap.add_argument("--no-assert", action="store_true",
                     help="report counts without failing on them")
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--database-dump", type=Path, default=None,
+                    help="write the replayed isolated database as SQL before teardown")
     ap.add_argument("--keep", action="store_true")
     args = ap.parse_args()
 
@@ -193,6 +196,25 @@ def main() -> int:
             if sql_errors:
                 failures.append(f"{len(sql_errors)} SQL error(s) from the daemon:\n  "
                                 + "\n  ".join(sql_errors[:5]))
+        if args.database_dump is not None:
+            args.database_dump.parent.mkdir(parents=True, exist_ok=True)
+            dump_args = [
+                "mysqldump", "--no-defaults", f"--socket={db.socket_path}",
+                "-u", "root", "--complete-insert", "--skip-extended-insert",
+                "--no-tablespaces", db.database,
+            ]
+            with args.database_dump.open("wb") as dump_file:
+                dumped = subprocess.run(
+                    dump_args, stdout=dump_file, stderr=subprocess.PIPE,
+                    text=False)
+            if dumped.returncode != 0:
+                raise SystemExit(
+                    "mysqldump failed: "
+                    + dumped.stderr.decode(errors="replace")[-1200:])
+            report["database_dump"] = {
+                "path": str(args.database_dump),
+                "bytes": args.database_dump.stat().st_size,
+            }
     report["failures"] = failures
     _print_report(report)
     if args.out:
