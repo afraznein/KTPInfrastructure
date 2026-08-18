@@ -1,44 +1,131 @@
-# Credentials and secrets
+# Generic credential globs. Deliberately OUTSIDE the audited region below:
+# they name no specific file, so there is nothing to verify them against.
 *.secret
 *.key
 *.pem
+
+# === CREDENTIAL RULES: tagged, audited by ktp_secret_scan audit-ignore ===
+#
+# Every concrete path withheld for secrecy, host-topology or privacy reasons lives
+# in this region and carries a tag on the line ABOVE it. `make secrets-audit`
+# checks that each tag still says something true, so the list cannot quietly rot
+# into a set of rules nobody can justify.
+#
+#   @secret    file exists and carries credential VALUES -> the scan must hit it
+#   @hostinfo  file exists and carries fleet IPs / topology, but no credential
+#   @guard     file is ABSENT; the rule exists so it can never be added
+#   @privacy   file exists, holds no credential, withheld for a stated reason
+#   @local     local stub or runtime artifact; no secrecy claim
+#
+# ⚠️ A tag must be its own line. In .gitignore syntax `#` only opens a comment at
+# the START of a line, so `deploy/.env  # @guard` folds the comment into the
+# pattern and the rule silently stops matching anything.
+#
+# 🔑 A rule matching an ABSENT file is doing its most valuable work, not its least.
+# Five rules were commented out on 2026-08-18 for naming files that no longer
+# existed; two of those files had been deleted precisely BECAUSE they carried
+# secrets. @guard exists so that judgement is never made by hand again.
+#
+# 🔑 The way to shrink this list is to refactor a file to resolve its secrets at
+# run time and then track it -- as monitoring/ktp-server-monitor.py did. Deleting
+# lines is not the same thing.
+
+# @guard
+# why: relay URL + auth secret. Lives at /etc/ktp/discord-relay.conf on the hosts.
 discord-relay.conf
 
-# Deployment config with credentials (use config.yaml.example as template)
+# @hostinfo
 deploy/config.yaml
+
+# @guard
+# why: canonical secrets filename; regenerating deploy config recreates it.
 deploy/.env
 
-# Online configs with credentials (use *.example as templates)
+# @local
+# why: stub with empty values; the tracked discord.ini.example is the template.
 config/online/discord.ini
+
+# @hostinfo
 config/online/hltv_recorder.ini
+
+# @guard
+# why: the live fleet config carries rcon_password and sv_password. Pulling one
+# off a host to diff is routine, which is exactly when this rule earns its keep.
 config/online/dodserver.cfg
 
-# Scripts with credentials (use *.example as templates)
-# POLICY: these are ignored because they EMBED credentials or fleet IPs, not because
-# they are scripts. Audited 2026-08-11 against the known secret values: 10 of 14 hit,
-# so this list is doing real work -- do not bulk-un-ignore it.
-# A script that sources its secrets instead (e.g. /etc/ktp/discord-relay.conf, as
-# scripts/ktp-hltv-liveness.sh does) carries nothing sensitive and SHOULD be tracked.
-# That refactor is the way to shrink this list; deleting lines from it is not.
-# ⚠️ A keyword grep is not sufficient to clear a file: hltv-api.py was called clean
-# twice before a value-based check found AUTH_KEY on line 34. Match the VALUES.
+# @guard
+# why: retired 2026-08-17; embedded a live Discord webhook and was neither tracked
+# nor ignored, so a `git add` from a data-server checkout would have published it.
+# Superseded by ktp-systemd-alert.py. Correct end state is deleted + webhook revoked.
+scripts/discord-alert.sh
+
+# @hostinfo
 scripts/ktp-scheduled-restart.sh
+
+# @local
+# why: locally edited copy; scripts/ktp-organize-hltv-demos.sh.example is tracked
+# and is the source of truth. Candidate to un-ignore -- it carries neither a
+# credential nor a host address.
 scripts/ktp-organize-hltv-demos.sh
+
+# @secret
 scripts/hltv-api.py
+
+# @secret
 scripts/ktp-backup.sh
+
+# @hostinfo
 scripts/audit-fleet.json
+
+# @hostinfo
 scripts/audit_fleet_versions.py
+
+# @hostinfo
 scripts/verify_new_staged.py
 
-# Private documentation (contains IPs/credentials)
+# @secret
+scripts/deploy-chrt-to-servers.py
+
+# @hostinfo
+scripts/profiling-report.py
+
+# @hostinfo
+provision/clone-ktp-stack.sh
+
+# @hostinfo
 ktp_gameserver_setup.md
+
+# @secret
 ktp_dataserver_setup.md
+
+# @secret
 infrastructure.md
-# Owner-facing LAN PC provisioning guide — embeds a suggested account
-# password + remote-access setup; share privately, never publish.
+
+# @privacy
+# why: embeds a suggested account password and remote-access setup for a machine
+# handed to an owner. Share privately, never publish.
 provision/LAN-PC-OWNER-SETUP.md
+
+# @privacy
+# why: rendered form of LAN-PC-OWNER-SETUP.md, same content.
 provision/LAN-PC-OWNER-SETUP.html
+
+# @privacy
+# why: rendered form of LAN-PC-OWNER-SETUP.md, same content.
 provision/LAN-PC-OWNER-SETUP.pdf
+
+# @hostinfo
+COSTS.md
+
+# @privacy
+# why: maps every player's SteamID to every alias they have used. Not a
+# credential, but publishing it permanently deanonymizes alt accounts.
+docs/ktpr_mcp/roster.csv
+
+# === END CREDENTIAL RULES ===
+
+# monitoring/ktp-server-monitor.py — un-ignored: it now resolves its rcon password
+# at run time and embeds no secret, which is the refactor the policy above asks for.
 
 # Editor files
 *.swp
@@ -75,14 +162,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-COSTS.md
-provision/clone-ktp-stack.sh
-
-# Deployment scripts with credentials
-scripts/deploy-chrt-to-servers.py
-scripts/profiling-report.py
-# monitoring/ktp-server-monitor.py — un-ignored: it now resolves its rcon password
-# at run time and embeds no secret, which is the refactor the policy note above asks for.
 
 # WSDoD LAN 2026 site — rendered output (regenerated by builder.py
 # from the published-CSV registration sheet each cron tick). Source
@@ -96,10 +175,6 @@ wsdod-lan-2026/index.rendered.html
 
 # WSDoD site build output — regenerate with sites/wsdod-lan-2026/build_site.py
 sites/wsdod-lan-2026/dist/
-
-# KTPR roster — maps every player's SteamID to every alias they've used.
-# Not a credential, but publishing it permanently deanonymizes alt accounts.
-docs/ktpr_mcp/roster.csv
 
 # Third-party DoD bot AI (Marine Bot / new_bot) for the Lane B stats e2e tests.
 # TEST-ONLY and quarantined: it must never reach the fleet, never enter a
