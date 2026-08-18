@@ -206,3 +206,14 @@ def test_an_unended_match_runs_to_the_end_of_the_log():
     log = "\n".join([MATCH_START, _k(), _k()])
     w = li.match_window(log)
     assert w["during"] == 2 and w["after"] == 0 and w["ended"] is False
+
+
+def test_periodic_markers_are_counted_only_inside_the_match():
+    marker = '"Bot<1><BOT><Axis>" triggered "position_sample"'
+    log = "\n".join([marker, MATCH_START, marker, marker, MATCH_END, marker])
+    assert li.count_in_match(log, 'triggered "position_sample"') == 2
+
+
+def test_marker_count_without_a_match_is_zero():
+    marker = '"Bot<1><BOT><Axis>" triggered "position_sample"'
+    assert li.count_in_match(marker, 'triggered "position_sample"') == 0

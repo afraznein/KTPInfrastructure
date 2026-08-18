@@ -66,18 +66,23 @@
 #define BD_TEAM_ALLIES 1
 #define BD_TEAM_AXIS   2
 #define BD_TASK_WALKOFF_POLL 77130
+#define BD_TASK_KILL_POLL 77131
 #define BD_TASK_UNPROTECT_BASE 77140
 #define BD_WALKOFF_MAX_POLLS 2400
+#define BD_KILL_MAX_POLLS 600
 #define BD_WALKOFF_DEATH_QUIET_SECS 5.0
 #define BD_WALKOFF_PROTECT_SECS 5.0
 
 new g_bdWalkoffPolls = 0
+new g_bdKillPolls = 0
+new bool:g_bdKillNear = true
 new Float:g_bdLastTeamDeath[3]
 
 public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_bd_scan", "cmd_scan")
 	register_srvcmd("ktp_bd_kill", "cmd_kill")
+	register_srvcmd("ktp_bd_arm_kill", "cmd_arm_kill")
 	register_srvcmd("ktp_bd_walkoff", "cmd_walkoff")
 	register_srvcmd("ktp_bd_arm_walkoff", "cmd_arm_walkoff")
 	log_amx("[BD] loaded — NOT FOR PRODUCTION")
@@ -239,39 +244,39 @@ public cmd_scan() {
  * `near` failed to drop the count, that scenario proved nothing and must not
  * be scored as a missing break.
  */
-public cmd_kill() {
-	new arg_flag[8], arg_mode[8]
-	read_argv(1, arg_flag, charsmax(arg_flag))
-	read_argv(2, arg_mode, charsmax(arg_mode))
-
-	new f = bd_resolve_flag(arg_flag)
-	new bool:want_near = !equal(arg_mode, "far")
-
+stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
+	new arg_mode[8]
+	copy(arg_mode, charsmax(arg_mode), want_near ? "near" : "far")
 	if (f < 0) {
-		log_amx("[BD] kill ABORT flag=-1 no flag is capturing right now")
-		return PLUGIN_HANDLED
+		if (log_abort)
+			log_amx("[BD] kill ABORT flag=-1 no flag is capturing right now")
+		return false
 	}
 	if (!dodx_area_get_data(f, CA_is_capturing)) {
-		log_amx("[BD] kill ABORT flag=%d not capturing", f)
-		return PLUGIN_HANDLED
+		if (log_abort)
+			log_amx("[BD] kill ABORT flag=%d not capturing", f)
+		return false
 	}
 
 	new team = dodx_area_get_data(f, CA_capturing_team)
 	if (team != BD_TEAM_ALLIES && team != BD_TEAM_AXIS) {
-		log_amx("[BD] kill ABORT flag=%d capteam=%d", f, team)
-		return PLUGIN_HANDLED
+		if (log_abort)
+			log_amx("[BD] kill ABORT flag=%d capteam=%d", f, team)
+		return false
 	}
 
 	new Float:dist = 0.0
 	new victim = bd_pick(f, team, want_near, dist)
 	if (!victim) {
-		log_amx("[BD] kill ABORT flag=%d mode=%s no qualifying player", f, arg_mode)
-		return PLUGIN_HANDLED
+		if (log_abort)
+			log_amx("[BD] kill ABORT flag=%d mode=%s no qualifying player", f, arg_mode)
+		return false
 	}
 	new killer = bd_pick_enemy(team)
 	if (!killer) {
-		log_amx("[BD] kill ABORT flag=%d no enemy to attribute to", f)
-		return PLUGIN_HANDLED
+		if (log_abort)
+			log_amx("[BD] kill ABORT flag=%d no enemy to attribute to", f)
+		return false
 	}
 
 	// Names, not just slots: the break line names its breaker by name, and
@@ -297,6 +302,51 @@ public cmd_kill() {
 	dod_user_kill(victim)
 
 	set_task(1.5, "bd_report_after", f)
+	return true
+}
+
+public cmd_kill() {
+	new arg_flag[8], arg_mode[8]
+	read_argv(1, arg_flag, charsmax(arg_flag))
+	read_argv(2, arg_mode, charsmax(arg_mode))
+	bd_execute_kill(bd_resolve_flag(arg_flag), !equal(arg_mode, "far"))
+	return PLUGIN_HANDLED
+}
+
+/**
+ * Arm a near/far kill inside HLDS and poll until a capture is stageable.
+ * Observing and acting in the same game process removes the short-capture
+ * RCON race, matching the established ktp_bd_arm_walkoff design.
+ */
+public cmd_arm_kill() {
+	new arg_mode[8]
+	read_argv(1, arg_mode, charsmax(arg_mode))
+	if (!equal(arg_mode, "near") && !equal(arg_mode, "far")) {
+		log_amx("[BD] kill ABORT flag=-1 mode=%s expected near or far", arg_mode)
+		return PLUGIN_HANDLED
+	}
+
+	remove_task(BD_TASK_KILL_POLL)
+	g_bdKillNear = bool:equal(arg_mode, "near")
+	g_bdKillPolls = 0
+	log_amx("[BD] kill ARMED mode=%s", arg_mode)
+	set_task(0.1, "bd_kill_poll", BD_TASK_KILL_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public bd_kill_poll() {
+	g_bdKillPolls++
+	new f = bd_find_capturing()
+	if (f >= 0 && bd_execute_kill(f, g_bdKillNear, false)) {
+		remove_task(BD_TASK_KILL_POLL)
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdKillPolls >= BD_KILL_MAX_POLLS) {
+		remove_task(BD_TASK_KILL_POLL)
+		log_amx("[BD] kill ABORT flag=-1 mode=%s no stageable capture while armed",
+			g_bdKillNear ? "near" : "far")
+	}
 	return PLUGIN_HANDLED
 }
 
