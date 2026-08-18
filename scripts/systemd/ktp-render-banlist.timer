@@ -1,0 +1,11 @@
+[Unit]
+Description=Render the KTP ban list every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=ktp-render-banlist.service
+
+[Install]
+WantedBy=timers.target

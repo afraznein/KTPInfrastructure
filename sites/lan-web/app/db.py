@@ -56,3 +56,21 @@ def execute(sql: str, params: Optional[Iterable[Any]] = None) -> int:
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, params or ())
         return cur.lastrowid
+
+
+Statement = tuple[str, Optional[Iterable[Any]]]
+
+
+def execute_all(statements: Iterable[Statement]) -> int:
+    """Run several writes in ONE transaction; returns the first one's lastrowid.
+
+    execute() takes a connection per call, so a mutation and the audit row
+    recording it were two transactions and the second could fail alone —
+    leaving a change nothing accounts for. Pair them through here instead."""
+    first = None
+    with get_conn() as conn, conn.cursor() as cur:
+        for sql, params in statements:
+            cur.execute(sql, params or ())
+            if first is None:
+                first = cur.lastrowid
+    return first

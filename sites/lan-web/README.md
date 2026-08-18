@@ -1,13 +1,23 @@
 # WSDoD LAN 2026 — web service
 
 Dedicated FastAPI service for the LAN site: Discord login, a captain-only
-seeding poll, Saturday result reporting, and an auto-fed Sunday bracket. Runs
-behind nginx at `/lan/`, separate from the AC API (keeps that service's
-surface narrow). Voice on all player-facing copy is WSDoD **we/us/our**.
+seeding poll, result reporting, an auto-fed bracket, awards, uploads and the
+public dossier site. Separate from the AC API, which keeps that service's
+surface narrow. Voice on all player-facing copy is WSDoD **we/us/our**.
 
-This directory is **Phase 0**: the identity foundation — schema, migrations,
-and the full Discord OAuth + session + captain-gating wiring. The poll,
-schedule, and bracket UIs land in later phases; their tables already exist.
+⚠️ **It serves `dodworldseries.com` at the ROOT, not `/lan/`.** *(Corrected
+2026-08-14 — this said "runs behind nginx at `/lan/`", and `/lan/admin` 404s.)*
+nginx has a single `location /` proxying to `127.0.0.1:8099`,
+`LAN_WEB_ROOT_PATH` is empty, and the app mounts the built static site itself
+(`LAN_SITE_DIR`, `LAN_SITE_AT_ROOT=1`) **after** every router — `Mount("/")`
+matches every path, so a router registered later would never be reached.
+🔑 That mount is why Discord OAuth, uploads and the awards API are same-origin
+with the site: one host, one cookie, one redirect URI. Do not "tidy" it into a
+separate vhost without re-solving all three.
+
+⚠️ **This is no longer "Phase 0".** *(Corrected 2026-08-14 — it claimed the
+poll, schedule and bracket UIs were still to come. They shipped, along with
+awards, veto, stations, check-in, photos and feedback.)*
 
 ## Layout
 
@@ -17,11 +27,20 @@ app/
   config.py      env-backed settings
   db.py          thin PyMySQL helpers (query_one/query_all/execute)
   auth.py        Discord OAuth + session_user / current_identity / require_captain
-  routes/        public.py (/, /health), auth_routes.py (/login /auth/callback /logout /me)
-  templates/     field-manual base + index + me
-migrations/      0001_init.sql  (lan_teams, lan_players, lan_seed_ballots, lan_schedule, lan_bracket)
+  routes/        16 routers — public, auth, admin, api, poll, mappoll, schedule,
+                 bracket, veto, stations, placements, checkin, demo, extras,
+                 match. Registered BEFORE the static mount, which claims "/".
+  site_gate.py   serves the built site's HTML and strips the stats payload when
+                 stats_published is 0 — the flag cannot hide data baked into a
+                 static file, so the withholding happens on the way out
+  stat_awards.py generated awards: candidates, staff nomination, master select
+  admin_audit.py lan_admin_audit writer + reader
+  match_stats.py per-match scoreboard, gated on stats_published
+  templates/     field-manual base + per-feature pages
+migrations/      0001 … 0018. Awards framework is 0015-0018.
 migrate.py       idempotent migration runner (tracks applied files)
-tools/lan_admin.py   CLI to seed teams/players + link Discord IDs (Phase-0 stand-in for the admin UI)
+tools/lan_admin.py   CLI to seed teams/players + link Discord IDs
+tools/load_match_scoreboard.py  loads the generated per-match scoreboard
 deploy/          systemd unit + nginx snippet
 ```
 

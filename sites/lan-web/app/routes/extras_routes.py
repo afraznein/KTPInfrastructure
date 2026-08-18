@@ -3,9 +3,9 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from .. import auth, awards, common, db
+from .. import admin_audit, auth, awards, common, db, parse, photos
 from ..config import settings
 from ..templating import templates
 
@@ -43,8 +43,12 @@ def awards_page(request: Request):
 async def award_vote(request: Request):
     ident = auth.require_login(request)
     f = await request.form()
+    aid = parse.as_int(f.get("award_id"))
+    tid = parse.as_int(f.get("target_id"))
+    if aid is None or tid is None:
+        raise HTTPException(400, "An award id and a target id are required.")
     try:
-        awards.cast_vote(int(f["award_id"]), ident["discord_id"], int(f["target_id"]))
+        awards.cast_vote(aid, ident["discord_id"], tid)
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return RedirectResponse(request.url_for("awards"), status_code=303)
@@ -71,9 +75,22 @@ async def award_add(request: Request):
 
 @router.post("/admin/awards/toggle", name="award_toggle")
 async def award_toggle(request: Request):
+    """Open or close voting on one category. Closing reveals the result to
+    everyone, so it is a decision rather than a setting."""
     auth.require_admin(request)
     f = await request.form()
-    db.execute("UPDATE lan_awards SET is_open = 1 - is_open WHERE id=%s", (int(f["award_id"]),))
+    aid = parse.as_int(f.get("award_id"))
+    if aid is None:
+        raise HTTPException(400, "An award id is required.")
+    prior = db.query_one("SELECT title, is_open FROM lan_awards WHERE id=%s", (aid,))
+    if prior is None:  # the UPDATE matches nothing; a row would assert a flip that never happened
+        return RedirectResponse(request.url_for("awards"), status_code=303)
+    was = "open" if prior["is_open"] else "closed"
+    db.execute_all([
+        ("UPDATE lan_awards SET is_open = 1 - is_open WHERE id=%s", (aid,)),
+        admin_audit.stmt_request(request, "award_toggle", f"award:{aid}",
+                                 was, "closed" if prior["is_open"] else "open"),
+    ])
     return RedirectResponse(request.url_for("awards"), status_code=303)
 
 
@@ -81,9 +98,18 @@ async def award_toggle(request: Request):
 async def award_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    aid = int(f["award_id"])
-    db.execute("DELETE FROM lan_award_votes WHERE award_id=%s", (aid,))
-    db.execute("DELETE FROM lan_awards WHERE id=%s", (aid,))
+    aid = parse.as_int(f.get("award_id"))
+    if aid is None:
+        raise HTTPException(400, "An award id is required.")
+    prior = db.query_one("SELECT title FROM lan_awards WHERE id=%s", (aid,))
+    if prior is None:
+        return RedirectResponse(request.url_for("awards"), status_code=303)
+    db.execute_all([
+        ("DELETE FROM lan_award_votes WHERE award_id=%s", (aid,)),
+        ("DELETE FROM lan_awards WHERE id=%s", (aid,)),
+        admin_audit.stmt_request(request, "award_delete", f"award:{aid}",
+                                 prior["title"], None),
+    ])
     return RedirectResponse(request.url_for("awards"), status_code=303)
 
 
@@ -127,6 +153,9 @@ async def gallery_upload(request: Request, file: UploadFile = File(...), caption
     stored = f"{pid:06d}.{ext}"
     (Path(settings.photo_dir) / stored).write_bytes(data)
     db.execute("UPDATE lan_photos SET stored_name=%s WHERE id=%s", (stored, pid))
+    photos.make(stored)
+    if common.wants_json(request):
+        return JSONResponse({"ok": True, "id": pid})
     return RedirectResponse(request.url_for("gallery"), status_code=303)
 
 
@@ -142,15 +171,39 @@ def gallery_img(photo_id: int):
     return FileResponse(str(path), media_type=_IMG_EXT.get(ext, "application/octet-stream"))
 
 
+@router.get("/gallery/{photo_id}/thumb", name="gallery_thumb")
+def gallery_thumb(photo_id: int):
+    """The grid's image. 404 when none was generated — the caller falls back to
+    the original rather than showing a hole."""
+    row = db.query_one("SELECT stored_name FROM lan_photos WHERE id=%s", (photo_id,))
+    if not row or not photos.has_thumb(row["stored_name"]):
+        raise HTTPException(404, "No thumbnail.")
+    return FileResponse(str(photos.thumb_path(row["stored_name"])), media_type="image/jpeg")
+
+
 @router.post("/admin/gallery/delete", name="gallery_delete")
 async def gallery_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    pid = int(f["photo_id"])
-    row = db.query_one("SELECT stored_name FROM lan_photos WHERE id=%s", (pid,))
-    if row and row["stored_name"]:
-        p = Path(settings.photo_dir) / row["stored_name"]
-        if p.is_file():
-            p.unlink()
-    db.execute("DELETE FROM lan_photos WHERE id=%s", (pid,))
+    pid = parse.as_int(f.get("photo_id"))
+    if pid is None:
+        raise HTTPException(400, "A photo id is required.")
+    row = db.query_one(
+        "SELECT stored_name, caption, uploaded_by FROM lan_photos WHERE id=%s", (pid,))
+    if row is None:  # already gone; the file unlink and the DELETE both no-op
+        return RedirectResponse(request.url_for("gallery"), status_code=303)
+    if row["stored_name"]:
+        for p in (Path(settings.photo_dir) / row["stored_name"],
+                  photos.thumb_path(row["stored_name"])):
+            if p.is_file():
+                p.unlink()
+    # Taking down someone else's upload is a decision about them, so the row
+    # carries who posted it — the photo itself is gone from disk by now.
+    db.execute_all([
+        ("DELETE FROM lan_photos WHERE id=%s", (pid,)),
+        admin_audit.stmt_request(
+            request, "photo_delete", f"photo:{pid}",
+            f"{row['stored_name'] or '?'} / {row['caption'] or '-'} / "
+            f"uploaded by {row['uploaded_by'] or '-'}", None),
+    ])
     return RedirectResponse(request.url_for("gallery"), status_code=303)

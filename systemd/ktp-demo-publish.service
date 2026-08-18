@@ -1,0 +1,13 @@
+[Unit]
+Description=KTP publish HLTV demos (file them, then rebuild the archive pages)
+Documentation=file:///usr/local/bin/ktp-demo-publish.sh
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-demo-publish.sh
+# systemd will not start a second instance while one is running, so a slow run
+# cannot overlap the next hour's.
+TimeoutStartSec=900
+Nice=10
+IOSchedulingClass=idle

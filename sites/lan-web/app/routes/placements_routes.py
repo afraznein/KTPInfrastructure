@@ -5,7 +5,7 @@ import json
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import auth, common, db, placements, seeding
+from .. import auth, common, db, parse, placements, seeding
 from ..templating import templates
 
 router = APIRouter()
@@ -47,10 +47,9 @@ async def placements_set(request: Request):
     n = db.query_one("SELECT COUNT(*) AS n FROM lan_teams")["n"]
     order, seen = [], set()
     for i in range(1, n + 1):
-        raw = (f.get(f"place_{i}") or "").strip()
-        if not raw.isdigit():
+        tid = parse.as_int(f.get(f"place_{i}"))
+        if tid is None:
             continue  # allow partial publish (e.g. only top placements decided)
-        tid = int(raw)
         if tid in seen:
             raise HTTPException(400, "Each team can be placed only once.")
         seen.add(tid)

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}WSDoD / LAN 2026 / Photo Removal Requests{% endblock %}
+{% block content %}
+  <section class="chapter">
+    <header class="chapter-head">
+      <div class="chapter-num">&#9733;</div>
+      <h2 class="chapter-title">Photo Removal Requests</h2>
+      <span class="chapter-stamp">RESTRICTED / MODERATION</span>
+    </header>
+    <div class="chapter-body">
+      <p style="font-size:13px;color:var(--ink-faint);"><a href="{{ url_for('admin') }}">&larr; Staff</a> —
+         people asking for their photo to come down, newest first. {{ pending }} still open.
+         Take the photo down on the <a href="{{ url_for('gallery') }}">gallery</a>, then mark the request handled.</p>
+
+      {% if rows %}
+      <table>
+        <thead><tr><td>When</td><td>Photo</td><td>Who asked</td><td>Reason</td><td>Status</td><td></td></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td style="font-size:12px;color:var(--ink-faint);white-space:nowrap;">{{ r.created_at }}</td>
+            <td style="width:9rem;">
+              {% if r.stored_name %}<a href="{{ url_for('gallery_img', photo_id=r.photo_id) }}" target="_blank" rel="noopener">#{{ r.photo_id }}</a>
+              {% else %}<span style="color:var(--ink-faint);">#{{ r.photo_id }} deleted</span>{% endif %}
+              {% if r.caption %}<div style="font-size:11px;color:var(--ink-faint);">{{ r.caption }}</div>{% endif %}
+            </td>
+            <td style="font-size:12px;color:var(--ink-soft);">{{ r.requested_name or '—' }}
+              <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint);">discord {{ r.requested_by }} &middot; {{ r.requested_ip or 'no ip' }}</div></td>
+            <td style="width:auto;color:var(--ink);">{{ r.reason or '—' }}</td>
+            <td style="width:8rem;font-size:12px;color:{{ 'var(--ink-faint)' if r.status == 'handled' else 'var(--alert)' }};">
+              {{ r.status }}{% if r.handled_at %}<div style="font-size:11px;">{{ r.handled_at }}</div>{% endif %}</td>
+            <td style="width:7rem;">
+              {% if r.status == 'pending' %}
+              <form method="post" action="{{ url_for('photo_request_handled') }}" style="display:inline;">
+                <input type="hidden" name="request_id" value="{{ r.id }}">
+                <button type="submit">Mark handled</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="pending-note">No removal requests.</div>
+      {% endif %}
+    </div>
+  </section>
+{% endblock %}

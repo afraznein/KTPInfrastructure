@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily KTP non-official match analytics retention
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+OnCalendar=*-*-* 05:20:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+Unit=ktp-match-retention.service
+
+[Install]
+WantedBy=timers.target

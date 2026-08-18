@@ -208,8 +208,22 @@ def check_unresolved_actions(findings: list[str], info: list[str]) -> None:
             "discarded because hlstats_Actions has no matching row. Seed the table."
             % m.group(1))
     m = re.search(r"sql_failed=(\d+)", last)
-    if m and int(m.group(1)) > 0:
-        findings.append("daemon reports %s failed SQL write(s) after retry" % m.group(1))
+    if m:
+        total = int(m.group(1))
+        state = load_state()
+        prev = state.get("sql_failed")
+        save_state({**state, "sql_failed": total, "sql_failed_at": int(time.time())})
+        info.append("daemon sql_failed lifetime=%d" % total)
+        if prev is None:
+            info.append("sql_failed: first run, no delta yet")
+        elif total < prev:
+            # Cumulative, and only ever zeroed at daemon startup.
+            info.append("sql_failed: counter reset, daemon restarted")
+        elif total > prev:
+            findings.append(
+                "daemon failed %d SQL write(s) since the last check (lifetime %d) -- "
+                "writes are being lost after retry. journalctl -u hlstatsx | grep "
+                "SQL_ERROR names the table." % (total - prev, total))
 
 
 def check_logs_against_db(db: str, logdir: str, since: int, findings: list[str]) -> None:

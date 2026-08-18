@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from starlette.concurrency import run_in_threadpool
 
-from .. import auth, bracket, common, db, notify, seeding
+from .. import auth, bracket, common, db, notify, parse, seeding
 from .. import schedule as sched
 from ..templating import templates
 
@@ -145,12 +145,13 @@ async def report(request: Request):
     ident = auth.require_login(request)
     form = await request.form()
     mkey = form.get("mkey", "")
-    try:
-        sa = int(form["score_a"]); sb = int(form["score_b"])
-    except (KeyError, ValueError):
-        raise HTTPException(400, "Both series scores required.")
-    if sa < 0 or sb < 0:
-        raise HTTPException(400, "Scores must be non-negative.")
+    # int() read '1٢3' as 123 and wrote a score nobody typed. as_int takes a
+    # plain ASCII digit string or nothing, which also covers the missing key
+    # and the negative.
+    sa = parse.as_int(form.get("score_a"))
+    sb = parse.as_int(form.get("score_b"))
+    if sa is None or sb is None:
+        raise HTTPException(400, "Both series scores required, as whole numbers.")
     row = db.query_one("SELECT team_a_id, team_b_id FROM lan_bracket WHERE mkey=%s", (mkey,))
     if not row:
         raise HTTPException(404, "No such bracket match.")
@@ -195,8 +196,7 @@ async def set_station(request: Request):
     mkey = f.get("mkey", "")
     if not db.query_one("SELECT 1 FROM lan_bracket WHERE mkey=%s", (mkey,)):
         raise HTTPException(404, "No such bracket match.")
-    raw = (f.get("station") or "").strip()
-    station = int(raw) if raw.isdigit() and 1 <= int(raw) <= 5 else None
+    station = parse.bounded(f.get("station"), 1, 5)
     bracket.set_station(mkey, station)
     if station:
         row = db.query_one(

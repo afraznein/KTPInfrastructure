@@ -7,7 +7,7 @@ embed to #ktp-updates so a service flap is visible immediately rather than
 waiting for the periodic ktp-data-server-health.sh sweep.
 
 Companion to ktp-data-server-health.sh:
-  - data-server-health: periodic (hourly cadence), state-transition tracking,
+  - data-server-health: periodic (10 min cadence), state-transition tracking,
     catches services that go down AND stay down across multiple checks.
   - this script: immediate (fires on the failure event itself), captures
     the full journalctl tail at the moment of failure for diagnostic info.
@@ -33,11 +33,38 @@ import os
 import socket
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 
 
 DEFAULT_ALERT_CHANNEL = "1498813261263405097"  # #ktp-updates
+
+# Per-unit post cooldown. Without it a 60-second timer that stays broken posts
+# 60 embeds an hour, which trains people to mute the channel -- the failure mode
+# that makes the whole alerting layer worthless.
+COOLDOWN_STATE = "/var/lib/ktp/systemd-alert-cooldown.json"
+DEFAULT_COOLDOWN_SEC = 900
+
+
+def load_cooldown() -> dict:
+    try:
+        with open(COOLDOWN_STATE) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cooldown(state: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(COOLDOWN_STATE), exist_ok=True)
+        tmp = COOLDOWN_STATE + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(state, fh, indent=1)
+        os.replace(tmp, COOLDOWN_STATE)   # never leave a half-written state file
+    except OSError as ex:
+        # Losing the cooldown must never lose the alert: fail open and post.
+        print(f"WARN: cooldown state not written: {ex}", file=sys.stderr)
 
 
 def sh(cmd: str, timeout: int = 15) -> tuple[int, str, str]:
@@ -158,6 +185,9 @@ def main() -> int:
                     help=f"Discord channel ID (default: {DEFAULT_ALERT_CHANNEL} = #ktp-updates)")
     ap.add_argument("--dry-run", action="store_true",
                     help="Print embed JSON to stdout instead of POSTing")
+    ap.add_argument("--cooldown", type=int, default=DEFAULT_COOLDOWN_SEC,
+                    help=f"Per-unit seconds between posts; 0 disables "
+                         f"(default: {DEFAULT_COOLDOWN_SEC})")
     args = ap.parse_args()
 
     state = collect_unit_state(args.unit)
@@ -174,9 +204,29 @@ def main() -> int:
         print("ERROR: /etc/ktp/discord-relay.conf missing RELAY_URL or AUTH_SECRET", file=sys.stderr)
         return 2
 
+    # Cooldown is checked AFTER the embed is built so a suppressed alert still
+    # costs nothing but is fully diagnosable from the journal.
+    cooldown = load_cooldown()
+    entry = cooldown.get(args.unit, {})
+    now = int(time.time())
+    since = now - int(entry.get("last_post", 0))
+    if args.cooldown > 0 and entry.get("last_post") and since < args.cooldown:
+        entry["suppressed"] = int(entry.get("suppressed", 0)) + 1
+        cooldown[args.unit] = entry
+        save_cooldown(cooldown)
+        print(f"Suppressed alert for {args.unit}: last post {since}s ago "
+              f"(<{args.cooldown}s), {entry['suppressed']} suppressed since")
+        return 0
+
     ok, resp = post_to_discord(embed, args.channel, relay_url, auth_secret)
     if ok:
-        print(f"Posted alert for {args.unit}")
+        suppressed = int(entry.get("suppressed", 0))
+        # Recorded only on success -- a failed POST must not start a cooldown
+        # and swallow its own retry.
+        cooldown[args.unit] = {"last_post": now, "suppressed": 0}
+        save_cooldown(cooldown)
+        extra = f" ({suppressed} suppressed since last)" if suppressed else ""
+        print(f"Posted alert for {args.unit}{extra}")
         return 0
     else:
         # If the relay POST failed, write a sentinel to /var/log so the next

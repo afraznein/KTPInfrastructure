@@ -21,7 +21,7 @@
   "stage": "PI",
   "slot": "1",
   "station": "2",
-  "map": "NULL",
+  "map": "armory_b6",
   "source_a": "seed:7",
   "source_b": "seed:10",
   "team_a": "NoSoul",
@@ -37,7 +37,7 @@
   "stage": "PI",
   "slot": "2",
   "station": "3",
-  "map": "NULL",
+  "map": "railroad2_s9a",
   "source_a": "seed:8",
   "source_b": "seed:9",
   "team_a": "Price is Right",
@@ -165,7 +165,7 @@
   "stage": "LS",
   "slot": "2",
   "station": "4",
-  "map": "NULL",
+  "map": "railroad2_s9a / saints2_b3e",
   "source_a": "L:QF3",
   "source_b": "L:QF4",
   "team_a": "onLAN thunder",
@@ -229,7 +229,7 @@
   "stage": "P910",
   "slot": "1",
   "station": "5",
-  "map": "NULL",
+  "map": "saints2_b3e",
   "source_a": "L:PI1",
   "source_b": "L:PI2",
   "team_a": "Uncle Rico's Time Machine",
@@ -237,6 +237,7 @@
   "score_a": "0",
   "score_b": "2",
   "winner": "b Team",
-  "status": "final"
+  "status": "final",
+  "note": "One map played. Uncle Rico's Time Machine forfeited the second, which is why the series reads 2-0 with a single match on record."
  }
 ]

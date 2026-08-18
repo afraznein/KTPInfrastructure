@@ -1,0 +1,12 @@
+[Unit]
+Description=Publish HLTV demos hourly
+
+[Timer]
+# Hourly at :10 -- clear of the 03:00 fleet restart and the 04:00/04:45 legacy
+# window, and of the :00 spike when everything else fires.
+OnCalendar=*-*-* *:10:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

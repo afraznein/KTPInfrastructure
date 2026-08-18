@@ -3,7 +3,7 @@ password to admins) + inline admin CRUD on the same page."""
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from .. import auth, common, db, seeding, stations
+from .. import admin_audit, auth, common, db, parse, seeding, stations
 from ..templating import templates
 
 router = APIRouter()
@@ -56,7 +56,9 @@ async def station_add(request: Request):
 async def station_edit(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    sid = int(f["station_id"])
+    sid = parse.as_int(f.get("station_id"))
+    if sid is None:
+        raise HTTPException(400, "A station id is required.")
     label, connect, password, now_playing, status, sort_order = _fields(f)
     if not label:
         raise HTTPException(400, "Station label required.")
@@ -71,7 +73,17 @@ async def station_edit(request: Request):
 async def station_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    db.execute("DELETE FROM lan_stations WHERE id=%s", (int(f["station_id"]),))
+    sid = parse.as_int(f.get("station_id"))
+    if sid is None:
+        raise HTTPException(400, "A station id is required.")
+    prior = db.query_one("SELECT label, connect FROM lan_stations WHERE id=%s", (sid,))
+    if prior is None:  # already gone; a row would assert a delete that never ran
+        return RedirectResponse(request.url_for("stations"), status_code=303)
+    db.execute_all([
+        ("DELETE FROM lan_stations WHERE id=%s", (sid,)),
+        admin_audit.stmt_request(request, "station_delete", f"station:{sid}",
+                                 f"{prior['label'] or '?'} / {prior['connect'] or '-'}", None),
+    ])
     return RedirectResponse(request.url_for("stations"), status_code=303)
 
 
@@ -103,12 +115,15 @@ async def stream_add(request: Request):
 async def stream_edit(request: Request):
     auth.require_admin(request)
     f = await request.form()
+    stream_id = parse.as_int(f.get("stream_id"))
+    if stream_id is None:
+        raise HTTPException(400, "A stream id is required.")
     label, url, caster, live, order = _stream_fields(f)
     if not label or not url:
         raise HTTPException(400, "Stream label and URL required.")
     db.execute(
         "UPDATE lan_streams SET label=%s, url=%s, caster=%s, live=%s, sort_order=%s WHERE id=%s",
-        (label, url, caster, live, order, int(f["stream_id"])),
+        (label, url, caster, live, order, stream_id),
     )
     return RedirectResponse(request.url_for("stations"), status_code=303)
 
@@ -117,5 +132,15 @@ async def stream_edit(request: Request):
 async def stream_delete(request: Request):
     auth.require_admin(request)
     f = await request.form()
-    db.execute("DELETE FROM lan_streams WHERE id=%s", (int(f["stream_id"]),))
+    stream_id = parse.as_int(f.get("stream_id"))
+    if stream_id is None:
+        raise HTTPException(400, "A stream id is required.")
+    prior = db.query_one("SELECT label, url FROM lan_streams WHERE id=%s", (stream_id,))
+    if prior is None:  # already gone; a row would assert a delete that never ran
+        return RedirectResponse(request.url_for("stations"), status_code=303)
+    db.execute_all([
+        ("DELETE FROM lan_streams WHERE id=%s", (stream_id,)),
+        admin_audit.stmt_request(request, "stream_delete", f"stream:{stream_id}",
+                                 f"{prior['label'] or '?'} / {prior['url'] or '-'}", None),
+    ])
     return RedirectResponse(request.url_for("stations"), status_code=303)

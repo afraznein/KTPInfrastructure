@@ -237,6 +237,27 @@ Compresses old logs and deletes archives older than a year.
 0 4 * * 0 /home/dodserver/ktp-log-rotation.sh >> /home/dodserver/log/log-rotation.log 2>&1
 ```
 
+### hlstatsx-ingest-monitor.py
+Hourly reconciliation of the HLStatsX ingest path, for the failures that produce no error. Full detail in [`README-hlstatsx-ingest-monitor.md`](README-hlstatsx-ingest-monitor.md).
+
+**Usage:**
+```bash
+hlstatsx-ingest-monitor.py [--db hlstatsx] [--since 90] [--logs <dod/logs>] [--quiet]
+```
+
+Findings print with a `!!` prefix and set exit 1, which fails the systemd unit and fires the existing `ktp-systemd-alert` `OnFailure` wiring into Discord.
+
+| Check | Catches |
+|---|---|
+| UDP `RcvbufErrors` delta | log lines dropped before the daemon saw them — the only evidence that exists |
+| Half with no summary rows | the empty-match-id shape that lost the 2026 LAN's Grand Final half |
+| Summary short of its events | aggregation stopped while ingest continued |
+| Half 2 far below half 1 | partial ingest loss, which leaves plausible rows rather than a gap |
+| Daemon `KTP_HEALTH` line | unresolved actions, failed writes (needs KTPHLStatsX ≥ 0.3.5) |
+| `--logs` log-vs-database | everything, but only where servers and daemon share a host (LAN) |
+
+⚠️ At a LAN, drop the timer to every 10 minutes and pass `--logs`. ⚠️ Runs as root and reaches MySQL over the local socket — it holds no credentials, and this repo is public.
+
 ### package-dod-base.sh
 Creates a tarball of base DoD game files for deployment to new servers.
 
@@ -298,4 +319,5 @@ python3 precache_audit.py --scope all --cron-mode --output /var/log/ktp-precache
 | hltv-api.py | Data Server | /home/hltvserver/ |
 | hltv-restart-all.sh | Data Server | /usr/local/bin/ |
 | ktp-backup.sh | Data Server | /opt/ |
+| hlstatsx-ingest-monitor.py | Data Server | /usr/local/bin/ (+ systemd timer) |
 | ktp-log-rotation.sh | Game Servers | /home/dodserver/ |
