@@ -96,6 +96,11 @@ def inventory_path() -> Path:
 
 VALID_INVENTORY_TAGS = ("live", "retired", "hostinfo")
 
+# A short value matches everywhere and drowns the real findings, which is how a
+# gate stops being read. `ktp` -- a genuine retired fleet password -- would hit
+# thousands of files. Reject it loudly rather than emit a useless report.
+MIN_VALUE_LEN = 8
+
 
 def _parse_inventory() -> dict[str, list[str]]:
     path = inventory_path()
@@ -109,16 +114,25 @@ def _parse_inventory() -> dict[str, list[str]]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        tag, _, value = line.partition("\t")
-        if not value:
-            tag, _, value = line.partition(" ")
-        tag, value = tag.strip().lower(), value.strip()
+        # Strictly field-separated: tag, value, then an optional trailing
+        # comment naming which credential it is. Splitting on '#' instead
+        # would truncate any password containing one -- the generator emits them.
+        fields = line.split("	") if "	" in line else line.split(None, 2)
+        if len(fields) < 2:
+            raise Broken(f"{path}:{lineno}: no value field (use tag<TAB>value)")
+        tag, value = fields[0].strip().lower(), fields[1].strip()
         if not value:
             raise Broken(f"{path}:{lineno}: tag {tag!r} with no value")
         if tag not in buckets:
             raise Broken(
                 f"{path}:{lineno}: unknown tag {tag!r} "
                 f"(want {'/'.join(VALID_INVENTORY_TAGS)})"
+            )
+        if tag != "hostinfo" and len(value) < MIN_VALUE_LEN:
+            raise Broken(
+                f"{path}:{lineno}: {tag} value is {len(value)} chars, under the "
+                f"{MIN_VALUE_LEN}-char floor. Short values match everywhere and "
+                "bury the real findings. Drop it, or scan for it by hand."
             )
         buckets[tag].append(value)
     return buckets

@@ -303,3 +303,41 @@ def test_cli_reports_broken_without_a_traceback(tmp_path, monkeypatch):
     assert out.returncode == scan.EXIT_BROKEN, out.stderr
     assert "Traceback" not in out.stderr
     assert "BROKEN" in out.stderr
+
+
+def test_short_value_is_rejected(tmp_path, monkeypatch):
+    """A 3-char value like the retired fleet password `ktp` would match
+    thousands of files and bury every real finding."""
+    path = tmp_path / "inv.txt"
+    path.write_text("live\tktp\n", encoding="utf-8")
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(path))
+    with pytest.raises(scan.Broken, match="char floor"):
+        scan.load_inventory()
+
+
+def test_hostinfo_is_exempt_from_the_length_floor(tmp_path, monkeypatch):
+    """IPs are legitimately short and are matched as whole addresses."""
+    path = tmp_path / "inv.txt"
+    path.write_text("live\tLONGENOUGHVALUE\nhostinfo\t10.0.0.1\n", encoding="utf-8")
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(path))
+    assert scan.load_hostinfo() == ["10.0.0.1"]
+
+
+def test_trailing_comment_is_not_part_of_the_value(tmp_path, monkeypatch):
+    """The inventory labels each entry with a trailing comment. Taking
+    everything after the first tab would fold that into the secret."""
+    path = tmp_path / "inv.txt"
+    path.write_text("live\tREALSECRETVALUE\t# data server root\n", encoding="utf-8")
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(path))
+    live, _ = scan.load_inventory()
+    assert live == ["REALSECRETVALUE"]
+
+
+def test_a_value_containing_a_hash_survives(tmp_path, monkeypatch):
+    """The password generator's alphabet includes '#', so splitting on it
+    would silently truncate a real credential and the scan would miss it."""
+    path = tmp_path / "inv.txt"
+    path.write_text("live\tab#cd~ef@gh_12\t# generated\n", encoding="utf-8")
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(path))
+    live, _ = scan.load_inventory()
+    assert live == ["ab#cd~ef@gh_12"]
