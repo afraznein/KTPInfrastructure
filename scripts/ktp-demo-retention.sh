@@ -100,7 +100,7 @@ oldest_mtime() {
 }
 
 # KTP Discord embed constants (match plugins/include/ktp_discord.inc)
-KTP_EMOJI='<:ktp:1105490705188659272>'
+KTP_EMOJI='<:KTP:1002382703020212245>'
 KTP_COLOR_RED=16711680
 KTP_COLOR_ORANGE=16750848
 KTP_COLOR_GREEN=65280
