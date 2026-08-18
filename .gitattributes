@@ -26,3 +26,9 @@ scripts/cron.d/* text eol=lf
 ops/cron-inventory/**/cron.d/* text eol=lf
 # sql/ deploys verbatim to a Linux host the same way scripts/ does.
 *.sql text eol=lf
+# Git hooks have no extension, so none of the rules above reach them. A CRLF
+# hook dies on Linux with `$'\r': command not found` -- and a pre-push hook that
+# cannot run is a secret gate that never fires.
+scripts/hooks/* text eol=lf
+# Workflow `run:` blocks are bash on a Linux runner; CRLF leaks \r into them.
+.github/workflows/*.yml text eol=lf
