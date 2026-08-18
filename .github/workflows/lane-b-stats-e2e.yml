@@ -254,6 +254,7 @@ jobs:
             -v "${PWD}/.github:/work/.github:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -w /work ktp-lane-b:ci \
             python3 -m pytest tests/e2e_stats -q
 
@@ -286,6 +287,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_012_frag_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
                        /work/build/artifacts/sql/migrate_014_match_type_retention.sql \
+                       /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -349,6 +351,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_012_frag_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
                        /work/build/artifacts/sql/migrate_014_match_type_retention.sql \
+                       /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

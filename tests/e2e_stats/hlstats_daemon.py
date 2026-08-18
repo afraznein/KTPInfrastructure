@@ -100,6 +100,33 @@ def strip_log_prefix(line: str) -> str:
     return rest if sep else line
 
 
+def _replacement_resume_offset(current, candidate: Path, offset: int,
+                               *, checkpoint_bytes: int = 4096) -> int:
+    """Resume when a replacement contains bytes already consumed.
+
+    Docker Desktop bind mounts can change ``st_ino`` for an unchanged growing
+    file. Reopening such a path from byte zero duplicates every event already
+    sent to HLStatsX. Compare a checkpoint immediately before the consumed
+    offset; a genuine replacement resumes at zero, while a rebinding of the
+    same content resumes exactly where the pump stopped.
+    """
+    if offset <= 0:
+        return 0
+    try:
+        if candidate.stat().st_size < offset:
+            return 0
+        start = max(0, offset - checkpoint_bytes)
+        current.seek(start)
+        old = current.read(offset - start)
+        current.seek(offset)
+        with candidate.open("rb") as incoming:
+            incoming.seek(start)
+            new = incoming.read(offset - start)
+        return offset if old == new and len(new) == offset - start else 0
+    except OSError:
+        return 0
+
+
 def preflight() -> dict:
     """Check the daemon's runtime deps before booting anything expensive.
 
@@ -359,14 +386,86 @@ class HlstatsDaemon:
             time.sleep(0.2)
         if self._stop.is_set():
             return
-        with self.log_source.open("r", encoding="utf-8", errors="replace") as f:
-            f.seek(0, os.SEEK_END)
+        f = None
+        identity = None
+        first_open = True
+        short_since = None
+        try:
             while not self._stop.is_set():
-                line = f.readline()
-                if not line:
+                if f is None:
+                    try:
+                        f = self.log_source.open("rb")
+                    except FileNotFoundError:
+                        time.sleep(0.2)
+                        continue
+                    # Only the initial attachment skips existing boot noise.
+                    # A replacement file belongs to the active/retried server
+                    # and must be consumed from its beginning.
+                    f.seek(0, os.SEEK_END if first_open else os.SEEK_SET)
+                    stat = os.fstat(f.fileno())
+                    identity = (stat.st_dev, stat.st_ino)
+                    first_open = False
+
+                try:
+                    line = f.readline()
+                except OSError:
+                    # Docker Desktop bind mounts can briefly return ENODATA
+                    # while HLDS writes. Retrying the same descriptor avoids
+                    # replaying its prefix on a transient mount error.
                     time.sleep(0.2)
                     continue
-                self._feed(line.rstrip("\r\n"))
+                if line:
+                    self._feed(line.decode("utf-8", "replace").rstrip("\r\n"))
+                    continue
+
+                # HLDS opens the configured console log with truncation on a
+                # retry/map lifecycle. Following the old file descriptor then
+                # loses the whole match while the host path keeps growing.
+                # Detect replacement or truncation and follow the path again.
+                try:
+                    path_stat = self.log_source.stat()
+                    replaced = (path_stat.st_dev, path_stat.st_ino) != identity
+                    offset = f.tell()
+                    truncated = path_stat.st_size < offset
+                except OSError:
+                    time.sleep(0.2)
+                    continue
+
+                if truncated:
+                    # Bind-mounted size can briefly lag the readable file.
+                    # Require a persistent short file before accepting a real
+                    # HLDS truncation; otherwise reopening at zero duplicates
+                    # the active match.
+                    short_since = short_since or time.monotonic()
+                    if time.monotonic() - short_since < 1.0:
+                        time.sleep(0.2)
+                        continue
+                    f.close()
+                    f = None
+                    identity = None
+                    short_since = None
+                    continue
+                short_since = None
+
+                if replaced:
+                    resume = _replacement_resume_offset(
+                        f, self.log_source, offset)
+                    f.close()
+                    try:
+                        f = self.log_source.open("rb")
+                    except FileNotFoundError:
+                        f = None
+                        identity = None
+                        time.sleep(0.2)
+                        continue
+                    f.seek(resume)
+                    stat = os.fstat(f.fileno())
+                    identity = (stat.st_dev, stat.st_ino)
+                    continue
+                time.sleep(0.2)
+        finally:
+            if f is not None:
+                f.close()
 
     def _feed(self, line: str) -> None:
         if not line:

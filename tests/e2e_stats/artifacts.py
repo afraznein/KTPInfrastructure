@@ -63,6 +63,7 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_012_frag_context_correlation.sql",
     "sql/migrate_013_ktp_table_collation.sql",
     "sql/migrate_014_match_type_retention.sql",
+    "sql/migrate_015_flag_state_events.sql",
 )
 
 

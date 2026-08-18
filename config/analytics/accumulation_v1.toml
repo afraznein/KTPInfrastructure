@@ -1,0 +1,44 @@
+# Scenario-aware positional accumulation. Shadow-only, not production KTPR.
+
+[profile]
+name = "accumulation_v1"
+status = "experimental_shadow"
+
+[events]
+kill = 100.0
+assist = 50.0
+damage = 0.10
+capture_credit = 100.0
+cap_break = 100.0
+team_kill = -100.0
+suicide = -50.0
+
+[position]
+sample_seconds = 5.0
+objective_radius_units = 512.0
+points_per_second_at_flag = 0.10
+grid_size_units = 256
+max_points_per_half = 100.0
+
+[scenarios]
+# Territory multipliers apply to the proximity-decayed base tick.
+own_first_multiplier = 0.50
+own_second_multiplier = 0.80
+middle_multiplier = 1.25
+enemy_second_multiplier = 1.75
+enemy_first_multiplier = 2.25
+
+# Double-cap and known high-traffic flags receive smaller structural bonuses.
+double_cap_multiplier = 1.25
+high_contest_area_multiplier = 1.20
+
+# This is an observed contest: at least one opponent sampled within the radius
+# during the same tick. It distinguishes active pressure from empty camping.
+active_contest_radius_units = 768.0
+active_contest_multiplier = 1.75
+
+# Existing frag telemetry marks a kill made while the victim team is down to
+# its last flag. This is stronger evidence than proximity and earns a discrete
+# contextual bonus, still inside the positional cap.
+last_flag_defense_kill_points = 15.0
+last_flag_defense_max_per_half = 45.0

@@ -17,6 +17,7 @@ STATS = (
     ("damage", None),
     ("flag_capture", "flag_captures"),
     ("flag_position", "flag_positions"),
+    ("flag_state", "flag_states"),
     ("position_sample", "position_samples"),
 )
 
@@ -43,7 +44,7 @@ def judge(report: dict) -> list[str]:
 
     required = (
         "assist", "cap_break", "suicide", "headshot", "damage_ledger",
-        "flag_captures", "flag_positions", "position_samples",
+        "flag_captures", "flag_positions", "flag_states", "position_samples",
         "capture_buffer_drops", "projectile_killer_not_assister",
         "match_players", "match_frags_tagged", "match_half_set",
         "match_context_cleared", "match_stats_reconciled", "kill_switch",
@@ -93,6 +94,7 @@ def render(reports: list[tuple[Path, dict]], *, expected: int) -> str:
             "damage": emitted.get("damage", 0),
             "captures": emitted.get("flag_capture", 0),
             "positions": emitted.get("position_sample", 0),
+            "flag_states": emitted.get("flag_state", 0),
             "roster": stored.get("match_players", 0),
             "walkoff": _scenario(report, "negative_voluntary_walkoff").get("status", "missing"),
             "context": _verdict(report, "match_context_cleared").get("status", "missing"),
@@ -107,14 +109,14 @@ def render(reports: list[tuple[Path, dict]], *, expected: int) -> str:
         "",
         f"Reports found: {len(reports)}; expected: {expected}.",
         "",
-        "| Run | Result | Kills | Assists | Breaks | Damage | Captures | Position samples | Roster | Walkoff | Context clear |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---|---|",
+        "| Run | Result | Kills | Assists | Breaks | Damage | Captures | Flag states | Position samples | Roster | Walkoff | Context clear |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     for row in rows:
         out.append(
             f"| {row['run']} | {row['status']} | {row['kills']} | {row['assists']} "
             f"| {row['breaks']} | {row['damage']} | {row['captures']} "
-            f"| {row['positions']} | {row['roster']} | {row['walkoff']} "
+            f"| {row['flag_states']} | {row['positions']} | {row['roster']} | {row['walkoff']} "
             f"| {row['context']} |")
 
     out += ["", "## Cross-run ranges", "",
@@ -122,6 +124,7 @@ def render(reports: list[tuple[Path, dict]], *, expected: int) -> str:
     for key, label in (("kills", "Kills"), ("assists", "Assists"),
                        ("breaks", "Cap breaks"), ("damage", "Damage events"),
                        ("captures", "Flag captures"),
+                       ("flag_states", "Flag states"),
                        ("positions", "Position samples")):
         values = [row[key] for row in rows]
         if values:
