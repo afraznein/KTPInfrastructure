@@ -626,9 +626,12 @@ def assert_no_dropped_lines(log_text: str) -> None:
 
 
 def _check_direct_rows(db, *, code: str, table: str, emitted: int,
-                       exact: bool = True) -> dict:
+                       exact: bool = True, where: str | None = None) -> dict:
     """Compare a direct KTP marker with its destination table."""
-    rows = db.count(f"SELECT COUNT(*) FROM {table}")
+    query = f"SELECT COUNT(*) FROM {table}"
+    if where is not None:
+        query += f" WHERE {where}"
+    rows = db.count(query)
     if emitted == 0:
         return {"code": code, "status": "not_exercised", "emitted": 0,
                 "rows": rows, "detail": f"no {code} markers were emitted"}
@@ -656,9 +659,12 @@ def check_flag_positions(db, *, emitted: int) -> dict:
                               exact=False)
 
 
-def check_position_samples(db, *, emitted: int) -> dict:
+def check_position_samples(db, *, emitted: int,
+                           match_id: str | None = None) -> dict:
     return _check_direct_rows(db, code="position_samples",
-                              table="ktp_position_samples", emitted=emitted)
+                              table="ktp_position_samples", emitted=emitted,
+                              where=(f"match_id = '{match_id}'"
+                                     if match_id is not None else None))
 
 
 def check_flag_states(db, *, emitted: int) -> dict:
@@ -703,7 +709,7 @@ def check_match_players(db, *, expected: int) -> dict:
             "expected": expected, "detail": f"all {expected} bots tracked"}
 
 
-def summarise(db) -> dict:
+def summarise(db, *, match_id: str | None = None) -> dict:
     """Everything Lane B measured, for the run report. Raises nothing."""
     def _safe(fn, *a, **kw):
         try:
@@ -738,7 +744,12 @@ def summarise(db) -> dict:
         "match_players": db.count("SELECT COUNT(*) FROM ktp_match_players"),
         "flag_captures": db.count("SELECT COUNT(*) FROM ktp_flag_captures"),
         "flag_positions": db.count("SELECT COUNT(*) FROM ktp_flag_positions"),
-        "position_samples": db.count("SELECT COUNT(*) FROM ktp_position_samples"),
+        "position_samples": db.count(
+            "SELECT COUNT(*) FROM ktp_position_samples"
+            + (f" WHERE match_id = '{match_id}'" if match_id is not None else "")
+        ),
+        "position_samples_total": db.count(
+            "SELECT COUNT(*) FROM ktp_position_samples"),
         "flag_states": db.count("SELECT COUNT(*) FROM ktp_flag_state_events"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),

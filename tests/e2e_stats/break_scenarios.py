@@ -153,7 +153,7 @@ class BreakDriver:
     def find_capturing_flag(self, *, timeout: float = 120.0,
                             poll: float = 4.0) -> dict | None:
         """Wait for a flag with a cap actually in progress. Diagnostic only —
-        see `_fire_when_capturing` for what the scenarios actually use."""
+        staged-kill scenarios use `_arm_kill` to avoid an RCON race."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             for flag in self.scan():
@@ -165,30 +165,25 @@ class BreakDriver:
             time.sleep(poll)
         return None
 
-    def _fire_when_capturing(self, cmd_template: str, *, timeout: float = 60.0,
-                             poll: float = 1.5) -> bool:
-        """Wait for a capture, then fire at the exact flag just observed.
+    def _arm_kill(self, mode: str, *, timeout: float = 65.0,
+                  poll: float = 0.1) -> bool:
+        """Ask the diagnostic plugin to stage a kill on the next live cap.
 
-        Earlier versions either fired blind on a fixed outer schedule or used
-        `auto` after observing a capture. DoD's active-capture window can be
-        only a few seconds, so both approaches raced the capture completing.
-        The scan is now the gate and its exact flag is carried into the command.
-
-        `cmd_template` contains a ``{flag}`` placeholder. Passing the observed
-        flag closes a second race where the plugin was asked to rediscover an
-        arbitrary capturing flag after the scan had already identified one.
-        Combined with scan-completion polling, the remaining gap is the RCON
-        round trip rather than a fixed one-second sleep plus rediscovery.
+        The plugin polls and executes inside HLDS, so observing a capture and
+        killing its capper are no longer separated by two RCON round trips.
+        Return only after the staged-kill or explicit-abort line is visible;
+        the caller's settle window must begin when the kill actually happened,
+        not when the arm command was sent.
         """
+        mark = len(self._read())
+        self.handle.rcon(f"ktp_bd_arm_kill {mode}")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            for flag in self.scan():
-                if flag["capping"] and flag["capteam"] in (TEAM_ALLIES, TEAM_AXIS):
-                    occupants = (flag["allies"] if flag["capteam"] == TEAM_ALLIES
-                                 else flag["axis"])
-                    if occupants >= 1:
-                        self.handle.rcon(cmd_template.format(flag=flag["flag"]))
-                        return True
+            tail = _tail(self._read(), mark)
+            if _KILL_RE.search(tail):
+                return True
+            if _ABORT_RE.search(tail):
+                return False
             time.sleep(poll)
         return False
 
@@ -199,8 +194,10 @@ class BreakDriver:
         name the killer we injected."""
         s = Scenario("positive_kill_on_point")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill {flag} near"):
-            s.detail = "no cap started within the wait"
+        if not self._arm_kill("near"):
+            tail = _tail(self._read(), mark)
+            s.detail = (self._abort_reason(tail)
+                        or "armed near kill did not stage within the wait")
             return s
         time.sleep(self.SETTLE)
         tail = _tail(self._read(), mark)
@@ -265,8 +262,10 @@ class BreakDriver:
         """
         s = Scenario("negative_off_point_kill")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill {flag} far"):
-            s.detail = "no cap started within the wait"
+        if not self._arm_kill("far"):
+            tail = _tail(self._read(), mark)
+            s.detail = (self._abort_reason(tail)
+                        or "armed far kill did not stage within the wait")
             return s
         time.sleep(self.SETTLE)
         tail = _tail(self._read(), mark)
@@ -463,8 +462,10 @@ class BreakDriver:
         """
         s = Scenario("negative_round_restart")
         mark = len(self._read())
-        if not self._fire_when_capturing("ktp_bd_kill {flag} far"):
-            s.detail = "no cap started within the wait to queue a candidate against"
+        if not self._arm_kill("far"):
+            tail = _tail(self._read(), mark)
+            s.detail = (self._abort_reason(tail)
+                        or "armed far kill did not stage within the wait")
             return s
         time.sleep(2.0)
         staged = _KILL_RE.search(_tail(self._read(), mark))
@@ -568,14 +569,10 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     active capture; once found, the diagnostic isolates its evidence window
     from unrelated bot deaths.
 
-    `attempts` dropped from 8 to 3 when the kill scenarios themselves started
-    gating on `_fire_when_capturing`, which waits up to 60s watching
-    for a capture rather than firing blind. The old 8×~10s outer schedule was
-    doing the waiting badly — DoD's active-capture window turned out to be
-    only a few seconds, so a fixed retry every ~10s mostly landed between
-    captures rather than during one, and all four rcon-firing scenarios came
-    back `not_staged` in a live run despite 38 `dod_capture_area` events in
-    the same log.
+    `attempts` dropped from 8 to 3 when the kill scenarios started arming an
+    in-process poll for up to 60s rather than firing blind. The old 8×~10s
+    outer schedule did the waiting badly: DoD's active-capture window can be
+    only a few seconds, so a fixed retry mostly landed between captures.
     """
     d = BreakDriver(handle, log_path)
     out = []

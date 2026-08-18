@@ -71,6 +71,17 @@ class FlagStateDb(FakeDb):
         return self.rows
 
 
+class QueryCaptureDb(FakeDb):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = rows
+        self.queries = []
+
+    def count(self, query):
+        self.queries.append(query)
+        return self.rows
+
+
 def _carried(db, code="assist", *, emitted, table=_PPA, other=_PA):
     return assertions.check_carried(db, code, emitted=emitted, table=table,
                                     other_table=other)
@@ -109,6 +120,17 @@ def test_flag_state_pipeline_requires_exact_carry_and_a_baseline():
     assert assertions.check_flag_states(
         FlagStateDb(rows=7, initial=0), emitted=7
     )["status"] == "pipeline"
+
+
+def test_position_samples_compare_only_the_driven_match():
+    db = QueryCaptureDb(rows=12)
+    verdict = assertions.check_position_samples(
+        db, emitted=12, match_id="1787019402-TEST")
+    assert verdict["status"] == "ok"
+    assert db.queries == [
+        "SELECT COUNT(*) FROM ktp_position_samples "
+        "WHERE match_id = '1787019402-TEST'"
+    ]
 
 
 def test_missing_lane_b_weaponstats_is_a_pipeline_failure():
