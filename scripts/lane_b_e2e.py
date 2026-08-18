@@ -241,6 +241,22 @@ def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None
               flush=True)
 
 
+def replay_boot_flag_positions(daemon, log_path: Path) -> int:
+    """Feed static map metadata emitted before the successful boot was ready.
+
+    HLStatsX intentionally starts only after RCON readiness so a failed Steam
+    initialization cannot contaminate event tables. Flag positions are the
+    one useful record emitted during boot. They are idempotent map metadata,
+    so replay only those lines from the successful boot log after the daemon
+    attaches; gameplay and player events remain excluded.
+    """
+    lines = [line for line in log_path.read_text(errors="replace").splitlines()
+             if "KTP_FLAG_POSITION " in line]
+    for line in lines:
+        daemon.feed_line(line)
+    return len(lines)
+
+
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
               per_team: int = 8, before_play=None, during_play=None,
               after_match=None) -> dict:
@@ -507,9 +523,6 @@ def main() -> int:
             stdout_path=args.out.with_name("hlstats-e2e.out"),
             debug=1,
         )
-        daemon.start()
-        print("daemon up, tailing the game log", flush=True)
-
         completed = False
         run_error = None
         for attempt in range(1, BOOT_ATTEMPTS + 1):
@@ -524,6 +537,20 @@ def main() -> int:
                     print(f"server up (attempt {attempt})", flush=True)
                     server_started = True
                     report["boot_attempts"] = attempt
+                    # Do not let a transient HLDS boot attempt touch the
+                    # database. Fresh containers commonly fail their first
+                    # SteamAPI_Init and retry with the same console-log path.
+                    # Starting the daemon only after RCON readiness means it
+                    # attaches at the current end of the successful boot log;
+                    # failed-attempt rows can neither be ingested nor mixed
+                    # into the match that follows.
+                    daemon.start()
+                    print("daemon up, tailing the successful boot log", flush=True)
+                    report["boot_flag_positions_replayed"] = (
+                        replay_boot_flag_positions(daemon, args.log))
+                    print("replayed "
+                          f"{report['boot_flag_positions_replayed']} successful-boot "
+                          "flag position marker(s)", flush=True)
                     configure_bots(handle, flag_priority=args.flag_priority,
                                    wait_for_cap=args.wait_for_cap)
                     def _stage_scenarios():

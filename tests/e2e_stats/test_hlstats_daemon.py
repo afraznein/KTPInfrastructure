@@ -15,7 +15,8 @@ import time
 
 import pytest
 
-from .hlstats_daemon import HlstatsDaemon, strip_log_prefix
+from .hlstats_daemon import (HlstatsDaemon, _replacement_resume_offset,
+                             strip_log_prefix)
 
 
 class FakeDb:
@@ -280,6 +281,31 @@ def test_log_pump_follows_truncated_file_from_the_beginning(tmp_path):
     d._stop.set()
     pump.join(timeout=3)
     assert fed == ["first server line", "replacement starts here"]
+
+
+def test_rebound_growing_file_resumes_after_consumed_prefix(tmp_path):
+    old = tmp_path / "old.log"
+    candidate = tmp_path / "candidate.log"
+    consumed = b"first\nsecond\n"
+    old.write_bytes(consumed)
+    candidate.write_bytes(consumed + b"third\n")
+
+    with old.open("rb") as current:
+        current.seek(len(consumed))
+        assert _replacement_resume_offset(
+            current, candidate, len(consumed)) == len(consumed)
+
+
+def test_genuine_replacement_restarts_from_zero(tmp_path):
+    old = tmp_path / "old.log"
+    candidate = tmp_path / "candidate.log"
+    consumed = b"first generation\n"
+    old.write_bytes(consumed)
+    candidate.write_bytes(b"second generation is different\n")
+
+    with old.open("rb") as current:
+        current.seek(len(consumed))
+        assert _replacement_resume_offset(current, candidate, len(consumed)) == 0
 
 
 # -- SQL error classification ----------------------------------------------
