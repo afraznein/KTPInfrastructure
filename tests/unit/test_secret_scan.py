@@ -274,3 +274,32 @@ def test_fresh_checkout_refuses_content_mode(tmp_path, inventory):
 def test_repo_gitignore_passes_its_own_structure_audit(inventory):
     """The shipped .gitignore must satisfy the rules it documents."""
     assert ignore_audit.audit(REPO, structure_only=True) == 0
+
+
+def test_structure_only_needs_no_inventory(tmp_path, monkeypatch):
+    """The CI path. Structure checks read tags and why: lines -- no values -- so
+    requiring an inventory there made the gate depend on a secret it never reads,
+    and fork PRs (which get no secrets) could never pass it."""
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(tmp_path / "absent.txt"))
+    _write_ignore(tmp_path, "# @guard\n# why: stated\nsome/path.conf")
+    assert ignore_audit.audit(tmp_path, structure_only=True) == 0
+
+
+def test_repo_structure_audit_passes_without_an_inventory(monkeypatch, tmp_path):
+    """Exactly what CI runs, with no inventory present."""
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(tmp_path / "absent.txt"))
+    assert ignore_audit.audit(REPO, structure_only=True) == 0
+
+
+def test_cli_reports_broken_without_a_traceback(tmp_path, monkeypatch):
+    """Running the file as a script makes __main__ a second copy of the module,
+    so `except Broken` there stopped catching the class ktp_ignore_audit raised.
+    A traceback is exit 1, which reads as 'findings' rather than 'broken'."""
+    monkeypatch.setenv("KTP_SECRET_INVENTORY", str(tmp_path / "absent.txt"))
+    out = subprocess.run(
+        [sys.executable, str(SCRIPTS / "ktp_secret_scan.py"), "tree", "--repo", str(REPO)],
+        capture_output=True, text=True,
+    )
+    assert out.returncode == scan.EXIT_BROKEN, out.stderr
+    assert "Traceback" not in out.stderr
+    assert "BROKEN" in out.stderr

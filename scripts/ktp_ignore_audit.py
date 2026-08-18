@@ -100,9 +100,14 @@ def audit(root: Path, strict: bool = False, structure_only: bool = False) -> int
                   "working copy that holds them.")
             return 2
 
-    live, retired = load_inventory()
-    secret_values = live + retired
-    host_values = load_hostinfo()
+    # Structure checks are tags and why: lines -- no values involved. Loading
+    # the inventory here would make the CI path depend on a secret it never reads.
+    if structure_only:
+        secret_values, host_values = [], []
+    else:
+        live, retired = load_inventory()
+        secret_values = live + retired
+        host_values = load_hostinfo()
 
     def _contains(path: Path, needles: list[str]) -> bool | None:
         """True/False, or None when the file cannot be read as text."""

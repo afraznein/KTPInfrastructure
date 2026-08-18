@@ -299,4 +299,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Delegate to the module under its real name. Run directly, this file is
+    # `__main__`, while ktp_ignore_audit does `from ktp_secret_scan import ...`
+    # and gets a SECOND copy -- two Broken classes, and `except Broken` here
+    # silently fails to catch the one that was raised.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ktp_secret_scan
+
+    sys.exit(ktp_secret_scan.main())
