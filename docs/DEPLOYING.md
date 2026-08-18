@@ -2,6 +2,10 @@
 
 This document describes how to deploy KTP components to production and test servers.
 
+For the August 2026 stats-capture, match-type, and analytics-retention release,
+use the ordered
+[stats and retention production runbook](STATS_RETENTION_PRODUCTION_DEPLOY.md).
+
 ## Prerequisites
 
 - Built artifacts (see [BUILDING.md](BUILDING.md))
