@@ -72,8 +72,8 @@
       <p style="font-size:13px;color:var(--ink-faint);">Everyone listed here can see this page and run every control. <strong>Config</strong> admins are
          set in the server environment and can't be revoked here — that's the lockout guard.
          <strong>Master</strong> is the extra authority to tick an award onto the public board. It is granted in the environment
-         but it rides on staff access, so revoking a master's row here <em>does</em> take it away — and if that was the last
-         master, nobody can publish an award until the row is granted back.
+         but it rides on staff access, so revoking a master's row here <em>does</em> take it away. The <em>last</em> remaining
+         master is refused: that would leave nobody able to publish an award, with no way back through this page.
          Grants and revocations are recorded in the <a href="{{ url_for('admin_audit_log') }}">staff action log</a>.
          <strong>Clear row</strong> shows when a config admin also has a leftover row in the table, from before their id went into the
          environment. It deletes that row and nothing else — their access is unaffected.</p>

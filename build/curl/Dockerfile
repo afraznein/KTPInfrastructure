@@ -15,6 +15,8 @@ RUN apt-get update && \
 # Create static lib output directory
 RUN mkdir -p /usr/local/lib32/lib /usr/local/lib32/include
 
+# Every dependency tarball is sha256-pinned; when bumping a version re-derive the hash from
+# the vendor's own published checksum, not from whatever the download happened to return.
 # Build 32-bit zlib
 RUN cd /tmp && \
     wget -q --tries=3 --waitretry=5 https://zlib.net/fossils/zlib-1.3.2.tar.gz && \
@@ -28,7 +30,8 @@ RUN cd /tmp && \
 
 # Build 32-bit OpenSSL 3.3.2 (replaces EOL 1.1.1w)
 RUN cd /tmp && \
-    wget -q https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz && \
+    wget -q --tries=3 --waitretry=5 https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz && \
+    echo "2e8a40b01979afe8be0bbfb3de5dc1c6709fedb46d6c89c10da114ab5fc3d281  openssl-3.3.2.tar.gz" | sha256sum -c - && \
     tar xzf openssl-3.3.2.tar.gz && \
     cd openssl-3.3.2 && \
     ./Configure linux-generic32 no-shared no-async no-tests \
@@ -41,7 +44,8 @@ RUN cd /tmp && \
 
 # Build 32-bit c-ares
 RUN cd /tmp && \
-    wget -q https://github.com/c-ares/c-ares/releases/download/v1.34.4/c-ares-1.34.4.tar.gz && \
+    wget -q --tries=3 --waitretry=5 https://github.com/c-ares/c-ares/releases/download/v1.34.4/c-ares-1.34.4.tar.gz && \
+    echo "fa38dbed659ee4cc5a32df5e27deda575fa6852c79a72ba1af85de35a6ae222f  c-ares-1.34.4.tar.gz" | sha256sum -c - && \
     tar xzf c-ares-1.34.4.tar.gz && \
     cd c-ares-1.34.4 && \
     CFLAGS="-m32 -O3 -fPIC" LDFLAGS="-m32" \
@@ -53,7 +57,8 @@ RUN cd /tmp && \
 
 # Build 32-bit curl with static linking
 RUN cd /tmp && \
-    wget -q https://curl.se/download/curl-8.11.1.tar.gz && \
+    wget -q --tries=3 --waitretry=5 https://curl.se/download/curl-8.11.1.tar.gz && \
+    echo "a889ac9dbba3644271bd9d1302b5c22a088893719b72be3487bc3d401e5c4e80  curl-8.11.1.tar.gz" | sha256sum -c - && \
     tar xzf curl-8.11.1.tar.gz && \
     cd curl-8.11.1 && \
     CFLAGS="-m32 -O3 -fPIC" LDFLAGS="-m32" \

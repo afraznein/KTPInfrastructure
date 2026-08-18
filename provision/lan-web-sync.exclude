@@ -1,0 +1,30 @@
+# What deploy-lan-web.sh does not sync, and the ONLY thing the drift check is
+# allowed to be blind to. One file, two readers, so the guard and the rsync it
+# guards cannot drift apart.
+#
+# rsync --delete does not delete what it excludes, so this list is also the
+# protection list: a path in here survives a deploy, and a path not in here is
+# either replaced from the repo or DELETED. That is why the drift check reads
+# this file rather than keeping its own idea of what to look at.
+#
+# Format is rsync's, restricted to two shapes the Python side also implements:
+#   name/    a directory of that name, at any depth (glob allowed)
+#   glob     a file whose basename matches, at any depth
+# Anything else -- a pattern with a slash in the middle, an anchored /path --
+# makes ktp-lan-web-drift.py exit 2 rather than guess.
+
+# Python bytecode, regenerated on import.
+__pycache__/
+*.pyc
+
+# The venv is built on the box and is not ours to manage.
+venv/
+.venv/
+node_modules/
+
+.git/
+
+# Hand-deploy fossils from before this script existed. They sit above app/, so
+# this is belt and braces -- but if one ever lands inside app/, it is preserved
+# rather than deleted.
+.deploy-bak-*/
