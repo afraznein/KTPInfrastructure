@@ -145,12 +145,13 @@ async def report(request: Request):
     ident = auth.require_login(request)
     form = await request.form()
     mkey = form.get("mkey", "")
-    try:
-        sa = int(form["score_a"]); sb = int(form["score_b"])
-    except (KeyError, ValueError):
-        raise HTTPException(400, "Both series scores required.")
-    if sa < 0 or sb < 0:
-        raise HTTPException(400, "Scores must be non-negative.")
+    # int() read '1٢3' as 123 and wrote a score nobody typed. as_int takes a
+    # plain ASCII digit string or nothing, which also covers the missing key
+    # and the negative.
+    sa = parse.as_int(form.get("score_a"))
+    sb = parse.as_int(form.get("score_b"))
+    if sa is None or sb is None:
+        raise HTTPException(400, "Both series scores required, as whole numbers.")
     row = db.query_one("SELECT team_a_id, team_b_id FROM lan_bracket WHERE mkey=%s", (mkey,))
     if not row:
         raise HTTPException(404, "No such bracket match.")
