@@ -495,3 +495,32 @@ help:
 	@echo "Environment variables:"
 	@echo "  VERSION              - Build version (default: YYYYMMDD)"
 	@echo "  KTP_PROJECT_ROOT     - Path to KTP projects"
+
+# ---------------------------------------------------------------- secret scan
+# Value-based credential scan. See docs/SECRET_SCANNING.md.
+# Needs an inventory OUTSIDE this repo: $KTP_SECRET_INVENTORY, else
+# ~/.ktp/secret-inventory.txt. Without one the scan exits 2 (BROKEN) rather
+# than reporting a clean run it cannot back up.
+.PHONY: secrets-selftest secrets-scan secrets-history secrets-audit secrets-install-hooks
+
+# Prove the scanner can still fire. Cheap enough to run before anything else.
+secrets-selftest:
+	@python3 scripts/ktp_secret_scan.py selftest
+
+# The tracked tree, plus the range this branch adds over main.
+secrets-scan: secrets-selftest
+	@python3 scripts/ktp_secret_scan.py tree --include-retired
+	@python3 scripts/ktp_secret_scan.py range --range origin/main...HEAD --include-retired
+
+# Every value in every ref. Slower; this is the retroactive sweep.
+secrets-history:
+	@python3 scripts/ktp_secret_scan.py history --include-retired
+
+# Check the .gitignore credential tags still say something true. Run from a
+# working copy that HOLDS the ignored files -- a fresh checkout has none of
+# them and the content half is meaningless there.
+secrets-audit:
+	@python3 scripts/ktp_secret_scan.py audit-ignore
+
+secrets-install-hooks:
+	@bash scripts/hooks/install.sh

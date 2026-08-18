@@ -1,0 +1,68 @@
+#!/bin/bash
+# KTP pre-push secret gate.
+#
+# Scans the COMMIT RANGE being pushed, not staged content. That distinction is
+# the entire point: the data-server root password entered history on 2026-08-06
+# and was removed from the tip on 08-09, and a staged-content hook would have
+# waved through every push in between. Removing a line from HEAD does not
+# remove it from the objects you are about to publish.
+#
+# Install:  bash scripts/hooks/install.sh
+# Bypass:   git push --no-verify   (leaves no record -- say why in the PR)
+
+set -uo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCANNER="${REPO_ROOT}/scripts/ktp_secret_scan.py"
+# Probe by RUNNING it, not with `command -v`. On Windows `python3` resolves to
+# the Microsoft Store alias stub, which exists on PATH, prints an install advert
+# and exits nonzero -- so a presence check picks an interpreter that cannot run.
+pick_python() {
+  local candidate
+  for candidate in "${KTP_PYTHON:-}" python3 python py; do
+    [ -n "${candidate}" ] || continue
+    if "${candidate}" -c "import sys" >/dev/null 2>&1; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PYTHON="$(pick_python)" || {
+  echo "pre-push: no working python found; set KTP_PYTHON to one." >&2
+  echo "pre-push: BLOCKED -- an unrunnable scanner is not a clean scan." >&2
+  exit 2
+}
+[ -f "${SCANNER}" ] || { echo "pre-push: scanner missing at ${SCANNER}" >&2; exit 2; }
+
+status=0
+# stdin: <local ref> <local sha> <remote ref> <remote sha>
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  # All-zero local sha = branch deletion; nothing is being published.
+  case "${local_sha}" in *[!0]*) ;; *) continue ;; esac
+
+  case "${remote_sha}" in
+    *[!0]*) range="${remote_sha}..${local_sha}" ;;
+    # New branch: the remote has no tip to diff against. Scanning against every
+    # other ref keeps this from re-reporting the whole repo on each new branch.
+    *)      range="${local_sha} --not --remotes" ;;
+  esac
+
+  echo "pre-push: scanning ${range}"
+  "${PYTHON}" "${SCANNER}" range --range "${range}" --include-retired --repo "${REPO_ROOT}"
+  rc=$?
+  # 0 clean · 1 findings · 2 BROKEN. 2 must block: a scan that cannot fire is
+  # not permission to push.
+  [ "${rc}" -ne 0 ] && status="${rc}"
+done
+
+if [ "${status}" -ne 0 ]; then
+  echo >&2
+  echo "pre-push: BLOCKED (exit ${status})." >&2
+  echo "  1 = a credential value is in the range you are pushing." >&2
+  echo "  2 = the scan is broken; fix it rather than trusting the silence." >&2
+  echo "Removing the line from HEAD is NOT enough -- the value stays in the" >&2
+  echo "objects. Rewrite the range, or rotate the credential." >&2
+fi
+exit "${status}"
