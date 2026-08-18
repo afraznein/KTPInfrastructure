@@ -1,0 +1,509 @@
+# Stats and retention production deployment
+
+This is the operator runbook for the stats-capture, match classification, and
+non-official analytics-retention release merged in August 2026. Merging these
+changes does not deploy them. Production changes only when an operator performs
+the data-server steps below or stages a fleet artifact with `stage-wave.py`.
+
+The safe order is:
+
+1. freeze and test exact source revisions;
+2. back up the database and daemon;
+3. apply the database migrations;
+4. deploy and restart the HLStatsX daemon in a no-match window;
+5. activate one fleet artifact per nightly restart;
+6. verify match classification in production;
+7. install retention in dry-run mode, then separately approve its first apply;
+8. enable the daily retention timer.
+
+Do not combine steps 3-7 into one change window. In particular, do not enable
+retention until `match_type` has been observed end to end on live data.
+
+## 1. Release manifest
+
+The reviewed source revisions were current on 2026-08-17:
+
+| Repository | Production branch | Reviewed revision | Runtime payload |
+| --- | --- | --- | --- |
+| KTPAMXX | `main` | `82508b45f8286f56bf0d066377e4dde80e5a6dfb` | `stats_logging.amxx`; deploy `ktpamx_i386.so` or `dodx_ktp_i386.so` only if the artifact inventory says production differs |
+| KTPMatchHandler | `main` | `da4742f32388526dceb0dbf00b69e9a52a36809d` | `KTPMatchHandler.amxx` 0.10.161 |
+| KTPHLStatsX | `main` | `609e25a2f141eb30dbde5562a929ed32113acaec` | migrations and the three-file daemon delta, version 0.3.9 |
+| KTPInfrastructure | `main` | `07c474b974ea7ba1a7fd5fdbe9086d440f4cf8fd` | retention script and systemd units; fleet staging and verification tools |
+
+Treat this table as a manifest, not as proof that the revisions are still the
+desired ones. Before building, compare it with the remote branch tips and stop
+if any tip moved. Review and deliberately update this document rather than
+silently building a newer commit.
+
+```sh
+for repo in KTPAMXX KTPMatchHandler KTPHLStatsX KTPInfrastructure; do
+    git ls-remote "https://github.com/afraznein/${repo}.git" refs/heads/main
+done
+```
+
+Record the following in the deployment ticket or operator log:
+
+- the four source revisions;
+- every artifact's MD5 and SHA-256;
+- the migration list actually applied;
+- the daemon backup directory and database dump;
+- each staging time, activation time, and 24/24 verification result;
+- the first retention dry-run candidate list and first apply result.
+
+Infrastructure PRs that only pin build inputs, such as a Docker source SHA,
+have no direct production payload unless that image or artifact is rebuilt and
+deployed as part of a separately approved release.
+
+## 2. Release gates
+
+All of these must be green before production contact:
+
+- the four manifest revisions are merged to `main` and their required GitHub
+  checks pass;
+- Lane A/Tier 2 passes against the reviewed stack;
+- Lane B deterministic corpus passes; a full bot run is supporting evidence,
+  not a required check because bot cap-break timing can be nondeterministic;
+- local retention unit/config tests and the ephemeral MariaDB
+  migrate/dry-run/apply test pass;
+- the production operator confirms a no-live-match window for the daemon
+  restart and knows whether another fleet wave is already staged.
+
+The recent promotion already passed Tier 2 and the retention/SQL reconciliation
+tests. Re-run the gates if any manifest revision changes or any artifact is
+rebuilt. A bot-only cap-break flake is not by itself evidence of a retention or
+SQL failure; inspect the failed assertion before deciding whether to proceed.
+
+Useful local checks from the Infrastructure checkout are:
+
+```sh
+python3 -m pytest -q tests/unit/test_match_retention.py
+python3 -m py_compile scripts/ktp-match-retention.py
+python3 scripts/preflight.py check --repo-root .
+```
+
+Dispatch Lane B with `amxx_ref=main`, `daemon_ref=main`, and `lane=corpus`, then
+optionally `lane=full`. The current full workflow checks out MatchHandler from
+`preprod`; confirm that branch contains the reviewed MatchHandler change before
+treating the result as release evidence.
+
+## 3. Build once from clean detached worktrees
+
+Use an empty release directory. Never build from a working tree with local
+changes, and never rebuild after recording an MD5: KTPAMXX and MatchHandler
+embed build metadata, so a rebuild can create a different reviewed artifact.
+
+The commands below are examples for a Linux/WSL shell. Set the checkout paths
+for the local machine.
+
+```sh
+export RELEASE_ID=stats-retention-20260817
+export RELEASE_ROOT="$PWD/release-$RELEASE_ID"
+mkdir -p "$RELEASE_ROOT/out"
+
+git -C /path/to/KTPAMXX fetch origin main
+git -C /path/to/KTPMatchHandler fetch origin main
+git -C /path/to/KTPHLStatsX fetch origin main
+git -C /path/to/KTPInfrastructure fetch origin main
+
+git -C /path/to/KTPAMXX worktree add --detach \
+    "$RELEASE_ROOT/KTPAMXX" 82508b45f8286f56bf0d066377e4dde80e5a6dfb
+git -C /path/to/KTPMatchHandler worktree add --detach \
+    "$RELEASE_ROOT/KTPMatchHandler" da4742f32388526dceb0dbf00b69e9a52a36809d
+git -C /path/to/KTPHLStatsX worktree add --detach \
+    "$RELEASE_ROOT/KTPHLStatsX" 609e25a2f141eb30dbde5562a929ed32113acaec
+git -C /path/to/KTPInfrastructure worktree add --detach \
+    "$RELEASE_ROOT/KTPInfrastructure" 07c474b974ea7ba1a7fd5fdbe9086d440f4cf8fd
+
+for repo in KTPAMXX KTPMatchHandler KTPHLStatsX KTPInfrastructure; do
+    test -z "$(git -C "$RELEASE_ROOT/$repo" status --porcelain)" || exit 1
+done
+```
+
+Build KTPAMXX without copying into the maintainer's staging tree:
+
+```sh
+cd "$RELEASE_ROOT/KTPAMXX"
+KTP_NO_STAGE=1 bash build_linux.sh
+
+cp obj-linux/packages/base/addons/ktpamx/dlls/ktpamx_i386.so \
+    "$RELEASE_ROOT/out/"
+cp obj-linux/packages/dod/addons/ktpamx/modules/dodx_ktp_i386.so \
+    "$RELEASE_ROOT/out/"
+
+PLUGIN_BUILD="$RELEASE_ROOT/plugin-build"
+mkdir -p "$PLUGIN_BUILD"
+sed 's/\r$//' "$RELEASE_ROOT/KTPAMXX/plugins/dod/stats_logging.sma" \
+    > "$PLUGIN_BUILD/stats_logging.sma"
+sed 's/\r$//' "$RELEASE_ROOT/KTPAMXX/plugins/dod/ktp_stats_capture.inc" \
+    > "$PLUGIN_BUILD/ktp_stats_capture.inc"
+
+AMXXPC_DIR="$RELEASE_ROOT/KTPAMXX/obj-linux/packages/base/addons/ktpamx/scripting"
+cd "$AMXXPC_DIR"
+./amxxpc "$PLUGIN_BUILD/stats_logging.sma" \
+    -i"$RELEASE_ROOT/KTPAMXX/plugins/include" \
+    -i"$PLUGIN_BUILD" \
+    -o"$RELEASE_ROOT/out/stats_logging.amxx"
+```
+
+Build both MatchHandler variants from the same KTPAMXX compiler. Only the
+production build goes to the fleet; the test build is the Tier 2 runner gate.
+
+```sh
+cd "$RELEASE_ROOT/KTPMatchHandler"
+KTPAMXX_ROOT="$RELEASE_ROOT/KTPAMXX" KTP_NO_STAGE=1 bash compile.sh
+KTPAMXX_ROOT="$RELEASE_ROOT/KTPAMXX" KTP_NO_STAGE=1 KTP_TEST_MODE=1 bash compile.sh
+cp compiled/KTPMatchHandler.amxx "$RELEASE_ROOT/out/"
+cp compiled/test/KTPMatchHandler.amxx \
+    "$RELEASE_ROOT/out/KTPMatchHandler-test.amxx"
+```
+
+Copy the daemon delta, migrations, and retention files into the release bundle:
+
+```sh
+mkdir -p "$RELEASE_ROOT/out/hlstatsx" "$RELEASE_ROOT/out/retention"
+cp "$RELEASE_ROOT/KTPHLStatsX/scripts/hlstats.pl" \
+   "$RELEASE_ROOT/KTPHLStatsX/scripts/HLstats.plib" \
+   "$RELEASE_ROOT/KTPHLStatsX/scripts/HLstats_EventHandlers.plib" \
+   "$RELEASE_ROOT/out/hlstatsx/"
+cp "$RELEASE_ROOT/KTPHLStatsX/sql/"migrate_*.sql \
+   "$RELEASE_ROOT/out/hlstatsx/"
+cp "$RELEASE_ROOT/KTPInfrastructure/scripts/ktp-match-retention.py" \
+   "$RELEASE_ROOT/KTPInfrastructure/scripts/systemd/ktp-match-retention.service" \
+   "$RELEASE_ROOT/KTPInfrastructure/scripts/systemd/ktp-match-retention.timer" \
+   "$RELEASE_ROOT/out/retention/"
+
+cd "$RELEASE_ROOT/out"
+md5sum ktpamx_i386.so dodx_ktp_i386.so stats_logging.amxx \
+    KTPMatchHandler.amxx KTPMatchHandler-test.amxx > MD5SUMS
+find hlstatsx retention -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+sha256sum ktpamx_i386.so dodx_ktp_i386.so stats_logging.amxx \
+    KTPMatchHandler.amxx KTPMatchHandler-test.amxx >> SHA256SUMS
+```
+
+Archive this exact output directory. All later `--expect` values come from its
+`MD5SUMS`, never from an older runbook, build directory, or CI artifact.
+
+## 4. Inventory production and choose fleet waves
+
+Run the normal fleet verifier before staging anything:
+
+```sh
+cd "$RELEASE_ROOT/KTPInfrastructure/scripts"
+python3 stage-wave.py --preflight-only
+python3 ktp-verify-deploy.py --scope all --check-runtime \
+    --out "$RELEASE_ROOT/pre-deploy-fleet.json"
+```
+
+Compare the live fleet MD5s with the release bundle. `stats_logging.amxx` and
+`KTPMatchHandler.amxx` are expected release payloads. Treat
+`ktpamx_i386.so` and `dodx_ktp_i386.so` as inventory-driven candidates: if the
+fleet already has the intended reviewed build, do not churn it; if it differs
+and the main revision intentionally supersedes production, give each changed
+binary its own nightly wave.
+
+Before each selected wave, locate the exact previous binary in the release
+archive or copy it from a verifier-confirmed reference instance into
+`$RELEASE_ROOT/rollback`. Hash it and confirm that hash is the uniform live MD5
+reported by the inventory. Do not stage a wave whose rollback artifact is only
+a commit reference; rebuilding that commit can produce a different binary.
+
+One file per wave is the default. Do not use `--allow-existing-new` for this
+release. The order for files that need deployment is:
+
+1. `ktpamx_i386.so`, if required;
+2. `dodx_ktp_i386.so`, if required;
+3. `stats_logging.amxx`;
+4. `KTPMatchHandler.amxx`, but only after the database and daemon deployment in
+   the next section.
+
+Do not stage the first selected wave until the data-server deployment in the
+next section is green. Keep `stats_logging` before MatchHandler so the reviewed
+stats emitter is already uniform when new matches begin using the new envelope.
+
+## 5. Data-server migration and daemon deployment
+
+This is a single planned outage on the data server. The daemon restart drops
+UDP events received while it is down, so the operator must confirm no match is
+live. A low frag count is a supporting check, not a substitute for the match
+calendar.
+
+```sql
+SELECT COUNT(*) AS recent_frags
+FROM hlstats_Events_Frags
+WHERE eventTime > NOW() - INTERVAL 20 MINUTE;
+```
+
+Copy `out/hlstatsx` to a temporary directory on the data server. Become root,
+create a protected backup, and record the current daemon hashes:
+
+```sh
+export RELEASE_ID=stats-retention-20260817
+export BAK="/root/$RELEASE_ID-backup"
+install -d -m 0700 "$BAK"
+cp -a /opt/hlstatsx/scripts/hlstats.pl \
+      /opt/hlstatsx/scripts/HLstats.plib \
+      /opt/hlstatsx/scripts/HLstats_EventHandlers.plib "$BAK/"
+md5sum /opt/hlstatsx/scripts/hlstats.pl \
+       /opt/hlstatsx/scripts/HLstats.plib \
+       /opt/hlstatsx/scripts/HLstats_EventHandlers.plib | tee "$BAK/daemon-before.md5"
+mysqldump --single-transaction --routines --triggers hlstatsx | \
+    gzip -9 > "$BAK/hlstatsx-before.sql.gz"
+gzip -t "$BAK/hlstatsx-before.sql.gz"
+```
+
+Audit schema state before applying SQL. Migrations 003-014 are designed to be
+re-runnable, but they must still be applied in numeric order and their results
+reviewed. Migration 002 contains unguarded `ADD COLUMN` statements: apply it
+only if its columns are absent and record that decision. Never pipe every SQL
+file through `mysql --force`.
+
+```sh
+mysql hlstatsx -e "SHOW COLUMNS FROM ktp_matches LIKE 'match_type'"
+mysql hlstatsx -e "SELECT code,reward_player,for_PlayerActions,for_PlayerPlayerActions FROM hlstats_Actions WHERE game='dod' AND code IN ('assist','cap_break')"
+mysql hlstatsx -e "SHOW TABLES LIKE 'ktp_damage_events'; SHOW TABLES LIKE 'ktp_flag_captures'; SHOW TABLES LIKE 'ktp_position_samples'"
+mysql hlstatsx -e "SELECT TABLE_NAME,TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA='hlstatsx' AND TABLE_NAME LIKE 'ktp_%' ORDER BY TABLE_NAME"
+```
+
+Build an explicit list containing only the missing migrations, preserve numeric
+order, then apply one at a time without `--force`:
+
+```sh
+MIGRATIONS_TO_APPLY="migrate_003_assist_action.sql migrate_004_cap_break_action.sql migrate_005_frag_context_columns.sql migrate_006_damage_ledger.sql migrate_007_break_context.sql migrate_008_position_samples.sql migrate_009_disable_connect_announcements.sql migrate_010_flag_captures.sql migrate_011_match_player_identity_width.sql migrate_012_frag_context_correlation.sql migrate_013_ktp_table_collation.sql migrate_014_match_type_retention.sql"
+for migration in $MIGRATIONS_TO_APPLY; do
+    echo "APPLY $migration"
+    mysql --show-warnings hlstatsx < "/tmp/$RELEASE_ID/hlstatsx/$migration" || exit 1
+done
+```
+
+Remove already-satisfied migrations from that example list; do not call them
+"applied" in the operator log. Afterward, migration 014 must have exactly one
+column and one index:
+
+```sql
+SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
+FROM information_schema.COLUMNS
+WHERE TABLE_SCHEMA='hlstatsx' AND TABLE_NAME='ktp_matches'
+  AND COLUMN_NAME='match_type';
+
+SELECT INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS columns_in_order
+FROM information_schema.STATISTICS
+WHERE TABLE_SCHEMA='hlstatsx' AND TABLE_NAME='ktp_matches'
+  AND INDEX_NAME='idx_retention'
+GROUP BY INDEX_NAME;
+```
+
+Install the three daemon files together. They are a delta over the existing
+HLStatsX installation; do not replace `/opt/hlstatsx/scripts` wholesale.
+
+```sh
+install -o root -g root -m 0755 "/tmp/$RELEASE_ID/hlstatsx/hlstats.pl" \
+    /opt/hlstatsx/scripts/hlstats.pl
+install -o root -g root -m 0644 "/tmp/$RELEASE_ID/hlstatsx/HLstats.plib" \
+    /opt/hlstatsx/scripts/HLstats.plib
+install -o root -g root -m 0644 "/tmp/$RELEASE_ID/hlstatsx/HLstats_EventHandlers.plib" \
+    /opt/hlstatsx/scripts/HLstats_EventHandlers.plib
+
+for file in hlstats.pl HLstats.plib HLstats_EventHandlers.plib; do
+    cmp -s "/tmp/$RELEASE_ID/hlstatsx/$file" "/opt/hlstatsx/scripts/$file" || exit 1
+done
+
+grep -c "Actions loaded for game" /opt/hlstatsx/scripts/hlstats.pl
+grep -c "frag_context" /opt/hlstatsx/scripts/hlstats.pl
+grep -c "KTP_MATCH_START" /opt/hlstatsx/scripts/hlstats.pl
+grep -c "zzq_not_a_real_marker" /opt/hlstatsx/scripts/hlstats.pl
+# Expect the first three to be nonzero and the negative control to be zero.
+
+systemctl restart hlstatsx
+systemctl is-active hlstatsx
+journalctl -u hlstatsx --since '-15 min' --no-pager | tee "$BAK/daemon-restart.log"
+```
+
+Stop and roll back the daemon files if the unit is not active, the journal has
+an SQL/Perl error, or the journal window is empty. An empty journal cannot prove
+that a negative grep is clean. Additive schema migrations normally remain in
+place during daemon rollback; restoring a full database is a separate incident
+decision.
+
+## 6. Stage and verify each fleet wave
+
+For every file selected in section 4, use the MD5 from this release bundle:
+
+```sh
+cd "$RELEASE_ROOT/KTPInfrastructure/scripts"
+python3 stage-wave.py --preflight-only
+python3 stage-wave.py -f "$RELEASE_ROOT/out/ARTIFACT" \
+    --expect ARTIFACT=00000000000000000000000000000000
+# Expect refusal. This proves the MD5 gate is active; it must stage nothing.
+python3 stage-wave.py \
+    -f "$RELEASE_ROOT/out/ARTIFACT" \
+    --expect ARTIFACT=REVIEWED_MD5
+```
+
+For MatchHandler, first stage the matching test-mode binary to Tier 2, run the
+integration check, and then bind the production wave to that runner MD5:
+
+```sh
+python3 stage-runner.py \
+    -f "$RELEASE_ROOT/out/KTPMatchHandler-test.amxx" \
+    --as KTPMatchHandler.amxx --version 0.10.161 \
+    --expect TEST_MODE_MD5
+
+python3 stage-wave.py \
+    -f "$RELEASE_ROOT/out/KTPMatchHandler.amxx" \
+    --expect KTPMatchHandler.amxx=PRODUCTION_MD5 \
+    --expect-runner KTPMatchHandler.amxx=TEST_MODE_MD5
+```
+
+`stage-wave.py` writes `.new` files and never restarts a game server. Let the
+normal 03:00 ET restart activate the one staged artifact. The next morning:
+
+```sh
+python3 ktp-verify-deploy.py --scope all --check-runtime \
+    --out "$RELEASE_ROOT/post-ARTIFACT.json"
+python3 stage-wave.py --preflight-only
+```
+
+Require 24/24 MD5 uniformity, expected runtime versions, no remaining `.new`,
+and no new core dumps or startup errors before staging the next wave. Update
+the fleet inventory by artifact MD5, not merely by a version banner.
+
+## 7. Live functional verification
+
+After the daemon and MatchHandler are live, run controlled matches before
+retention is enabled. At minimum, observe an official or draft match and one
+disposable `.testmatch`, scrim, or 12man. Bots are acceptable for a controlled
+test, but real-client `weaponstats` still needs an organic-match check because
+the bot lane does not exercise it.
+
+```sql
+SELECT match_id, half, match_type, start_time, end_time
+FROM ktp_matches
+ORDER BY start_time DESC
+LIMIT 20;
+
+SELECT match_type, COUNT(*) AS halves
+FROM ktp_matches
+WHERE start_time > NOW() - INTERVAL 24 HOUR
+GROUP BY match_type
+ORDER BY match_type;
+```
+
+Expected match types are `0=official`, `1=scrim`, `2=12man`, `3=draft`,
+`4=KTP OT`, and `5=draft OT`. A `.testmatch` uses a `-TEST` match ID and is
+purgeable even though its internal competitive type can be `0`. Legacy NULLs
+must remain NULL and are retained. Both halves of a non-test match must agree
+on type; disagreement is fail-closed and must be investigated.
+
+Also verify recent frags, weaponstats, assists, damage, flag captures,
+positions, and match summaries are nonzero/plausible, and that the daemon
+journal has no `SQL_ERROR`, parse errors, or `KTP_NO_ROW_MATCHED` burst. The
+absence of an event is inconclusive unless the raw game log proves the event
+was emitted.
+
+## 8. Install retention, dry-run first
+
+Only start this section after section 7 passes. Copy the three retention files
+to the data server and install them:
+
+```sh
+install -o root -g root -m 0755 "/tmp/$RELEASE_ID/retention/ktp-match-retention.py" \
+    /usr/local/bin/ktp-match-retention.py
+install -o root -g root -m 0644 "/tmp/$RELEASE_ID/retention/ktp-match-retention.service" \
+    /etc/systemd/system/ktp-match-retention.service
+install -o root -g root -m 0644 "/tmp/$RELEASE_ID/retention/ktp-match-retention.timer" \
+    /etc/systemd/system/ktp-match-retention.timer
+systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/ktp-match-retention.service \
+    /etc/systemd/system/ktp-match-retention.timer
+```
+
+Dry-run is the default and cannot delete rows:
+
+```sh
+/usr/local/bin/ktp-match-retention.py --days 14 | \
+    tee "$BAK/retention-first-dry-run.txt"
+systemctl list-timers ktp-match-retention.timer --all
+```
+
+Review every candidate. The only eligible matches are older than 14 days and
+either have a `-TEST` suffix or have complete, consistent half classification
+of type 1 or 2. Official, draft, both OT types, mixed-half, and NULL legacy
+matches must not appear.
+
+The first apply is a separate destructive change requiring explicit operator
+approval and a fresh database backup. Preserve the candidate output, run apply
+once, then immediately repeat the dry-run:
+
+```sh
+mysqldump --single-transaction hlstatsx | \
+    gzip -9 > "$BAK/hlstatsx-before-first-retention-apply.sql.gz"
+gzip -t "$BAK/hlstatsx-before-first-retention-apply.sql.gz"
+/usr/local/bin/ktp-match-retention.py --apply --days 14 | \
+    tee "$BAK/retention-first-apply.txt"
+/usr/local/bin/ktp-match-retention.py --days 14
+```
+
+Expect the second dry-run to report zero of the just-deleted candidates. Verify
+several retained official/draft/legacy match IDs still have rows in
+`ktp_matches` and their child tables. Only then enable the schedule:
+
+```sh
+systemctl enable --now ktp-match-retention.timer
+systemctl status ktp-match-retention.timer --no-pager
+systemctl list-timers ktp-match-retention.timer --all
+```
+
+The timer runs daily at 05:20 UTC with up to ten minutes of jitter and uses
+`--apply --days 14`. Check the first scheduled service execution and its
+journal explicitly.
+
+## 9. Stop and rollback
+
+Stop the release immediately on a failed migration, daemon startup error,
+non-uniform fleet MD5, unexpected `.new`, incorrect match type, or a retention
+candidate outside the allowlist.
+
+- **Before nightly activation:** remove only the explicitly identified staged
+  artifact's `.new` through the fleet tooling/operator procedure. Do not use a
+  broad recursive delete.
+- **After a bad fleet activation:** disable stats emission first where
+  applicable with `ktp_stats_capture 0`, then stage the recorded previous
+  artifact as the next single nightly wave. Restore in reverse dependency
+  order: MatchHandler, stats plugin, DODX, core.
+- **Bad daemon:** restore all three daemon files from `$BAK` together and
+  restart `hlstatsx` in an approved window. Keep additive migrations unless a
+  DBA determines they caused the incident.
+- **Bad retention selection before apply:** do not apply; disable the timer if
+  it was enabled and fix the classifier/query through feature -> preprod ->
+  main.
+- **Bad retention deletion after apply:** immediately disable the timer,
+  preserve logs, stop writes if practical, and restore the affected data from
+  the pre-apply dump. Deleted analytics are not recoverable from the retention
+  tool itself.
+
+```sh
+systemctl disable --now ktp-match-retention.timer
+journalctl -u ktp-match-retention.service --since '-2 days' --no-pager
+```
+
+Any fix discovered during this deploy follows the normal promotion path: a new
+feature branch, local tests, PR to `preprod`, integration tests in preprod, and
+only then a PR to `main`. Do not patch production and later try to reconstruct
+what changed.
+
+## 10. Completion record
+
+The release is complete only when all applicable boxes are recorded:
+
+- [ ] manifest revisions reverified and CI evidence linked
+- [ ] immutable build bundle archived with MD5/SHA-256 manifests
+- [ ] database and daemon backups verified
+- [ ] exact migration list and output recorded
+- [ ] daemon active and ingest healthy after restart
+- [ ] each fleet wave activated and verified 24/24 before the next wave
+- [ ] official/draft retention and scrim/12man/test classification verified
+- [ ] real-client weaponstats checked from organic traffic
+- [ ] first retention dry-run reviewed
+- [ ] first retention apply separately approved, backed up, and verified
+- [ ] first scheduled timer execution checked
+- [ ] rollback artifacts and operator log retained

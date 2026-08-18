@@ -4,6 +4,14 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `docs`: one production runbook for the stats and retention release (2026-08-17)
+
+- Adds `docs/STATS_RETENTION_PRODUCTION_DEPLOY.md`: exact reviewed source pins,
+  build-once artifact manifests, ordered database/daemon/fleet rollout, live
+  match-type validation, retention dry-run and first-apply gates, and rollback.
+- Keeps production activation one artifact per nightly and makes the first
+  destructive retention apply a separately approved, backed-up operation.
+
 ### `tests`: cover StatsMe in the all-bot Lane B match (2026-08-15)
 
 - Full Lane B builds `stats_logging.amxx` with the test-only
