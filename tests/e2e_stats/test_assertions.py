@@ -54,6 +54,23 @@ _PPA = "hlstats_Events_PlayerPlayerActions"
 _PA = "hlstats_Events_PlayerActions"
 
 
+class FlagStateDb(FakeDb):
+    def __init__(self, *, rows, initial, bad_owners=0):
+        super().__init__()
+        self.rows = rows
+        self.initial = initial
+        self.bad_owners = bad_owners
+
+    def count(self, query):
+        if "ktp_flag_state_events" not in query:
+            return super().count(query)
+        if "owner_team NOT IN" in query:
+            return self.bad_owners
+        if "is_initial = 1" in query:
+            return self.initial
+        return self.rows
+
+
 def _carried(db, code="assist", *, emitted, table=_PPA, other=_PA):
     return assertions.check_carried(db, code, emitted=emitted, table=table,
                                     other_table=other)
@@ -80,6 +97,18 @@ def test_nothing_emitted_is_not_exercised_rather_than_a_failure():
     v = _carried(FakeDb(ppa=0), "cap_break", emitted=0, table=_PA, other=_PPA)
     assert v["status"] == "not_exercised"
     assert "did not produce the scenario" in v["detail"]
+
+
+def test_flag_state_pipeline_requires_exact_carry_and_a_baseline():
+    assert assertions.check_flag_states(
+        FlagStateDb(rows=7, initial=5), emitted=7
+    )["status"] == "ok"
+    assert assertions.check_flag_states(
+        FlagStateDb(rows=6, initial=5), emitted=7
+    )["status"] == "pipeline"
+    assert assertions.check_flag_states(
+        FlagStateDb(rows=7, initial=0), emitted=7
+    )["status"] == "pipeline"
 
 
 def test_missing_lane_b_weaponstats_is_a_pipeline_failure():

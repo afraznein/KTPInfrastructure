@@ -1,0 +1,38 @@
+# Reviewed map topology for accumulation scenarios.
+# Add a map only after its flag names, team orientation, and multi-cap points
+# have been verified. Unknown maps fall back to uncategorized base proximity.
+
+[maps.dod_anzio]
+# Team 1 = Allies, team 2 = Axis.
+team1_first = "POINT_ANZIO_LAUNDRY"
+team1_second = "POINT_ANZIO_PLAZA"
+middle = "POINT_ANZIO_STREET"
+team2_second = "POINT_BRIDGE"
+team2_first = "POINT_ANZIO_HILL"
+
+# Bridge and Plaza repeatedly emit two player capture-credit rows for one
+# event in the Lane B corpus, matching their two-player capture requirement.
+double_caps = ["POINT_BRIDGE", "POINT_ANZIO_PLAZA"]
+
+# Initial reviewed hotspot. Later profiles can learn this from sufficiently
+# pooled private heatmaps, but the personal heatmaps themselves stay private.
+high_contest = ["POINT_ANZIO_STREET"]
+
+# Base location value is reviewed per team and flag. These values override the
+# generic first/second/middle role multipliers in the accumulation profile.
+# Anzio middle is intentionally asymmetric: holding Street is currently judged
+# harder for Allies than Axis. Real match control rates should refine these
+# provisional values over time.
+[maps.dod_anzio.team1_flag_multipliers]
+POINT_ANZIO_LAUNDRY = 0.50
+POINT_ANZIO_PLAZA = 0.80
+POINT_ANZIO_STREET = 1.40
+POINT_BRIDGE = 1.75
+POINT_ANZIO_HILL = 2.25
+
+[maps.dod_anzio.team2_flag_multipliers]
+POINT_ANZIO_HILL = 0.50
+POINT_BRIDGE = 0.80
+POINT_ANZIO_STREET = 1.10
+POINT_ANZIO_PLAZA = 1.75
+POINT_ANZIO_LAUNDRY = 2.25

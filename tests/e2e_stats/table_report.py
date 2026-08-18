@@ -133,6 +133,7 @@ def render_markdown(report: dict) -> str:
         f"| Damage events | {emitted.get('damage', 0)} | see changed-table samples |",
         f"| Flag captures | {emitted.get('flag_capture', 0)} | {rows.get('flag_captures', 0)} |",
         f"| Flag positions | {emitted.get('flag_position', 0)} | {rows.get('flag_positions', 0)} current |",
+        f"| Flag ownership states | {emitted.get('flag_state', 0)} | {rows.get('flag_states', 0)} |",
         f"| Position samples | {emitted.get('position_sample', 0)} | {rows.get('position_samples', 0)} |",
         f"| Match roster | — | {rows.get('match_players', 0)} |",
         "",

@@ -1,0 +1,26 @@
+# Experimental shadow-only accumulation profile.
+# These are starting values for sensitivity work, not production KTPR weights.
+
+[profile]
+name = "accumulation_v0"
+status = "experimental_shadow"
+
+[events]
+kill = 100.0
+assist = 50.0
+damage = 0.10
+capture_credit = 100.0
+cap_break = 100.0
+team_kill = -100.0
+suicide = -50.0
+
+[position]
+# The current capture interval is five seconds. A sample is evidence for one
+# interval, not a continuous path between coordinates.
+sample_seconds = 5.0
+objective_radius_units = 512.0
+points_per_second_at_flag = 0.10
+grid_size_units = 256
+# Presence is useful, but cannot dominate efficiency/event production in v0.
+max_points_per_half = 100.0
+
