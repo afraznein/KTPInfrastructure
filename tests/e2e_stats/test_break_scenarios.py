@@ -206,48 +206,29 @@ def test_scan_returns_as_soon_as_terminator_arrives(monkeypatch):
     assert sleeps == [0.05]
 
 
-def test_fire_when_capturing_waits_then_fires(monkeypatch):
-    """The gate must not fire immediately — it should poll until a capture is
-    actually seen, matching the fix for the bug where blind firing on a fixed
-    schedule mostly missed DoD's short active-capture window."""
+def test_arm_kill_waits_for_plugin_to_stage(monkeypatch):
+    """The settle window starts only after HLDS confirms the staged kill."""
     from . import break_scenarios as bs
 
     handle = _FakeHandle([])
-    driver = bs.BreakDriver(handle, log_path=None)
+    log = _FakeLog(["old\n", "old\n", "old\n" + KILL_LINE])
+    driver = bs.BreakDriver(handle, log)
+    sleeps = []
+    monkeypatch.setattr(bs.time, "sleep", sleeps.append)
 
-    # First two scans see nothing capturing; the third sees a live capture.
-    responses = [
-        [],
-        [{"flag": 0, "owner": 0, "capping": 0, "capteam": 0, "allies": 0, "axis": 0}],
-        [{"flag": 3, "owner": 1, "capping": 1, "capteam": 2, "allies": 0, "axis": 2}],
-    ]
-    calls = {"n": 0}
-
-    def fake_scan():
-        i = min(calls["n"], len(responses) - 1)
-        calls["n"] += 1
-        return responses[i]
-
-    monkeypatch.setattr(driver, "scan", fake_scan)
-    monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
-
-    ok = driver._fire_when_capturing("ktp_bd_kill {flag} near", timeout=5.0, poll=0.01)
+    ok = driver._arm_kill("near", timeout=5.0, poll=0.01)
     assert ok is True
-    assert handle.fired == ["ktp_bd_kill 3 near"]
-    assert calls["n"] == 3, "must not fire before capping=1 is actually observed"
+    assert handle.fired == ["ktp_bd_arm_kill near"]
+    assert sleeps == [0.01]
 
 
-def test_fire_when_capturing_times_out_without_firing(monkeypatch):
+def test_arm_kill_reports_plugin_abort(monkeypatch):
     from . import break_scenarios as bs
 
     handle = _FakeHandle([])
-    driver = bs.BreakDriver(handle, log_path=None)
-    monkeypatch.setattr(driver, "scan", lambda: [])
+    abort = "[BD] kill ABORT flag=-1 mode=far no stageable capture while armed"
+    driver = bs.BreakDriver(handle, _FakeLog(["old\n", "old\n" + abort]))
 
-    t = {"now": 0.0}
-    monkeypatch.setattr(bs.time, "sleep", lambda s: t.__setitem__("now", t["now"] + s))
-    monkeypatch.setattr(bs.time, "monotonic", lambda: t["now"])
-
-    ok = driver._fire_when_capturing("ktp_bd_kill {flag} near", timeout=0.05, poll=0.02)
+    ok = driver._arm_kill("far", timeout=5.0, poll=0.01)
     assert ok is False
-    assert handle.fired == []
+    assert handle.fired == ["ktp_bd_arm_kill far"]

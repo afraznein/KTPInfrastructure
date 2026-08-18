@@ -327,15 +327,10 @@ def test_a_bot_steam_id_overflow_is_now_a_real_failure(tmp_path):
     assert benign == []
 
 
-def test_expected_assist_probe_is_scoped_explicitly(tmp_path):
+def test_unresolved_assist_is_not_allow_listed(tmp_path):
     d = _with_stdout(
         tmp_path,
         "SQL_ERROR: Unresolved action 'assist' (game 'dod') is NOT in hlstats_Actions\n")
-    real, benign = d.classify_sql_errors(
-        expected_unresolved_actions={"assist"})
-    assert real == []
-    assert len(benign) == 1
-
     real, benign = d.classify_sql_errors()
     assert len(real) == 1
     assert benign == []

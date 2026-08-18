@@ -615,6 +615,11 @@ def main() -> int:
 
         log_text = args.log.read_text(errors="replace")
         daemon_text = daemon.stdout_path.read_text(errors="replace")
+        position_sample_total = log_text.count('triggered "position_sample"')
+        position_sample_match = (
+            log_invariants.count_in_match(log_text, 'triggered "position_sample"')
+            if report.get("match") else position_sample_total
+        )
         report["emitted"] = {
             "kills": log_text.count('" killed "'),
             "assist": log_text.count('triggered "assist"'),
@@ -632,15 +637,16 @@ def main() -> int:
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
             "flag_state": log_text.count("KTP_FLAG_STATE "),
-            "position_sample": log_text.count('triggered "position_sample"'),
+            "position_sample": position_sample_match,
+            "position_sample_total": position_sample_total,
         }
         report["lines_fed"] = daemon.lines_fed
-        real_sql, benign_sql = daemon.classify_sql_errors(
-            expected_unresolved_actions={"assist"}
-            if report.get("kill_switch") else set())
+        real_sql, benign_sql = daemon.classify_sql_errors()
         report["sql_errors"] = real_sql[:20]
         report["sql_errors_benign"] = benign_sql[:5]
-        report["rows"] = assertions.summarise(db)
+        report["rows"] = assertions.summarise(
+            db, match_id=(report["match"]["match_id"]
+                          if report.get("match") else None))
 
         # Attribution negatives, from the log rather than the database: the log
         # is what capture emitted, so a violation here is a plugin bug and not
@@ -673,7 +679,9 @@ def main() -> int:
             assertions.check_flag_positions(
                 db, emitted=report["emitted"]["flag_position"]),
             assertions.check_position_samples(
-                db, emitted=report["emitted"]["position_sample"]),
+                db, emitted=report["emitted"]["position_sample"],
+                match_id=(report["match"]["match_id"]
+                          if report.get("match") else None)),
             assertions.check_flag_states(
                 db, emitted=report["emitted"]["flag_state"]),
             assertions.check_capture_buffer(log_text),

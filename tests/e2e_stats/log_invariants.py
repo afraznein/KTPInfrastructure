@@ -183,6 +183,28 @@ def match_window(log_text: str) -> dict:
             "ended": end is not None}
 
 
+def count_in_match(log_text: str, needle: str) -> int:
+    """Count literal markers inside the first driven match window.
+
+    Periodic capture begins at map load, before Lane B starts the daemon or
+    drives `.testmatch`. Comparing the whole console log with match-scoped
+    database rows therefore fabricates loss from warmup markers the daemon was
+    never meant to ingest. The match markers share the same ordered log stream,
+    so they provide the race-free boundary for non-kill events too.
+    """
+    lines = log_text.splitlines()
+    start = end = None
+    for i, line in enumerate(lines):
+        if start is None and "KTP_MATCH_START" in line:
+            start = i
+        elif start is not None and end is None and "KTP_MATCH_END" in line:
+            end = i
+    if start is None:
+        return 0
+    stop = end if end is not None else len(lines)
+    return sum(1 for line in lines[start:stop] if needle in line)
+
+
 def summarise(log_text: str) -> dict:
     """Counts plus violations, for the run report."""
     return {
