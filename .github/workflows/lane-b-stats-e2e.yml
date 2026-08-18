@@ -254,6 +254,7 @@ jobs:
             -v "${PWD}/.github:/work/.github:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -w /work ktp-lane-b:ci \
             python3 -m pytest tests/e2e_stats -q
 
