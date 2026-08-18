@@ -39,6 +39,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "statsme2": True,
         "legacy_match_cache": True,
         "assists": True,
+        "flag_ownership": False,
     }
     assert report["schema_version"] == 2
 
