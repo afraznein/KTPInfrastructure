@@ -20,13 +20,14 @@
 #   DRY_RUN=1           list deletions without performing them
 #   SKIP_DISCORD=1      suppress Discord posts
 #   ARCHIVE_URL=...     override archive URL shown in preview
+#   DEMO_ROOT=...       point at a scratch tree (tests/unit/test_demo_retention.py)
 #
 # Logs: /var/log/ktp-demo-retention.log
 # Archive browser: https://fastdl.ktpdod.com/demos/
 
 set -euo pipefail
 
-DEMO_ROOT="/home/hltvserver/hlds/dod/demos"
+DEMO_ROOT="${DEMO_ROOT:-/home/hltvserver/hlds/dod/demos}"
 
 # Directories carrying a .noprune marker are NEVER swept, whatever they are called.
 # The LAN-* pattern below is kept for belt-and-braces, but a marker file survives a
