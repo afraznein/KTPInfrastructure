@@ -98,6 +98,26 @@ comparison MUST use a leave-one-match-out baseline so the target does not
 contribute to its own expected value. Bot baselines MUST be labeled synthetic
 and MUST NOT be described as competitive norms.
 
+### Confidence and sample size
+
+Display thresholds are versioned in
+`config/analytics/metric_confidence.json`; they do not alter the underlying
+count or rate. Source completeness MUST be reported separately from statistical
+interpretation.
+
+- exact bot facts are `synthetic`, even when every source row reconciles;
+- human damage/minute requires five observed minutes for `descriptive`;
+- human damage/life requires three completed lives;
+- human headshot rate requires five kills;
+- human raw accuracy requires 25 shots and remains descriptive only;
+- sequence metrics require ten observed events; and
+- human map baselines are `emerging` at five matches, `reviewable` at 20, and
+  `established` at 50.
+
+Values below a display threshold are `low_sample`, not zero and not missing.
+Unavailable inputs remain `unavailable`. Positional accumulation remains
+`shadow_only` regardless of sample size until a separate production decision.
+
 ## Positional accumulation
 
 The currently implemented accumulation profile is

@@ -14,6 +14,7 @@ def test_committed_five_match_atlas_summary_is_stable():
     matches = [atlas.load_fixture(path) for path in FIXTURES]
     payload = atlas.build_atlas(matches, "1786721661-TEST")
 
+    assert payload["target_match_id"] == "1786721661-TEST"
     assert payload["summary"] == {
         "matches": 5,
         "target_coordinate_frags": 191,

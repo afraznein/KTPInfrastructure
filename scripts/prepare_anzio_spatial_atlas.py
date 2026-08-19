@@ -570,6 +570,7 @@ def build_atlas(matches, target_id):
     return {
         "schema_version": 1,
         "map": MAP_NAME,
+        "target_match_id": target_id,
         "map_config_schema_version": int(MAP_CONFIG["schema_version"]),
         "grid_size": GRID,
         "flags": [{key: flag[key] for key in ("name", "x", "y")} for flag in FLAGS],

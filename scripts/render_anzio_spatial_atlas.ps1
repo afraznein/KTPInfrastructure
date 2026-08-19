@@ -391,6 +391,7 @@ $metadata = [ordered]@{
     schema_version = 1
     generated_at_utc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
     map = [string]$atlas.map
+    target_match_id = [string]$atlas.target_match_id
     grid_size = [double]$atlas.grid_size
     privacy = [string]$atlas.privacy
     summary = $atlas.summary

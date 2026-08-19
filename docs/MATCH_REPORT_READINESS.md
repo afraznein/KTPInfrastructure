@@ -1,10 +1,13 @@
 # Match report readiness package
 
-This package turns a local Lane B SQL fixture into two complementary artifacts:
+This package turns a local Lane B SQL fixture into three complementary artifacts:
 
 1. an aggregate-only `PASS`/`WARN`/`FAIL` source-quality gate; and
 2. for `dod_anzio`, a spatial atlas containing aggregate heatmaps, event
-   windows, combat lanes, objective summaries, and a synthetic baseline.
+   windows, combat lanes, objective summaries, and a synthetic baseline; and
+3. one sanitized match-report bundle joining the canonical box score,
+   readiness findings, optional shadow accumulation totals, and optional
+   aggregate atlas.
 
 Both commands are local-only. They do not contain an HTTP client, connect to a
 shared database, update ratings, or publish positional data.
@@ -94,6 +97,52 @@ Damage coordinates are approximate: capped damage is assigned to the nearest
 attacker position sample within three seconds. Grenade explosion heatmaps are
 not produced until exact explosion events are persisted.
 
+## Unified match-report bundle
+
+After Phase A, readiness, private-shadow accumulation, and the optional atlas
+have been generated for the same match, assemble the review artifact with:
+
+```powershell
+python scripts/match_report_bundle.py `
+  --analytics-json build/match-analytics/MATCH-ID.json `
+  --readiness-json build/match-readiness/match-readiness.json `
+  --accumulation-json build/accumulation/shareable/MATCH-ID.json `
+  --atlas-metadata build/anzio-spatial-atlas/atlas-metadata.json `
+  --copy-atlas `
+  --output-dir build/match-report
+```
+
+Omit the accumulation or atlas arguments when those products are unavailable.
+The command refuses cross-match inputs and runs a recursive privacy guard. Its
+`MATCH_REPORT.md` and `match-report.json` contain player box-score facts and
+derived shadow totals, but no Steam IDs, database IDs, coordinates, routes, or
+individual heatmaps.
+
+Confidence thresholds live in `config/analytics/metric_confidence.json`.
+Synthetic observations validate the calculation but never become competitive
+evidence. Human rates below their configured denominator are `low_sample`;
+map baselines progress from `emerging` at five human matches to `reviewable` at
+20 and `established` at 50. Source completeness and statistical interpretation
+are kept separate, so an exact count can still be labeled synthetic or
+descriptive.
+
+## Cross-map readiness
+
+Generate the complete KTP match-map inventory with:
+
+```powershell
+python scripts/spatial_map_registry.py `
+  --output-dir build/spatial-map-readiness
+```
+
+The command scans every `config/local/dod-configs/ktp_*.cfg`, merges reviewed
+evidence from `config/analytics/spatial_maps/registry.json`, and writes JSON and
+Markdown readiness reports. `synthetic_ready` requires reviewed overview/flag/
+topology geometry, verified bot waypoints, and five synthetic matches.
+`competitive_ready` additionally requires 20 human matches. At present only
+Anzio is synthetic-ready; no map is competitive-ready. Other maps must not
+inherit Anzio coordinates or objective weights.
+
 ## Golden regression corpus
 
 `tests/e2e_stats/fixtures/regression-2026-08-14-anzio-5match/` is the committed
@@ -113,17 +162,7 @@ silently repaired.
 
 ## First real-match use
 
-For the first post-deployment human match:
-
-1. save the untouched SQL fixture and server log;
-2. run the readiness gate before interpreting any metric;
-3. stop on `FAIL`; review every `WARN` explicitly;
-4. run canonical Phase A box-score analytics;
-5. generate the aggregate atlas only after its coordinate and timing checks
-   are acceptable;
-6. reconcile the report with the game scoreboard and match log; and
-7. retain the report schema version, metric-contract version, fixture hash,
-   and generated artifacts together.
-
-The first human match validates capture behavior. It is not enough to establish
-a competitive map baseline or recalibrate points.
+The executable capture, analysis, privacy, reconciliation, sign-off, and
+failure procedure is in `runbooks/FIRST_REAL_MATCH_ANALYTICS.md`. The first
+human match validates capture behavior. It is not enough to establish a
+competitive map baseline or recalibrate points.
