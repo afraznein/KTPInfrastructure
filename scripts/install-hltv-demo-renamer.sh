@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install the hltv-demo-renamer service on the data server.
-# Run as root on 74.91.112.242.
+# Run as root on <DATA_SERVER_IP>.
 
 set -euo pipefail
 

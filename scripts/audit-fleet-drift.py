@@ -23,7 +23,7 @@ Design notes:
   group is the high-signal comparison.
 
 Deployment (as weekly audit):
-- Target host: data server (74.91.112.242) — always up, already runs other
+- Target host: data server (<DATA_SERVER_IP>) — always up, already runs other
   fleet ops, has Python + SSH keys for dodserver.
 - Clone KTPInfrastructure to /opt/ktp-infra (or wherever).
 - Install paramiko: `pip3 install paramiko` (or apt).

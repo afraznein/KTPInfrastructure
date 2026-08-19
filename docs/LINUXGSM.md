@@ -76,7 +76,7 @@ grep -i 'old type\|error' ~/log/monitor.log | tail -20
 **Fix:**
 Restart all servers to recreate tmux sessions in current format:
 ```bash
-# Dallas (74.91.126.55)
+# Dallas (<DAL_GAME_IP>)
 for s in dodserver dodserver2 dodserver3 dodserver4 dodserver5; do
   ~/dod-2701$((${s#dodserver} + 4 - ${s#dodserver}))/$s stop
 done
@@ -228,7 +228,7 @@ looking only at `*-script.log` finds nothing and reads as innocence:
 grep -h 'old type\|Killing' ~/dod-*/log/script/*.log | tail
 ```
 
-**Servers patched:** Atlanta Baremetal (74.91.121.9), Dallas (74.91.126.55), Denver (66.163.114.109), New York (74.91.123.64), Chicago (172.238.176.101) - All 5 instances each.
+**Servers patched:** Atlanta Baremetal (`<ATL_BM_GAME_IP>`), Dallas (`<DAL_GAME_IP>`), Denver (`<DEN_GAME_IP>`), New York (`<NYC_GAME_IP>`), Chicago (`<CHI_GAME_IP>`) - All 5 instances each.
 
 ### LinuxGSM Lockfile Fix (After Cloning/Migration)
 When cloning a server or migrating to new hardware, LinuxGSM may report "No lockfile found" errors if the `-monitoring.lock` files don't exist.

@@ -11,7 +11,7 @@ This runbook exists to make the Phase 2 kernel-cmdline experiments (and the Phas
 
 ---
 
-## 1. Audit findings (2026-04-24, ATL:74.91.121.9)
+## 1. Audit findings (2026-04-24, ATL:`<ATL_BM_GAME_IP>`)
 
 ### What's already active
 
@@ -129,7 +129,7 @@ Same mechanical steps as Experiment A.
 **GRUB edit:** Add `idle=poll` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
 
 ```bash
-# On ATL host (74.91.121.9):
+# On ATL host (<ATL_BM_GAME_IP>):
 TS=$(date +%Y%m%d-%H%M%S)
 sudo cp /etc/default/grub /etc/default/grub.idle-poll-experiment-bak-${TS}
 sudo sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\)|\1idle=poll |' /etc/default/grub
@@ -198,7 +198,7 @@ Before committing to the multi-week Phase 3 build, ran a direct measurement of `
 **Tool:** `nanosleep_bench.c` (~145 LoC, BCL only). Sweeps requested sleep intervals 100µs / 200µs / 500µs / 800µs / 900µs / 999µs / 1000µs / 1100µs / 1500µs / 2000µs / 5000µs; 10000 iterations each + 100-iter warm-up. Reports min / p50 / p90 / p99 / max / mean of actual elapsed time. Optional `--rt` (SCHED_FIFO 50) + `--cpu N` (pin) flags.
 
 **Run conditions:**
-- Host: ATL baremetal (74.91.121.9), kernel 6.8.0-110-lowlatency
+- Host: ATL baremetal (`<ATL_BM_GAME_IP>`), kernel 6.8.0-110-lowlatency
 - Cmdline: standard isolcpus=2-7 / nohz_full / rcu_nocbs / max_cstate=0 / mitigations=off (matches production fleet)
 - CPU 6: free isolated core (game servers on 2,3,4,5,7)
 - 2 runs back-to-back: default (SCHED_OTHER) + `--rt --cpu 6` (matches absgrid runtime conditions)

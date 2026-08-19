@@ -2470,7 +2470,7 @@ hltv_port = 27020
 | KVM VPS (4 dedicated vCPUs, no SMT exposed) | 1 (Chicago) | 4, ports 27015-27018 | 1:1 instance-to-vCPU; the 5th instance was removed 2026-07 because 4 vCPUs can't host 5 instances without contention |
 | Data server (VPS) | 1 | — | MySQL, HLStatsX daemon, 24 HLTV proxies (27020-27043), FastDL (nginx), FileDistributor, admin-tier services, Tier-2 test runner |
 
-All host addresses in docs and configs use placeholders (`<ATL_BM_GAME_IP>`, `<DATA_SERVER_IP>`, ...); the real inventory lives in gitignored operator files.
+Docs and config examples use placeholders (`<ATL_BM_GAME_IP>`, `<DATA_SERVER_IP>`, ...), and the real inventory lives in gitignored operator files. The fleet-automation scripts under `scripts/` and `monitoring/` are the exception: their host tables still carry literal addresses, because a token there would stop them running. So this repo does not hide where the fleet lives — treat every host address in it as public, and rely on credentials, key-only SSH and firewall scope rather than on the addresses being unknown.
 
 #### LinuxGSM multi-instance layout
 
