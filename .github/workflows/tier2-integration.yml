@@ -30,16 +30,14 @@
 #     original design decision 2026-04-24, applied 2026-05-18) and, since the
 #     preprod/prod gate was introduced, on `preprod` too.
 #   - Nightly via schedule (09:00 UTC), targeting preprod only while the staged
-#     stack is being proven; paired
+#     stack is being proven. The main leg remains paused until production
+#     enablement; paired
 #     with scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
 #     missing/stale/failed last-run marker so a dead runner is not silently
 #     green. Schedule triggers always fire from the default branch's copy of
 #     this file (a GitHub Actions constraint — schedules can't run from a
 #     non-default branch), so preprod coverage comes from the matrix explicitly
 #     checking out that ref, not from the trigger itself.
-#     ⚠️ That matrix does nothing until this file IS the default branch's copy.
-#     Until then the schedule keeps running the old copy: the main leg is not
-#     paused, and preprod gets no scheduled coverage at all.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
@@ -61,7 +59,7 @@ on:
         type: string
         default: '1.0'
       matchhandler_version:
-        description: 'Pre-activation gate: KTPMatchHandler version to assert (e.g. 0.10.149). Blank = the committed pin, which tracks the FLEET.'
+        description: 'Pre-activation gate: KTPMatchHandler version to assert (e.g. 0.10.149). Blank = the version of the pinned reviewed build this workflow compiles, which tracks THE PIN, not the fleet.'
         required: false
         type: string
         default: ''
@@ -124,12 +122,13 @@ jobs:
       # a Discord embed via the relay. Unset in dev to preserve the
       # "no extra files written" loop.
       KTP_TIER2_REPORT_PATH: tier2-report.json
-      # Pre-activation gate override. The committed pin in
-      # tests/integration/test_match_flow_spine.py tracks the FLEET and is bumped
-      # only after post-activation verify. When the runner deliberately leads the
-      # fleet — a reviewed build being smoked before a wave — that pin would
-      # otherwise hard-fail the run, which is the one state the gate exists for.
-      # Empty on scheduled/PR runs, so those still assert against the fleet pin.
+      # Pre-activation gate override. Resolution is env -> stage manifest ->
+      # the literal floor in tests/integration/test_match_flow_spine.py (see
+      # _stage_manifest.py). This workflow compiles its OWN pinned reviewed
+      # KTPMatchHandler and derives the expected version from that source, so
+      # the assertion tracks THE PIN — which can legitimately sit behind the
+      # fleet, and currently does. Set this input to smoke a build that leads
+      # the pin; it is now honoured rather than silently overwritten.
       KTP_EXPECTED_MATCHHANDLER_VERSION: ${{ inputs.matchhandler_version || '' }}
 
     steps:
@@ -196,6 +195,80 @@ jobs:
           # post-run report; no Allure CLI install needed at this layer
           # (operators run `allure serve <downloaded-results>` locally).
           pip install pytest==9.0.3 pytest-rerunfailures==15.0 allure-pytest==2.13.5
+
+      # Match type retention spans KTPMatchHandler and KTPInfrastructure. Pin
+      # the already-reviewed preprod merge rather than testing whichever
+      # hand-staged MatchHandler binary happens to be left on the persistent
+      # runner. This is a test-mode artifact only; it never enters a fleet
+      # staging path.
+      - name: Checkout reviewed KTPMatchHandler preprod build
+        if: steps.changes.outputs.run == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/KTPMatchHandler
+          ref: 01de0750b51b20bf0d861365fafa336b81942ecd
+          path: .tier2/KTPMatchHandler
+
+      - name: Checkout reviewed KTPAMXX preprod includes
+        if: steps.changes.outputs.run == '1'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/KTPAMXX
+          ref: dfe1c8959f754e7757e3c443671240a9ef42c8db
+          path: .tier2/KTPAMXX
+
+      - name: Build + install reviewed KTPMatchHandler test artifact
+        if: steps.changes.outputs.run == '1'
+        env:
+          TOOLCHAIN: /opt/ktp-tier2-runner/toolchain
+        run: |
+          set -euo pipefail
+          SRC="$GITHUB_WORKSPACE/.tier2/KTPMatchHandler"
+          SF="$KTP_HLDS_SERVERFILES"
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "$WORK"' EXIT
+
+          mkdir -p "$WORK/include"
+          cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
+          # Current MatchHandler consumes DODX aim-stat natives that predate
+          # the runner's compiler bundle. Overlay only the reviewed source
+          # includes; the runner's known-good native compiler remains in use.
+          cp "$GITHUB_WORKSPACE/.tier2/KTPAMXX/plugins/include/"*.inc "$WORK/include/"
+          cp "$SRC"/*.inc "$WORK/" 2>/dev/null || true
+          tr -d '\r' < "$SRC/KTPMatchHandler.sma" > "$WORK/KTPMatchHandler.sma"
+          printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' \
+            "$(git -C "$SRC" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%MZ)" \
+            > "$WORK/include/build_info.inc"
+
+          ( cd "$WORK" && \
+            LD_LIBRARY_PATH="$TOOLCHAIN" "$TOOLCHAIN/amxxpc" \
+              KTPMatchHandler.sma -i"$WORK/include" -i"$WORK" \
+              -oKTPMatchHandler.amxx KTP_TEST_MODE=1 )
+          install -D "$WORK/KTPMatchHandler.amxx" \
+            "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"
+
+          # Derive the version from the source we just compiled. It used to be
+          # hardcoded here as well as pinned by `ref:` above -- two places that
+          # had to be bumped together by hand, with nothing checking. Bumping
+          # the ref alone would make the gate assert a version it did not
+          # install: either a confusing red, or a green against the wrong build.
+          VER="$(sed -n 's/.*#define PLUGIN_VERSION "\([^"]*\)".*/\1/p' \
+                 "$SRC/KTPMatchHandler.sma" | head -1)"
+          if [ -z "$VER" ]; then
+            echo "::error::could not read PLUGIN_VERSION from the pinned KTPMatchHandler source"
+            exit 1
+          fi
+
+          # An explicit dispatch input wins -- that is the documented escape
+          # hatch for smoking a build that leads the pin. Unconditionally
+          # writing GITHUB_ENV here silently overrode it, because a value
+          # written to GITHUB_ENV beats the job-level `env:` for later steps.
+          if [ -n "${KTP_EXPECTED_MATCHHANDLER_VERSION:-}" ]; then
+            echo "Dispatch input pins the assertion to ${KTP_EXPECTED_MATCHHANDLER_VERSION}; installed build is ${VER}."
+          else
+            echo "KTP_EXPECTED_MATCHHANDLER_VERSION=$VER" >> "$GITHUB_ENV"
+          fi
+          echo "Installed reviewed KTPMatchHandler $VER test build ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
 
       # Re-landed 2026-08-04 from the closed-unmerged PR #33. The runner's copy
       # had drifted a MONTH (staged Jul 3) because it was hand-staged and nothing
