@@ -307,7 +307,7 @@ January focused on production stability, fixing edge cases discovered during rea
 
 - **KTPFileDistributor v1.1.0**: Added multi-channel Discord support via `AdditionalChannelIds` configuration.
 
-- **Server Infrastructure**: Deployed Atlanta 2-5 server cluster (ports 27016-27019) with full LinuxGSM configuration, HLStatsX integration, and KTPFileDistributor setup. Configured HLTV instances 27021-27024 with systemd services and scheduled restart timers. Diagnosed and fixed UDP buffer exhaustion issue (47k+ RcvbufErrors) by increasing kernel buffer sizes from 208KB to 25MB. Documented server setup procedures for future deployments. **Deployed Dallas game server cluster** (74.91.114.178 — historical; that VPS era is deprecated and its IPs re-leased by the provider; current Dallas is 74.91.126.55) with identical configuration. **Added nightly scheduled restarts** at 3 AM ET for both Atlanta and Dallas game servers with Discord embed notifications (live-updating: shows "In Progress" then edits to "Complete"). Fixed LinuxGSM "old type tmux session" bug that caused spurious server restarts by patching `command_monitor.sh` on all instances.
+- **Server Infrastructure**: Deployed Atlanta 2-5 server cluster (ports 27016-27019) with full LinuxGSM configuration, HLStatsX integration, and KTPFileDistributor setup. Configured HLTV instances 27021-27024 with systemd services and scheduled restart timers. Diagnosed and fixed UDP buffer exhaustion issue (47k+ RcvbufErrors) by increasing kernel buffer sizes from 208KB to 25MB. Documented server setup procedures for future deployments. **Deployed Dallas game server cluster** (on the deprecated VPS era, whose addresses have since been re-leased by the provider; Dallas has since moved to baremetal) with identical configuration. **Added nightly scheduled restarts** at 3 AM ET for both Atlanta and Dallas game servers with Discord embed notifications (live-updating: shows "In Progress" then edits to "Complete"). Fixed LinuxGSM "old type tmux session" bug that caused spurious server restarts by patching `command_monitor.sh` on all instances.
 
 ---
 
@@ -321,9 +321,9 @@ February marked the transition from VPS hosting to dedicated bare metal servers,
 
 | Server | IP | Hardware | Status |
 |--------|-----|----------|--------|
-| Denver | 66.163.114.109 | Xeon E3-1240 V2, 16GB | Deployed 01/30 |
-| Atlanta | 74.91.121.9 | Xeon E3-1271v3, 32GB | Deployed 02/01 |
-| Dallas | 74.91.126.55 | Xeon E3-1271v3, 32GB | Deployed 02/03 |
+| Denver | `<DEN_GAME_IP>` | Xeon E3-1240 V2, 16GB | Deployed 01/30 |
+| Atlanta | `<ATL_BM_GAME_IP>` | Xeon E3-1271v3, 32GB | Deployed 02/01 |
+| Dallas | `<DAL_GAME_IP>` | Xeon E3-1271v3, 32GB | Deployed 02/03 |
 
 **Why Bare Metal:** GoldSrc's 1000 tick rate is especially vulnerable to CPU steal. A 20ms steal at 1000 tick means 20 missed ticks, while the same steal at 64 tick (CS2) only misses ~1 tick.
 
@@ -439,8 +439,8 @@ Expanded server fleet with two new locations for scrim play.
 
 | Server | IP | Hardware | Branding |
 |--------|-----|----------|----------|
-| New York 1-5 | 74.91.123.64 | Baremetal | KTPSCRIM - New York 1-5 |
-| Chicago 1-5 | 172.238.176.101 | KVM VPS | KTPSCRIM - Chicago 1-5 |
+| New York 1-5 | `<NYC_GAME_IP>` | Baremetal | KTPSCRIM - New York 1-5 |
+| Chicago 1-5 | `<CHI_GAME_IP>` | KVM VPS | KTPSCRIM - Chicago 1-5 |
 
 - Total fleet: **25 game servers** across 5 locations (Atlanta, Dallas, Denver, New York, Chicago)
 - 25 HLTV proxy instances on data server (ports 27020-27044)
