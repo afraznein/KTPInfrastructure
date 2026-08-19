@@ -69,19 +69,35 @@ Per the [TEST_INFRASTRUCTURE_PLAN.md](../TEST_INFRASTRUCTURE_PLAN.md) decision
 Tier 2 starts warn-only (because flaky-by-default initially) and flips to
 blocking after 2 weeks of green-on-main.
 
-**Do once per smoke-equipped KTP repo** (all 9 smoke callers as of
-2026-04-28; KTPScoreTracker/KTPFileChecker/KTPAntiCheat remain blocked —
-see the root TODO "Branch protection" entry):
+**Do once per smoke-equipped KTP repo.** Which repos are actually gated, and
+by what, changes — regenerate it rather than reading a list here:
+
+```bash
+gh api repos/afraznein/<repo>/branches/main/protection   --jq '.required_status_checks.contexts'
+```
+
+⚠️ **On a PRIVATE repo on the free plan that call answers `403 "Upgrade to
+GitHub Pro or make this repository public to enable this feature"`, and
+`branches/main` reports `protected: false`.** Protection there is not pending,
+it is unavailable — the repo has to be made public or the plan upgraded before
+any of this section applies. Their workflows still run and still report, so a
+green tick is evidence the job passed and **not** evidence that a red one could
+have stopped a merge. Every PUBLIC KTP repo gets protection for free.
 
 1. **Repo settings → Branches → Branch protection rules**
 2. Add rule for `main` (or `master`):
    - ✅ Require a pull request before merging — 1 review
    - ✅ Require status checks to pass before merging
      - ✅ Require branches to be up to date before merging
-     - **Required status checks:**
-       - `smoke / smoke` (from the per-project caller workflow)
-       - `Tier 1 Config Tests / config-tests` (only on KTPInfrastructure —
-         the workflow lives there and only fires when configs change)
+     - **Required status checks:** pick them from the dropdown after the
+       first run. ⛔ **Never type a context in.** The context is the job name as
+       GitHub reports it, and for a reusable-workflow caller that is
+       `<caller-job> / <called-job>` — so the smoke callers report
+       `smoke / KTPMatchHandler`, `smoke / KTPCvarChecker`, `smoke / KTPAmxxCurl`
+       and so on, **never `smoke / smoke`**. `KTPGrenades` builds two plugins
+       from a matrix and reports two contexts that each embed the matrix values.
+       A required context that no workflow emits never reports, and an
+       unreported required check blocks every PR on that branch forever.
    - ✅ Do not allow bypassing the above settings (admins can override per-PR
      if labelled, but the default is to enforce — see hotfix path below)
 
@@ -257,7 +273,10 @@ For each KTP repo with a smoke workflow:
 - [ ] `.github/workflows/smoke.yml` present and parses (`yamllint`, `python -c "import yaml; yaml.safe_load(open(...))"`)
 - [ ] Workflow uses `${{ secrets.KTP_CHECKOUT_TOKEN }}` (not a hardcoded token)
 - [ ] One green workflow run on `main` since the smoke was added
-- [ ] Branch protection rule on `main` includes `smoke / smoke` as required check
+- [ ] Branch protection on `main` requires this repo's own smoke context, and the name
+      matches one the last PR actually reported — read both back rather than eyeballing:
+      `gh api repos/afraznein/<repo>/branches/main/protection --jq '.required_status_checks.contexts'`
+      against `gh api repos/afraznein/<repo>/commits/<head-sha>/check-runs --jq '.check_runs[].name'`
 - [ ] At least one PR has been merged through the gate (proves the path works)
 
 Org-level:
