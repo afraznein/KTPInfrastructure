@@ -8,28 +8,47 @@ Log format (TSV):
   timestamp  server  fps  players  sv_cpu  sys_cpu_steal  ram_used_mb  ram_total_mb  load_1m
 """
 
+import glob
 import socket
 import subprocess
 import datetime
 import os
+import re
 import sys
 
 # ============================================
 # Configuration
 # ============================================
-SERVERS = [
-    (27015, "chi1"),
-    (27016, "chi2"),
-    (27017, "chi3"),
-    (27018, "chi4"),
-    (27019, "chi5"),
-]
-
-SERVER_IP = "172.238.176.101"
-LOG_DIR = "/home/dodserver/log"
+# The system metrics below come from this host's own /proc, so the RCON target
+# is always this host. A literal address would also pin the file to one site
+# and put fleet addressing in a public repo.
+SERVER_IP = "127.0.0.1"
+INSTANCE_GLOB = os.path.expanduser("~/dod-*")
+LOG_DIR = os.path.expanduser("~/log")
 LOG_FILE = os.path.join(LOG_DIR, "server-monitor.log")
 RCON_TIMEOUT = 3
 HEADER = b'\xff\xff\xff\xff'
+
+
+def discover_servers():
+    """[(port, label)] from the instance directories present on this host.
+
+    A hardcoded list outlives the topology it was written for — this one kept a
+    deleted instance and logged a phantom DOWN row every minute. Labels stay
+    <site><n> for log continuity; site is $KTP_SITE, else the hostname prefix.
+    """
+    site = os.environ.get("KTP_SITE") or socket.gethostname().split(".")[0][:3].lower()
+    ports = sorted(
+        int(m.group(1))
+        for d in glob.glob(INSTANCE_GLOB)
+        if os.path.isdir(d) and (m := re.fullmatch(r"dod-(\d+)", os.path.basename(d)))
+    )
+    if not ports:
+        sys.exit(f"no instance directories match {INSTANCE_GLOB} — nothing to monitor")
+    return [(port, f"{site}{i}") for i, port in enumerate(ports, start=1)]
+
+
+SERVERS = discover_servers()
 
 
 def _resolve_secret(env_var: str, dotfile: str, label: str) -> str:
