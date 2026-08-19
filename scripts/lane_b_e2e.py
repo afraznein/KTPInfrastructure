@@ -636,7 +636,14 @@ def main() -> int:
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
-            "flag_state": log_text.count("KTP_FLAG_STATE "),
+            # The ownership poll can observe a final control-point change just
+            # after KTP_MATCH_END. The daemon deliberately rejects that marker
+            # because match context is already closed, so compare persisted
+            # rows only with markers inside the same ordered match window.
+            "flag_state": (
+                log_invariants.count_in_match(log_text, "KTP_FLAG_STATE ")
+                if report.get("match") else log_text.count("KTP_FLAG_STATE ")
+            ),
             "position_sample": position_sample_match,
             "position_sample_total": position_sample_total,
         }

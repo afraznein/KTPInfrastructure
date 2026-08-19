@@ -214,6 +214,13 @@ def test_periodic_markers_are_counted_only_inside_the_match():
     assert li.count_in_match(log, 'triggered "position_sample"') == 2
 
 
+def test_post_match_flag_state_is_not_claimed_as_pipeline_loss():
+    """The daemon intentionally drops ownership after match context closes."""
+    marker = 'KTP_FLAG_STATE (map "dod_anzio") (flag_index "1")'
+    log = "\n".join([marker, MATCH_START, marker, marker, MATCH_END, marker])
+    assert li.count_in_match(log, "KTP_FLAG_STATE ") == 2
+
+
 def test_marker_count_without_a_match_is_zero():
     marker = '"Bot<1><BOT><Axis>" triggered "position_sample"'
     assert li.count_in_match(marker, 'triggered "position_sample"') == 0

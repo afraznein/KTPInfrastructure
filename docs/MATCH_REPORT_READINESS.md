@@ -143,6 +143,35 @@ topology geometry, verified bot waypoints, and five synthetic matches.
 Anzio is synthetic-ready; no map is competitive-ready. Other maps must not
 inherit Anzio coordinates or objective weights.
 
+## Pre-release hardening
+
+Before identifying candidate commits for another push, run the deliberate
+failure suite. It proves that missing hard sources block while optional or
+low-sample sources remain visible warnings:
+
+```powershell
+python -m pytest tests/unit/test_match_readiness_failures.py `
+  tests/unit/test_match_report_bundle.py `
+  tests/unit/test_spatial_map_registry.py -q
+```
+
+Measure the saved fixture and compare it with the synthetic corpus using
+`match_fixture_storage.py`. The report separates the exact portable SQL dump,
+match-tagged INSERT payload, and a canonical gzip projection. It explicitly
+does not claim to measure live InnoDB allocation or an average human match.
+
+After all candidate work is committed and every checkout is clean, use
+`release_candidate_manifest.py` with exactly one `--repository NAME=PATH@REF`
+for KTPAMXX, KTPHLStatsX, and KTPInfrastructure. Add the compiled modules,
+plugin, daemon files, and configuration with repeated `--artifact NAME=PATH`,
+and the staged SQL directory with `--migration-dir`. The resulting JSON and
+Markdown bind the rehearsal to exact commits and SHA-256 values; they do not
+authorize a merge or deployment.
+
+`measure_command.py` can wrap database-backed report commands inside the
+network-disabled Lane B container. It records exit status, elapsed/CPU time,
+and peak process/child RSS where the operating system exposes it.
+
 ## Golden regression corpus
 
 `tests/e2e_stats/fixtures/regression-2026-08-14-anzio-5match/` is the committed
@@ -151,6 +180,7 @@ five-match golden corpus. Its match-tagged row counts are locked in
 
 ```powershell
 python -m pytest tests/unit/test_match_readiness.py `
+  tests/unit/test_match_readiness_failures.py `
   tests/unit/test_prepare_anzio_spatial_atlas.py -q
 ```
 

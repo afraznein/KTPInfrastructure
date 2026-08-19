@@ -24,6 +24,13 @@ privacy-checked Markdown/JSON bundle. `metric_confidence.py` supplies versioned
 source/sample labels. `spatial_map_registry.py` discovers all KTP match configs
 and produces the map readiness matrix; it does not infer geometry or waypoints.
 
+`match_fixture_storage.py` measures SQL archive/transfer size and match-tagged
+payload without mislabeling that value as InnoDB allocation or a human-match
+average. `release_candidate_manifest.py` binds the three release repositories,
+test-only dependencies, built artifacts, and migrations to exact commits and
+SHA-256 values. `measure_command.py` writes elapsed/CPU/peak-RSS evidence for a
+local command and preserves its exit status.
+
 See `docs/MATCH_REPORT_READINESS.md` for commands and
 `docs/MATCH_METRIC_CONTRACT_V1.md` for normative metric definitions. The first
 human-match procedure is `docs/runbooks/FIRST_REAL_MATCH_ANALYTICS.md`.

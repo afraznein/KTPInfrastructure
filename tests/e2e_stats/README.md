@@ -599,6 +599,13 @@ compiles only its ephemeral `stats_logging.amxx` with
 and `ktp_testmatch_enabled 1`. The match must emit bot `weaponstats` and create
 StatsMe rows or the run fails. Production artifacts retain the bot exclusion.
 
+Ownership markers use the same match boundary as periodic position samples.
+The objective poll can observe a legitimate control-point change immediately
+after `KTP_MATCH_END`; the daemon intentionally rejects it because live match
+context is closed. Lane B therefore compares `ktp_flag_state_events` only with
+`KTP_FLAG_STATE` markers between the ordered start/end markers. Counting the
+whole server log would fabricate a one-row pipeline loss at shutdown.
+
 ### Known all-bot artifact
 
 `ktp_match_players.steam_id` is `VARCHAR(32)`; the daemon gives bots a
