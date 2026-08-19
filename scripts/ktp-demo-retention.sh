@@ -20,13 +20,14 @@
 #   DRY_RUN=1           list deletions without performing them
 #   SKIP_DISCORD=1      suppress Discord posts
 #   ARCHIVE_URL=...     override archive URL shown in preview
+#   DEMO_ROOT=...       point at a scratch tree (tests/unit/test_demo_retention.py)
 #
 # Logs: /var/log/ktp-demo-retention.log
 # Archive browser: https://fastdl.ktpdod.com/demos/
 
 set -euo pipefail
 
-DEMO_ROOT="/home/hltvserver/hlds/dod/demos"
+DEMO_ROOT="${DEMO_ROOT:-/home/hltvserver/hlds/dod/demos}"
 
 # Directories carrying a .noprune marker are NEVER swept, whatever they are called.
 # The LAN-* pattern below is kept for belt-and-braces, but a marker file survives a
@@ -35,7 +36,6 @@ PRUNE_EXCLUDES=()
 while IFS= read -r marker; do
     PRUNE_EXCLUDES+=( -not -path "$(dirname "$marker")/*" )
 done < <(find "$DEMO_ROOT" -name .noprune -type f 2>/dev/null)
-PRUNE_EXCLUDES_STR="${PRUNE_EXCLUDES[*]}"
 
 PREVIEW_WINDOW_DAYS="${PREVIEW_WINDOW_DAYS:-7}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -75,28 +75,51 @@ human_bytes() {
     }'
 }
 
-# count_and_size <subdir> <min_age_days> <max_age_days_inclusive_plus_1>
-# Returns "count<TAB>bytes" on stdout.
-count_and_size() {
+# Assembles one tier's find arguments into FIND_ARGV. Every consumer -- count,
+# preview and the delete pass itself -- goes through here, so the set that gets
+# counted is by construction the set that gets deleted.
+# Never flatten the excludes into a string: unquoted, the trailing /* glob-expands
+# and find dies with "paths must precede expression".
+build_find_argv() {
     local subdir="$1" min="$2" maxexc="$3"
-    local filter_cmd="find \"$DEMO_ROOT\" -path \"*/${subdir}/*.dem\" -not -path \"*/LAN-*/*\" $PRUNE_EXCLUDES_STR -type f -mtime \"+${min}\""
-    if [ -n "$maxexc" ]; then
-        filter_cmd="$filter_cmd -mtime \"-${maxexc}\""
+    FIND_ARGV=( "$DEMO_ROOT" -path "*/${subdir}/*.dem" -not -path "*/LAN-*/*"
+                "${PRUNE_EXCLUDES[@]}" -type f -mtime "+${min}" )
+    [ -n "$maxexc" ] && FIND_ARGV+=( -mtime "-${maxexc}" )
+    return 0
+}
+
+# find_matches <subdir> <min_age_days> <max_age_days_inclusive_plus_1>
+# Emits "<bytes>\t<YYYY-MM-DD>\t<path>" per match; returns 1 if find itself failed.
+# find's stderr is deliberately NOT discarded -- swallowing it is what let a broken
+# filter read as an empty result for ten days.
+find_matches() {
+    build_find_argv "$1" "$2" "$3"
+    local out rc=0
+    out=$(find "${FIND_ARGV[@]}" -printf '%s\t%TY-%Tm-%Td\t%p\n') || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "[$(ts)] ERROR: find exited ${rc} for tier '${1}' -- tier SKIPPED, retention NOT applied" >&2
+        return 1
     fi
-    local count bytes
-    count=$(eval "$filter_cmd" 2>/dev/null | wc -l)
-    bytes=$(eval "$filter_cmd -printf '%s\\n'" 2>/dev/null \
-            | awk 'BEGIN{s=0} {s+=$1} END{print s+0}')
-    printf '%s\t%s\n' "$count" "$bytes"
+    [ -n "$out" ] && printf '%s\n' "$out"
+    return 0
+}
+
+# count_and_size <subdir> <min_age_days> <max_age_days_inclusive_plus_1>
+# Returns "count<TAB>bytes" on stdout; returns 1 if the underlying find failed.
+count_and_size() {
+    local matches
+    matches=$(find_matches "$@") || return 1
+    printf '%s\n' "$matches" \
+        | awk -F'\t' 'BEGIN{n=0;s=0} NF{n++;s+=$1} END{printf "%d\t%d\n", n, s+0}'
 }
 
 oldest_mtime() {
-    local subdir="$1" min="$2" maxexc="$3"
-    local filter_cmd="find \"$DEMO_ROOT\" -path \"*/${subdir}/*.dem\" -not -path \"*/LAN-*/*\" $PRUNE_EXCLUDES_STR -type f -mtime \"+${min}\""
-    if [ -n "$maxexc" ]; then
-        filter_cmd="$filter_cmd -mtime \"-${maxexc}\""
-    fi
-    eval "$filter_cmd -printf '%TY-%Tm-%Td\\n'" 2>/dev/null | sort -u | head -1
+    local matches
+    matches=$(find_matches "$@") || return 1
+    # ISO dates, so lexicographic min is chronological min -- and no sort|head
+    # pipeline to raise SIGPIPE under pipefail.
+    printf '%s\n' "$matches" \
+        | awk -F'\t' 'NF && (m=="" || $2<m){m=$2} END{if(m!="")print m}'
 }
 
 # KTP Discord embed constants (match plugins/include/ktp_discord.inc)
@@ -149,36 +172,68 @@ post_discord() {
     fi
 }
 
+# A pass that errors and then reports zero is indistinguishable from a healthy one --
+# that is exactly how this job ran for ten days. Route failures somewhere a human looks.
+alert_failure() {
+    local desc="$1"
+    echo "[$(ts)] ALERT: ${desc}" >&2
+    post_discord "$DEMO_CHANNEL_KTP" "HLTV Demo Retention — FAILED" "$desc" "$KTP_COLOR_RED" || true
+}
+
 # ---- delete mode ----
 run_delete() {
     [ -d "$DEMO_ROOT" ] || { echo "[$(ts)] ERROR: demo root missing" >&2; exit 1; }
 
-    local total_deleted=0 total_bytes=0
+    local total_deleted=0 total_bytes=0 failures=0
     for subdir in "${!RETENTION[@]}"; do
         local days=${RETENTION[$subdir]}
-        local result count bytes gb
-        result=$(count_and_size "$subdir" "$days" "")
-        count="${result%$'\t'*}"
-        bytes="${result#*$'\t'}"
+        local matches count bytes gb
+        if ! matches=$(find_matches "$subdir" "$days" ""); then
+            failures=$((failures + 1))
+            continue
+        fi
+        count=$(printf '%s\n' "$matches" | awk -F'\t' 'BEGIN{n=0} NF{n++} END{print n}')
+        bytes=$(printf '%s\n' "$matches" | awk -F'\t' 'BEGIN{s=0} NF{s+=$1} END{print s+0}')
         [ "$count" = "0" ] && continue
+
+        # The excludes are the only thing between this job and the irreplaceable event
+        # archives. Assert on the resulting set, not on the argv that produced it.
+        if printf '%s\n' "$matches" | grep -q '/LAN-'; then
+            echo "[$(ts)] FATAL: event-archive path in the ${subdir}/ delete set -- aborting, nothing deleted" >&2
+            alert_failure "Event-archive path reached the delete set for \`${subdir}/\`. Retention **aborted with nothing deleted** -- inspect before re-running."
+            exit 3
+        fi
 
         gb=$(human_bytes "$bytes")
         if [ "$DRY_RUN" = "1" ]; then
             echo "[$(ts)] DRY_RUN: ${subdir}/ would delete ${count} files / ${gb} (>${days}d)"
         else
             echo "[$(ts)] ${subdir}/ deleting ${count} files / ${gb} (>${days}d)"
-            find "$DEMO_ROOT" -path "*/${subdir}/*.dem" -not -path "*/LAN-*/*" "${PRUNE_EXCLUDES[@]}" -type f -mtime "+${days}" -delete
+            build_find_argv "$subdir" "$days" ""
+            if ! find "${FIND_ARGV[@]}" -delete; then
+                echo "[$(ts)] ERROR: delete pass failed for ${subdir}/" >&2
+                failures=$((failures + 1))
+            fi
         fi
         total_deleted=$((total_deleted + count))
         total_bytes=$((total_bytes + bytes))
     done
 
     if [ "$total_deleted" = "0" ]; then
-        echo "[$(ts)] delete: nothing past retention"
+        if [ "$failures" -eq 0 ]; then
+            echo "[$(ts)] delete: nothing past retention"
+        else
+            echo "[$(ts)] delete: 0 files, but ${failures} tier(s) ERRORED -- this is not a clean pass" >&2
+        fi
     else
         local total_gb
         total_gb=$(human_bytes "$total_bytes")
         echo "[$(ts)] delete: total ${total_deleted} files / ${total_gb}"
+    fi
+
+    if [ "$failures" -ne 0 ]; then
+        alert_failure "\`ktp-demo-retention.sh delete\` -- **${failures} tier(s) failed to evaluate**, so those demos were not swept. See \`/var/log/ktp-demo-retention.log\`."
+        return 4
     fi
 }
 
@@ -188,7 +243,7 @@ run_preview() {
 
     # Collect per-tier stats for files due for deletion in the next PREVIEW_WINDOW_DAYS.
     # For subdir retention=D, age range is (D - window, D]  =>  find -mtime +(D-window-1) -mtime -(D+1)
-    local any=0
+    local any=0 failures=0
     local -a rows=()
 
     for subdir in ktp draft 12man scrim; do
@@ -196,20 +251,32 @@ run_preview() {
         local warn_min=$((days - PREVIEW_WINDOW_DAYS - 1))
         local warn_maxexc=$((days + 1))
         local result count bytes oldest
-        result=$(count_and_size "$subdir" "$warn_min" "$warn_maxexc")
+        if ! result=$(count_and_size "$subdir" "$warn_min" "$warn_maxexc"); then
+            failures=$((failures + 1))
+            continue
+        fi
         count="${result%$'\t'*}"
         bytes="${result#*$'\t'}"
         [ "$count" = "0" ] && continue
 
         any=1
-        oldest=$(oldest_mtime "$subdir" "$warn_min" "$warn_maxexc")
+        oldest=$(oldest_mtime "$subdir" "$warn_min" "$warn_maxexc" || true)
         local size_str
         size_str=$(human_bytes "$bytes")
         rows+=("\`${subdir}\` (${days}d) — ${count} files / ${size_str} — oldest ${oldest}")
     done
 
+    if [ "$failures" -ne 0 ]; then
+        alert_failure "\`ktp-demo-retention.sh preview\` -- **${failures} tier(s) failed to evaluate**. The weekly heads-up is incomplete; do not read it as an all-clear."
+    fi
+
     if [ "$any" = "0" ]; then
-        echo "[$(ts)] preview: no demos due for deletion in next ${PREVIEW_WINDOW_DAYS}d"
+        if [ "$failures" -eq 0 ]; then
+            echo "[$(ts)] preview: no demos due for deletion in next ${PREVIEW_WINDOW_DAYS}d"
+        else
+            echo "[$(ts)] preview: 0 tiers reported, but ${failures} ERRORED -- not an all-clear" >&2
+            return 4
+        fi
         return 0
     fi
 
@@ -225,6 +292,8 @@ run_preview() {
     echo "$desc"
     post_discord "$DEMO_CHANNEL_KTP"       "HLTV Demos — Scheduled for Deletion" "$desc" "$KTP_COLOR_ORANGE"
     post_discord "$DEMO_CHANNEL_COMMUNITY" "HLTV Demos — Scheduled for Deletion" "$desc" "$KTP_COLOR_ORANGE"
+
+    [ "$failures" -eq 0 ] || return 4
 }
 
 case "$MODE" in
