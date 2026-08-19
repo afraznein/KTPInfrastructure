@@ -89,7 +89,7 @@ The KTP stack eliminates Metamod dependency through a custom extension loading a
 └─────────────────────────────────────────────────────────────────────────────┘
                               ↓ ReHLDS Extension API
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Layer 1: Game Engine (KTP-ReHLDS v3.22.0.930)                              │
+│  Layer 1: Game Engine (KTP-ReHLDS v3.22.0.931)                              │
 │  Custom ReHLDS fork with extension loader + KTP features                    │
 │  Provides: SV_UpdatePausedHUD hook, SV_Rcon hook, pfnClientCvarChanged,     │
 │            SV_ClientUserInfoChanged (re-enabled .929, ktp_userinfo_hook)    │
@@ -105,6 +105,7 @@ The KTP stack eliminates Metamod dependency through a custom extension loading a
 │          RH_SV_Rcon fires on every attempt (incl. failures)                 │
 │  - .929: SV_ClientUserInfoChanged hookchain re-enabled (ktp_userinfo_hook)  │
 │  - .930: engine auto-bans re-armed ([KTP_AUTOBAN]) + launcher signal fix    │
+│  - .931: per-phase spike counters stopped reporting one identical number    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
                          Supporting Infrastructure:
@@ -254,7 +255,7 @@ rehlds/
 ### Layer 1: KTP-ReHLDS (Engine)
 
 **Repository:** [github.com/afraznein/KTP-ReHLDS](https://github.com/afraznein/KTP-ReHLDS)
-**Version:** 3.22.0.930 (fleet-live 2026-08-08; .931 staged for the 2026-08-16 nightly)
+**Version:** 3.22.0.931 (fleet-live since the 2026-08-16 nightly; md5 `eedfc99e97652b3e40430befa41b57a8` on all 24 instances)
 **License:** MIT
 
 > **Version identity note:** the console banner is generated from the git commit count (`appversion.h`) and drifts from the CHANGELOG version by design. Deployments are verified by binary checksum, not by banner.
@@ -2915,7 +2916,7 @@ discord_channel_id_audit_competitive=5555555555555555555
 
 | Layer    | Repository                                              | Version       | Description                         |
 |----------|---------------------------------------------------------|---------------|-------------------------------------|
-| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTP-ReHLDS)    | 3.22.0.930    | Custom ReHLDS with extension loader + frame profiler + async log writer |
+| Engine   | [KTP-ReHLDS](https://github.com/afraznein/KTP-ReHLDS)    | 3.22.0.931    | Custom ReHLDS with extension loader + frame profiler + async log writer |
 | SDK      | [KTP HLSDK](https://github.com/afraznein/KTPhlsdk)      | 1.0.0         | SDK headers with callback support   |
 | Platform | [KTPAMXX](https://github.com/afraznein/KTPAMXX)         | core 2.7.27 / dodx 2.7.28 | AMX Mod X extension mode fork + JIT + async CLog + lifecycle fixes (two artifacts, versioned independently) |
 | Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTP-ReAPI)     | 5.29.0.365-ktp| ReAPI extension mode fork (deployed binary self-reports a stale 5.25.0.0-ktp — see Layer 3) |
