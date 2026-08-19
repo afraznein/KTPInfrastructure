@@ -39,9 +39,12 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "statsme2": True,
         "legacy_match_cache": True,
         "assists": True,
-        "flag_ownership": False,
+        "flag_ownership": True,
     }
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
+    assert report["shadow_timelines"]["status"] == "available"
+    assert len(report["shadow_timelines"]["opening_duels"]) == 2
+    assert report["shadow_timelines"]["fast_multikills"] == []
 
 
 def test_replay_report_suppresses_time_normalized_metrics(tmp_path):
@@ -53,6 +56,8 @@ def test_replay_report_suppresses_time_normalized_metrics(tmp_path):
 
     assert report["quality"]["status"] == "WARN"
     assert report["temporal_metrics_valid"] is False
+    assert report["shadow_timelines"]["status"] == "timed_metrics_suppressed"
+    assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert all(player["damage_per_minute"] is None for player in report["players"])
     assert any(check["code"] == "replay_timing_compressed"
                for check in report["quality"]["checks"])

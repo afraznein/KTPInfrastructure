@@ -4,6 +4,18 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `analytics`: canary evidence and private event timelines (2026-08-19)
+
+- Adds a local-dump-only canary evidence bundle covering match classification,
+  current capture sources, ownership baselines/transitions, operational log
+  errors, retention eligibility, and fixture provenance.
+- Match analytics schema version 3 adds configurable fast multikills, basic
+  trades, opening duels, head-to-head results, and post-multikill objective
+  conversion. These remain private, read-only shadow outputs with no public API
+  or rating writes; replay-compressed fixtures suppress timed inferences.
+- Extends the isolated MySQL query-contract fixture and tests the new tools
+  against the same Lane B database engine used in CI.
+
 ### `scripts`: the lan-web drift check now says which tree it compared (2026-08-18)
 
 `ktp-lan-web-drift.py` reads a working tree, so its verdict was about whichever
