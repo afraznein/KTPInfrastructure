@@ -34,7 +34,7 @@ from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 
 INTEGER_COLUMNS = {
@@ -52,8 +52,8 @@ INTEGER_COLUMNS = {
     "legacy_damage_dealt",
 }
 FLOAT_COLUMNS = {
-    "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
-    "raw_accuracy",
+    "kd_ratio", "kda_ratio", "damage_per_minute", "damage_per_life",
+    "headshot_rate", "raw_accuracy",
 }
 
 
@@ -462,6 +462,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("headshots", "HS"), ("capture_credits", "Caps"),
             ("cap_breaks", "Breaks"), ("raw_accuracy", "Raw acc."),
             ("damage_per_minute", "Dmg/min"),
+            ("damage_per_life", "Dmg/life"),
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
@@ -540,6 +541,11 @@ def build_report(
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
+            )
+            deaths = player.get("deaths") or 0
+            player["damage_per_life"] = (
+                round(damage / deaths, 2)
+                if damage is not None and deaths else None
             )
     if source_mode == "replay":
         for player in players:

@@ -41,7 +41,14 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "assists": True,
         "flag_ownership": False,
     }
-    assert report["schema_version"] == 2
+    for player in report["players"]:
+        if player["deaths"]:
+            assert player["damage_per_life"] == round(
+                player["damage_dealt"] / player["deaths"], 2
+            )
+        else:
+            assert player["damage_per_life"] is None
+    assert report["schema_version"] == 3
 
 
 def test_replay_report_suppresses_time_normalized_metrics(tmp_path):

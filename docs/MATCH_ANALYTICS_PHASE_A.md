@@ -78,3 +78,8 @@ raw match-tagged event tables produce the canonical totals.
 
 Raw accuracy is reported by weapon with a Garand chamber-clearing caveat. It is
 not a player-ranking or KTPR input.
+
+The aggregate readiness gate, supported Anzio atlas command, and first-real-
+match procedure are documented in `MATCH_REPORT_READINESS.md`. Normative metric
+definitions and null/privacy behavior are versioned in
+`MATCH_METRIC_CONTRACT_V1.md`.

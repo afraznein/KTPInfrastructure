@@ -10,6 +10,17 @@ Operational scripts for KTP game servers and data server.
 
 ## Scripts
 
+### match_readiness.py and the Anzio spatial atlas
+
+`match_readiness.py` applies an aggregate-only `PASS`/`WARN`/`FAIL` gate to a
+local `.sql` or `.sql.gz` match fixture without starting MySQL or contacting a
+shared service. `build_anzio_spatial_atlas.ps1` turns one or more Anzio fixtures
+into the supported heatmap/report image set. Map geometry and analytical
+windows live in `config/analytics/spatial_maps/dod_anzio.json`.
+
+See `docs/MATCH_REPORT_READINESS.md` for commands and
+`docs/MATCH_METRIC_CONTRACT_V1.md` for normative metric definitions.
+
 ### draft_day_monitor.py
 Monitors CPU steal time, RAM, load, and game server stats during high-load events.
 
