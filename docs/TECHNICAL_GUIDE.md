@@ -8,7 +8,7 @@
 
 **Doc home note:** This file (and `DEVELOPMENT_HISTORY.md`) used to live in `KTPMatchHandler/` for historical reasons — they predated the existence of `KTPInfrastructure/`. Moved to their proper home 2026-04-25.
 
-**What this document is:** the engineering reference for the whole stack. It aims to leave a contributor or future maintainer understanding *how* each layer works and *why* it's built this way — the extension-loader mechanism, the hookchain model, the extension-mode lifecycle and its bug class, the async I/O designs, the match-flow state machine, the deploy pipeline, and the fleet platform. Mechanism descriptions were verified against the actual source trees (2026-07-20); version callouts were re-verified against the deployed fleet by binary checksum on 2026-08-19, with every artifact confirmed byte-identical across all 24 instances (engine 3.22.0.931, KTPAMXX core 2.7.27 + DODX module 2.7.28 — the two ship separately and legitimately differ — ReAPI 5.29.0.365-ktp, AmxxCurl 1.3.15-ktp). Version callouts describe the fleet on that date, not forever; the deploy pipeline moves weekly.
+**What this document is:** the engineering reference for the whole stack. It aims to leave a contributor or future maintainer understanding *how* each layer works and *why* it's built this way — the extension-loader mechanism, the hookchain model, the extension-mode lifecycle and its bug class, the async I/O designs, the match-flow state machine, the deploy pipeline, and the fleet platform. Mechanism descriptions were verified against the actual source trees (2026-07-20); version callouts were re-verified against the deployed fleet by binary checksum on 2026-08-19, with every artifact confirmed byte-identical across all 24 instances (engine 3.22.0.931, KTPAMXX core 2.7.27 + DODX module 2.7.28 — the two ship separately and legitimately differ — ReAPI 5.29.0.365-ktp, AmxxCurl 1.3.17-ktp). Version callouts describe the fleet on that date, not forever; the deploy pipeline moves weekly.
 
 - ⏳ Inline "(introduced in vX.Y)" markers in section prose are historical attribution, not current-version claims.
 - ⏳ Possible split into per-layer docs (ENGINE.md / SCRIPTING.md / MODULES.md / PLUGINS.md / SERVICES.md / ADMIN.md). Multi-session restructure; deferred.
@@ -57,7 +57,7 @@ The KTP stack eliminates Metamod dependency through a custom extension loading a
                               ↓ Uses AMXX Module API
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Layer 4: HTTP/Networking Modules (AMXX Modules)                            │
-│  KTP AMXX Curl v1.3.15-ktp - Non-blocking HTTP via libcurl + asio           │
+│  KTP AMXX Curl v1.3.17-ktp - Non-blocking HTTP via libcurl + asio           │
 │  Uses MF_RegModuleFrameFunc() for async processing                          │
 │  2026: socket-lifecycle fix (keep-alive connection reuse), extension-mode   │
 │        shutdown teardown, crash-safety guards at every C boundary           │
@@ -1153,7 +1153,7 @@ public OnPausedHUDUpdate() {
 ### Layer 4: KTP AMXX Curl (HTTP Module)
 
 **Repository:** [github.com/afraznein/KTPAMXXCurl](https://github.com/afraznein/KTPAMXXCurl)
-**Version:** 1.3.15-ktp
+**Version:** 1.3.17-ktp
 **License:** MIT
 **Base:** AmxxCurl by Polarhigh
 
@@ -2921,7 +2921,7 @@ discord_channel_id_audit_competitive=5555555555555555555
 | SDK      | [KTP HLSDK](https://github.com/afraznein/KTPhlsdk)      | 1.0.0         | SDK headers with callback support   |
 | Platform | [KTPAMXX](https://github.com/afraznein/KTPAMXX)         | core 2.7.27 / dodx 2.7.28 | AMX Mod X extension mode fork + JIT + async CLog + lifecycle fixes (two artifacts, versioned independently) |
 | Bridge   | [KTP-ReAPI](https://github.com/afraznein/KTP-ReAPI)     | 5.29.0.365-ktp| ReAPI extension mode fork (deployed binary self-reports a stale 5.25.0.0-ktp — see Layer 3) |
-| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAMXXCurl)| 1.3.15-ktp   | Non-blocking HTTP module + connection-reuse fix |
+| HTTP     | [KTP AMXX Curl](https://github.com/afraznein/KTPAMXXCurl)| 1.3.17-ktp   | Non-blocking HTTP module + connection-reuse fix |
 
 ### Application Plugins
 
