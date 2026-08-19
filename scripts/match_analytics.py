@@ -30,11 +30,12 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
+from scripts.match_timelines import TimelineConfig, build_shadow_timelines  # noqa: E402
 
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 
 INTEGER_COLUMNS = {
@@ -50,6 +51,8 @@ INTEGER_COLUMNS = {
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
     "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
     "legacy_damage_dealt",
+    "event_id", "event_unix", "killer_id", "killer_team", "victim_team",
+    "match_type", "flag_index", "owner_team", "is_initial",
 }
 FLOAT_COLUMNS = {
     "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
@@ -473,6 +476,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "Assist weapon is not reported because the assist event does not carry "
         "one; nearby damage is not treated as a safe substitute.",
+        "", "## Private shadow timelines", "",
+        f"Status: `{report.get('shadow_timelines', {}).get('status', 'not_collected')}`  ",
+        "Exploratory only: no database writes, public API output, or rating impact.",
+        "",
+        markdown_table(report.get("shadow_timelines", {}).get("opening_duels", []), [
+            ("half", "Half"), ("event_time", "Opening time"),
+            ("weapon", "Weapon"), ("headshot", "Headshot"),
+        ]),
+        f"Fast multikills: {len(report.get('shadow_timelines', {}).get('fast_multikills', []))}  ",
+        f"Basic trades: {len(report.get('shadow_timelines', {}).get('trades', []))}  ",
+        f"Head-to-head pairs: {len(report.get('shadow_timelines', {}).get('head_to_head', []))}",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -512,6 +526,7 @@ def build_report(
     fixture: Path,
     sources: dict[str, bool] | None = None,
     source_mode: str = "database",
+    timeline_config: TimelineConfig | None = None,
 ) -> dict[str, Any]:
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
@@ -522,6 +537,10 @@ def build_report(
                if sources is None or sources.get("capture_credits", True) else [])
     events = (query_rows(db, "capture_event_fact.sql", match_id)
               if sources is None or sources.get("capture_credits", True) else [])
+    frag_timeline = query_rows(db, "frag_timeline_fact.sql", match_id)
+    objective_timeline = (query_rows(db, "objective_timeline_fact.sql", match_id)
+                          if sources is None or sources.get("capture_credits", True)
+                          else [])
     inventory_rows = query_rows(db, "quality_inventory.sql", match_id)
     inventory = inventory_rows[0] if inventory_rows else {}
     match = match_rows[0] if match_rows else None
@@ -565,6 +584,10 @@ def build_report(
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
         "capture_events": events,
+        "shadow_timelines": build_shadow_timelines(
+            frag_timeline, objective_timeline, timeline_config,
+            temporal_valid=source_mode != "replay",
+        ),
         "positional": {
             "privacy": "aggregate_only",
             "aggregate_sample_count": inventory.get("position_samples", 0),
@@ -581,6 +604,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source-mode", choices=("database", "replay"),
                         default="database",
                         help="replay suppresses invalid time-normalized metrics")
+    parser.add_argument("--multikill-seconds", type=float, default=10.0)
+    parser.add_argument("--trade-seconds", type=float, default=5.0)
+    parser.add_argument("--objective-conversion-seconds", type=float, default=30.0)
     return parser.parse_args(argv)
 
 
@@ -605,7 +631,12 @@ def main(argv: list[str] | None = None) -> int:
                 f"Available: {match_ids}"
             )
         report = build_report(
-            db, match_id, args.fixture, sources, args.source_mode
+            db, match_id, args.fixture, sources, args.source_mode,
+            TimelineConfig(
+                multikill_seconds=args.multikill_seconds,
+                trade_seconds=args.trade_seconds,
+                objective_conversion_seconds=args.objective_conversion_seconds,
+            ),
         )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

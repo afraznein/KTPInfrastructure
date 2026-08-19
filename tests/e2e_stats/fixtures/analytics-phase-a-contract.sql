@@ -5,7 +5,7 @@
 
 CREATE TABLE ktp_matches (
   match_id varchar(64), server_id int, map_name varchar(32), half tinyint,
-  start_time datetime, end_time datetime
+  match_type tinyint, start_time datetime, end_time datetime
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE ktp_match_players (
   match_id varchar(64), player_id int, steam_id varchar(64),
@@ -15,6 +15,7 @@ CREATE TABLE hlstats_Actions (
   id int, game varchar(32), code varchar(64)
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE hlstats_Events_Frags (
+  id int NOT NULL AUTO_INCREMENT PRIMARY KEY, eventTime datetime,
   match_id varchar(64), killerId int, victimId int, weapon varchar(64),
   headshot tinyint, half tinyint
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -52,12 +53,18 @@ CREATE TABLE ktp_position_samples (
 CREATE TABLE ktp_match_stats (
   match_id varchar(64), player_id int, half tinyint, kills int, deaths int
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE ktp_flag_state_events (
+  id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, server_id int,
+  match_id varchar(64), half tinyint, map_name varchar(32), flag_index tinyint,
+  flag_name varchar(64), owner_team tinyint, is_initial tinyint,
+  game_time decimal(10,2), event_time datetime
+) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT INTO hlstats_Actions VALUES
   (1,'dod','assist'),(2,'dod','cap_break');
 INSERT INTO ktp_matches VALUES
-  ('phase-a-contract-TEST',2,'dod_anzio',1,'2026-08-16 20:00:00','2026-08-16 20:10:00'),
-  ('phase-a-contract-TEST',2,'dod_anzio',2,'2026-08-16 20:11:00','2026-08-16 20:21:00');
+  ('phase-a-contract-TEST',2,'dod_anzio',1,0,'2026-08-16 20:00:00','2026-08-16 20:10:00'),
+  ('phase-a-contract-TEST',2,'dod_anzio',2,0,'2026-08-16 20:11:00','2026-08-16 20:21:00');
 INSERT INTO ktp_match_players VALUES
   ('phase-a-contract-TEST',1,'BOT:0001','Allies 1',1,'2026-08-16 20:00:00'),
   ('phase-a-contract-TEST',2,'BOT:0002','Allies 2',1,'2026-08-16 20:00:00'),
@@ -72,7 +79,8 @@ INSERT INTO ktp_match_players VALUES
   ('phase-a-contract-TEST',11,'BOT:0011','Axis 5',2,'2026-08-16 20:00:00'),
   ('phase-a-contract-TEST',12,'BOT:0012','Axis 6',2,'2026-08-16 20:00:00');
 
-INSERT INTO hlstats_Events_Frags VALUES
+INSERT INTO hlstats_Events_Frags
+  (match_id, killerId, victimId, weapon, headshot, half) VALUES
   ('phase-a-contract-TEST',1,7,'garand',1,1),
   ('phase-a-contract-TEST',2,8,'garand',0,1),
   ('phase-a-contract-TEST',3,9,'thompson',0,1),
@@ -85,6 +93,8 @@ INSERT INTO hlstats_Events_Frags VALUES
   ('phase-a-contract-TEST',10,4,'mp44',1,2),
   ('phase-a-contract-TEST',11,5,'scopedkar',1,2),
   ('phase-a-contract-TEST',12,6,'mg42',0,2);
+UPDATE hlstats_Events_Frags
+SET eventTime = DATE_ADD('2026-08-16 20:00:00', INTERVAL id * 20 SECOND);
 INSERT INTO hlstats_Events_Teamkills VALUES
   ('phase-a-contract-TEST',1,2);
 INSERT INTO hlstats_Events_Suicides VALUES
@@ -159,3 +169,11 @@ INSERT INTO ktp_match_stats VALUES
   ('phase-a-contract-TEST',7,0,1,1),('phase-a-contract-TEST',8,0,1,1),
   ('phase-a-contract-TEST',9,0,1,1),('phase-a-contract-TEST',10,0,1,1),
   ('phase-a-contract-TEST',11,0,1,1),('phase-a-contract-TEST',12,0,1,1);
+
+INSERT INTO ktp_flag_state_events
+  (server_id,match_id,half,map_name,flag_index,flag_name,owner_team,is_initial,game_time,event_time)
+VALUES
+  (2,'phase-a-contract-TEST',1,'dod_anzio',0,'POINT_ANZIO_STREET',0,1,0,'2026-08-16 20:00:00'),
+  (2,'phase-a-contract-TEST',1,'dod_anzio',0,'POINT_ANZIO_STREET',1,0,300,'2026-08-16 20:05:00'),
+  (2,'phase-a-contract-TEST',2,'dod_anzio',0,'POINT_ANZIO_STREET',0,1,0,'2026-08-16 20:11:00'),
+  (2,'phase-a-contract-TEST',2,'dod_anzio',0,'POINT_ANZIO_STREET',2,0,300,'2026-08-16 20:16:00');

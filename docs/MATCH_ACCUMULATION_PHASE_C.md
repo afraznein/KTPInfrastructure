@@ -75,6 +75,11 @@ only owner changes. Joining each position sample to the most recent preceding
 state for its nearest flag distinguishes holding, attacking, neutral presence,
 and defense under pressure without storing ownership every five seconds.
 
+Private, read-only event correlations are now emitted by match analytics
+schema version 3 through `scripts/match_timelines.py`. Definitions, privacy
+boundaries, and canary validation are documented in
+`docs/CANARY_EVIDENCE_AND_SHADOW_TIMELINES.md`.
+
 When a complete baseline proves that a team owns exactly one flag, passive
 nearby holding receives a small `1.10x` premium. A nearby opponent raises an
 owned-flag tick to `1.15x` before the existing active-contest multiplier, and a
