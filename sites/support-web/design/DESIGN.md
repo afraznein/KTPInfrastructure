@@ -552,9 +552,9 @@ prerequisites.
 
 | Host | Resolves to | Serves today |
 |---|---|---|
-| `support.ktpdod.com` | **74.91.112.242** (data server) ✅ | **404** — no vhost yet, as expected |
-| `ac` / `admin` / `api` / `bundles` / `fastdl` / `hud` / `netcode` / `profiles` / `watch` | 74.91.112.242 | own vhost each, own LE cert each |
-| **`ktpdod.com` (apex)** | **74.91.112.242 — OUR box** | ⚠️ **404** |
+| `support.ktpdod.com` | **`<DATA_SERVER_IP>`** (data server) ✅ | **404** — no vhost yet, as expected |
+| `ac` / `admin` / `api` / `bundles` / `fastdl` / `hud` / `netcode` / `profiles` / `watch` | `<DATA_SERVER_IP>` | own vhost each, own LE cert each |
+| **`ktpdod.com` (apex)** | **`<DATA_SERVER_IP>` — OUR box** | ⚠️ **404** |
 | **`www.ktpdod.com`** | **34.149.87.45 — external** | Sears' host |
 
 DNS for `support.` is correct and nothing more is needed there.

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Denver Data Server Integration Script
-# Run this on the data server (74.91.112.242) as root
+# Run this on the data server (<DATA_SERVER_IP>) as root
 #
 # This script:
 # 1. Creates HLTV instances 27030-27034 for Denver

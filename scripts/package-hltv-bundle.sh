@@ -1,7 +1,7 @@
 #!/bin/bash
 # package-hltv-bundle.sh — produce a portable HLTV-binaries tarball.
 #
-# Run this on the production data server (74.91.112.242) to capture the
+# Run this on the production data server (<DATA_SERVER_IP>) to capture the
 # /home/hltvserver/hlds/ tree minus the recorded demos and the unused
 # cstrike/ subtree. Resulting tarball is suitable for HLTV_BINARIES_PATH
 # in a LAN deployment.

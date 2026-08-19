@@ -299,7 +299,7 @@ public relay, so a box IP change doesn't affect the tunnel.
 
 | Concern | Cloud fleet | LAN |
 |---------|-------------|-----|
-| Data server IP | `74.91.112.242` baked in | `LAN_IP` (all-in-one) |
+| Data server IP | `<DATA_SERVER_IP>` baked in | `LAN_IP` (all-in-one) |
 | Discord relay | Cloud Run endpoint | Optional; empty = no posts |
 | Fleet-health webhook | Production Discord channel | Optional per-deployment |
 | Dataserver passwords | Production secret | Auto-generated per run |

@@ -13,7 +13,7 @@ format the existing `ktp-organize-hltv-demos.sh` recognizes:
 Multi-segment matches (HLTV source-reconnect mid-match) are preserved as
 `_part2`, `_part3` ... appended before the `.dem` extension.
 
-Service runs on the data server (74.91.112.242) as root.
+Service runs on the data server (<DATA_SERVER_IP>) as root.
 
 Pipeline order (cron):
   1. THIS SERVICE (continuous) — renames auto-*.dem → canonical

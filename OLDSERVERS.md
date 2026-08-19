@@ -2,7 +2,7 @@
 
 ```
 
-IP:        74.91.112.182 (offline)
+IP:        <ATL_VPS_GAME_IP> (offline)
 
 Cost:      $29.39/month (cancelled)
 
@@ -24,7 +24,7 @@ Instances: 5 game servers (27015-27019)
 
 ```
 
-IP:        74.91.114.195 (offline)
+IP:        <DAL_VPS_GAME_IP> (offline)
 
 Cost:      $29.39/month (cancelled)
 
