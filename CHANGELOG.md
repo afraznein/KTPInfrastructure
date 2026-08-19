@@ -4,6 +4,23 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: the lan-web drift check now says which tree it compared (2026-08-18)
+
+`ktp-lan-web-drift.py` reads a working tree, so its verdict was about whichever
+branch was checked out — "in sync" read as "in sync with `main`" no matter what
+was actually out, and the same box could be reported clean and drifted on the
+same day with neither report wrong about anything it said.
+
+- Every report opens with a `source:` line naming the checkout and whether
+  `sites/lan-web/app` matches `LAN_WEB_BASE_REF` (default `origin/main`).
+  `UNKNOWN` is said out loud rather than omitted. Exit codes are unchanged —
+  `deploy-lan-web.sh` branches on them, so they stay an interface.
+- `deploy-lan-web.sh --apply` refuses when that tree differs from the base ref,
+  alongside the existing box-only refusal. An unresolvable base ref is refused
+  too, rather than skipped. Override: `--force-unreviewed-source`.
+- `tests/unit/test_lan_web_drift_provenance.py` pins all five states, including
+  that an edit outside `sites/lan-web/app` is not a divergence.
+
 ### `docs`: one production runbook for the stats and retention release (2026-08-17)
 
 - Adds `docs/STATS_RETENTION_PRODUCTION_DEPLOY.md`: exact reviewed source pins,
