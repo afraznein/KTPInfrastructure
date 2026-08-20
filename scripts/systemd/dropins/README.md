@@ -32,13 +32,16 @@ was absent. Both greps hit, both units alerted nobody, and one of them had been 
 Carry a control when checking: `hltv-demo-renamer.service` has always been correctly wired, so a
 sweep that reports it as empty is a broken sweep, not a finding.
 
-## Known inconsistency
+## Filenames are uniform — keep them that way, but never *rely* on it
 
-`hud-observer` and `hud-observer-web` use `onfailure.conf`; everything else uses
-`00-ktp-onfailure-alert.conf`. Both work — systemd reads every `.conf` in a `.d/` directory — but a
-sweep keyed on the common filename misses those two. Match on the directory, not the filename.
+Every drop-in here is named `00-ktp-onfailure-alert.conf`. That was not always true:
+`hud-observer` and `hud-observer-web` used `onfailure.conf` until 2026-08-17, and a sweep keyed on
+the common filename silently missed exactly those two — which is how they stayed on the retired
+webhook-based alert template long after everything else had migrated. **Match on the `.d/`
+directory, not the filename**, so the next divergence cannot hide the same way.
 
-## Not covered here
+## Adding a unit
 
-`ktp-render-banlist.service` has **no** drop-in and is deliberately absent from this set — see its
-TODO card. It is the last unwired unit on the box.
+Two files, or the alert never fires: the drop-in **and** an entry here. The drop-in carries no
+secret — `ktp-systemd-alert` reads the relay URL and auth from `/etc/ktp/discord-relay.conf` at
+runtime — so it is safe to track, which is the property that keeps this set reviewable.
