@@ -8,6 +8,7 @@ table whose row count grew during the synthetic match.
 
 from __future__ import annotations
 
+from collections import Counter
 import re
 from typing import Any
 
@@ -106,6 +107,7 @@ def _cell(value: Any, limit: int = 160) -> str:
 
 def render_markdown(report: dict) -> str:
     emitted, rows = report.get("emitted", {}), report.get("rows", {})
+    frag_diagnostics = report.get("frag_context_diagnostics") or {}
     match = report.get("match") or {}
     failures = report.get("failures") or []
     gaps = report.get("coverage_gaps") or []
@@ -124,8 +126,10 @@ def render_markdown(report: dict) -> str:
         "| Stat | Emitted by game | Recorded in database |",
         "|---|---:|---:|",
         f"| Kills/frags | {emitted.get('kills', 0)} | {rows.get('frags', 0)} |",
-        f"| Assists | {emitted.get('assist', 0)} | "
+        f"| Assists (generic PPA) | {emitted.get('assist', 0)} | "
         f"{(rows.get('assist') or {}).get('ppa', 0)} |",
+        f"| Assist contexts (canonical, in-match) | "
+        f"{emitted.get('assist_context', 0)} | {rows.get('assist_context', 0)} |",
         f"| Cap breaks | {emitted.get('cap_break', 0)} | "
         f"{(rows.get('cap_break') or {}).get('pa', 0)} |",
         f"| Suicides | {emitted.get('suicide', 0)} | {rows.get('suicides', 0)} |",
@@ -135,7 +139,35 @@ def render_markdown(report: dict) -> str:
         f"| Flag positions | {emitted.get('flag_position', 0)} | {rows.get('flag_positions', 0)} current |",
         f"| Flag ownership states | {emitted.get('flag_state', 0)} | {rows.get('flag_states', 0)} |",
         f"| Position samples | {emitted.get('position_sample', 0)} | {rows.get('position_samples', 0)} |",
+        f"| Life boundaries | {emitted.get('life_boundary', 0)} | {rows.get('life_events', 0)} |",
         f"| Match roster | — | {rows.get('match_players', 0)} |",
+    ]
+    if frag_diagnostics:
+        def _multiset(values):
+            counts = Counter(values)
+            return ", ".join(
+                f"{identity} x{count}" if count > 1 else identity
+                for identity, count in sorted(counts.items())
+            ) or "none"
+
+        out += [
+            "",
+            "## Frag-context diagnostic reconciliation",
+            "",
+            "| Expected BreakDrive no-row | Observed no-row | "
+            "Claimed-row denominator | Producer-clock denominator |",
+            "|---:|---:|---:|---:|",
+            f"| {frag_diagnostics.get('expected_synthetic_unmatched', 0)} | "
+            f"{frag_diagnostics.get('observed_unmatched', 0)} | "
+            f"{frag_diagnostics.get('claimed_expected_rows', 0)} | "
+            f"{frag_diagnostics.get('producer_clock_expected_rows', 0)} |",
+            "",
+            f"- Expected identity multiset: "
+            f"`{_cell(_multiset(frag_diagnostics.get('expected_identities') or []), 500)}`",
+            f"- Observed identity multiset: "
+            f"`{_cell(_multiset(frag_diagnostics.get('observed_identities') or []), 500)}`",
+        ]
+    out += [
         "",
         "## Assertion verdicts",
         "",

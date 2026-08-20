@@ -40,6 +40,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
+from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
+                                       load_bundle_provenance,
+                                       render_bundle_provenance_markdown)
 from tests.e2e_stats.table_report import (changed_table_samples,  # noqa: E402
                                           render_markdown, table_counts)
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
@@ -431,13 +434,30 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
     ap.add_argument("--summary-out", type=Path,
                     default=Path("/work/build/lane-b-summary.md"))
+    ap.add_argument("--artifact-manifest", type=Path, default=None,
+                    help="artifact manifest carrying the exact four-repository "
+                         "bundle; invalid or incomplete provenance is fatal")
+    ap.add_argument("--require-complete-coverage", action="store_true",
+                    help="return nonzero when any assertion or staged scenario "
+                         "is not exercised; required for release evidence")
     ap.add_argument("--database-dump", type=Path, default=None,
                     help="optional local mysqldump written before the isolated "
                          "database is destroyed; intended for read-only "
                          "post-match analytics")
     args = ap.parse_args()
 
-    report: dict = {"map": args.map, "play_seconds": args.play_seconds}
+    report: dict = {
+        "map": args.map,
+        "play_seconds": args.play_seconds,
+        "require_complete_coverage": args.require_complete_coverage,
+    }
+    if args.artifact_manifest is not None:
+        try:
+            report["bundle_provenance"] = load_bundle_provenance(
+                args.artifact_manifest
+            )
+        except BuildError as exc:
+            raise SystemExit(f"invalid --artifact-manifest: {exc}") from exc
     failures: list[str] = []
     # Scenarios that could not be staged. Kept apart from `failures`
     # for the same reason as the other coverage gaps: a scenario that
@@ -620,6 +640,37 @@ def main() -> int:
             log_invariants.count_in_match(log_text, 'triggered "position_sample"')
             if report.get("match") else position_sample_total
         )
+        assist_context_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "assist"')
+            if report.get("match") else 0
+        )
+        frag_context_match_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "frag_context"')
+            if report.get("match") else 0
+        )
+        damage_match_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "damage"')
+            if report.get("match") else 0
+        )
+        life_match_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "life_boundary"')
+            if report.get("match") else 0
+        )
+        frag_diagnostic_evidence = (
+            log_invariants.frag_context_diagnostic_evidence(
+                log_text, daemon_text
+            )
+            if report.get("match") else {
+                "expected_synthetic_unmatched": 0,
+                "observed_unmatched": 0,
+                "expected_identities": [],
+                "observed_identities": [],
+                "unresolved_expected": [],
+                "unparsed_observed": [],
+                "synthetic_kill_markers": [],
+                "unmatched_warnings": [],
+            }
+        )
         report["emitted"] = {
             "kills": log_text.count('" killed "'),
             "assist": log_text.count('triggered "assist"'),
@@ -630,7 +681,9 @@ def main() -> int:
             # "frag_context" marker every kill now emits.
             "headshot": log_text.count('(headshot "1")'),
             "frag_context": log_text.count('triggered "frag_context"'),
+            "frag_context_match": frag_context_match_emitted,
             "damage": log_text.count('triggered "damage"'),
+            "damage_match": damage_match_emitted,
             "flag_capture": sum(
                 1 for line in log_text.splitlines()
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
@@ -639,6 +692,28 @@ def main() -> int:
             "flag_state": log_text.count("KTP_FLAG_STATE "),
             "position_sample": position_sample_match,
             "position_sample_total": position_sample_total,
+            "life_boundary": log_text.count('triggered "life_boundary"'),
+            "life_boundary_match": life_match_emitted,
+            # Canonical ktp_assist_events is deliberately match-only.  Keep
+            # this separate from the generic PPA count above, which also
+            # includes diagnostic/warmup assist actions.
+            "assist_context": assist_context_emitted,
+        }
+        expected_frag_diagnostics = frag_diagnostic_evidence[
+            "expected_synthetic_unmatched"
+        ]
+        observed_frag_diagnostics = frag_diagnostic_evidence[
+            "observed_unmatched"
+        ]
+        report["frag_context_diagnostics"] = {
+            **frag_diagnostic_evidence,
+            "claimed_expected_rows": (
+                report["emitted"]["frag_context"] - expected_frag_diagnostics
+            ),
+            "producer_clock_expected_rows": (
+                report["emitted"]["frag_context_match"]
+                - expected_frag_diagnostics
+            ),
         }
         report["lines_fed"] = daemon.lines_fed
         real_sql, benign_sql = daemon.classify_sql_errors()
@@ -660,20 +735,56 @@ def main() -> int:
         # the bots never produced, which say nothing either way and must not be
         # dressed up as either a pass or a defect.
         carried = [
+            assertions.check_capture_clock_schema(db),
             assertions.check_carried(db, "assist", emitted=report["emitted"]["assist"],
                                      table="hlstats_Events_PlayerPlayerActions",
                                      other_table="hlstats_Events_PlayerActions"),
+            assertions.check_assist_context(
+                db,
+                emitted=report["emitted"]["assist_context"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_carried(db, "cap_break", emitted=report["emitted"]["cap_break"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_frag_context_diagnostics(
+                expected=expected_frag_diagnostics,
+                observed=observed_frag_diagnostics,
+                expected_identities=frag_diagnostic_evidence[
+                    "expected_identities"
+                ],
+                observed_identities=frag_diagnostic_evidence[
+                    "observed_identities"
+                ],
+                unresolved_expected=frag_diagnostic_evidence[
+                    "unresolved_expected"
+                ],
+                unparsed_observed=frag_diagnostic_evidence[
+                    "unparsed_observed"
+                ],
+            ),
             assertions.check_frag_context_claimed(
                 db,
                 emitted=report["emitted"]["frag_context"],
-                unmatched=daemon_text.count(
-                    "KTP_NO_ROW_MATCHED: frag_context:")),
+                expected_unmatched=expected_frag_diagnostics,
+            ),
+            assertions.check_frag_producer_clocks(
+                db,
+                emitted=report["emitted"]["frag_context_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+                expected_unmatched=expected_frag_diagnostics,
+            ),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
+            assertions.check_damage_producer_clocks(
+                db,
+                emitted=report["emitted"]["damage_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_flag_captures(
                 db, emitted=report["emitted"]["flag_capture"]),
             assertions.check_flag_positions(
@@ -684,6 +795,14 @@ def main() -> int:
                           if report.get("match") else None)),
             assertions.check_flag_states(
                 db, emitted=report["emitted"]["flag_state"]),
+            assertions.check_life_events(
+                db, emitted=report["emitted"]["life_boundary"]),
+            assertions.check_life_event_context(
+                db,
+                emitted=report["emitted"]["life_boundary_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_capture_buffer(log_text),
         ]
         if report.get("assist_scenario"):
@@ -784,6 +903,8 @@ def main() -> int:
     for code in ("assist", "cap_break"):
         r = rows[code]
         print(f"  {code:<12} log={e[code]:<4} ppa={r['ppa']:<4} pa={r['pa']}")
+    print(f"  {'assist ctx':<12} log={e['assist_context']:<4} "
+          f"canonical={rows['assist_context']}")
     print(f"  {'kills':<12} log={e['kills']:<4} frags={rows['frags']}")
     print(f"  {'suicide':<12} log={e['suicide']:<4} suicides={rows['suicides']}"
           f"  {rows['suicide_weapons'].splitlines()[1:] if rows['suicide_weapons'] else ''}")
@@ -811,10 +932,16 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, default=str))
     args.summary_out.parent.mkdir(parents=True, exist_ok=True)
-    args.summary_out.write_text(render_markdown(report), encoding="utf-8")
+    summary = render_markdown(report)
+    if report.get("bundle_provenance"):
+        summary += "\n" + render_bundle_provenance_markdown(
+            report["bundle_provenance"]
+        )
+    args.summary_out.write_text(summary, encoding="utf-8")
     print(f"wrote {args.out}")
     print(f"wrote {args.summary_out}")
-    return 1 if failures else 0
+    incomplete_release_evidence = args.require_complete_coverage and bool(gaps)
+    return 1 if failures or incomplete_release_evidence else 0
 
 
 if __name__ == "__main__":

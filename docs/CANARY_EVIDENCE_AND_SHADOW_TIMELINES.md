@@ -54,13 +54,19 @@ only after the configured retention window.
 
 ## Private shadow timelines
 
-`scripts/match_analytics.py` schema version 3 adds a `shadow_timelines` object:
+`scripts/match_analytics.py` schema version 6 contains `shadow_timelines` plus
+aggregate-only `shadow_explorations`:
 
 - fast 2k/3k-or-higher sequences;
 - basic time-window trade kills;
 - the first kill/duel in each half;
 - pairwise head-to-head kills and differential;
-- the next same-team flag capture after a fast multikill.
+- the next same-team flag capture after a fast multikill;
+- symmetric basic-trade/death-traded and life-reset revenge analysis;
+- producer-clock damage conversion;
+- sampled objective pressure with temporal-coverage gates;
+- weapon kill-time player separation; and
+- DoD-native KAT coverage over completed physical lives.
 
 Defaults are 10 seconds for a fast multikill, 5 seconds for a trade, and 30
 seconds for objective conversion. Every report records these values. Override
@@ -72,26 +78,36 @@ The definitions are deliberately conservative:
 
 - a multikill is a non-overlapping same-player sequence whose first and last
   kills fit inside the configured window;
-- a basic trade is the victim's roster teammate killing the original killer
-  in the same half and inside the trade window;
+- a basic trade is a same-team reply killing the original killer in the same
+  half and inside the trade window; one reply credits the most recent eligible
+  death, while the denominator remains team deaths rather than proof of an
+  individual opportunity;
 - objective conversion is the next same-team flag-control event inside its
   window, not an inferred capout, score, or causal claim;
 - replay-compressed fixtures retain opening-duel and head-to-head ordering but
   suppress all timed multikill, trade, and conversion inferences.
 
 This data is `private_shadow_only`. It stays in local report artifacts, makes
-no database/API/site writes, and has no KTPR or other rating impact. Trade
-distance, line of sight, and opportunity are not yet available, so the output
-must continue to say “basic trade” rather than “trade eligible.”
+no database/API/site writes, and has no KTPR or other rating impact. The
+explicit `shadow_timelines` section retains private event-level kill/objective
+diagnostics; `shadow_explorations` remains aggregate-only. Raw coordinates,
+paths, position timelines, and reconstructed per-life timelines are excluded
+from both. Trade distance, line of sight, and individual opportunity are not
+available, so the output must continue to say "basic trade" rather than
+"trade eligible." See
+`FPS_STAT_EXPLORATION_BUNDLE.md` for the exact source and definition contracts.
 
 ## Preprod review order
 
-1. Run unit and query-contract tests locally.
-2. Merge the feature PR into `preprod`.
-3. Run Lane B and generate a bundle from its fixture; missing operational logs
-   may leave this synthetic bundle at `WARN`.
-4. After deployment to the canary game port, collect the real SQL dump plus
+1. Run unit and query-contract tests locally across all affected repositories.
+2. Commit the coordinated collection branches and run full Lane B against the
+   exact Infrastructure, MatchHandler, AMXX, and HLStatsX SHAs.
+3. Open all affected PRs to `preprod` together and do not merge any until the
+   complete bundle and its shared manifest are approved and green.
+4. Merge in dependency order, rerun full Lane B on the resulting `preprod`
+   SHAs, then deploy in the documented schema/daemon/full-restart order.
+5. After deployment to the canary game port, collect the real SQL dump plus
    game and daemon logs and require a `PASS` bundle.
-5. Review the private shadow output for plausible windows and identities. Do
+6. Review the private shadow output for plausible windows and identities. Do
    not publish it or feed it into ratings.
-6. Only then raise the separately reviewed `preprod` to `main` PR.
+7. Only then raise the separately reviewed `preprod` to `main` PRs.

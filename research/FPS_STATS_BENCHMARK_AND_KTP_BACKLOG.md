@@ -2,18 +2,21 @@
 
 **Snapshot date:** 2026-08-19
 
-**Status:** research and prioritization only; this branch changes no capture,
-schema, rating, API, or public page
+**Status:** the recommended five are implemented on the coordinated local
+`feat/fps-stats-exploration-bundle` branches and are awaiting exact-bundle
+validation. Nothing is merged to `preprod`, deployed, public, or rating-active.
 
 **Baseline:** KTPInfrastructure `preprod` at
 `1e62f2e61f5242b509c10d87a39f851738bcc5ac`
 
 ## Resume here
 
-KTP already captures enough canonical data to explore several useful statistics
-without changing a game-server plugin. The next safe step is to run the P0
-prototypes below against one real, completed human canary match, keep the output
-private, and have players review whether it tells the truth about the match.
+The implementation checkpoint and exact contracts now live in
+[`FPS_STAT_EXPLORATION_BUNDLE.md`](../docs/FPS_STAT_EXPLORATION_BUNDLE.md).
+The next safe step is to freeze all affected repository SHAs, run deterministic
+and full Lane B validation as one bundle, then use one real, completed human
+canary match. Keep the output private and have players review whether it tells
+the truth about the match.
 
 Do **not** add any candidate to KTPR or publish it merely because it can be
 calculated. Definitions, source coverage, sample size, role/map bias, and

@@ -4,6 +4,29 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `analytics`: coordinated FPS-stat private-shadow bundle (2026-08-19)
+
+- Match analytics schema version 6 adds symmetric basic trades, all-death-reset
+  revenge, producer-clock damage conversion, temporally gated sampled objective
+  pressure, weapon kill-time player separation, and physical-life KAT coverage.
+  Every exploration reports definition parameters, source coverage, confidence,
+  private visibility, and zero rating effect; unavailable sources never become
+  observed zeroes.
+- Adds read-only SQL feeds for canonical assist context, producer-clock frag and
+  damage facts, life boundaries, positions, flag geometry, and ownership. Raw
+  coordinates, paths, position timelines, and reconstructed lives are excluded
+  from aggregate explorations; the separately named private kill/objective
+  diagnostic timeline remains local-only and rating-neutral.
+- Extends Lane B for migrations 016/017, life and canonical-assist reconciliation,
+  and a fail-closed four-repository SHA manifest. Manual full runs can pin exact
+  Infrastructure, MatchHandler, AMXX, and HLStatsX refs instead of mutable
+  branch tips.
+- Extends 14-day scrim/12man/`*-TEST` retention to `ktp_life_events` and
+  `ktp_assist_events`; draft and official retention rules are unchanged.
+- Documents the coordinated collection-branch, validation, dependency-order,
+  full-HLDS-restart, privacy, and human-canary gates in
+  `docs/FPS_STAT_EXPLORATION_BUNDLE.md`.
+
 ### `analytics`: canary evidence and private event timelines (2026-08-19)
 
 - Adds a local-dump-only canary evidence bundle covering match classification,
