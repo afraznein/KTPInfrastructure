@@ -82,6 +82,86 @@ class QueryCaptureDb(FakeDb):
         return self.rows
 
 
+class LifeEventDb(FakeDb):
+    def __init__(self, *, rows, starts, deaths, invalid=0, duplicates=0):
+        super().__init__()
+        self.rows = rows
+        self.starts = starts
+        self.deaths = deaths
+        self.invalid = invalid
+        self.duplicates = duplicates
+
+    def count(self, query):
+        if "ktp_life_events" not in query:
+            return super().count(query)
+        if "duplicates" in query:
+            return self.duplicates
+        if "boundary_kind = 'start'" in query and "NOT IN" not in query:
+            return self.starts
+        if "boundary_kind = 'end'" in query and "reason = 'death'" in query:
+            return self.deaths
+        if "NOT IN ('start','end')" in query:
+            return self.invalid
+        return self.rows
+
+
+class CaptureSchemaDb(FakeDb):
+    def __init__(self, matched):
+        super().__init__()
+        self.matched = matched
+        self.query = ""
+
+    def count(self, query):
+        if "information_schema.COLUMNS" in query:
+            self.query = query
+            return self.matched
+        return super().count(query)
+
+
+class AssistContextDb(FakeDb):
+    def __init__(self, *, rows, scoped=None, ppa=0, table_exists=True,
+                 invalid=0, duplicates=0, interval_mismatches=0):
+        super().__init__(ppa=ppa)
+        self.rows = rows
+        self.scoped = rows if scoped is None else scoped
+        self.table_exists = table_exists
+        self.invalid = invalid
+        self.duplicates = duplicates
+        self.interval_mismatches = interval_mismatches
+        self.queries = []
+
+    def count(self, query):
+        self.queries.append(query)
+        if "information_schema.TABLES" in query:
+            return int(self.table_exists)
+        if "LEFT JOIN ktp_matches" in query:
+            return self.interval_mismatches
+        if ") duplicates" in query:
+            return self.duplicates
+        if "UNIX_TIMESTAMP(event_time)" in query:
+            return self.invalid
+        if "BINARY match_id = BINARY" in query:
+            return self.scoped
+        if "ktp_assist_events" in query:
+            return self.rows
+        return super().count(query)
+
+
+class TaggedCountDb(FakeDb):
+    def __init__(self, code, **counts):
+        super().__init__()
+        self.code = code
+        self.counts = counts
+        self.queries = []
+
+    def count(self, query):
+        self.queries.append(query)
+        for name, value in self.counts.items():
+            if f"/* {self.code}:{name} */" in query:
+                return value
+        return super().count(query)
+
+
 def _carried(db, code="assist", *, emitted, table=_PPA, other=_PA):
     return assertions.check_carried(db, code, emitted=emitted, table=table,
                                     other_table=other)
@@ -131,6 +211,207 @@ def test_position_samples_compare_only_the_driven_match():
         "SELECT COUNT(*) FROM ktp_position_samples "
         "WHERE match_id = '1787019402-TEST'"
     ]
+
+
+def test_life_events_require_exact_valid_start_and_death_coverage():
+    assert assertions.check_life_events(
+        LifeEventDb(rows=20, starts=12, deaths=8), emitted=20
+    )["status"] == "ok"
+    assert assertions.check_life_events(
+        LifeEventDb(rows=19, starts=12, deaths=7), emitted=20
+    )["status"] == "pipeline"
+    assert assertions.check_life_events(
+        LifeEventDb(rows=20, starts=12, deaths=8, invalid=1), emitted=20
+    )["status"] == "pipeline"
+    assert assertions.check_life_events(
+        LifeEventDb(rows=20, starts=20, deaths=0), emitted=20
+    )["status"] == "pipeline"
+
+
+@pytest.mark.parametrize(
+    ("checker", "code"),
+    [
+        (assertions.check_frag_producer_clocks, "frag_producer_clocks"),
+        (assertions.check_damage_producer_clocks, "damage_producer_clocks"),
+    ],
+)
+def test_target_producer_clocks_require_exact_context_and_interval(
+        checker, code):
+    db = TaggedCountDb(
+        code, candidates=6, exact=6, invalid_clocks=0,
+        interval_mismatches=0,
+    )
+    verdict = checker(
+        db, emitted=6, match_id="1787019402-TEST", half=1
+    )
+
+    assert verdict["status"] == "ok"
+    assert verdict["clocked_rows"] == 6
+    sql = "\n".join(db.queries)
+    assert "BINARY e.producer_match_id = BINARY '1787019402-TEST'" in sql
+    assert "e.producer_half = 1" in sql
+    assert "e.game_time IS NULL" in sql
+    assert "e.event_epoch IS NULL" in sql
+    assert "UNIX_TIMESTAMP(m.start_time)" in sql
+    assert "UNIX_TIMESTAMP(m.end_time)" in sql
+
+
+@pytest.mark.parametrize(
+    ("counts", "field"),
+    [
+        ({"candidates": 6, "exact": 5, "invalid_clocks": 0,
+          "interval_mismatches": 0}, "wrong_context"),
+        ({"candidates": 6, "exact": 6, "invalid_clocks": 1,
+          "interval_mismatches": 0}, "invalid_clocks"),
+        ({"candidates": 6, "exact": 6, "invalid_clocks": 0,
+          "interval_mismatches": 1}, "interval_mismatches"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("checker", "code"),
+    [
+        (assertions.check_frag_producer_clocks, "frag_producer_clocks"),
+        (assertions.check_damage_producer_clocks, "damage_producer_clocks"),
+    ],
+)
+def test_target_producer_clocks_fail_closed(checker, code, counts, field):
+    verdict = checker(
+        TaggedCountDb(code, **counts), emitted=6,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict[field] == 1
+    assert verdict["clocked_rows"] == 5
+
+
+def test_target_producer_clock_check_does_not_reject_unscoped_legacy_rows():
+    db = TaggedCountDb(
+        "damage_producer_clocks", candidates=4, exact=4,
+        invalid_clocks=0, interval_mismatches=0,
+    )
+    verdict = assertions.check_damage_producer_clocks(
+        db, emitted=4, match_id="target-TEST", half=1
+    )
+    assert verdict["status"] == "ok"
+    candidate_query = next(
+        query for query in db.queries
+        if "/* damage_producer_clocks:candidates */" in query
+    )
+    assert "e.match_id" in candidate_query
+    assert "e.producer_match_id" in candidate_query
+    assert "IS NULL" not in candidate_query
+
+
+def test_life_event_context_requires_exact_half_and_event_time_interval():
+    db = TaggedCountDb(
+        "life_event_context", candidates=8, exact=8, invalid=0,
+        starts=4, death_ends=4, interval_mismatches=0,
+    )
+    verdict = assertions.check_life_event_context(
+        db, emitted=8, match_id="1787019402-TEST", half=1
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["clocked_rows"] == 8
+    sql = "\n".join(db.queries)
+    assert "BINARY le.match_id = BINARY '1787019402-TEST'" in sql
+    assert "le.half = 1" in sql
+    assert "UNIX_TIMESTAMP(le.event_time) = le.event_epoch" in sql
+    assert "le.event_time >= m.start_time" in sql
+    assert "le.event_time <= m.end_time" in sql
+
+
+@pytest.mark.parametrize(
+    ("counts", "field"),
+    [
+        ({"candidates": 8, "exact": 7, "invalid": 0, "starts": 4,
+          "death_ends": 3, "interval_mismatches": 0}, "wrong_context"),
+        ({"candidates": 8, "exact": 8, "invalid": 1, "starts": 4,
+          "death_ends": 4, "interval_mismatches": 0}, "invalid"),
+        ({"candidates": 8, "exact": 8, "invalid": 0, "starts": 4,
+          "death_ends": 4, "interval_mismatches": 1}, "interval_mismatches"),
+        ({"candidates": 8, "exact": 8, "invalid": 0, "starts": 8,
+          "death_ends": 0, "interval_mismatches": 0}, "death_ends"),
+    ],
+)
+def test_life_event_context_fails_closed(counts, field):
+    verdict = assertions.check_life_event_context(
+        TaggedCountDb("life_event_context", **counts), emitted=8,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "pipeline"
+    if field == "death_ends":
+        assert verdict[field] == 0
+    else:
+        assert verdict[field] == 1
+
+
+def test_migration_017_schema_preserves_truthful_legacy_nullability():
+    verdict = assertions.check_capture_clock_schema(CaptureSchemaDb(matched=22))
+    assert verdict["status"] == "ok"
+    assert verdict["expected"] == 22
+
+
+def test_migration_017_schema_rejects_a_missing_or_wrongly_nonnull_column():
+    db = CaptureSchemaDb(matched=21)
+    verdict = assertions.check_capture_clock_schema(db)
+    assert verdict["status"] == "pipeline"
+    assert "IS_NULLABLE = 'YES'" in db.query
+    assert "IS_NULLABLE = 'NO'" in db.query
+
+
+def test_assist_context_is_exact_and_distinct_from_generic_ppa_rows():
+    # One generic diagnostic/warmup assist may exist in addition to the two
+    # match-scoped canonical rows. The two ledgers intentionally have distinct
+    # counts and purposes.
+    verdict = assertions.check_assist_context(
+        AssistContextDb(rows=2, ppa=3), emitted=2,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["rows"] == 2
+    assert verdict["generic_ppa_rows"] == 3
+
+
+def test_assist_context_zero_is_not_a_false_pass_or_false_fact():
+    empty = assertions.check_assist_context(
+        AssistContextDb(rows=0), emitted=0,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert empty["status"] == "not_exercised"
+
+    false_fact = assertions.check_assist_context(
+        AssistContextDb(rows=1, scoped=1), emitted=0,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert false_fact["status"] == "pipeline"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        ({"rows": 2, "scoped": 1}, "wrong_context"),
+        ({"rows": 2, "invalid": 1}, "invalid"),
+        ({"rows": 2, "duplicates": 1}, "duplicate_keys"),
+        ({"rows": 2, "interval_mismatches": 1}, "interval_mismatches"),
+    ],
+)
+def test_assist_context_rejects_wrong_half_clock_shape_or_duplicates(
+        overrides, field):
+    verdict = assertions.check_assist_context(
+        AssistContextDb(**overrides), emitted=2,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict[field] > 0
+
+
+def test_assist_context_requires_migration_017_table():
+    verdict = assertions.check_assist_context(
+        AssistContextDb(rows=0, table_exists=False), emitted=1,
+        match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "pipeline"
+    assert "migration 017" in verdict["detail"]
 
 
 def test_missing_lane_b_weaponstats_is_a_pipeline_failure():

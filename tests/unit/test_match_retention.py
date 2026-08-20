@@ -32,6 +32,10 @@ def test_candidate_sql_is_aged_and_fail_closed():
 
 def test_apply_deletes_children_before_match_metadata():
     sql = retention.build_sql(14, apply=True)
+    assert "ktp_life_events" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_life_events`" in sql
+    assert "ktp_assist_events" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_assist_events`" in sql
     last_child = max(sql.index(f"DELETE t FROM `{table}`") for table in retention.MATCH_TABLES)
     parent = sql.index("DELETE t FROM `ktp_matches`")
     assert last_child < parent

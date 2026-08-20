@@ -53,9 +53,12 @@ def test_render_markdown_includes_summary_and_samples():
         "map": "dod_anzio",
         "play_seconds": 240,
         "match": {"match_id": "20260814-TEST", "half": 1},
-        "emitted": {"kills": 12, "assist": 3, "cap_break": 1},
+        "emitted": {"kills": 12, "assist": 3, "assist_context": 2, "cap_break": 1,
+                    "life_boundary": 24},
         "rows": {
             "players": 16, "bots": 16, "frags": 12, "suicides": 1,
+            "life_events": 24,
+            "assist_context": 2,
             "assist": {"ppa": 3}, "cap_break": {"pa": 1},
         },
         "carried": [{"code": "assist", "status": "ok", "detail": "3/3 carried"}],
@@ -70,6 +73,9 @@ def test_render_markdown_includes_summary_and_samples():
     body = render_markdown(report)
     assert "| PASS | dod_anzio | 20260814-TEST" in body
     assert "| Kills/frags | 12 | 12 |" in body
+    assert "| Assists (generic PPA) | 3 | 3 |" in body
+    assert "| Assist contexts (canonical, in-match) | 2 | 2 |" in body
+    assert "| Life boundaries | 24 | 24 |" in body
     assert "SQL `NULL` / not applicable" in body
     assert "`hlstats_Events_Frags`" in body
     assert "garand\\|scoped" in body

@@ -38,8 +38,10 @@ staged. `compile_plugin()` raises.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -49,6 +51,12 @@ from pathlib import Path
 class BuildError(RuntimeError):
     """A build or collection step failed. Always fatal — never degrade to
     'run anyway with whatever is on disk'."""
+
+
+REQUIRED_BUNDLE_REPOSITORIES = frozenset(
+    {"infrastructure", "matchhandler", "amxx", "hlstatsx"}
+)
+_FULL_GITHUB_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 DEFAULT_SCHEMA_FILES = (
@@ -64,6 +72,8 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_013_ktp_table_collation.sql",
     "sql/migrate_014_match_type_retention.sql",
     "sql/migrate_015_flag_state_events.sql",
+    "sql/migrate_016_life_events.sql",
+    "sql/migrate_017_capture_clocks_and_assists.sql",
 )
 
 
@@ -89,6 +99,130 @@ def resolve_ref(repo: Path, ref: str) -> str:
     """Full SHA for `ref`. Recorded in the manifest so a result can be traced
     back to exact commits rather than to a branch name that has since moved."""
     return _git(repo, "rev-parse", ref).strip()
+
+
+def _validated_sha(value: str, *, label: str) -> str:
+    sha = str(value).strip().lower()
+    if not _FULL_GITHUB_SHA.fullmatch(sha):
+        raise BuildError(
+            f"{label} must be a resolved 40-character Git commit SHA, got {value!r}"
+        )
+    return sha
+
+
+def record_bundle_provenance(
+    manifest_path: Path,
+    repositories: dict[str, dict[str, str]],
+    *,
+    workflow_context: dict[str, str] | None = None,
+) -> dict:
+    """Add the four-repository immutable bundle identity to a manifest.
+
+    The artifact collector predates the cross-repository bundle and owns only
+    the AMXX and daemon sources.  Infrastructure and MatchHandler are consumed
+    directly from Actions checkouts, so the workflow records their checked-out
+    ``HEAD`` values here after all four checkouts have completed.  Requiring the
+    complete set prevents a report that looks exact while silently omitting one
+    of the runtime inputs.
+    """
+    manifest_path = Path(manifest_path)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise BuildError(f"cannot read artifact manifest {manifest_path}: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise BuildError(f"artifact manifest {manifest_path} is not a JSON object")
+
+    supplied = set(repositories)
+    if supplied != REQUIRED_BUNDLE_REPOSITORIES:
+        missing = sorted(REQUIRED_BUNDLE_REPOSITORIES - supplied)
+        extra = sorted(supplied - REQUIRED_BUNDLE_REPOSITORIES)
+        raise BuildError(
+            "bundle provenance must contain exactly infrastructure, "
+            f"matchhandler, amxx, and hlstatsx (missing={missing}, extra={extra})"
+        )
+
+    normalized: dict[str, dict[str, str]] = {}
+    for name in sorted(REQUIRED_BUNDLE_REPOSITORIES):
+        item = repositories[name]
+        repository = str(item.get("repository", "")).strip()
+        requested_ref = str(item.get("requested_ref", "")).strip()
+        if not repository or not requested_ref:
+            raise BuildError(
+                f"bundle provenance for {name} needs repository and requested_ref"
+            )
+        normalized[name] = {
+            "repository": repository,
+            "requested_ref": requested_ref,
+            "sha": _validated_sha(item.get("sha", ""), label=name),
+        }
+
+    # The artifact builder already resolved these two inputs independently.
+    # Refuse to overwrite the manifest with a contradictory post-hoc claim.
+    legacy = manifest.get("provenance") or {}
+    for old_name, bundle_name in (("amxx", "amxx"), ("daemon", "hlstatsx")):
+        old_sha = (legacy.get(old_name) or {}).get("sha")
+        if old_sha and str(old_sha).lower() != normalized[bundle_name]["sha"]:
+            raise BuildError(
+                f"{bundle_name} checkout is {normalized[bundle_name]['sha']} but "
+                f"the collected artifact came from {old_sha}"
+            )
+
+    context = dict(workflow_context or {})
+    if context.get("event_sha"):
+        context["event_sha"] = _validated_sha(
+            context["event_sha"], label="workflow event_sha"
+        )
+    bundle = {"repositories": normalized, "workflow": context}
+    manifest.setdefault("provenance", {})["bundle"] = bundle
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return bundle
+
+
+def load_bundle_provenance(manifest_path: Path) -> dict:
+    """Read and validate a complete immutable bundle from a saved manifest."""
+    manifest_path = Path(manifest_path)
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        bundle = manifest["provenance"]["bundle"]
+        repositories = bundle["repositories"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise BuildError(
+            f"artifact manifest {manifest_path} has no valid bundle provenance: {exc}"
+        ) from exc
+
+    if set(repositories) != REQUIRED_BUNDLE_REPOSITORIES:
+        raise BuildError(
+            f"artifact manifest {manifest_path} does not identify all four repositories"
+        )
+    for name, item in repositories.items():
+        _validated_sha(item.get("sha", ""), label=name)
+        if not item.get("repository") or not item.get("requested_ref"):
+            raise BuildError(f"artifact manifest has incomplete {name} provenance")
+    return bundle
+
+
+def render_bundle_provenance_markdown(bundle: dict) -> str:
+    """Render full (not abbreviated) SHAs for the run summary artifact."""
+    rows = [
+        "## Exact bundle provenance",
+        "",
+        "| Component | Repository | Requested ref | Resolved commit |",
+        "|---|---|---|---|",
+    ]
+    for name in ("infrastructure", "matchhandler", "amxx", "hlstatsx"):
+        item = bundle["repositories"][name]
+        rows.append(
+            f"| {name} | `{item['repository']}` | `{item['requested_ref']}` "
+            f"| `{item['sha']}` |"
+        )
+    workflow = bundle.get("workflow") or {}
+    if workflow:
+        rows += ["", "Workflow context:"]
+        for key in ("workflow_ref", "event_sha", "run_url"):
+            if workflow.get(key):
+                rows.append(f"- {key}: `{workflow[key]}`")
+    return "\n".join(rows) + "\n"
 
 
 def extract(repo: Path, ref: str, rel_path: str, dest: Path) -> Path:
@@ -294,3 +428,54 @@ class ArtifactSet:
         path = Path(path) if path else (self.build_dir / "artifact-manifest.json")
         path.write_text(json.dumps(self.manifest(), indent=2), encoding="utf-8")
         return path
+
+
+def _provenance_cli(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        description="Record an immutable four-repository Lane B bundle"
+    )
+    ap.add_argument("--manifest", type=Path, required=True)
+    ap.add_argument("--markdown", type=Path, default=None)
+    ap.add_argument(
+        "--repository",
+        action="append",
+        nargs=4,
+        metavar=("NAME", "REPOSITORY", "REQUESTED_REF", "RESOLVED_SHA"),
+        required=True,
+    )
+    ap.add_argument("--workflow-ref", default="")
+    ap.add_argument("--event-sha", default="")
+    ap.add_argument("--run-url", default="")
+    args = ap.parse_args(argv)
+
+    repositories = {
+        name: {
+            "repository": repository,
+            "requested_ref": requested_ref,
+            "sha": resolved_sha,
+        }
+        for name, repository, requested_ref, resolved_sha in args.repository
+    }
+    try:
+        bundle = record_bundle_provenance(
+            args.manifest,
+            repositories,
+            workflow_context={
+                "workflow_ref": args.workflow_ref,
+                "event_sha": args.event_sha,
+                "run_url": args.run_url,
+            },
+        )
+    except BuildError as exc:
+        ap.error(str(exc))
+
+    markdown = render_bundle_provenance_markdown(bundle)
+    if args.markdown is not None:
+        args.markdown.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown.write_text(markdown, encoding="utf-8")
+    print(markdown, end="")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_provenance_cli())

@@ -21,6 +21,9 @@ from .artifacts import (
     BuildError,
     DEFAULT_SCHEMA_FILES,
     extract,
+    load_bundle_provenance,
+    record_bundle_provenance,
+    render_bundle_provenance_markdown,
     resolve_ref,
 )
 
@@ -83,6 +86,8 @@ def daemon_repo(tmp_path):
         (13, "ktp_table_collation"),
         (14, "match_type_retention"),
         (15, "flag_state_events"),
+        (16, "life_events"),
+        (17, "capture_clocks_and_assists"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -101,14 +106,16 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_sma.is_file()
     assert arts.plugin_inc.is_file()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 12
+    assert len(arts.schema_sql) == 14
     assert len(arts.seed_sql) == 2
 
 
-def test_default_schema_sequence_includes_retention_then_flag_state():
-    assert DEFAULT_SCHEMA_FILES[-2:] == (
+def test_default_schema_sequence_includes_retention_flag_state_life_then_clocks():
+    assert DEFAULT_SCHEMA_FILES[-4:] == (
         "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
+        "sql/migrate_016_life_events.sql",
+        "sql/migrate_017_capture_clocks_and_assists.sql",
     )
 
 
@@ -197,8 +204,115 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_012_frag_context_correlation.sql",
                  "migrate_013_ktp_table_collation.sql",
                  "migrate_014_match_type_retention.sql",
-                 "migrate_015_flag_state_events.sql"):
+                 "migrate_015_flag_state_events.sql",
+                 "migrate_016_life_events.sql",
+                 "migrate_017_capture_clocks_and_assists.sql"):
         assert len(m["files"][name]["md5"]) == 32
+
+
+def _bundle_repositories(amxx_repo, daemon_repo):
+    amxx_sha = resolve_ref(amxx_repo, "feat/stats-positions")
+    daemon_sha = resolve_ref(daemon_repo, "feat/seed-cap-break-action")
+    return {
+        "infrastructure": {
+            "repository": "afraznein/KTPInfrastructure",
+            "requested_ref": "feat/fps-stats-exploration-bundle",
+            "sha": "1" * 40,
+        },
+        "matchhandler": {
+            "repository": "afraznein/KTPMatchHandler",
+            "requested_ref": "e27afc7",
+            "sha": "2" * 40,
+        },
+        "amxx": {
+            "repository": "afraznein/KTPAMXX",
+            "requested_ref": "feat/stats-positions",
+            "sha": amxx_sha,
+        },
+        "hlstatsx": {
+            "repository": "afraznein/KTPHLStatsX",
+            "requested_ref": "feat/seed-cap-break-action",
+            "sha": daemon_sha,
+        },
+    }
+
+
+def test_bundle_provenance_records_all_four_full_shas(
+        amxx_repo, daemon_repo, tmp_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    repositories = _bundle_repositories(amxx_repo, daemon_repo)
+    bundle = record_bundle_provenance(
+        manifest,
+        repositories,
+        workflow_context={
+            "workflow_ref": "afraznein/KTPInfrastructure/.github/workflows/"
+                            "lane-b-stats-e2e.yml@refs/heads/main",
+            "event_sha": "3" * 40,
+            "run_url": "https://github.com/afraznein/KTPInfrastructure/actions/runs/1",
+        },
+    )
+
+    loaded = load_bundle_provenance(manifest)
+    assert loaded == bundle
+    assert set(loaded["repositories"]) == {
+        "infrastructure", "matchhandler", "amxx", "hlstatsx",
+    }
+    assert all(len(item["sha"]) == 40
+               for item in loaded["repositories"].values())
+    saved = json.loads(manifest.read_text())
+    assert saved["provenance"]["bundle"] == bundle
+    rendered = render_bundle_provenance_markdown(bundle)
+    assert repositories["infrastructure"]["sha"] in rendered
+    assert repositories["matchhandler"]["sha"] in rendered
+    assert repositories["amxx"]["sha"] in rendered
+    assert repositories["hlstatsx"]["sha"] in rendered
+
+
+def test_bundle_provenance_refuses_an_incomplete_repository_set(
+        amxx_repo, daemon_repo, tmp_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    repositories = _bundle_repositories(amxx_repo, daemon_repo)
+    repositories.pop("matchhandler")
+    with pytest.raises(BuildError, match="exactly infrastructure"):
+        record_bundle_provenance(manifest, repositories)
+
+
+def test_bundle_provenance_refuses_artifact_checkout_mismatch(
+        amxx_repo, daemon_repo, tmp_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    repositories = _bundle_repositories(amxx_repo, daemon_repo)
+    repositories["amxx"]["sha"] = "f" * 40
+    with pytest.raises(BuildError, match="collected artifact came from"):
+        record_bundle_provenance(manifest, repositories)
+
+
+def test_bundle_provenance_requires_immutable_full_shas(
+        amxx_repo, daemon_repo, tmp_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    repositories = _bundle_repositories(amxx_repo, daemon_repo)
+    repositories["matchhandler"]["sha"] = "preprod"
+    with pytest.raises(BuildError, match="40-character Git commit SHA"):
+        record_bundle_provenance(manifest, repositories)
 
 
 def test_use_prebuilt_plugin_records_provenance(amxx_repo, daemon_repo, tmp_path):

@@ -37,6 +37,41 @@ from dataclasses import dataclass
 _PPA = "hlstats_Events_PlayerPlayerActions"
 _PA = "hlstats_Events_PlayerActions"
 
+# Migration 017 deliberately leaves the producer fields on legacy frag and
+# damage tables nullable: old rows cannot be backfilled truthfully.  The
+# canonical assist ledger has required producer context/clocks, while each
+# optional position is an all-or-nothing XYZ triplet.
+_CAPTURE_CLOCK_COLUMNS = {
+    "hlstats_Events_Frags": {
+        "producer_match_id": "YES",
+        "producer_half": "YES",
+        "game_time": "YES",
+        "event_epoch": "YES",
+    },
+    "ktp_damage_events": {
+        "producer_match_id": "YES",
+        "producer_half": "YES",
+        "event_epoch": "YES",
+    },
+    "ktp_assist_events": {
+        "server_id": "NO",
+        "match_id": "NO",
+        "half": "NO",
+        "map_name": "NO",
+        "assister_id": "NO",
+        "victim_id": "NO",
+        "assister_pos_x": "YES",
+        "assister_pos_y": "YES",
+        "assister_pos_z": "YES",
+        "victim_pos_x": "YES",
+        "victim_pos_y": "YES",
+        "victim_pos_z": "YES",
+        "game_time": "NO",
+        "event_epoch": "NO",
+        "event_time": "NO",
+    },
+}
+
 
 @dataclass(frozen=True)
 class ActionRows:
@@ -553,6 +588,132 @@ def check_frag_context_claimed(db, *, emitted: int, unmatched: int) -> dict:
             f"{unmatched} orphan diagnostic marker(s) were safely rejected"}
 
 
+def _check_target_producer_clocks(
+        db, *, code: str, table: str, stored_match_column: str,
+        stored_half_column: str, server_column: str, emitted: int,
+        match_id: str | None,
+        half: int | None, row_filter: str = "1=1",
+        map_column: str | None = None) -> dict:
+    """Validate producer context only for the driven match.
+
+    Migration 017 intentionally leaves historical frag/damage producer fields
+    nullable. Rows wholly outside the target match are therefore ignored. A
+    row whose stored or producer context names the target is a candidate and
+    must resolve to the exact producer match/half with complete clocks inside
+    exactly one matching ``ktp_matches`` interval.
+    """
+    common = {
+        "code": code, "emitted": emitted, "candidate_rows": 0,
+        "exact_context_rows": 0, "clocked_rows": 0, "wrong_context": 0,
+        "invalid_clocks": 0, "interval_mismatches": 0,
+    }
+    if match_id is None or half is None:
+        return {
+            **common, "status": "not_exercised",
+            "detail": "no driven match context was available for producer-clock validation",
+        }
+
+    target = _sql_text(match_id)
+    expected_half = int(half)
+    candidate_where = (
+        f"({row_filter}) AND ((BINARY e.{stored_match_column} = BINARY {target} "
+        f"AND e.{stored_half_column} = {expected_half}) OR "
+        f"(BINARY e.producer_match_id = BINARY {target} "
+        f"AND e.producer_half = {expected_half}))"
+    )
+    exact_where = (
+        f"({row_filter}) AND BINARY e.producer_match_id = BINARY {target} "
+        f"AND e.producer_half = {expected_half}"
+    )
+    candidates = db.count(
+        f"SELECT /* {code}:candidates */ COUNT(*) FROM {table} e "
+        f"WHERE {candidate_where}"
+    )
+    exact = db.count(
+        f"SELECT /* {code}:exact */ COUNT(*) FROM {table} e "
+        f"WHERE {exact_where}"
+    )
+    invalid_clocks = db.count(
+        f"SELECT /* {code}:invalid_clocks */ COUNT(*) FROM {table} e "
+        f"WHERE {exact_where} AND (e.game_time IS NULL OR e.game_time < 0 "
+        "OR e.event_epoch IS NULL OR e.event_epoch <= 0)"
+    )
+    map_join = (
+        f" AND BINARY m.map_name = BINARY e.{map_column}"
+        if map_column is not None else ""
+    )
+    interval_mismatches = db.count(f"""
+SELECT /* {code}:interval_mismatches */ COUNT(*) FROM (
+  SELECT e.id
+  FROM {table} e
+  LEFT JOIN ktp_matches m
+    ON m.server_id = e.{server_column}
+   AND BINARY m.match_id = BINARY e.producer_match_id
+   AND m.half = e.producer_half{map_join}
+   AND e.event_epoch >= UNIX_TIMESTAMP(m.start_time)
+   AND (m.end_time IS NULL OR e.event_epoch <= UNIX_TIMESTAMP(m.end_time))
+  WHERE {exact_where}
+    AND e.game_time IS NOT NULL AND e.game_time >= 0
+    AND e.event_epoch IS NOT NULL AND e.event_epoch > 0
+  GROUP BY e.id
+  HAVING COUNT(m.id) <> 1
+) producer_interval_mismatches
+""")
+    wrong_context = candidates - exact
+    clocked = exact - invalid_clocks - interval_mismatches
+    result = {
+        **common,
+        "candidate_rows": candidates,
+        "exact_context_rows": exact,
+        "clocked_rows": clocked,
+        "wrong_context": wrong_context,
+        "invalid_clocks": invalid_clocks,
+        "interval_mismatches": interval_mismatches,
+    }
+    if (candidates != emitted or exact != emitted or clocked != emitted
+            or wrong_context or invalid_clocks or interval_mismatches):
+        return {
+            **result, "status": "pipeline",
+            "detail": f"{emitted} target-match marker(s), {candidates} candidate "
+                      f"row(s), {exact} exact producer match/half row(s), "
+                      f"{clocked} with complete clocks inside the exact match "
+                      f"interval; wrong_context={wrong_context}, "
+                      f"invalid_clocks={invalid_clocks}, "
+                      f"interval_mismatches={interval_mismatches}",
+        }
+    if emitted == 0:
+        return {
+            **result, "status": "not_exercised",
+            "detail": "no target-match marker exercised producer-clock persistence",
+        }
+    return {
+        **result, "status": "ok",
+        "detail": f"{clocked}/{emitted} target-match marker(s) retained exact "
+                  "producer match/half and interval-valid clocks",
+    }
+
+
+def check_frag_producer_clocks(db, *, emitted: int,
+                               match_id: str | None, half: int | None) -> dict:
+    return _check_target_producer_clocks(
+        db, code="frag_producer_clocks", table="hlstats_Events_Frags",
+        stored_match_column="match_id", stored_half_column="half",
+        server_column="serverId",
+        emitted=emitted, match_id=match_id, half=half,
+        row_filter="e.frag_context_recorded = 1", map_column="map",
+    )
+
+
+def check_damage_producer_clocks(db, *, emitted: int,
+                                 match_id: str | None, half: int | None) -> dict:
+    return _check_target_producer_clocks(
+        db, code="damage_producer_clocks", table="ktp_damage_events",
+        stored_match_column="match_id", stored_half_column="half",
+        server_column="server_id",
+        emitted=emitted, match_id=match_id, half=half,
+    )
+
+
 def check_damage_ledger(db, *, emitted: int) -> dict:
     """Did every emitted `damage` marker land in `ktp_damage_events`, and is
     `damage_capped` actually capped?
@@ -687,6 +848,303 @@ def check_flag_states(db, *, emitted: int) -> dict:
             "detail": f"{carried['rows']}/{emitted} carried; {initial} baseline row(s)"}
 
 
+def check_life_events(db, *, emitted: int) -> dict:
+    carried = _check_direct_rows(
+        db, code="life_events", table="ktp_life_events", emitted=emitted
+    )
+    if carried["status"] != "ok":
+        return carried
+    invalid = db.count("""
+SELECT COUNT(*) FROM ktp_life_events
+WHERE match_id IS NULL OR match_id = '' OR half <= 0
+   OR boundary_kind NOT IN ('start','end')
+   OR reason NOT IN ('spawn','context_live','death','disconnect')
+   OR (boundary_kind = 'start' AND reason NOT IN ('spawn','context_live'))
+   OR (boundary_kind = 'end' AND reason NOT IN ('death','disconnect'))
+   OR team NOT IN (0,1,2) OR round_live NOT IN (0,1)
+   OR game_time < 0 OR event_epoch <= 0
+""")
+    starts = db.count(
+        "SELECT COUNT(*) FROM ktp_life_events WHERE boundary_kind = 'start'"
+    )
+    deaths = db.count(
+        "SELECT COUNT(*) FROM ktp_life_events "
+        "WHERE boundary_kind = 'end' AND reason = 'death'"
+    )
+    duplicate_keys = db.count("""
+SELECT COUNT(*) FROM (
+  SELECT 1 FROM ktp_life_events
+  GROUP BY server_id, match_id, half, player_id,
+           boundary_kind, reason, game_time
+  HAVING COUNT(*) > 1
+) duplicates
+""")
+    if invalid or duplicate_keys or starts == 0 or deaths == 0:
+        return {"code": "life_events", "status": "pipeline",
+                "emitted": emitted, "rows": carried["rows"],
+                "starts": starts, "death_ends": deaths,
+                "invalid": invalid, "duplicate_keys": duplicate_keys,
+                "detail": "life-boundary rows failed shape/coverage checks: "
+                f"starts={starts}, death_ends={deaths}, invalid={invalid}, "
+                f"duplicate_keys={duplicate_keys}"}
+    return {**carried, "starts": starts, "death_ends": deaths,
+            "invalid": 0, "duplicate_keys": 0,
+            "detail": f"{carried['rows']}/{emitted} carried; "
+            f"starts={starts}, death_ends={deaths}"}
+
+
+def check_life_event_context(db, *, emitted: int,
+                             match_id: str | None, half: int | None) -> dict:
+    """Require target life rows to resolve to their exact match interval."""
+    common = {
+        "code": "life_event_context", "emitted": emitted,
+        "candidate_rows": 0, "exact_context_rows": 0, "clocked_rows": 0,
+        "starts": 0, "death_ends": 0, "wrong_context": 0,
+        "invalid": 0, "interval_mismatches": 0,
+    }
+    if match_id is None or half is None:
+        return {
+            **common, "status": "not_exercised",
+            "detail": "no driven match context was available for life-event validation",
+        }
+
+    target = _sql_text(match_id)
+    expected_half = int(half)
+    candidate_where = f"BINARY le.match_id = BINARY {target}"
+    exact_where = candidate_where + f" AND le.half = {expected_half}"
+    valid_shape = """(
+       le.match_id <> '' AND le.map_name <> '' AND le.half > 0
+   AND le.boundary_kind IN ('start','end')
+   AND le.reason IN ('spawn','context_live','death','disconnect')
+   AND (le.boundary_kind <> 'start' OR le.reason IN ('spawn','context_live'))
+   AND (le.boundary_kind <> 'end' OR le.reason IN ('death','disconnect'))
+   AND le.team IN (0,1,2)
+   AND (le.round_live IS NULL OR le.round_live IN (0,1))
+   AND le.game_time >= 0 AND le.event_epoch > 0
+   AND UNIX_TIMESTAMP(le.event_time) = le.event_epoch
+)"""
+    candidates = db.count(
+        "SELECT /* life_event_context:candidates */ COUNT(*) "
+        f"FROM ktp_life_events le WHERE {candidate_where}"
+    )
+    exact = db.count(
+        "SELECT /* life_event_context:exact */ COUNT(*) "
+        f"FROM ktp_life_events le WHERE {exact_where}"
+    )
+    invalid = db.count(
+        "SELECT /* life_event_context:invalid */ COUNT(*) "
+        f"FROM ktp_life_events le WHERE {exact_where} AND NOT {valid_shape}"
+    )
+    starts = db.count(
+        "SELECT /* life_event_context:starts */ COUNT(*) "
+        f"FROM ktp_life_events le WHERE {exact_where} "
+        "AND le.boundary_kind = 'start'"
+    )
+    deaths = db.count(
+        "SELECT /* life_event_context:death_ends */ COUNT(*) "
+        f"FROM ktp_life_events le WHERE {exact_where} "
+        "AND le.boundary_kind = 'end' AND le.reason = 'death'"
+    )
+    interval_mismatches = db.count(f"""
+SELECT /* life_event_context:interval_mismatches */ COUNT(*) FROM (
+  SELECT le.id
+  FROM ktp_life_events le
+  LEFT JOIN ktp_matches m
+    ON m.server_id = le.server_id
+   AND BINARY m.match_id = BINARY le.match_id
+   AND m.half = le.half
+   AND BINARY m.map_name = BINARY le.map_name
+   AND le.event_time >= m.start_time
+   AND (m.end_time IS NULL OR le.event_time <= m.end_time)
+  WHERE {exact_where} AND {valid_shape}
+  GROUP BY le.id
+  HAVING COUNT(m.id) <> 1
+) life_interval_mismatches
+""")
+    wrong_context = candidates - exact
+    clocked = exact - invalid - interval_mismatches
+    result = {
+        **common, "candidate_rows": candidates, "exact_context_rows": exact,
+        "clocked_rows": clocked, "starts": starts, "death_ends": deaths,
+        "wrong_context": wrong_context, "invalid": invalid,
+        "interval_mismatches": interval_mismatches,
+    }
+    if (candidates != emitted or exact != emitted or clocked != emitted
+            or wrong_context or invalid or interval_mismatches
+            or starts == 0 or deaths == 0):
+        return {
+            **result, "status": "pipeline",
+            "detail": f"{emitted} target-match life marker(s), {candidates} "
+                      f"candidate row(s), {exact} exact match/half row(s), "
+                      f"{clocked} valid row(s) inside the exact event-time "
+                      f"interval; starts={starts}, death_ends={deaths}, "
+                      f"wrong_context={wrong_context}, invalid={invalid}, "
+                      f"interval_mismatches={interval_mismatches}",
+        }
+    if emitted == 0:
+        return {
+            **result, "status": "not_exercised",
+            "detail": "no target-match life boundary was emitted",
+        }
+    return {
+        **result, "status": "ok",
+        "detail": f"{clocked}/{emitted} target-match life row(s) retained "
+                  f"exact match/half/event-time context; starts={starts}, "
+                  f"death_ends={deaths}",
+    }
+
+
+def check_capture_clock_schema(db) -> dict:
+    """Migration 017 exists with the intentional legacy nullability.
+
+    A missing column is a deployment-order failure.  Making the legacy frag or
+    damage clocks NOT NULL is also a failure: pre-migration facts do not have a
+    truthful producer clock and must stay unknown rather than becoming zero.
+    """
+    clauses = []
+    for table, columns in _CAPTURE_CLOCK_COLUMNS.items():
+        for column, nullable in columns.items():
+            clauses.append(
+                "(TABLE_NAME = '" + table + "' AND COLUMN_NAME = '" + column
+                + "' AND IS_NULLABLE = '" + nullable + "')"
+            )
+    expected = len(clauses)
+    matched = db.count(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND (" + " OR ".join(clauses) + ")"
+    )
+    if matched != expected:
+        return {
+            "code": "capture_clock_schema",
+            "status": "pipeline",
+            "rows": matched,
+            "expected": expected,
+            "detail": f"{matched}/{expected} migration-017 columns have the "
+                      "required nullability; apply "
+                      "migrate_017_capture_clocks_and_assists.sql in order",
+        }
+    return {
+        "code": "capture_clock_schema",
+        "status": "ok",
+        "rows": matched,
+        "expected": expected,
+        "detail": f"all {expected} capture-clock/assist columns have the "
+                  "required nullability",
+    }
+
+
+def _sql_text(value: str) -> str:
+    """Quote trusted run metadata for the diagnostic SQL below."""
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def check_assist_context(db, *, emitted: int,
+                         match_id: str | None, half: int | None) -> dict:
+    """Every in-match generic assist gets one canonical producer-time fact.
+
+    The generic PlayerPlayerAction remains the rating-neutral HLStatsX action
+    and is checked separately by :func:`check_carried`.  This verdict is only
+    for ``ktp_assist_events``: it compares against assist markers inside the
+    driven match window and rejects receipt-time or wrong-half attribution.
+    """
+    table_exists = db.count(
+        "SELECT COUNT(*) FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() "
+        "AND TABLE_NAME = 'ktp_assist_events'"
+    ) > 0
+    if not table_exists:
+        return {
+            "code": "assist_context",
+            "status": "pipeline",
+            "emitted": emitted,
+            "rows": 0,
+            "generic_ppa_rows": count_action(db, "assist").ppa,
+            "detail": "ktp_assist_events is missing; migration 017 was not applied",
+        }
+
+    rows = db.count("SELECT COUNT(*) FROM ktp_assist_events")
+    generic = count_action(db, "assist").ppa
+    if match_id is None or half is None:
+        scoped = 0
+    else:
+        scoped = db.count(
+            "SELECT COUNT(*) FROM ktp_assist_events WHERE "
+            f"BINARY match_id = BINARY {_sql_text(match_id)} "
+            f"AND half = {int(half)}"
+        )
+
+    invalid = db.count("""
+SELECT COUNT(*) FROM ktp_assist_events
+WHERE match_id = '' OR half <= 0 OR map_name = ''
+   OR assister_id <= 0 OR victim_id <= 0 OR assister_id = victim_id
+   OR game_time < 0 OR event_epoch <= 0
+   OR UNIX_TIMESTAMP(event_time) <> event_epoch
+   OR ((assister_pos_x IS NULL) + (assister_pos_y IS NULL)
+       + (assister_pos_z IS NULL)) NOT IN (0,3)
+   OR ((victim_pos_x IS NULL) + (victim_pos_y IS NULL)
+       + (victim_pos_z IS NULL)) NOT IN (0,3)
+""")
+    duplicate_keys = db.count("""
+SELECT COUNT(*) FROM (
+  SELECT 1 FROM ktp_assist_events
+  GROUP BY server_id, match_id, half, assister_id, victim_id, game_time
+  HAVING COUNT(*) > 1
+) duplicates
+""")
+    interval_mismatches = db.count("""
+SELECT COUNT(*) FROM (
+  SELECT a.id
+  FROM ktp_assist_events a
+  LEFT JOIN ktp_matches m
+    ON m.server_id = a.server_id
+   AND BINARY m.match_id = BINARY a.match_id
+   AND a.event_epoch >= UNIX_TIMESTAMP(m.start_time)
+   AND (m.end_time IS NULL OR a.event_epoch <= UNIX_TIMESTAMP(m.end_time))
+  GROUP BY a.id, a.half, a.map_name
+  HAVING COUNT(m.id) <> 1
+     OR SUM(m.half = a.half
+            AND BINARY m.map_name = BINARY a.map_name) <> 1
+) event_context_mismatches
+""")
+    wrong_context = rows - scoped
+
+    common = {
+        "code": "assist_context",
+        "emitted": emitted,
+        "rows": rows,
+        "scoped_rows": scoped,
+        "generic_ppa_rows": generic,
+        "invalid": invalid,
+        "duplicate_keys": duplicate_keys,
+        "interval_mismatches": interval_mismatches,
+        "wrong_context": wrong_context,
+    }
+    if (rows != emitted or scoped != emitted or invalid or duplicate_keys
+            or interval_mismatches or wrong_context):
+        return {
+            **common,
+            "status": "pipeline",
+            "detail": f"{emitted} in-match assist marker(s), {rows} canonical "
+                      f"row(s) ({scoped} in the expected match/half); "
+                      f"invalid={invalid}, duplicate_keys={duplicate_keys}, "
+                      f"interval_mismatches={interval_mismatches}, "
+                      f"wrong_context={wrong_context}; generic PPA rows={generic}",
+        }
+    if emitted == 0:
+        return {
+            **common,
+            "status": "not_exercised",
+            "detail": "no assist marker occurred inside the driven match; "
+                      f"canonical rows=0, generic PPA rows={generic}",
+        }
+    return {
+        **common,
+        "status": "ok",
+        "detail": f"{rows}/{emitted} canonical producer-time assist row(s) "
+                  f"carried in the expected match/half; generic PPA rows={generic}",
+    }
+
+
 def check_capture_buffer(log_text: str) -> dict:
     dropped = [line for line in log_text.splitlines()
                if "[KTP-STATS] dropped" in line]
@@ -751,6 +1209,8 @@ def summarise(db, *, match_id: str | None = None) -> dict:
         "position_samples_total": db.count(
             "SELECT COUNT(*) FROM ktp_position_samples"),
         "flag_states": db.count("SELECT COUNT(*) FROM ktp_flag_state_events"),
+        "life_events": db.count("SELECT COUNT(*) FROM ktp_life_events"),
+        "assist_context": db.count("SELECT COUNT(*) FROM ktp_assist_events"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),
     }
