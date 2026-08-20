@@ -59,9 +59,8 @@ LINE_NEG_GAP = (
     "gap=-0.000ms"
 )
 
-# Synthetic phys-dominated 158ms spike (matches the 2026-04-17 ATL2 incident
-# that motivated the spike instrumentation in the first place — see
-# CHANGES_SUMMARY-04-17 § "v917 Spike-Frame Phys Sub-Phase Instrumentation").
+# Synthetic phys-dominated 158ms spike, matching the 2026-04-17 ATL2 incident
+# that motivated the spike instrumentation in the first place.
 LINE_PHYS_158MS = (
     "L 05/04/2026 - 12:00:00: [KTP_SPIKE] full=158.761ms read=0.005ms "
     "phys=158.000ms misc1=0.000ms send=0.001ms post=0.000ms steam=0.000ms "

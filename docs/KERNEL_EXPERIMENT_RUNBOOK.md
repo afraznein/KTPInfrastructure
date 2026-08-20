@@ -41,7 +41,7 @@ nohz=off           — force periodic tick. Counter-intuitive. Skip unless we su
 
 ### Honest expected outcomes
 
-The 977→999 fps gap is dominated by one specific kernel behavior: **`nanosleep` / `clock_nanosleep` rounds sub-ms sleeps up to the next HZ tick**, which is what broke our Stage C abs-time experiments (raised 977 fps baseline to 643 fps under ATL:27019 `-absgrid`, see CHANGES_SUMMARY_2026-05-08 Stage C entry). No cmdline flag fixes that; it's compile-time CONFIG_HZ and the specific nanosleep implementation in `kernel/time/`.
+The 977→999 fps gap is dominated by one specific kernel behavior: **`nanosleep` / `clock_nanosleep` rounds sub-ms sleeps up to the next HZ tick**, which is what broke our Stage C abs-time experiments (raised 977 fps baseline to 643 fps under ATL:27019 `-absgrid`). No cmdline flag fixes that; it's compile-time CONFIG_HZ and the specific nanosleep implementation in `kernel/time/`.
 
 **So cmdline experiments will NOT close the fps gap to NFO's claimed window.** What they CAN do:
 - Reduce p99 interframe jitter (current p99=5.16ms) — `preempt=full` most likely to help
@@ -56,7 +56,7 @@ If we want 999 fps at low CPU cost, the realistic path is Phase 3 (custom kernel
 
 ### Test host selection
 
-**ATL:27019 (ATL5)** — already the `-absgrid` research slot per 2026-04-23 canary topology (see `CHANGES_SUMMARY_2026-05-08.md` canary topology update). But kernel cmdline is **host-level**, not per-instance, so the entire Atlanta baremetal takes the hit — 27015 through 27019 all reboot together.
+**ATL:27019 (ATL5)** — already the `-absgrid` research slot per the 2026-04-23 canary topology. But kernel cmdline is **host-level**, not per-instance, so the entire Atlanta baremetal takes the hit — 27015 through 27019 all reboot together.
 
 Alternative host: **Dallas**. Similar baremetal, identical setup, tightest σ in pre-JIT baseline (7.96). But pulling Dallas offline pulls 5 instances.
 

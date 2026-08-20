@@ -1328,7 +1328,9 @@ cron auto-reloads `/etc/cron.d/` on file change; no `systemctl reload` needed. V
 - 1.5.17 — spike threshold widening (2σ → 2.5σ) that this 1.5.18 lift validates
 - 1.5.16 — initial perf-rollup deploy
 - TODO.md "FPS floor refinement" — filed follow-up tracking the DAL1/DAL4 sub-1-fps boundary case
-- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "perf-rollup spike threshold tuned" — pre-lift decision rationale
+- Why 2.5σ: the first dry-run fire tripped DAL3 on a single spike over the 2σ boundary. Spike counts
+  are Poisson-distributed (averaging well under one per window, with rare bursts an order of magnitude
+  higher), and a Gaussian-σ rule applied to a Poisson metric mistunes at the boundary by construction.
 
 ---
 
@@ -1367,7 +1369,6 @@ After the 2nd dry-run fire (tomorrow 04:30 ET), re-eyeball the table + log to co
 #### Cross-references
 
 - TODO.md § "Tier 3 Project 1 follow-up" — original spec
-- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "Perf-rollup dry-run review" — first-fire data + decision rationale
 - 1.5.16 (entry below) — initial deploy
 
 ---
