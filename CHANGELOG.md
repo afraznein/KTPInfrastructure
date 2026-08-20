@@ -717,13 +717,13 @@ Deploy note: `ktp_spike_daily` created manually + per-table GRANT to
 
 ### ktp-perf-rollup: retire the stale NY5 default exclusion
 
-NY5 (74.91.123.64:27019) was still excluded from WARN evaluation and the
+NY5 (<NYC_GAME_IP>:27019) was still excluded from WARN evaluation and the
 fleet median despite the operator clearing `PERF_EXCLUDED_HOSTS=""` in
 `/etc/ktp/discord-relay.conf` on 2026-05-13 (when NY5 retired from
 pingboost-4 canary duty back to fleet config). Root cause: `resolve()`
 `or`-chains env → config → default, so an explicitly-empty config value is
 falsy and silently falls back to the baked-in default — which still carried
-the canary-era `74.91.123.64:27019`.
+the canary-era `<NYC_GAME_IP>:27019`.
 
 - `DEFAULT_EXCLUDED` now empty; NY5 participates in WARN evaluation and the
   fleet median like every other instance.
@@ -1132,7 +1132,7 @@ Validation: re-replayed `--day 2026-05-05 --dry-run` against deployed 1.5.21:
 ```
 findings: 24 hosts; warn=1; fleet_median_fps=978.6
 title: WARN — 2026-05-05
-hosts in WARN (1): NY3 (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4)
+hosts in WARN (1): NY3 (<NYC_GAME_IP>:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4)
 ```
 
 Down from 3 WARN (NY3 + DAL1 + DAL4 → "CRITICAL (partial fleet)" tier) to 1 WARN (NY3 → standard WARN tier). DAL1 + DAL4 boundary alerts suppressed as intended. NY3's real signal preserved. Embed Source-field text updated to `fps 2σ + ≥1 fps floor / spike 2.5σ thresholds` so operators see the gating logic in the alert itself.
@@ -1149,8 +1149,8 @@ Down from 3 WARN (NY3 + DAL1 + DAL4 → "CRITICAL (partial fleet)" tier) to 1 WA
 
 ```bash
 # Already done — recorded for repeatability:
-scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
-ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+scp scripts/ktp-perf-rollup.py root@<DATA_SERVER_IP>:/usr/local/bin/ktp-perf-rollup
+ssh root@<DATA_SERVER_IP> chmod 755 /usr/local/bin/ktp-perf-rollup
 ```
 
 Live at md5 `14914a8b…` on data server. Backup of pre-fix script at `/usr/local/bin/ktp-perf-rollup.bak-20260506-103910`. Cron unchanged — picks up the new script at next 04:30 ET fire.
@@ -1215,8 +1215,8 @@ Aggregator daemon on data server is still running 1.5.x without the umbrella han
 
 ```bash
 # When ready (operator):
-scp aggregator.py spike_signatures.py root@74.91.112.242:/opt/ktp-profile-aggregator/
-ssh root@74.91.112.242 systemctl restart ktp-profile-aggregator
+scp aggregator.py spike_signatures.py root@<DATA_SERVER_IP>:/opt/ktp-profile-aggregator/
+ssh root@<DATA_SERVER_IP> systemctl restart ktp-profile-aggregator
 journalctl -u ktp-profile-aggregator -f --since "1 minute ago"
 # Verify first-cycle output: "wrote <endpoint>: ... signatures=N" in debug logs
 # Verify rows: SELECT * FROM ktp_spike_signatures ORDER BY first_seen DESC LIMIT 10
@@ -1301,9 +1301,9 @@ Second dry-run fire (2026-05-06 04:30:01 ET, target_day=2026-05-05) ran clean of
 
 3 hosts WARN today, all FPS-side:
 
-- **NY3** (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4). **Real ~6 fps regression.** Drilled down: localized to a single 21:15-22:00 EDT window where NY3-only dropped to 818-890 fps for 9 consecutive 5-min samples while NY1/NY2/NY4 held 974-985 normal. Spike total 84 vs 12-18 on siblings (7× baseline). Pattern is transient gameplay load (12man/scrim on NY3 specifically), not a systemic regression — recovered fully by next sample, 2026-05-06 NY3 back to 979.7 fps avg post-nightly-restart. The alert correctly surfaced a real per-instance anomaly worth a brief investigation.
-- **DAL1** (74.91.126.55:27015) — fps 980.2 < 980.2 (μ 980.7 σ 0.3). Sub-1-fps drop.
-- **DAL4** (74.91.126.55:27018) — fps 978.7 < 978.8 (μ 979.1 σ 0.2). Sub-1-fps drop.
+- **NY3** (<NYC_GAME_IP>:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4). **Real ~6 fps regression.** Drilled down: localized to a single 21:15-22:00 EDT window where NY3-only dropped to 818-890 fps for 9 consecutive 5-min samples while NY1/NY2/NY4 held 974-985 normal. Spike total 84 vs 12-18 on siblings (7× baseline). Pattern is transient gameplay load (12man/scrim on NY3 specifically), not a systemic regression — recovered fully by next sample, 2026-05-06 NY3 back to 979.7 fps avg post-nightly-restart. The alert correctly surfaced a real per-instance anomaly worth a brief investigation.
+- **DAL1** (<DAL_GAME_IP>:27015) — fps 980.2 < 980.2 (μ 980.7 σ 0.3). Sub-1-fps drop.
+- **DAL4** (<DAL_GAME_IP>:27018) — fps 978.7 < 978.8 (μ 979.1 σ 0.2). Sub-1-fps drop.
 
 DAL1 + DAL4 are the same flavor as the earlier spike-side DAL3 false-positive: tight-σ hosts trigger 2σ technically while the actual fps drop is player-imperceptible (~0.05% throughput). Filed as a low-priority follow-up TODO ("FPS floor refinement") to add an absolute-drop minimum (e.g., `WARN only if fps drop ≥ 1.0 fps OR ≥ 0.1%` AND 2σ). Not blocking the lift — DAL1/DAL4-style alerts are estimated at ~1-2 false positives/week on tight-σ hosts, an acceptable noise floor in exchange for surfacing real signals like NY3.
 
@@ -1318,7 +1318,7 @@ DAL1 + DAL4 are the same flavor as the earlier spike-side DAL3 false-positive: t
 
 ```bash
 # (Already done — recorded for repeatability)
-scp scripts/cron.d/ktp-perf-rollup-daily root@74.91.112.242:/etc/cron.d/ktp-perf-rollup-daily
+scp scripts/cron.d/ktp-perf-rollup-daily root@<DATA_SERVER_IP>:/etc/cron.d/ktp-perf-rollup-daily
 ```
 
 cron auto-reloads `/etc/cron.d/` on file change; no `systemctl reload` needed. Verified live execution line is `--dry-run`-free; cron service active. Backup of pre-lift cron at `/etc/cron.d/ktp-perf-rollup-daily.bak-20260506-093758`.
@@ -1355,11 +1355,11 @@ Same DAL3 example with 2.5σ: μ + 2.5σ = 200 + 165 = 365. DAL3's 333 sits comf
 
 #### Operator deploy step
 
-Stage updated `scripts/ktp-perf-rollup.py` to `/usr/local/bin/ktp-perf-rollup` on data server (74.91.112.242) before tomorrow's 04:30 ET cron fire. The cron itself is unchanged.
+Stage updated `scripts/ktp-perf-rollup.py` to `/usr/local/bin/ktp-perf-rollup` on data server (<DATA_SERVER_IP>) before tomorrow's 04:30 ET cron fire. The cron itself is unchanged.
 
 ```bash
-scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
-ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+scp scripts/ktp-perf-rollup.py root@<DATA_SERVER_IP>:/usr/local/bin/ktp-perf-rollup
+ssh root@<DATA_SERVER_IP> chmod 755 /usr/local/bin/ktp-perf-rollup
 ```
 
 After the 2nd dry-run fire (tomorrow 04:30 ET), re-eyeball the table + log to confirm the threshold widening eliminates the false-positives. If clean, lift `--dry-run` from `/etc/cron.d/ktp-perf-rollup-daily` per the original 48h-suppression protocol.
@@ -1424,7 +1424,7 @@ DELETE pre-authorizes future replay scenarios (script is idempotent on `ON DUPLI
 Also add to `/etc/ktp/discord-relay.conf`:
 ```
 PERF_ALERT_CHANNEL="<channel_id>"
-PERF_EXCLUDED_HOSTS="74.91.123.64:27019"
+PERF_EXCLUDED_HOSTS="<NYC_GAME_IP>:27019"
 # Optional:
 # FLEET_CRITICAL_FPS=963
 # KTP_ADMIN_ROLE_ID=1002394466700767332
@@ -1930,7 +1930,7 @@ Two new features for flexible deployments and LAN events.
 #### `ktp-scheduled-restart.sh`
 - **Dynamic port detection** — Scans `~/dod-*` directories at runtime to build port list. No more hardcoded `27015-27019` loops.
 - **Dynamic CPU pinning** — CPU map generated at runtime based on detected server count and `nproc --all`.
-- **Chicago server name** — Added 172.238.176.101 to IP-to-name lookup.
+- **Chicago server name** — Added <CHI_GAME_IP> to IP-to-name lookup.
 
 ### Changed
 
@@ -2025,15 +2025,15 @@ Extended provisioning and restart scripts for 5-location deployment.
 - **dodx.ini auto-created** - Creates default `pdata_offset = 4` if missing
 - **Server name prefix** - Uses `$SERVER_NAME_PREFIX` consistently (supports "KTPSCRIM" branding)
 - **nice=-5 in common.cfg** - Adds process priority to new and existing installations
-- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55 in restart script name lookup
+- **Updated Dallas IP** - <DAL_VPS_GAME_IP> → <DAL_GAME_IP> in restart script name lookup
 
 #### `provision-gameserver.sh`
 - **`mitigations=off`** - Added to GRUB for Spectre/Meltdown performance bypass
 - **`nice=-5` in limits.conf** - Allows dodserver user to use negative nice values
 
 #### `ktp-scheduled-restart.sh`
-- **New York server name** - Added 74.91.123.64 → "KTPSCRIM - New York"
-- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55
+- **New York server name** - Added <NYC_GAME_IP> → "KTPSCRIM - New York"
+- **Updated Dallas IP** - <DAL_VPS_GAME_IP> → <DAL_GAME_IP>
 
 ### Added
 - **`OLDSERVERS.md`** - Decommissioned server reference (Atlanta VPS, Dallas VPS)
