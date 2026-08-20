@@ -77,6 +77,20 @@ def test_full_lane_carries_target_producer_clock_release_gates():
     assert "args.require_complete_coverage and bool(gaps)" in runner
 
 
+def test_full_lane_strictly_accounts_for_breakdrive_frag_diagnostics():
+    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    invariants = (ROOT / "tests/e2e_stats/log_invariants.py").read_text()
+
+    assert "frag_context_diagnostic_evidence(" in runner
+    assert '"frag_context_diagnostics"' in runner
+    assert "assertions.check_frag_context_diagnostics(" in runner
+    assert runner.count("expected_unmatched=expected_frag_diagnostics") == 2
+    assert "[KTPBreakDrive.amxx] [BD] kill flag=" in invariants
+    assert "lines[start:stop]" in invariants
+    assert "expected_identities" in runner
+    assert "observed_identities" in runner
+
+
 def test_build_refuses_partial_lane_b_core_support():
     script = (ROOT / "scripts/build_ktpamx_laneb.sh").read_text()
 

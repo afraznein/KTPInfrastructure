@@ -656,6 +656,21 @@ def main() -> int:
             log_invariants.count_in_match(log_text, 'triggered "life_boundary"')
             if report.get("match") else 0
         )
+        frag_diagnostic_evidence = (
+            log_invariants.frag_context_diagnostic_evidence(
+                log_text, daemon_text
+            )
+            if report.get("match") else {
+                "expected_synthetic_unmatched": 0,
+                "observed_unmatched": 0,
+                "expected_identities": [],
+                "observed_identities": [],
+                "unresolved_expected": [],
+                "unparsed_observed": [],
+                "synthetic_kill_markers": [],
+                "unmatched_warnings": [],
+            }
+        )
         report["emitted"] = {
             "kills": log_text.count('" killed "'),
             "assist": log_text.count('triggered "assist"'),
@@ -683,6 +698,22 @@ def main() -> int:
             # this separate from the generic PPA count above, which also
             # includes diagnostic/warmup assist actions.
             "assist_context": assist_context_emitted,
+        }
+        expected_frag_diagnostics = frag_diagnostic_evidence[
+            "expected_synthetic_unmatched"
+        ]
+        observed_frag_diagnostics = frag_diagnostic_evidence[
+            "observed_unmatched"
+        ]
+        report["frag_context_diagnostics"] = {
+            **frag_diagnostic_evidence,
+            "claimed_expected_rows": (
+                report["emitted"]["frag_context"] - expected_frag_diagnostics
+            ),
+            "producer_clock_expected_rows": (
+                report["emitted"]["frag_context_match"]
+                - expected_frag_diagnostics
+            ),
         }
         report["lines_fed"] = daemon.lines_fed
         real_sql, benign_sql = daemon.classify_sql_errors()
@@ -719,16 +750,33 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_frag_context_diagnostics(
+                expected=expected_frag_diagnostics,
+                observed=observed_frag_diagnostics,
+                expected_identities=frag_diagnostic_evidence[
+                    "expected_identities"
+                ],
+                observed_identities=frag_diagnostic_evidence[
+                    "observed_identities"
+                ],
+                unresolved_expected=frag_diagnostic_evidence[
+                    "unresolved_expected"
+                ],
+                unparsed_observed=frag_diagnostic_evidence[
+                    "unparsed_observed"
+                ],
+            ),
             assertions.check_frag_context_claimed(
                 db,
                 emitted=report["emitted"]["frag_context"],
-                unmatched=daemon_text.count(
-                    "KTP_NO_ROW_MATCHED: frag_context:")),
+                expected_unmatched=expected_frag_diagnostics,
+            ),
             assertions.check_frag_producer_clocks(
                 db,
                 emitted=report["emitted"]["frag_context_match"],
                 match_id=((report.get("match") or {}).get("match_id")),
                 half=((report.get("match") or {}).get("half")),
+                expected_unmatched=expected_frag_diagnostics,
             ),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
             assertions.check_damage_producer_clocks(

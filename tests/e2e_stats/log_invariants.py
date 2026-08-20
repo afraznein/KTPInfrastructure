@@ -35,6 +35,26 @@ _ASSIST_RE = re.compile(rf'{_PLAYER} triggered "assist" against {_PLAYER}')
 _BREAK_RE = re.compile(rf'{_PLAYER} triggered "cap_break"')
 _TS_RE = re.compile(r"^L \d\d/\d\d/\d{4} - (\d\d):(\d\d):(\d\d):")
 
+# KTPBreakDrive's kill scenarios deliberately call the DODX test death
+# dispatcher and then kill the victim with a self-kill.  Capture therefore
+# emits a truthful frag_context marker for the dispatched death, but HLStatsX
+# has no corresponding ordinary frag row to claim.  Keep the marker narrow:
+# an ABORT, scan, walkoff, or a similarly-worded line from another plugin must
+# never buy an exception from the strict frag reconciliation gate.
+_BREAKDRIVE_SYNTHETIC_KILL = "[KTPBreakDrive.amxx] [BD] kill flag="
+_BREAKDRIVE_SYNTHETIC_KILL_RE = re.compile(
+    r"\[KTPBreakDrive\.amxx\] \[BD\] kill flag=\d+ capteam=-?\d+ "
+    r"mode=\w+ victim=\d+ vname=(?P<victim_name>\S+) killer=\d+ "
+    r"kname=(?P<killer_name>\S+)"
+)
+_DAEMON_PLAYER_RE = re.compile(
+    r'"(?P<name>[^"]+)" <P:(?P<player_id>\d+),U:\d+,W:[^,>]+,T:[^>]*>'
+)
+_FRAG_NO_ROW_RE = re.compile(
+    r"KTP_NO_ROW_MATCHED: frag_context: .*?killer=(?P<killer>\d+) "
+    r"victim=(?P<victim>\d+) weapon=(?P<weapon>\S+)"
+)
+
 
 @dataclass(frozen=True)
 class Actor:
@@ -203,6 +223,113 @@ def count_in_match(log_text: str, needle: str) -> int:
         return 0
     stop = end if end is not None else len(lines)
     return sum(1 for line in lines[start:stop] if needle in line)
+
+
+def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
+    """Successful BreakDrive synthetic deaths inside the driven match.
+
+    Each returned marker is expected to produce exactly one
+    ``KTP_NO_ROW_MATCHED: frag_context:`` diagnostic.  Returning the marker
+    text as well as a count leaves enough evidence in the Lane B report to
+    distinguish the intentional test injection from a genuine dropped frag.
+    Events outside the first KTP_MATCH_START/END window are never exempted.
+    """
+    lines = log_text.splitlines()
+    start = end = None
+    for i, line in enumerate(lines):
+        if start is None and "KTP_MATCH_START" in line:
+            start = i
+        elif start is not None and end is None and "KTP_MATCH_END" in line:
+            end = i
+    if start is None:
+        return []
+    stop = end if end is not None else len(lines)
+    return [
+        line.strip()
+        for line in lines[start:stop]
+        if _BREAKDRIVE_SYNTHETIC_KILL in line
+    ]
+
+
+def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
+    """Build identity-level evidence for intentional unmatched frag contexts.
+
+    BreakDrive reports client names while the daemon warning reports HLStatsX
+    player ids.  The daemon's ordinary actor diagnostics carry both, allowing
+    us to map each synthetic ``killer -> victim -> amerknife`` to the same
+    identity used by ``KTP_NO_ROW_MATCHED``.  Lists intentionally retain
+    duplicates: two injections for the same pair require two warnings for that
+    same pair, not one matching warning plus one unrelated loss.
+
+    There is no cross-log event UUID, so identity multiset is the strongest
+    practical correlation available without changing AMXX/HLStatsX.  Ambiguous
+    or absent name-to-player mappings fail closed via ``unresolved_expected``.
+    """
+    markers = breakdrive_synthetic_frag_diagnostics(log_text)
+    warnings = [
+        line.strip()
+        for line in daemon_text.splitlines()
+        if "KTP_NO_ROW_MATCHED: frag_context:" in line
+    ]
+
+    player_ids_by_name: dict[str, set[int]] = {}
+    for line in daemon_text.splitlines():
+        actor = _DAEMON_PLAYER_RE.search(line)
+        if actor:
+            player_ids_by_name.setdefault(actor.group("name"), set()).add(
+                int(actor.group("player_id"))
+            )
+
+    expected_identities: list[str] = []
+    unresolved_expected: list[dict] = []
+    for marker in markers:
+        parsed = _BREAKDRIVE_SYNTHETIC_KILL_RE.search(marker)
+        if not parsed:
+            unresolved_expected.append({
+                "marker": marker,
+                "reason": "successful BreakDrive marker shape was not parseable",
+            })
+            continue
+        killer_name = parsed.group("killer_name")
+        victim_name = parsed.group("victim_name")
+        killer_ids = player_ids_by_name.get(killer_name, set())
+        victim_ids = player_ids_by_name.get(victim_name, set())
+        if len(killer_ids) != 1 or len(victim_ids) != 1:
+            unresolved_expected.append({
+                "marker": marker,
+                "reason": (
+                    f"daemon identity mapping is not unique: killer "
+                    f"{killer_name!r} -> {sorted(killer_ids)}, victim "
+                    f"{victim_name!r} -> {sorted(victim_ids)}"
+                ),
+            })
+            continue
+        expected_identities.append(
+            f"{next(iter(killer_ids))}->{next(iter(victim_ids))}:amerknife"
+        )
+
+    observed_identities: list[str] = []
+    unparsed_observed: list[str] = []
+    for warning in warnings:
+        parsed = _FRAG_NO_ROW_RE.search(warning)
+        if not parsed:
+            unparsed_observed.append(warning)
+            continue
+        observed_identities.append(
+            f"{parsed.group('killer')}->{parsed.group('victim')}:"
+            f"{parsed.group('weapon')}"
+        )
+
+    return {
+        "expected_synthetic_unmatched": len(markers),
+        "observed_unmatched": len(warnings),
+        "expected_identities": expected_identities,
+        "observed_identities": observed_identities,
+        "unresolved_expected": unresolved_expected,
+        "unparsed_observed": unparsed_observed,
+        "synthetic_kill_markers": markers,
+        "unmatched_warnings": warnings,
+    }
 
 
 def summarise(log_text: str) -> dict:

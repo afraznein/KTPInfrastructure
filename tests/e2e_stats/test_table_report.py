@@ -61,6 +61,18 @@ def test_render_markdown_includes_summary_and_samples():
             "assist_context": 2,
             "assist": {"ppa": 3}, "cap_break": {"pa": 1},
         },
+        "frag_context_diagnostics": {
+            "expected_synthetic_unmatched": 3,
+            "observed_unmatched": 3,
+            "claimed_expected_rows": 63,
+            "producer_clock_expected_rows": 63,
+            "expected_identities": ["321->329:amerknife",
+                                    "321->330:amerknife",
+                                    "321->330:amerknife"],
+            "observed_identities": ["321->330:amerknife",
+                                    "321->329:amerknife",
+                                    "321->330:amerknife"],
+        },
         "carried": [{"code": "assist", "status": "ok", "detail": "3/3 carried"}],
         "failures": [],
         "coverage_gaps": [],
@@ -76,6 +88,9 @@ def test_render_markdown_includes_summary_and_samples():
     assert "| Assists (generic PPA) | 3 | 3 |" in body
     assert "| Assist contexts (canonical, in-match) | 2 | 2 |" in body
     assert "| Life boundaries | 24 | 24 |" in body
+    assert "## Frag-context diagnostic reconciliation" in body
+    assert "| 3 | 3 | 63 | 63 |" in body
+    assert "321->330:amerknife x2" in body
     assert "SQL `NULL` / not applicable" in body
     assert "`hlstats_Events_Frags`" in body
     assert "garand\\|scoped" in body

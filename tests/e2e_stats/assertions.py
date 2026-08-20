@@ -29,6 +29,7 @@ time anyone reads it.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 # `hlstats_Events_PlayerPlayerActions` and `_PlayerActions` both carry pos_x/y/z
@@ -562,30 +563,110 @@ def check_headshots_carried(db, *, emitted: int) -> dict:
             "rows": rows, "detail": f"{rows}/{emitted} carried"}
 
 
-def check_frag_context_claimed(db, *, emitted: int, unmatched: int) -> dict:
-    """Every context that found a stock frag claimed exactly one row."""
+def check_frag_context_diagnostics(
+        *, expected: int, observed: int,
+        expected_identities: list[str], observed_identities: list[str],
+        unresolved_expected: list[dict],
+        unparsed_observed: list[str]) -> dict:
+    """Only intentional BreakDrive injections may miss a stock frag row.
+
+    The expected count comes from successful ``[BD] kill flag=`` markers in
+    the driven match.  Comparing it exactly with the daemon warnings is
+    load-bearing: subtracting every observed warning would turn a genuinely
+    dropped ordinary frag into an allowed diagnostic.
+    """
+    result = {
+        "code": "frag_context_diagnostics",
+        "expected_synthetic_unmatched": expected,
+        "observed_unmatched": observed,
+        "expected_identities": expected_identities,
+        "observed_identities": observed_identities,
+        "unresolved_expected": unresolved_expected,
+        "unparsed_observed": unparsed_observed,
+    }
+    expected_multiset = Counter(expected_identities)
+    observed_multiset = Counter(observed_identities)
+    missing_identities = list((expected_multiset - observed_multiset).elements())
+    unexpected_identities = list((observed_multiset - expected_multiset).elements())
+    result.update({
+        "missing_identities": missing_identities,
+        "unexpected_identities": unexpected_identities,
+    })
+    evidence_shape_ok = (
+        len(expected_identities) + len(unresolved_expected) == expected
+        and len(observed_identities) + len(unparsed_observed) == observed
+    )
+    if (observed != expected or not evidence_shape_ok
+            or unresolved_expected or unparsed_observed
+            or expected_multiset != observed_multiset):
+        delta = observed - expected
+        if delta > 0:
+            mismatch = (
+                f"{delta} unexpected no-row warning(s) remain; these indicate "
+                "genuine frag loss and are not exempted"
+            )
+        else:
+            mismatch = (
+                f"{-delta} expected no-row warning(s) are missing; the "
+                "synthetic diagnostic path did not behave as designed"
+            ) if delta < 0 else "warning count matches but identities do not"
+        identity_detail = (
+            f"missing_identities={missing_identities or 'none'}, "
+            f"unexpected_identities={unexpected_identities or 'none'}, "
+            f"unresolved_expected={len(unresolved_expected)}, "
+            f"unparsed_observed={len(unparsed_observed)}"
+        )
+        return {
+            **result,
+            "status": "pipeline",
+            "detail": f"expected exactly {expected} BreakDrive synthetic "
+                      f"frag-context diagnostic(s), observed {observed}; "
+                      f"{mismatch}; {identity_detail}",
+        }
+    return {
+        **result,
+        "status": "ok",
+        "detail": f"observed exactly {observed} no-row diagnostic(s) for "
+                  f"{expected} successful in-match BreakDrive synthetic "
+                  "kill(s), with an exact killer/victim/weapon identity multiset",
+    }
+
+
+def check_frag_context_claimed(db, *, emitted: int,
+                               expected_unmatched: int) -> dict:
+    """Every non-synthetic context claimed exactly one stock frag row."""
     rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
     claimed = db.count(
         "SELECT COUNT(*) FROM hlstats_Events_Frags "
         "WHERE frag_context_recorded = 1"
     )
+    expected = emitted - expected_unmatched
+    result = {
+        "code": "frag_context_claimed",
+        "rows": rows,
+        "claimed": claimed,
+        "emitted": emitted,
+        "expected_synthetic_unmatched": expected_unmatched,
+        "expected_rows": expected,
+    }
+    if expected < 0:
+        return {
+            **result, "status": "pipeline", "detail":
+            f"{expected_unmatched} expected synthetic diagnostic(s) exceed "
+            f"the {emitted} emitted frag-context marker(s)"
+        }
     if emitted == 0:
-        return {"code": "frag_context_claimed", "status": "not_exercised",
-                "rows": rows, "claimed": claimed, "detail":
+        return {**result, "status": "not_exercised", "detail":
                 "no frag_context markers to check"}
-    expected = emitted - unmatched
-    if expected < 0 or claimed != expected:
-        return {"code": "frag_context_claimed", "status": "pipeline",
-                "rows": rows, "claimed": claimed, "emitted": emitted,
-                "unmatched": unmatched, "detail":
-                f"{emitted} context marker(s) minus {unmatched} deliberately "
-                f"unmatched marker(s) should claim {expected} row(s), but "
-                f"{claimed} were marked"}
-    return {"code": "frag_context_claimed", "status": "ok",
-            "rows": rows, "claimed": claimed, "emitted": emitted,
-            "unmatched": unmatched, "detail":
-            f"{claimed}/{emitted} context marker(s) claimed a row; "
-            f"{unmatched} orphan diagnostic marker(s) were safely rejected"}
+    if claimed != expected:
+        return {**result, "status": "pipeline", "detail":
+                f"{emitted} context marker(s) minus only the "
+                f"{expected_unmatched} expected BreakDrive diagnostic(s) "
+                f"should claim {expected} row(s), but {claimed} were marked"}
+    return {**result, "status": "ok", "detail":
+            f"{claimed}/{expected} canonical context marker(s) claimed a row; "
+            f"denominator {emitted} minus {expected_unmatched} expected "
+            "BreakDrive synthetic diagnostic(s)"}
 
 
 def _check_target_producer_clocks(
@@ -593,7 +674,8 @@ def _check_target_producer_clocks(
         stored_half_column: str, server_column: str, emitted: int,
         match_id: str | None,
         half: int | None, row_filter: str = "1=1",
-        map_column: str | None = None) -> dict:
+        map_column: str | None = None,
+        expected_diagnostics: int = 0) -> dict:
     """Validate producer context only for the driven match.
 
     Migration 017 intentionally leaves historical frag/damage producer fields
@@ -602,11 +684,20 @@ def _check_target_producer_clocks(
     must resolve to the exact producer match/half with complete clocks inside
     exactly one matching ``ktp_matches`` interval.
     """
+    expected_rows = emitted - expected_diagnostics
     common = {
         "code": code, "emitted": emitted, "candidate_rows": 0,
         "exact_context_rows": 0, "clocked_rows": 0, "wrong_context": 0,
         "invalid_clocks": 0, "interval_mismatches": 0,
+        "expected_synthetic_unmatched": expected_diagnostics,
+        "expected_rows": expected_rows,
     }
+    if expected_rows < 0:
+        return {
+            **common, "status": "pipeline",
+            "detail": f"{expected_diagnostics} expected diagnostic marker(s) "
+                      f"exceed {emitted} emitted target-match marker(s)",
+        }
     if match_id is None or half is None:
         return {
             **common, "status": "not_exercised",
@@ -670,37 +761,44 @@ SELECT /* {code}:interval_mismatches */ COUNT(*) FROM (
         "invalid_clocks": invalid_clocks,
         "interval_mismatches": interval_mismatches,
     }
-    if (candidates != emitted or exact != emitted or clocked != emitted
+    if (candidates != expected_rows or exact != expected_rows
+            or clocked != expected_rows
             or wrong_context or invalid_clocks or interval_mismatches):
         return {
             **result, "status": "pipeline",
-            "detail": f"{emitted} target-match marker(s), {candidates} candidate "
+            "detail": f"{emitted} target-match marker(s) minus only "
+                      f"{expected_diagnostics} expected diagnostic(s) = "
+                      f"{expected_rows} canonical row(s); {candidates} candidate "
                       f"row(s), {exact} exact producer match/half row(s), "
                       f"{clocked} with complete clocks inside the exact match "
                       f"interval; wrong_context={wrong_context}, "
                       f"invalid_clocks={invalid_clocks}, "
                       f"interval_mismatches={interval_mismatches}",
         }
-    if emitted == 0:
+    if expected_rows == 0:
         return {
             **result, "status": "not_exercised",
-            "detail": "no target-match marker exercised producer-clock persistence",
+            "detail": "no canonical target-match marker exercised producer-clock persistence",
         }
     return {
         **result, "status": "ok",
-        "detail": f"{clocked}/{emitted} target-match marker(s) retained exact "
-                  "producer match/half and interval-valid clocks",
+        "detail": f"{clocked}/{expected_rows} canonical target-match marker(s) "
+                  f"retained exact producer match/half and interval-valid clocks; "
+                  f"denominator {emitted} minus {expected_diagnostics} expected "
+                  "diagnostic(s)",
     }
 
 
 def check_frag_producer_clocks(db, *, emitted: int,
-                               match_id: str | None, half: int | None) -> dict:
+                               match_id: str | None, half: int | None,
+                               expected_unmatched: int = 0) -> dict:
     return _check_target_producer_clocks(
         db, code="frag_producer_clocks", table="hlstats_Events_Frags",
         stored_match_column="match_id", stored_half_column="half",
         server_column="serverId",
         emitted=emitted, match_id=match_id, half=half,
         row_filter="e.frag_context_recorded = 1", map_column="map",
+        expected_diagnostics=expected_unmatched,
     )
 
 

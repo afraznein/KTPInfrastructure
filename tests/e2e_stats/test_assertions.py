@@ -490,15 +490,115 @@ class FragContextDb:
 
 def test_every_frag_context_is_claimed_once():
     verdict = assertions.check_frag_context_claimed(
-        FragContextDb(rows=48, claimed=43), emitted=47, unmatched=4)
+        FragContextDb(rows=48, claimed=43), emitted=47,
+        expected_unmatched=4)
     assert verdict["status"] == "ok"
+    assert verdict["expected_rows"] == 43
 
 
 def test_unclaimed_frag_context_fails_the_lane():
     verdict = assertions.check_frag_context_claimed(
-        FragContextDb(rows=48, claimed=42), emitted=47, unmatched=4)
+        FragContextDb(rows=48, claimed=42), emitted=47,
+        expected_unmatched=4)
     assert verdict["status"] == "pipeline"
     assert "should claim 43" in verdict["detail"]
+
+
+def test_extra_frag_no_row_warning_fails_instead_of_shrinking_denominator():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=3, observed=4,
+        expected_identities=["1->2:amerknife"] * 3,
+        observed_identities=["1->2:amerknife"] * 3 + ["7->8:grenade"],
+        unresolved_expected=[], unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["expected_synthetic_unmatched"] == 3
+    assert verdict["observed_unmatched"] == 4
+    assert "unexpected no-row warning" in verdict["detail"]
+
+
+def test_missing_expected_frag_no_row_warning_fails():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=3, observed=2,
+        expected_identities=["1->2:amerknife"] * 3,
+        observed_identities=["1->2:amerknife"] * 2,
+        unresolved_expected=[], unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert "expected no-row warning(s) are missing" in verdict["detail"]
+
+
+def test_exact_breakdrive_frag_diagnostics_pass():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=3, observed=3,
+        expected_identities=["1->2:amerknife", "1->3:amerknife",
+                             "1->3:amerknife"],
+        observed_identities=["1->3:amerknife", "1->2:amerknife",
+                             "1->3:amerknife"],
+        unresolved_expected=[], unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "ok"
+
+
+def test_same_count_wrong_frag_warning_identity_fails():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=3, observed=3,
+        expected_identities=["1->2:amerknife", "1->3:amerknife",
+                             "1->3:amerknife"],
+        observed_identities=["1->2:amerknife", "1->3:amerknife",
+                             "7->8:grenade"],
+        unresolved_expected=[], unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["missing_identities"] == ["1->3:amerknife"]
+    assert verdict["unexpected_identities"] == ["7->8:grenade"]
+    assert "count matches but identities do not" in verdict["detail"]
+
+
+def test_duplicate_frag_warning_multiplicity_is_strict():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=2, observed=2,
+        expected_identities=["1->2:amerknife", "1->2:amerknife"],
+        observed_identities=["1->2:amerknife", "1->9:amerknife"],
+        unresolved_expected=[], unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["missing_identities"] == ["1->2:amerknife"]
+
+
+def test_unresolved_expected_frag_identity_fails_closed():
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=1, observed=1,
+        expected_identities=[], observed_identities=["1->2:amerknife"],
+        unresolved_expected=[{"marker": "[BD] kill flag=1", "reason": "missing"}],
+        unparsed_observed=[],
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["unresolved_expected"]
+
+
+def test_frag_producer_clocks_use_expected_canonical_denominator():
+    db = TaggedCountDb(
+        "frag_producer_clocks", candidates=63, exact=63,
+        invalid_clocks=0, interval_mismatches=0,
+    )
+
+    verdict = assertions.check_frag_producer_clocks(
+        db, emitted=66, expected_unmatched=3,
+        match_id="1787019402-TEST", half=1,
+    )
+
+    assert verdict["status"] == "ok"
+    assert verdict["emitted"] == 66
+    assert verdict["expected_synthetic_unmatched"] == 3
+    assert verdict["expected_rows"] == 63
+    assert verdict["clocked_rows"] == 63
 
 
 def test_nothing_emitted_but_rows_present_still_flags_the_flag_inversion():

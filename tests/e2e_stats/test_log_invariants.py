@@ -217,3 +217,80 @@ def test_periodic_markers_are_counted_only_inside_the_match():
 def test_marker_count_without_a_match_is_zero():
     marker = '"Bot<1><BOT><Axis>" triggered "position_sample"'
     assert li.count_in_match(marker, 'triggered "position_sample"') == 0
+
+
+def test_only_successful_in_match_breakdrive_kills_expect_frag_diagnostics():
+    successful = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=3 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1953 "
+        "count_before=2 owner_before=0"
+    )
+    abort = TS + (
+        "[KTPBreakDrive.amxx] [BD] kill ABORT flag=-1 mode=far "
+        "no stageable capture while armed"
+    )
+    other_plugin = successful.replace("KTPBreakDrive.amxx", "NotBreakDrive.amxx")
+    log = "\n".join([
+        successful, MATCH_START, successful, abort, other_plugin, MATCH_END,
+        successful,
+    ])
+
+    diagnostics = li.breakdrive_synthetic_frag_diagnostics(log)
+
+    assert diagnostics == [successful]
+
+
+def test_no_match_never_grants_a_synthetic_frag_exception():
+    marker = TS + (
+        "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=1 mode=near "
+        "victim=2 vname=A killer=3 kname=B dist=4 count_before=2 "
+        "owner_before=2"
+    )
+    assert li.breakdrive_synthetic_frag_diagnostics(marker) == []
+
+
+def test_frag_diagnostic_evidence_maps_identity_and_preserves_duplicates():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    log = "\n".join([MATCH_START, synthetic, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '2026-08-20 - E002: "Leon" <P:321,U:1,W:BOT:a,T:Allies> entered',
+        '2026-08-20 - E002: "GLaDOS" <P:329,U:9,W:BOT:b,T:Axis> entered',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife -- diagnostic",
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife -- diagnostic",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(log, daemon)
+
+    assert evidence["expected_synthetic_unmatched"] == 2
+    assert evidence["observed_unmatched"] == 2
+    assert evidence["expected_identities"] == ["321->329:amerknife"] * 2
+    assert evidence["observed_identities"] == ["321->329:amerknife"] * 2
+    assert evidence["unresolved_expected"] == []
+    assert evidence["unparsed_observed"] == []
+
+
+def test_frag_diagnostic_evidence_does_not_guess_ambiguous_names():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=Same killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    log = "\n".join([MATCH_START, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"Same" <P:329,U:9,W:BOT:b,T:Axis>',
+        '"Same" <P:330,U:10,W:BOT:c,T:Axis>',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(log, daemon)
+
+    assert evidence["expected_identities"] == []
+    assert len(evidence["unresolved_expected"]) == 1
