@@ -18,6 +18,16 @@ shared service. `build_anzio_spatial_atlas.ps1` turns one or more Anzio fixtures
 into the supported heatmap/report image set. Map geometry and analytical
 windows live in `config/analytics/spatial_maps/dod_anzio.json`.
 
+For checksum-pinned multi-map handovers, `analyze_competitive_corpus.py`
+restores every listed fixture into a separate ephemeral database and keeps
+public aggregate/derived totals separate from private positional working data.
+`build_competitive_spatial_configs.py`, `build_all_competitive_atlases.ps1`,
+and `build_spatial_atlas.ps1` extend the aggregate atlas to dataset-scoped map
+configs without treating those configs as reviewed scoring weights.
+`build_competitive_report_site.py` produces a static, directly viewable report
+site; `verify_competitive_report_site.py` checks its manifest, local links,
+expected map/match coverage, and public privacy boundary before distribution.
+
 `match_report_bundle.py` joins the canonical analytics JSON, readiness JSON,
 optional shareable accumulation JSON, and optional atlas metadata into one
 privacy-checked Markdown/JSON bundle. `metric_confidence.py` supplies versioned

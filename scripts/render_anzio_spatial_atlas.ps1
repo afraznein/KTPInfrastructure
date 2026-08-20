@@ -10,6 +10,11 @@ Add-Type -AssemblyName System.Drawing
 
 $atlas = Get-Content -LiteralPath $AtlasJson -Raw | ConvertFrom-Json
 $spatialConfig = Get-Content -LiteralPath $MapConfig -Raw | ConvertFrom-Json
+$mapDisplayName = if ($spatialConfig.display_name) {
+    [string]$spatialConfig.display_name
+} else {
+    [string]$spatialConfig.map_name
+}
 $overview = @{
     OriginX = [double]$spatialConfig.overview.origin_x
     OriginY = [double]$spatialConfig.overview.origin_y
@@ -76,6 +81,12 @@ function Get-PaletteColor {
 
 function New-MapCanvas {
     $source = [System.Drawing.Bitmap]::FromFile($OverviewBmp)
+    $corner = $source.GetPixel(0, 0)
+    if ($corner.G -ge 200 -and $corner.R -le 32 -and $corner.B -le 32) {
+        # Older DoD overview bitmaps use a bright-green corner color as a
+        # transparency key. Preserve normal artwork; remove only that exact key.
+        $source.MakeTransparent($corner)
+    }
     $canvas = [System.Drawing.Bitmap]::new($mapWidth, $mapHeight)
     $graphics = [System.Drawing.Graphics]::FromImage($canvas)
     $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -358,7 +369,7 @@ function New-ContactSheet {
     $format.Trimming = [System.Drawing.StringTrimming]::EllipsisCharacter
     $format.FormatFlags = [System.Drawing.StringFormatFlags]::NoWrap
     try {
-        $graphics.DrawString('Anzio spatial analytics atlas', $titleFont, $white, $margin, 18)
+        $graphics.DrawString("$mapDisplayName spatial analytics atlas", $titleFont, $white, $margin, 18)
         $graphics.DrawString("$($ImagePaths.Count) aggregate-only analytical panels", $labelFont, $muted, $margin + 2, 61)
         for ($index = 0; $index -lt $ImagePaths.Count; $index++) {
             $column = $index % $columns; $row = [Math]::Floor($index / $columns)
@@ -401,9 +412,9 @@ $metadata = [ordered]@{
 $metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'atlas-metadata.json') -Encoding UTF8
 
 $readme = [System.Collections.Generic.List[string]]::new()
-$readme.Add('# Anzio spatial analytics atlas')
+$readme.Add("# $mapDisplayName spatial analytics atlas")
 $readme.Add('')
-$readme.Add('This folder contains one aggregate-only image set built from five local Lane B bot matches. It exposes no player names, identifiers, individual heatmaps, or routes. The current baseline is synthetic and is not yet a competitive-match norm.')
+$readme.Add("This folder contains one aggregate-only image set built from $($atlas.summary.matches) local Lane B bot matches. It exposes no player names, identifiers, individual heatmaps, or routes. The current baseline is synthetic and is not yet a competitive-match norm.")
 $readme.Add('')
 $readme.Add('[Open the full contact sheet](99-atlas-contact-sheet.png)')
 $readme.Add('')

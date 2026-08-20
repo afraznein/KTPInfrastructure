@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare aggregate-only Anzio spatial atlas data from local Lane B fixtures.
+"""Prepare aggregate-only spatial atlas data from local Lane B fixtures.
 
 The output deliberately contains no player names, player identifiers, Steam IDs,
 or per-player tracks.  It is an intermediate rendering payload made exclusively
@@ -222,7 +222,7 @@ def load_fixture(path: Path):
     tables = parse_sql(path)
     match_rows = [row for row in tables["ktp_matches"] if row.get("map_name") == MAP_NAME and row.get("match_id")]
     if not match_rows:
-        raise ValueError(f"No Anzio match in {path}")
+        raise ValueError(f"No {MAP_NAME} match in {path}")
     match_row = match_rows[-1]
     match_id = match_row["match_id"]
     teams = {
@@ -481,9 +481,9 @@ def build_atlas(matches, target_id):
     capouts = [(match, event) for match in matches for event in reconstruct_capouts(match)]
     before_capouts = samples_before_events(matches, reconstruct_capouts)
     if before_capouts:
-        panels.append(make_heatmap("35-corpus-pre-capout-occupancy.png", "Occupancy before reconstructed capouts", f"Five-match bot corpus | {EVENT_WINDOW_SECONDS:g} seconds before all-five-flags-owned transitions", aggregate_cells(before_capouts, "sample", SAMPLE_SECONDS), "purple", "Objective windows"))
+        panels.append(make_heatmap("35-corpus-pre-capout-occupancy.png", "Occupancy before reconstructed capouts", f"Five-match bot corpus | {EVENT_WINDOW_SECONDS:g} seconds before all-{len(FLAGS)}-flags-owned transitions", aggregate_cells(before_capouts, "sample", SAMPLE_SECONDS), "purple", "Objective windows"))
     else:
-        panels.append(make_placeholder("35-corpus-pre-capout-coverage.png", "Capout window coverage", "Five-match bot corpus", "No all-five-flags-owned transition could be reconstructed from these capture timelines.", "Objective windows"))
+        panels.append(make_placeholder("35-corpus-pre-capout-coverage.png", "Capout window coverage", "Five-match bot corpus", f"No all-{len(FLAGS)}-flags-owned transition could be reconstructed from these capture timelines.", "Objective windows"))
 
     damage_points = []
     for match in matches:
@@ -564,7 +564,8 @@ def build_atlas(matches, target_id):
         {"Section": "Objective efficiency", "Images": str(sum(p["category"] == "Objective efficiency" for p in panels)), "Purpose": "Damage and flag-area efficiency"},
         {"Section": "Baselines", "Images": str(sum(p["category"] == "Baselines" for p in panels)), "Purpose": "Five-match corpus and target comparison"},
     ]
-    cover = {"name": "00-spatial-atlas-overview.png", "type": "table", "title": "Anzio spatial analytics atlas", "detail": f"{len(matches)} local bot matches | target plus leave-one-out baseline | aggregate-only", "category": "Overview", "columns": ["Section", "Images", "Purpose"], "rows": cover_rows}
+    display_name = str(MAP_CONFIG.get("display_name") or MAP_NAME)
+    cover = {"name": "00-spatial-atlas-overview.png", "type": "table", "title": f"{display_name} spatial analytics atlas", "detail": f"{len(matches)} local bot matches | target plus leave-one-out baseline | aggregate-only", "category": "Overview", "columns": ["Section", "Images", "Purpose"], "rows": cover_rows}
     panels.insert(0, cover)
 
     return {
