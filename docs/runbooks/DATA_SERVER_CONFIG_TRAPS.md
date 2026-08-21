@@ -1,6 +1,6 @@
 # Runbook: data-server config traps
 
-**What:** three ways a routine change on the data server produces a result that
+**What:** four ways a routine change on the data server produces a result that
 looks right and is not. Each one has cost real time; each has a cheap check.
 
 **When:** before editing nginx vhosts, changing observability retention, or
@@ -25,6 +25,44 @@ nginx -T | grep -i 'conflicting server name' # clashes it resolved silently
 Keep backups anywhere except the directory the service globs. The same shape
 applies wherever a service reads a directory rather than a named file — `sa2`
 find-globs `/etc/sysstat/`, and `cron.d` entries are read the same way.
+
+## Backups in a docroot are not globbed — they are SERVED
+
+The trap above is about a directory a service *reads*. A web root is worse: nginx
+does not glob it, it serves whatever is requested by name. So `index.html.bak-<date>`
+beside a live page is fetchable by anyone who guesses the filename, and the usual
+deploy habit — copy the file, then edit it — creates exactly that.
+
+Nothing warns you. The backup is not in any config, `nginx -t` has no opinion, and
+the live page keeps returning 200.
+
+```bash
+# what is actually reachable
+find /var/www -maxdepth 2 -name '*.bak*' ! -name '*fallback*'
+curl -s -o /dev/null -w '%{http_code}\n' https://<host>/index.html.bak-<date>
+```
+
+Two fixes, and the second is the one that lasts:
+
+1. Move the files out of the docroot. Delete nothing — a superseded page is still
+   a record; it just does not belong on a public path.
+2. Refuse the extensions at the server, so the next deploy cannot reintroduce it:
+
+```nginx
+location ~* \.(bak|bak-.*|orig|old|save|swp|swo|tmp)$ { return 404; }
+```
+
+Two cautions from applying it:
+
+- **Do not copy a variant that also denies `.md`** unless that vhost really has no
+  markdown to serve. One of ours serves `README.md` as `text/plain`, and the
+  stricter rule would have 404'd it.
+- **Verify with a file that exists.** After moving the backups out, a 404 proves
+  the file is gone, not that the rule fired. Plant one file and one `.bak` copy of
+  it, expect 200 and 404, then remove both.
+
+A regex `location` outranks prefix locations, so check it cannot shadow an ACME
+challenge block — give that block `^~` if it is a prefix match.
 
 ## Observability config that changes format, not just volume
 
