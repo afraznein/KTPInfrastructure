@@ -42,7 +42,7 @@ The rewrite: **compute md5sum + stat size of the live binaries on the canary ins
 4. **Live-binary md5 matches operator-supplied baseline** for every canary-relevant plugin/binary.
    - `md5sum ~/dod-<PORT>/serverfiles/dod/addons/ktpamx/plugins/<X>.amxx`
    - This is the load-bearing assertion. The whole point.
-   - The operator provides the expected md5 list at canary-creation time, sourced from the latest `CHANGES_SUMMARY_*.md` entry for the active deploy.
+   - The operator provides the expected md5 list at canary-creation time, sourced from the deploy record for the active wave.
 5. **Live-binary size matches expected** (belt + suspenders against md5 collision).
    - `stat -c '%s' <path>` per plugin.
 6. **The variable being toggled is currently at the expected pre-toggle value.**

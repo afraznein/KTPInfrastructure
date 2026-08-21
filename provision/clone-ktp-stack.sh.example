@@ -1164,7 +1164,7 @@ fi
 echo "  $STEP. Review/update discord.ini (relay URL, auth secret, channel IDs)"
 STEP=$((STEP + 1))
 echo "  $STEP. On data server: Run setup-<cluster>-dataserver.sh or manually:"
-echo "     - Add SSH key: ssh-copy-id -i /var/www/fastdl/.ssh/id_rsa.pub dodserver@<IP>"
+echo "     - Add SSH key: ssh-copy-id -i /opt/ktp-file-distributor/.ssh/id_distributor_ed25519.pub dodserver@<IP>"
 echo "     - Update FileDistributor: /opt/ktp-file-distributor/servers.json"
 echo "     - Configure HLTV instances for this cluster"
 echo "     - Add to HLStatsX database"

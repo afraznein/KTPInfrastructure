@@ -210,8 +210,7 @@ jobs:
       # but the registry was still serving the previous manifest — the new
       # KTPHudObserver.amxx wasn't visible, all 7 plugin smokes failed with
       # `Plugin file open error`. Re-running 8h later succeeded against the
-      # same `:latest` tag. See discord-embeds/CHANGES_SUMMARY_2026-05-01.md
-      # for the full incident write-up.
+      # same `:latest` tag.
       - name: Verify :latest propagation
         run: |
           set -euo pipefail

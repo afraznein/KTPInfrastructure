@@ -2371,6 +2371,15 @@ KTPFileDistributor automatically:
 }
 ```
 
+The `WatchPath` above is illustrative. In production the watched directory is
+`/home/dod/distribute/`, and it is a **live deploy surface, not a staging area**:
+anything created or modified there reaches every fleet instance within seconds,
+and deletions propagate too. That includes files nobody meant to deploy — a
+`sed -i` backup and sed's own temp file have both been replicated fleet-wide.
+Edit outside the tree and copy the finished file in, write backups somewhere
+else entirely, and when cleaning up remove the source first or the watcher
+re-pushes what you just deleted.
+
 #### Systemd Service
 
 ```ini
@@ -2529,7 +2538,7 @@ Monitoring is deliberately in-house: **Netdata was retired fleet-wide 2026-07-02
 | Telemetry aggregation | 5-min cycle, data server | Pulls engine-emitted `[KTP_PROFILE]` / `[KTP_SPIKE*]` lines from fleet logs into MySQL |
 | `ktp-perf-rollup` | daily cron | Per-host FPS and spike-rate digests against trailing baselines, with both statistical (σ-breach) and absolute-ceiling alert gates so a slowly degrading host can't hide inside its own worsening baseline |
 | Fleet drift audit | weekly cron | Compares live sysctl, binary checksums, kernel cmdline, timers, and rc.local against declarative expected-state files in `provision/` |
-| Tier-2 heartbeat + stack-drift tripwire | 6-h cron | Alerts if the integration-test runner dies, and if the runner's module stack drifts from the fleet reference host — a green test suite certifying a stale stack is worse than a red one |
+| Tier-2 heartbeat + stack-drift tripwire | 6-h cron | Alerts if the integration-test runner dies, and if the runner's module stack drifts from the fleet reference host — a green test suite certifying a stale stack is worse than a red one. It compares binaries only: plugins and configs are deliberately excluded, so config drift is invisible to it and stays a manual check each wave |
 
 **Nightly restarts and staged deploys.** Every game host restarts at 03:00 ET (Discord-notified). Between stop and start, `ktp-scheduled-restart.sh` swaps any staged `<file>.new` binaries into place — engine binaries, the KTPAMXX core, modules, and `.amxx` plugins. The swap glob list is explicit, not recursive; a new deploy path requires editing the script. Two hard-won details are baked in: `chmod +x` after every swap (an SFTP-uploaded file otherwise arrives without the execute bit and takes the fleet down at 03:00 — this happened once), and a post-start assert that `ktp_extension_loaded >= 1` over rcon, so a server that silently degraded to vanilla HLDS is caught at restart time rather than by a confused player.
 
