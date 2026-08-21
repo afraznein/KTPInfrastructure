@@ -32,7 +32,9 @@ mkdir -p "$BACKUP_DIR"
 # unconditionally: 4 consecutive failed weekly dumps (MySQL down, rotated
 # password) silently destroyed every good backup while printing
 # "Backup complete". Now a failed dump keeps the old backups and exits 1.
-if ! mysqldump --defaults-extra-file="$MYSQL_CNF" hlstatsx | gzip > "$BACKUP_DIR/hlstatsx_$TIMESTAMP.sql.gz"; then
+# --no-tablespaces is required: without PROCESS privilege MySQL 8 aborts mid-dump,
+# and the partial file it leaves behind still reads as a complete backup.
+if ! mysqldump --no-tablespaces --defaults-extra-file="$MYSQL_CNF" hlstatsx | gzip > "$BACKUP_DIR/hlstatsx_$TIMESTAMP.sql.gz"; then
     echo "ERROR: mysqldump FAILED — keeping existing backups, skipping retention prune"
     rm -f "$BACKUP_DIR/hlstatsx_$TIMESTAMP.sql.gz"
     exit 1
