@@ -129,10 +129,10 @@ def preflight_attribution(host_keys):
 # to the fleet without the runner holding the matching test build means the next
 # suite run certifies a build nobody is about to ship. Mirrors PLUGINS_TESTMODE
 # in ktp-tier2-stack-drift.py -- keep the two in step.
+# KTPHudObserver is externally maintained -- never staged or waved from here.
 RUNNER_TESTMODE_PLUGINS = {
     "KTPMatchHandler.amxx",
     "KTPPracticeMode.amxx",
-    "KTPHudObserver.amxx",
 }
 
 # Runner location. No default host: this tool deliberately holds no IPs, and a
