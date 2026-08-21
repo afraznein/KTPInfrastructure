@@ -259,11 +259,11 @@ The FileDistributor service on the data server needs SSH access to deploy files 
 
 ```bash
 # Copy the FileDistributor SSH key to the new game server
-ssh-copy-id -i /var/www/fastdl/.ssh/id_rsa.pub dodserver@<NEW_SERVER_IP>
+ssh-copy-id -i /opt/ktp-file-distributor/.ssh/id_distributor_ed25519.pub dodserver@<NEW_SERVER_IP>
 # Enter password: REDACTED
 
 # Test the connection
-ssh -i /var/www/fastdl/.ssh/id_rsa dodserver@<NEW_SERVER_IP> "echo 'FileDistributor access OK'"
+ssh -i /opt/ktp-file-distributor/.ssh/id_distributor_ed25519 dodserver@<NEW_SERVER_IP> "echo 'FileDistributor access OK'"
 ```
 
 **Verify:** Distribute a test file through FileDistributor. All servers should show successful uploads.
@@ -278,7 +278,7 @@ Edit `/opt/ktp-file-distributor/servers.json` on the data server to add entries 
   "host": "192.168.1.100",
   "port": 22,
   "username": "dodserver",
-  "privateKeyPath": "/var/www/fastdl/.ssh/id_rsa",
+  "privateKeyPath": "/opt/ktp-file-distributor/.ssh/id_distributor_ed25519",
   "remoteBasePath": "/home/dodserver/dod-27015/serverfiles/dod",
   "enabled": true
 }
