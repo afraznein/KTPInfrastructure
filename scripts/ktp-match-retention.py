@@ -38,6 +38,8 @@ MATCH_TABLES = (
     "hlstats_Events_TeamBonuses",
     "hlstats_Events_Teamkills",
     "ktp_assist_events",
+    "ktp_capture_health",
+    "ktp_capture_manifests",
     "ktp_damage_events",
     "ktp_flag_captures",
     "ktp_flag_state_events",

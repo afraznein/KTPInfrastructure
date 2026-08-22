@@ -157,7 +157,22 @@ def test_cap_breaks_report_credits_and_incident_lower_bound_separately():
     result = canary_evidence.cap_break_evidence(rows)
     assert result["cappers_stopped"] == 3
     assert result["incident_lower_bound"] == 2
+    assert result["incident_identity_available"] is False
+
+
+def test_cap_breaks_use_exact_incident_and_victim_identity_when_available():
+    rows = [
+        {"event_time": "2026-08-21 21:20:50", "player_id": 115,
+         "pos_x": 1, "pos_y": 2, "pos_z": 3, "break_victim_id": 200,
+         "break_incident_id": 44},
+        {"event_time": "2026-08-21 21:20:50", "player_id": 116,
+         "pos_x": 1, "pos_y": 2, "pos_z": 3, "break_victim_id": 201,
+         "break_incident_id": 45},
+    ]
+    result = canary_evidence.cap_break_evidence(rows)
     assert result["incident_identity_available"] is True
+    assert result["incident_lower_bound"] == 2
+    assert result["victim_identity_coverage"] == 1.0
 
 
 def test_statsme_is_reconciled_but_not_used_as_canonical_death_source():
@@ -169,3 +184,70 @@ def test_statsme_is_reconciled_but_not_used_as_canonical_death_source():
     assert result["canonical_physical_deaths"] == 558
     assert result["statsme_death_delta"] == -14
     assert "frag/teamkill/suicide ledgers" in result["canonical_rule"]
+
+
+def test_capture_health_requires_manifest_all_types_and_exact_receipts():
+    rows = {
+        "manifests": [{
+            "half": 1, "producer": "stats_logging", "producer_version": "1.17.0",
+            "schema_version": 20,
+        }],
+        "health": [
+            {
+                "half": 1, "event_type": event_type, "dropped": 0,
+                "emitted": 3, "daemon_received": 3, "daemon_accepted": 3,
+                "daemon_rejected": 0, "correlation_failure_count": 0,
+                "sequence_gap_count": 0,
+                "duplicate_or_reordered_count": 0,
+            }
+            for event_type in canary_evidence.CAPTURE_EVENT_TYPES
+        ],
+    }
+    result = canary_evidence.capture_health_evidence(rows, {1})
+    assert result["trusted"] is True
+    assert result["manifest_versions"] == ["stats_logging@1.17.0/schema-20"]
+
+
+def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
+    health = [
+        {
+            "half": 1, "event_type": event_type, "dropped": 0,
+            "emitted": 2, "daemon_received": 2, "daemon_accepted": 2,
+            "daemon_rejected": 0, "correlation_failure_count": 0,
+            "sequence_gap_count": 0,
+            "duplicate_or_reordered_count": 0,
+        }
+        for event_type in canary_evidence.CAPTURE_EVENT_TYPES
+    ]
+    health[0]["dropped"] = 1
+    health[1]["sequence_gap_count"] = 2
+    health[2]["daemon_received"] = 1
+    health[2]["daemon_accepted"] = 1
+    result = canary_evidence.capture_health_evidence(
+        {"manifests": [{"half": 1}], "health": health}, {1}
+    )
+    assert result["trusted"] is False
+    assert result["producer_drops"] == 1
+    assert result["sequence_gaps"] == 2
+    assert result["emitted_received_mismatches"] == 1
+
+
+def test_position_cadence_accepts_five_second_samples_with_tolerance():
+    result = canary_evidence.position_cadence_evidence([
+        {"half": 1, "sample_time": value, "player_samples": 10}
+        for value in (5.0, 10.0, 15.0, 20.0)
+    ] + [
+        {"half": 2, "sample_time": value, "player_samples": 8}
+        for value in (5.1, 10.2, 15.2)
+    ])
+    assert result["within_slo"] is True
+    assert result["halves"][0]["median_interval_seconds"] == 5.0
+
+
+def test_position_cadence_rejects_sparse_or_missing_samples():
+    sparse = canary_evidence.position_cadence_evidence([
+        {"half": 1, "sample_time": value, "player_samples": 5}
+        for value in (5.0, 20.0, 35.0)
+    ])
+    assert sparse["within_slo"] is False
+    assert canary_evidence.position_cadence_evidence([])["available"] is False

@@ -38,6 +38,10 @@ from dataclasses import dataclass
 _PPA = "hlstats_Events_PlayerPlayerActions"
 _PA = "hlstats_Events_PlayerActions"
 
+
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
 # Migration 017 deliberately leaves the producer fields on legacy frag and
 # damage tables nullable: old rows cannot be backfilled truthfully.  The
 # canonical assist ledger has required producer context/clocks, while each
@@ -1353,4 +1357,38 @@ def summarise(db, *, match_id: str | None = None) -> dict:
         "assist_context": db.count("SELECT COUNT(*) FROM ktp_assist_events"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),
+    }
+
+
+def check_capture_health(db, *, match_id: str, half: int) -> dict:
+    """Require the 1.17.0 producer manifest and exact end-to-end counts."""
+    literal = _sql_literal(match_id)
+    manifest = db.count(f"""
+SELECT COUNT(*) FROM ktp_capture_manifests
+WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
+  AND producer='stats_logging' AND schema_version >= 20
+""")
+    rows = db.count(f"""
+SELECT COUNT(*) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
+""")
+    bad = db.count(f"""
+SELECT COUNT(*) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
+  AND (dropped <> 0 OR emitted <> daemon_received OR emitted <> daemon_accepted
+       OR daemon_rejected <> 0 OR correlation_failure_count <> 0
+       OR sequence_gap_count <> 0 OR duplicate_or_reordered_count <> 0)
+""")
+    ok = manifest == 1 and rows == 8 and bad == 0
+    return {
+        "code": "capture_health",
+        "status": "ok" if ok else "pipeline",
+        "detail": (
+            "Manifest and all eight producer/daemon event counters reconcile"
+            if ok else
+            f"manifest={manifest} health_rows={rows}/8 unhealthy_rows={bad}"
+        ),
+        "manifest_rows": manifest,
+        "health_rows": rows,
+        "unhealthy_rows": bad,
     }

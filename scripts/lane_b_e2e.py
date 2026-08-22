@@ -1061,6 +1061,11 @@ def main() -> int:
                 half=((report.get("match") or {}).get("half")),
             ),
             assertions.check_capture_buffer(log_text),
+            assertions.check_capture_health(
+                db,
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
         ]
         if report.get("assist_scenario"):
             carried.append(report["assist_scenario"])

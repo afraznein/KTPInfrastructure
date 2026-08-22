@@ -16,6 +16,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from statistics import median
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -30,6 +31,9 @@ MATCH_TYPES = {
     0: "official", 1: "scrim", 2: "12man", 3: "draft",
     4: "official_ot", 5: "draft_ot",
 }
+FRAG_CONTEXT_SLO_PCT = 99.5
+POSITION_INTERVAL_SECONDS = 5.0
+POSITION_INTERVAL_TOLERANCE_SECONDS = 0.75
 ERROR_PATTERNS = {
     "unresolved_actions": re.compile(
         r"Unresolved action\s+['\"]|unknown action|action.{0,30}not found", re.I
@@ -146,13 +150,15 @@ SELECT COUNT(*) AS rows_total,
            AND producer_half > 0 AND game_time IS NOT NULL
            AND event_epoch IS NOT NULL) AS rows_producer_timed,
        SUM(frag_context_recorded = 1) AS rows_contextual,
+       SUM(LEFT(map, 4) <> 'dod_') AS rows_invalid_map,
        SUM(is_last_flag_defense = 1) AS rows_last_flag_defense
 FROM hlstats_Events_Frags
 WHERE BINARY match_id = BINARY {literal}
    OR BINARY producer_match_id = BINARY {literal}
 """) if sources.get("frag_event_clock") else {
         "rows_total": 0, "rows_producer_timed": None,
-        "rows_contextual": None, "rows_last_flag_defense": None,
+        "rows_contextual": None, "rows_invalid_map": None,
+        "rows_last_flag_defense": None,
     }
     damage = _count_row(db, f"""
 SELECT COUNT(*) AS rows_total,
@@ -181,6 +187,52 @@ FROM ktp_assist_events WHERE BINARY match_id = BINARY {literal}
             "canonical_assists": assists}
 
 
+def collect_position_cadence(
+    db: EphemeralMysql, match_id: str, available: bool,
+) -> list[dict[str, Any]]:
+    if not available:
+        return []
+    literal = analytics.sql_literal(match_id)
+    return analytics.tsv_rows(db.sql(f"""
+SELECT half, ROUND(game_time, 1) AS sample_time, COUNT(*) AS player_samples
+FROM ktp_position_samples
+WHERE BINARY match_id=BINARY {literal}
+GROUP BY half, ROUND(game_time, 1) ORDER BY half, sample_time
+"""))
+
+
+def position_cadence_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    ticks_by_half: dict[int, list[float]] = {}
+    samples_by_half: dict[int, int] = {}
+    for row in rows:
+        half = int(row["half"])
+        ticks_by_half.setdefault(half, []).append(float(row["sample_time"]))
+        samples_by_half[half] = samples_by_half.get(half, 0) + int(
+            row.get("player_samples") or 0
+        )
+    halves = []
+    for half, ticks in sorted(ticks_by_half.items()):
+        deltas = [later - earlier for earlier, later in zip(ticks, ticks[1:])]
+        interval = round(float(median(deltas)), 3) if deltas else None
+        in_tolerance = bool(
+            interval is not None
+            and abs(interval - POSITION_INTERVAL_SECONDS)
+            <= POSITION_INTERVAL_TOLERANCE_SECONDS
+        )
+        halves.append({
+            "half": half, "rows_total": samples_by_half[half],
+            "sample_ticks": len(ticks), "median_interval_seconds": interval,
+            "in_tolerance": in_tolerance,
+        })
+    return {
+        "available": bool(rows),
+        "target_interval_seconds": POSITION_INTERVAL_SECONDS,
+        "tolerance_seconds": POSITION_INTERVAL_TOLERANCE_SECONDS,
+        "within_slo": bool(halves) and all(row["in_tolerance"] for row in halves),
+        "halves": halves,
+    }
+
+
 def collect_flag_positions(
     db: EphemeralMysql, match_id: str, available: bool,
 ) -> list[dict[str, Any]]:
@@ -197,18 +249,109 @@ ORDER BY fp.flag_index
 """))
 
 
+CAPTURE_EVENT_TYPES = {
+    "life", "damage", "position", "frag", "assist", "break",
+    "flag_state", "flag_position",
+}
+
+
+def collect_capture_health(
+    db: EphemeralMysql, match_id: str, available: bool,
+) -> dict[str, list[dict[str, Any]]]:
+    if not available:
+        return {"manifests": [], "health": []}
+    literal = analytics.sql_literal(match_id)
+    manifests = analytics.tsv_rows(db.sql(f"""
+SELECT half, map_name, producer, producer_version, schema_version,
+       capabilities, position_interval, buffer_entries, life_buffer_entries,
+       producer_sequence, event_epoch
+FROM ktp_capture_manifests WHERE BINARY match_id=BINARY {literal}
+ORDER BY half, producer
+"""))
+    health = analytics.tsv_rows(db.sql(f"""
+SELECT half, event_type, attempted, enqueued, dropped, emitted,
+       daemon_received, daemon_accepted, daemon_rejected,
+       correlation_failure_count, sequence_first, sequence_last,
+       daemon_sequence_first, daemon_sequence_last, sequence_gap_count,
+       duplicate_or_reordered_count, producer_sequence, event_epoch
+FROM ktp_capture_health WHERE BINARY match_id=BINARY {literal}
+ORDER BY half, event_type
+"""))
+    return {"manifests": manifests, "health": health}
+
+
+def capture_health_evidence(
+    rows: dict[str, list[dict[str, Any]]], expected_halves: set[int],
+) -> dict[str, Any]:
+    manifests, health = rows.get("manifests", []), rows.get("health", [])
+    manifest_halves = {int(row["half"]) for row in manifests}
+    health_by_half: dict[int, set[str]] = {}
+    for row in health:
+        health_by_half.setdefault(int(row["half"]), set()).add(str(row["event_type"]))
+    complete_types = bool(expected_halves) and all(
+        health_by_half.get(half, set()) == CAPTURE_EVENT_TYPES
+        for half in expected_halves
+    )
+    drops = sum(int(row.get("dropped") or 0) for row in health)
+    gaps = max((int(row.get("sequence_gap_count") or 0) for row in health), default=0)
+    duplicates = max(
+        (int(row.get("duplicate_or_reordered_count") or 0) for row in health),
+        default=0,
+    )
+    mismatches = [row for row in health if int(row.get("emitted") or 0)
+                  != int(row.get("daemon_received") or 0)]
+    acceptance_mismatches = [
+        row for row in health
+        if int(row.get("emitted") or 0) != int(row.get("daemon_accepted") or 0)
+    ]
+    rejected = sum(int(row.get("daemon_rejected") or 0) for row in health)
+    correlation_failures = sum(
+        int(row.get("correlation_failure_count") or 0) for row in health
+    )
+    manifest_complete = bool(expected_halves) and manifest_halves == expected_halves
+    available = bool(manifests or health)
+    trusted = bool(
+        available and manifest_complete and complete_types and drops == 0
+        and gaps == 0 and duplicates == 0 and not mismatches
+        and not acceptance_mismatches and rejected == 0 and correlation_failures == 0
+    )
+    return {
+        "available": available,
+        "trusted": trusted,
+        "manifest_complete": manifest_complete,
+        "health_types_complete": complete_types,
+        "producer_drops": drops,
+        "sequence_gaps": gaps,
+        "duplicates_or_reordered": duplicates,
+        "emitted_received_mismatches": len(mismatches),
+        "emitted_accepted_mismatches": len(acceptance_mismatches),
+        "daemon_rejected": rejected,
+        "correlation_failures": correlation_failures,
+        "manifest_versions": sorted({
+            f"{row.get('producer')}@{row.get('producer_version')}/schema-{row.get('schema_version')}"
+            for row in manifests
+        }),
+        "rows": health,
+    }
+
+
 def collect_cap_breaks(db: EphemeralMysql, match_id: str) -> list[dict[str, Any]]:
     literal = analytics.sql_literal(match_id)
-    detail_columns = ("eventTime", "playerId", "pos_x", "pos_y", "pos_z")
+    detail_columns = (
+        "eventTime", "playerId", "pos_x", "pos_y", "pos_z",
+        "break_victim_id", "break_incident_id", "flag_index", "flag_name",
+    )
     detailed = all(
         _column_exists(db, "hlstats_Events_PlayerActions", column)
         for column in detail_columns
     )
     select = (
         "pa.eventTime AS event_time, pa.playerId AS player_id, "
-        "pa.pos_x, pa.pos_y, pa.pos_z" if detailed else
+        "pa.pos_x, pa.pos_y, pa.pos_z, pa.break_victim_id, "
+        "pa.break_incident_id, pa.flag_index, pa.flag_name" if detailed else
         "NULL AS event_time, NULL AS player_id, NULL AS pos_x, "
-        "NULL AS pos_y, NULL AS pos_z"
+        "NULL AS pos_y, NULL AS pos_z, NULL AS break_victim_id, "
+        "NULL AS break_incident_id, NULL AS flag_index, NULL AS flag_name"
     )
     return analytics.tsv_rows(db.sql(f"""
 SELECT {select}
@@ -265,10 +408,16 @@ def capture_activation_evidence(
 
     frag_pct = coverage("frags")
     damage_pct = coverage("damage")
+    frag_total = int(rows["frags"].get("rows_total") or 0)
+    frag_contextual = int(rows["frags"].get("rows_contextual") or 0)
+    frag_context_pct = (
+        round(100.0 * frag_contextual / frag_total, 3) if frag_total else None
+    )
     canonical = rows["canonical_assists"].get("rows_total")
     return {
         **rows,
         "frag_producer_coverage_pct": frag_pct,
+        "frag_context_coverage_pct": frag_context_pct,
         "damage_producer_coverage_pct": damage_pct,
         "life_active": (
             rows["life_events"].get("rows_total") is not None
@@ -335,9 +484,12 @@ def objective_trust_evidence(
 
 
 def cap_break_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    exact = bool(rows) and all(row.get("break_incident_id") is not None for row in rows)
     detailed = bool(rows) and all(row.get("event_time") is not None for row in rows)
     incidents = None
-    if detailed:
+    if exact:
+        incidents = len({row["break_incident_id"] for row in rows})
+    elif detailed:
         incidents = len({(
             row.get("event_time"), row.get("player_id"), row.get("pos_x"),
             row.get("pos_y"), row.get("pos_z"),
@@ -345,8 +497,13 @@ def cap_break_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "cappers_stopped": len(rows),
         "incident_lower_bound": incidents,
-        "incident_identity_available": detailed,
+        "incident_identity_available": exact,
+        "victim_identity_coverage": (
+            sum(row.get("break_victim_id") is not None for row in rows) / len(rows)
+            if rows else None
+        ),
         "schema_gap": (
+            None if exact else
             "Rows lack victim/flag/incident IDs; identical multi-capper credits can only be grouped as a lower bound."
             if rows else None
         ),
@@ -412,6 +569,8 @@ def build_evidence(
     provenance: dict[str, Any], *, capture_activation: dict[str, Any] | None = None,
     flag_positions: list[dict[str, Any]] | None = None,
     cap_break_rows: list[dict[str, Any]] | None = None,
+    capture_health_rows: dict[str, list[dict[str, Any]]] | None = None,
+    position_cadence_rows: list[dict[str, Any]] | None = None,
     expected_server_id: int | None = None,
     retention_days: int = 14, as_of: datetime | None = None,
 ) -> dict[str, Any]:
@@ -438,6 +597,11 @@ def build_evidence(
         as_of=as_of or datetime.now(timezone.utc),
     )
     sources = analytics_report["source_coverage"]
+    expected_halves = {int(row["half"]) for row in classifications}
+    capture_health = capture_health_evidence(
+        capture_health_rows or {"manifests": [], "health": []}, expected_halves,
+    )
+    position_cadence = position_cadence_evidence(position_cadence_rows or [])
     checks = []
 
     def add(level: str, code: str, detail: str) -> None:
@@ -459,6 +623,29 @@ def build_evidence(
             f"{source}_producer_clock",
             f"{label} producer-clock coverage: {percent if percent is not None else 'unavailable'}%.",
         )
+    context_pct = activation["frag_context_coverage_pct"]
+    add(
+        "PASS" if context_pct is not None and context_pct >= FRAG_CONTEXT_SLO_PCT
+        else "FAIL",
+        "frag_context_slo",
+        f"Frag-context coverage: {context_pct if context_pct is not None else 'unavailable'}%; "
+        f"required >= {FRAG_CONTEXT_SLO_PCT}%.",
+    )
+    invalid_maps = activation["frags"].get("rows_invalid_map")
+    add(
+        "WARN" if invalid_maps is None else
+        "PASS" if int(invalid_maps) == 0 else "FAIL",
+        "canonical_map_names",
+        f"Frag rows with non-dod_ map names: {invalid_maps if invalid_maps is not None else 'unavailable'}.",
+    )
+    add(
+        "PASS" if position_cadence["within_slo"] else
+        "WARN" if not position_cadence["available"] else "FAIL",
+        "position_cadence_slo",
+        f"Position cadence target {POSITION_INTERVAL_SECONDS}s +/- "
+        f"{POSITION_INTERVAL_TOLERANCE_SECONDS}s; halves: "
+        f"{position_cadence['halves'] if position_cadence['available'] else 'unavailable'}.",
+    )
     add("PASS" if activation["life_active"] else "FAIL", "life_capture_active",
         f"Physical life rows: {activation['life_events'].get('rows_total')}.")
     assist_level = (
@@ -468,6 +655,19 @@ def build_evidence(
     add(assist_level, "canonical_assist_reconciliation",
         f"Generic assists: {generic_assists}; canonical timed assists: "
         f"{activation['canonical_assists'].get('rows_total')}.")
+    add(
+        "PASS" if capture_health["trusted"] else
+        "WARN" if not capture_health["available"] else "FAIL",
+        "capture_health_reconciliation",
+        "Producer counters, daemon receipts, and global sequences reconcile."
+        if capture_health["trusted"] else
+        "Capture-health telemetry is unavailable (legacy producer)."
+        if not capture_health["available"] else
+        f"drops={capture_health['producer_drops']} gaps={capture_health['sequence_gaps']} "
+        f"receipt_mismatches={capture_health['emitted_received_mismatches']} "
+        f"rejected={capture_health['daemon_rejected']} "
+        f"correlation_failures={capture_health['correlation_failures']}.",
+    )
     add("PASS" if objective_trust["trusted_for_capout_and_last_flag"] else "WARN",
         "objective_classification_trust", objective_trust["reason"])
     add("PASS" if statsme["statsme_kills_reconciled"] else "WARN",
@@ -501,6 +701,8 @@ def build_evidence(
         "provenance": provenance, "checks": checks,
         "match_type": classification, "ownership": ownership,
         "capture_activation": activation,
+        "capture_health": capture_health,
+        "position_cadence": position_cadence,
         "objective_classification": objective_trust,
         "cap_breaks": cap_breaks,
         "statsme_reconciliation": statsme,
@@ -548,6 +750,11 @@ def render_markdown(evidence: dict[str, Any]) -> str:
         f"damage producer clocks: `{evidence['capture_activation']['damage_producer_coverage_pct']}%`.  ",
         f"Life rows: `{evidence['capture_activation']['life_events'].get('rows_total')}`; "
         f"canonical assists: `{evidence['capture_activation']['canonical_assists'].get('rows_total')}`.",
+        f"Capture-health trusted: `{evidence['capture_health']['trusted']}`; "
+        f"drops: `{evidence['capture_health']['producer_drops']}`; "
+        f"sequence gaps: `{evidence['capture_health']['sequence_gaps']}`.",
+        f"Position cadence within SLO: `{evidence['position_cadence']['within_slo']}`; "
+        f"halves: `{evidence['position_cadence']['halves']}`.",
         "", "## Objective classification", "",
         f"Trusted for capout/last-flag: "
         f"`{evidence['objective_classification']['trusted_for_capout_and_last_flag']}`.  ",
@@ -607,6 +814,12 @@ def main(argv: list[str] | None = None) -> int:
             db, args.match_id, sources.get("flag_positions", False)
         )
         cap_break_rows = collect_cap_breaks(db, args.match_id)
+        capture_health_rows = collect_capture_health(
+            db, args.match_id, sources.get("capture_health", False)
+        )
+        position_cadence_rows = collect_position_cadence(
+            db, args.match_id, sources.get("positions", False)
+        )
 
     evidence = build_evidence(
         report, classifications, ownership,
@@ -617,7 +830,9 @@ def main(argv: list[str] | None = None) -> int:
             "analytics_schema_version": analytics.SCHEMA_VERSION,
         },
         capture_activation=activation, flag_positions=flag_positions,
-        cap_break_rows=cap_break_rows, expected_server_id=args.expected_server_id,
+        cap_break_rows=cap_break_rows, capture_health_rows=capture_health_rows,
+        position_cadence_rows=position_cadence_rows,
+        expected_server_id=args.expected_server_id,
         retention_days=args.retention_days,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
