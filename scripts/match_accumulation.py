@@ -40,12 +40,20 @@ PRIVATE_KEYS = {
 }
 
 
-def load_profile(path: Path) -> dict[str, Any]:
+def load_position_profile(path: Path) -> dict[str, Any]:
     with path.open("rb") as source:
         profile = tomllib.load(source)
-    for section in ("profile", "events", "position"):
+    for section in ("profile", "position"):
         if section not in profile:
             raise ValueError(f"accumulation profile is missing [{section}]")
+    return profile
+
+
+def load_profile(path: Path) -> dict[str, Any]:
+    """Load a legacy aggregate profile used by this v0-v2 report CLI."""
+    profile = load_position_profile(path)
+    if "events" not in profile:
+        raise ValueError("legacy accumulation report profile is missing [events]")
     return profile
 
 
@@ -153,6 +161,19 @@ def _owner_at(
     return owner
 
 
+def _unopposed_presence_multiplier(elapsed_seconds: float, cfg: dict[str, Any]) -> float:
+    """Dampen only a consecutive unopposed run; contested presence stays whole."""
+    if "unopposed_full_value_seconds" not in cfg:
+        return 1.0
+    full = float(cfg["unopposed_full_value_seconds"])
+    reduced_until = float(cfg.get("unopposed_reduced_value_seconds", full))
+    if elapsed_seconds <= full:
+        return 1.0
+    if elapsed_seconds <= reduced_until:
+        return float(cfg.get("unopposed_reduced_multiplier", 0.5))
+    return float(cfg.get("unopposed_floor_multiplier", 0.25))
+
+
 def derive_private_positions(
     players: list[dict[str, Any]],
     samples: list[dict[str, Any]],
@@ -189,6 +210,8 @@ def derive_private_positions(
     for sample in samples:
         bucket = (int(sample["half"]), round(float(sample["game_time"]) / interval))
         sample_buckets[bucket].append(sample)
+    unopposed_runs: dict[tuple[int, int, int], float] = defaultdict(float)
+    last_near_flag: dict[tuple[int, int], tuple[int, int, int]] = {}
 
     for sample in samples:
         player_id = int(sample["player_id"])
@@ -229,6 +252,7 @@ def derive_private_positions(
         cell = state["heatmap"][(x // grid, y // grid)]
         cell["samples"] += 1
         cell["seconds"] += interval
+        player_half = (player_id, int(sample["half"]))
         if nearest is not None and nearest_distance is not None:
             flag_state = state["flag_breakdown"][(
                 int(nearest["flag_index"]), str(nearest["flag_name"])
@@ -236,8 +260,34 @@ def derive_private_positions(
             flag_state["samples"] += 1
             flag_state["observed_seconds"] += interval
             if nearest_distance <= radius:
+                bucket = (int(sample["half"]),
+                          round(float(sample["game_time"]) / interval))
+                actively_contested = False
+                if contest_radius > 0:
+                    for other in sample_buckets[bucket]:
+                        if int(other["team"]) == int(sample["team"]):
+                            continue
+                        if math.hypot(
+                            x - int(other["pos_x"]), y - int(other["pos_y"])
+                        ) <= contest_radius:
+                            actively_contested = True
+                            break
+
+                run_key = (player_id, int(sample["half"]), int(nearest["flag_index"]))
+                previous_key = last_near_flag.get(player_half)
+                if previous_key is not None and previous_key != run_key:
+                    unopposed_runs.pop(previous_key, None)
+                last_near_flag[player_half] = run_key
+                if actively_contested:
+                    unopposed_runs[run_key] = 0.0
+                    presence_multiplier = 1.0
+                else:
+                    unopposed_runs[run_key] += interval
+                    presence_multiplier = _unopposed_presence_multiplier(
+                        unopposed_runs[run_key], cfg
+                    )
                 proximity = 1.0 - (nearest_distance / radius)
-                raw_points = interval * rate * proximity
+                raw_points = interval * rate * proximity * presence_multiplier
                 flag_name = str(nearest["flag_name"])
                 role = _flag_role(flag_name, int(sample["team"]), topology)
                 territory_multiplier = _flag_multiplier(
@@ -264,19 +314,6 @@ def derive_private_positions(
                     )
                     state["contested_points"] += bonus
                     running += bonus
-
-                bucket = (int(sample["half"]),
-                          round(float(sample["game_time"]) / interval))
-                actively_contested = False
-                if contest_radius > 0:
-                    for other in sample_buckets[bucket]:
-                        if int(other["team"]) == int(sample["team"]):
-                            continue
-                        if math.hypot(
-                            x - int(other["pos_x"]), y - int(other["pos_y"])
-                        ) <= contest_radius:
-                            actively_contested = True
-                            break
 
                 sample_game_time = float(sample["game_time"])
                 timeline = ownership_timeline.get(
@@ -348,6 +385,10 @@ def derive_private_positions(
                 flag_state["raw_points"] += raw_points
                 flag_state["scenario_points"] += running
                 state["raw_position_points"] += running
+            else:
+                previous_key = last_near_flag.pop(player_half, None)
+                if previous_key is not None:
+                    unopposed_runs.pop(previous_key, None)
 
     point_fields = (
         "base_position_points", "enemy_pressure_points", "contested_points",

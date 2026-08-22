@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktp.example/schemas/accumulation-v3-facts-v1.json",
+  "title": "KTP normalized accumulation facts v1",
+  "type": "object",
+  "required": ["schema_version", "match", "players", "frags", "reliability"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "match": {
+      "type": "object",
+      "required": ["match_id", "map_name"],
+      "properties": {
+        "match_id": {"type": "string", "minLength": 1},
+        "map_name": {"type": "string", "minLength": 1},
+        "duration_seconds": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "players": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["player_id", "player_name_at_match"],
+        "properties": {
+          "player_id": {"type": "integer", "minimum": 1},
+          "player_name_at_match": {"type": "string"},
+          "team_name": {"type": ["string", "null"]},
+          "kills": {"type": "integer", "minimum": 0},
+          "deaths": {"type": "integer", "minimum": 0},
+          "assists": {"type": "integer", "minimum": 0},
+          "opponent_damage": {"type": "number", "minimum": 0},
+          "team_kills": {"type": "integer", "minimum": 0},
+          "suicides": {"type": "integer", "minimum": 0},
+          "observed_seconds": {"type": "number", "minimum": 0}
+        },
+        "additionalProperties": true
+      }
+    },
+    "frags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "half", "time", "killer_id", "victim_id"],
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1},
+          "half": {"type": "integer", "minimum": 1},
+          "time": {"type": "number", "minimum": 0},
+          "killer_id": {"type": "integer", "minimum": 1},
+          "victim_id": {"type": "integer", "minimum": 1},
+          "killer_team": {"type": "integer"},
+          "victim_team": {"type": "integer"},
+          "victim_life_id": {"type": ["string", "null"]}
+        },
+        "additionalProperties": true
+      }
+    },
+    "damage_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["attacker_id", "victim_id", "damage_capped"],
+        "properties": {
+          "death_event_id": {"type": ["string", "null"]},
+          "victim_life_id": {"type": ["string", "null"]},
+          "attacker_id": {"type": "integer", "minimum": 1},
+          "victim_id": {"type": "integer", "minimum": 1},
+          "attacker_team": {"type": "integer"},
+          "victim_team": {"type": "integer"},
+          "damage_capped": {"type": "number", "exclusiveMinimum": 0}
+        },
+        "additionalProperties": true
+      }
+    },
+    "death_resets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["half", "time", "player_id"],
+        "properties": {
+          "half": {"type": "integer", "minimum": 1},
+          "time": {"type": "number", "minimum": 0},
+          "player_id": {"type": "integer", "minimum": 1},
+          "kind": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "captures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "half", "time", "team", "credited_player_ids"],
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1},
+          "half": {"type": "integer", "minimum": 1},
+          "time": {"type": "number", "minimum": 0},
+          "team": {"type": "integer"},
+          "flag_name": {"type": ["string", "null"]},
+          "flag_role": {"enum": ["own_first", "own_second", "middle", "enemy_second", "enemy_first", "uncategorized", null]},
+          "credited_player_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+          "is_capout": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "cap_breaks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "half", "time", "player_id"],
+        "properties": {
+          "event_id": {"type": "string", "minLength": 1},
+          "half": {"type": "integer", "minimum": 1},
+          "time": {"type": "number", "minimum": 0},
+          "player_id": {"type": "integer", "minimum": 1},
+          "time_remaining": {"type": ["number", "null"], "minimum": 0},
+          "contester_count": {"type": ["integer", "null"], "minimum": 0},
+          "prevented_capout": {"type": "boolean"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "position_points": {
+      "description": "Derived points only. Raw personal positions are prohibited.",
+      "type": "object",
+      "patternProperties": {"^[1-9][0-9]*$": {"type": "number", "minimum": 0}},
+      "additionalProperties": false
+    },
+    "reliability": {
+      "type": "object",
+      "properties": {
+        "life_boundaries": {"type": "boolean"},
+        "damage_events": {"type": "boolean"},
+        "capture_events": {"type": "boolean"},
+        "ownership": {"type": "boolean"},
+        "map_topology": {"type": "boolean"},
+        "break_context": {"type": "boolean"},
+        "positions": {"type": "boolean"},
+        "flag_positions": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

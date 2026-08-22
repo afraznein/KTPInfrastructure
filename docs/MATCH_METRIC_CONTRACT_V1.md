@@ -120,10 +120,12 @@ Unavailable inputs remain `unavailable`. Positional accumulation remains
 
 ## Positional accumulation
 
-The currently implemented accumulation profile is
-`accumulation_v2_target10`; its exact private calculation and map-specific
-weights are defined in `MATCH_ACCUMULATION_PHASE_C.md` and versioned TOML. It
-is shadow-only and MUST NOT replace KTPR without a separately approved release.
+The historical positional comparison profile is `accumulation_v2_target10`.
+The current local scoring iteration is `accumulation_v3_bounded`, whose fixed
+combat/objective budgets, no-penalty rule, contextual bonuses, reliability
+gates, and report automation contract are defined in
+`ACCUMULATION_V3_BOUNDED.md` and versioned TOML. Both remain shadow-only and
+MUST NOT replace KTPR without a separately approved release.
 
 Only the final derived `position_points` and component totals may leave the
 private workspace. Per-player cells, coordinates, paths, flag identities,
@@ -131,7 +133,9 @@ distances, and sample coverage remain private.
 
 ## Momentum and objective conversion
 
-V1 deliberately publishes timelines, not a single momentum score. The atlas
+V1 deliberately published timelines rather than a momentum score. Bounded v3
+now emits an experimental, capped conversion ledger alongside those timelines;
+it remains a shadow component pending human-match calibration. The atlas
 may show combat and occupancy during the 30 seconds before captures, cap
 breaks, and capouts. A future score may weight fast multikills, trades, middle
 captures, and capout conversion, but it MUST be calibrated on human matches,

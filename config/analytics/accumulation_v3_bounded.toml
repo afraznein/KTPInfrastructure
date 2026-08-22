@@ -1,0 +1,92 @@
+# Bounded, explainable accumulation model. Every combat death and objective
+# event has a fixed point budget; the same contribution is never independently
+# rewarded as a kill, assist, and raw-damage total.
+
+[profile]
+name = "accumulation_v3_bounded"
+status = "experimental_shadow"
+schema_version = 1
+
+[combat]
+# One enemy death always creates exactly 100 base combat points when reliable
+# victim-life damage is available.
+finisher_points = 60.0
+damage_contribution_pool = 40.0
+assist_damage_threshold = 50.0
+
+# Safe fallback while life boundaries are unavailable. Teamkills, suicides,
+# and deaths are descriptive only and never subtract accumulation points.
+fallback_kill_points = 100.0
+fallback_assist_points = 50.0
+fallback_damage_points = 0.02
+
+[streaks]
+# Applies only to the finisher portion, not the damage-share pool.
+finisher_increment_per_kill = 0.10
+finisher_increment_steps_cap = 5
+shutdown_starts_after = 3
+shutdown_points_per_level = 5.0
+shutdown_points_cap = 25.0
+
+[fast_chains]
+max_personal_gap_seconds = 5.0
+minimum_kills = 2
+bonus_2 = 10.0
+bonus_3 = 25.0
+bonus_4 = 45.0
+bonus_5_plus = 70.0
+
+[objectives]
+# The capture pool is split among credited cappers. It is not multiplied by
+# the number of player-credit rows.
+capture_event_pool = 100.0
+
+# A separate fixed conversion pool is distributed over recent effective combat
+# contribution with linear time decay. A combat event can feed only the highest
+# applicable outcome, so a capout supersedes a preceding ordinary/mid capture.
+conversion_window_seconds = 30.0
+flag_conversion_pool = 25.0
+middle_conversion_pool = 50.0
+capout_conversion_pool = 150.0
+
+[cap_breaks]
+base_points = 25.0
+urgent_seconds = 3.0
+urgency_points_cap = 35.0
+extra_contester_points = 10.0
+extra_contester_count_cap = 2
+validated_last_flag_points = 20.0
+total_points_cap = 100.0
+
+[position]
+sample_seconds = 5.0
+objective_radius_units = 512.0
+points_per_second_at_flag = 0.50
+grid_size_units = 256
+max_points_per_half = 150.0
+
+# Consecutive unopposed samples near the same objective decay. Active contest,
+# leaving the radius, or changing objective resets the run.
+unopposed_full_value_seconds = 30.0
+unopposed_reduced_value_seconds = 90.0
+unopposed_reduced_multiplier = 0.50
+unopposed_floor_multiplier = 0.25
+
+[scenarios]
+own_first_multiplier = 0.50
+own_second_multiplier = 0.80
+middle_multiplier = 1.25
+enemy_second_multiplier = 1.75
+enemy_first_multiplier = 2.25
+double_cap_multiplier = 1.25
+high_contest_area_multiplier = 1.20
+active_contest_radius_units = 768.0
+active_contest_multiplier = 1.75
+holding_multiplier = 1.00
+neutral_flag_multiplier = 1.00
+attacking_multiplier = 1.10
+defending_under_pressure_multiplier = 1.15
+attacking_under_pressure_multiplier = 1.10
+last_flag_holding_multiplier = 1.10
+last_flag_defense_kill_points = 30.0
+last_flag_defense_max_per_half = 60.0

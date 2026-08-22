@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktp.example/schemas/accumulation-v3-ai-response-v1.json",
+  "title": "KTP advisory match-report AI response v1",
+  "type": "object",
+  "required": [
+    "input_sha256", "summary", "storylines", "anomalies",
+    "calibration_questions", "publication_recommendation"
+  ],
+  "properties": {
+    "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "summary": {"type": "string"},
+    "storylines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["title", "evidence_event_ids"],
+        "properties": {
+          "title": {"type": "string"},
+          "evidence_event_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "anomalies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "detail", "evidence_event_ids"],
+        "properties": {
+          "severity": {"enum": ["info", "warn", "block"]},
+          "detail": {"type": "string"},
+          "evidence_event_ids": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "calibration_questions": {"type": "array", "items": {"type": "string"}},
+    "publication_recommendation": {"enum": ["review", "hold"]}
+  },
+  "additionalProperties": false
+}

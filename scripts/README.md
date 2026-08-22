@@ -10,6 +10,22 @@ Operational scripts for KTP game servers and data server.
 
 ## Scripts
 
+### Bounded match accumulation and automated reports
+
+Generate a deterministic v3 report bundle from normalized match facts:
+
+```bash
+python scripts/build_automated_match_report.py \
+  --facts build/match-facts/MATCH_ID.json \
+  --output-dir build/match-reports/MATCH_ID/v3
+```
+
+The bundle contains the bounded score, three-model comparison, immutable
+manifest, and optional AI-review request. AI review is advisory and separate;
+it cannot alter points, reliability gates, privacy, or publication state. See
+`docs/ACCUMULATION_V3_BOUNDED.md` and
+`docs/AUTOMATED_MATCH_REPORTS_AND_AI_CHECKPOINTS.md`.
+
 ### Match readiness, report bundle, and spatial map registry
 
 `match_readiness.py` applies an aggregate-only `PASS`/`WARN`/`FAIL` gate to a
