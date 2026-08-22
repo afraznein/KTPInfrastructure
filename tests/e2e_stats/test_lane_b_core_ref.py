@@ -1,6 +1,12 @@
+import inspect
 from pathlib import Path
 
-from scripts.lane_b_e2e import replay_boot_flag_positions, stage_tree
+import pytest
+
+from scripts.lane_b_e2e import (gamerules_clock_preflight,
+                                persist_preflight_failure,
+                                replay_boot_flag_positions, run_match,
+                                stage_tree)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +29,8 @@ def test_full_lane_builds_test_core_from_the_exact_amxx_checkout():
     assert 'REF="${LANEB_REF:-preprod}"' in script
     assert "dodx-so-path:" in action
     assert "--dodx-so /work/build/dodx_ktp_i386.so" in workflow
+    assert "--amxx-gamedata /work/build/artifacts/gamedata" in workflow
+    assert '-v "${PWD}/config:/work/config:ro"' in workflow
     assert 'tree.overlay_file(dodx_so, "dod/addons/ktpamx/modules/dodx_ktp_i386.so")' in runner
 
 
@@ -46,18 +54,22 @@ def test_manual_lane_accepts_and_records_all_four_bundle_refs():
     assert "args.require_complete_coverage and bool(gaps)" in runner
 
 
-def test_full_and_corpus_lanes_apply_capture_clock_migration_after_life():
+def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     workflow = (ROOT / ".github/workflows/lane-b-stats-e2e.yml").read_text()
     life = "/work/build/artifacts/sql/migrate_016_life_events.sql"
     clocks = "/work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql"
+    breaks = "/work/build/artifacts/sql/migrate_018_break_context_correlation.sql"
+    correction = "/work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql"
 
-    assert workflow.count(life) == 2
-    assert workflow.count(clocks) == 2
-    first_life = workflow.index(life)
-    first_clocks = workflow.index(clocks)
-    second_life = workflow.index(life, first_life + 1)
-    second_clocks = workflow.index(clocks, first_clocks + 1)
-    assert first_life < first_clocks < second_life < second_clocks
+    for migration in (life, clocks, breaks, correction):
+        assert workflow.count(migration) == 2
+    first = [workflow.index(migration) for migration in
+             (life, clocks, breaks, correction)]
+    second = [workflow.index(migration, offset + 1) for migration, offset in
+              zip((life, clocks, breaks, correction), first)]
+    assert first == sorted(first)
+    assert second == sorted(second)
+    assert first[-1] < second[0]
 
 
 def test_full_lane_carries_target_producer_clock_release_gates():
@@ -140,6 +152,12 @@ def test_stage_tree_overlays_lane_b_dodx(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
     (config / "plugins.ini").write_text("stats_logging.amxx\n")
+    dod_configs = config / "dod-configs"
+    dod_configs.mkdir()
+    (dod_configs / "ktpbasic.cfg").write_text(
+        "mp_clan_match 1\nmp_timelimit 20\n")
+    (dod_configs / "ktp_anzio.cfg").write_text(
+        "exec configs/ktpbasic.cfg\n")
 
     core = tmp_path / "ktpamx_i386.so"
     dodx = tmp_path / "dodx_ktp_i386.so"
@@ -149,11 +167,26 @@ def test_stage_tree_overlays_lane_b_dodx(tmp_path):
     dodx.write_bytes(b"lane-b dodx")
     plugin.write_bytes(b"plugin")
     server_cfg.write_text("sv_lan 1\n")
+    gamedata = tmp_path / "gamedata"
+    for rel in (
+        "common.games/master.games.txt",
+        "common.games/functions.engine.txt",
+        "common.games/globalvars.engine.txt",
+        "common.games/gamerules.games/master.games.txt",
+        "common.games/gamerules.games/dod/offsets-cdodteamplay.txt",
+    ):
+        path = gamedata / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes((rel + "\n").encode())
+    stale = hlds / "dod/addons/ktpamx/data/gamedata/stale.txt"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("baked stale data")
 
-    tree, _ = stage_tree(
+    tree, _, provenance = stage_tree(
         hlds,
         ktpamx_so=core,
         dodx_so=dodx,
+        amxx_gamedata=gamedata,
         plugin=plugin,
         config_dir=config,
         server_cfg_fixture=server_cfg,
@@ -161,3 +194,110 @@ def test_stage_tree_overlays_lane_b_dodx(tmp_path):
 
     staged = tree.path / "dod/addons/ktpamx/modules/dodx_ktp_i386.so"
     assert staged.read_bytes() == b"lane-b dodx"
+    assert (tree.path / "dod/configs/ktpbasic.cfg").read_text() == (
+        "mp_clan_match 1\nmp_timelimit 20\n")
+    assert (tree.path / "dod/configs/ktp_anzio.cfg").read_text() == (
+        "exec configs/ktpbasic.cfg\n")
+    staged_gamedata = tree.path / "dod/addons/ktpamx/data/gamedata"
+    assert not (staged_gamedata / "stale.txt").exists()
+    assert (staged_gamedata / "common.games/globalvars.engine.txt").read_bytes() == (
+        gamedata / "common.games/globalvars.engine.txt").read_bytes()
+    assert provenance["tree_sha256"] == provenance["staged_tree_sha256"]
+    assert provenance["file_count"] == 5
+
+
+class _PreflightHandle:
+    def __init__(self, output):
+        self.output = output
+        self.commands = []
+
+    def rcon(self, command):
+        self.commands.append(command)
+        return self.output
+
+
+def _preflight(tmp_path, output, *, log_extra="", crc_path="/opt/hlds/dod/dlls/dod.so"):
+    log = tmp_path / "server.log"
+    crc = (f"GameConfig CRC computed server=89ABCDEF ({crc_path})\n"
+           if crc_path is not None else "")
+    log.write_text(crc + log_extra)
+    handle = _PreflightHandle(output)
+    result = gamerules_clock_preflight(handle, log)
+    assert handle.commands == ["ktp_bd_clock_preflight"]
+    return result
+
+
+def test_clock_preflight_accepts_exact_server_crc_and_live_clock(tmp_path):
+    result = _preflight(
+        tmp_path,
+        "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=1195.25 limit=1200.00",
+    )
+    assert result["status"] == "ok"
+    assert result["server_crc"][0]["path"].endswith("/dod/dlls/dod.so")
+
+
+@pytest.mark.parametrize("output", [
+    "KTP_BD_CLOCK_PREFLIGHT gamerules=0 round=-1.00 limit=1200.00",
+    "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=-1.00 limit=1200.00",
+    "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=nan limit=1200.00",
+    "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=0.00",
+    "unrelated output",
+    ("KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00 "
+     "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"),
+])
+def test_clock_preflight_fails_closed_on_bad_or_ambiguous_marker(tmp_path, output):
+    assert _preflight(tmp_path, output)["status"] == "pipeline"
+
+
+def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path):
+    marker = "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"
+    for message in (
+        'Unable to prove declared mm_gamedll "dlls/dod.so"',
+        'Unable to load library "server"',
+        'GameConfig CRC mismatch for library "server"',
+    ):
+        warning = _preflight(tmp_path, marker, log_extra=message + "\n")
+        assert warning["status"] == "pipeline"
+        assert warning["resolver_warnings"]
+    assert _preflight(tmp_path, marker, crc_path=None)["status"] == "pipeline"
+    assert _preflight(
+        tmp_path, marker, crc_path="/opt/hlds/metamod/metamod.so"
+    )["status"] == "pipeline"
+
+
+def test_clock_preflight_runs_after_config_settle_and_before_play_hooks():
+    source = inspect.getsource(run_match)
+    assert source.index("time.sleep(5.0)") < source.index("after_live()")
+    assert source.index("after_live()") < source.index("before_play()")
+
+
+def test_clock_preflight_parser_is_bound_to_pawn_producer_and_no_boot_retry():
+    pawn = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    assert 'register_srvcmd("ktp_bd_clock_preflight"' in pawn
+    assert "dodx_has_gamerules()" in pawn
+    assert "dodx_get_round_time()" in pawn
+    assert 'server_print("KTP_BD_CLOCK_PREFLIGHT gamerules=%d round=%.2f limit=%.2f"' in pawn
+    assert 'handle.rcon("ktp_bd_clock_preflight")' in runner
+    assert "if server_started:\n                    run_error = e\n                    break" in runner
+
+
+def test_strict_preflight_failure_is_persisted_before_exception_exit(tmp_path):
+    report = {
+        "map": "dod_anzio",
+        "gamerules_clock_preflight": {
+            "status": "pipeline", "detail": "gamerules unavailable",
+            "server_crc": [],
+        },
+    }
+    failures = []
+    out = tmp_path / "lane-b.json"
+    summary = tmp_path / "lane-b.md"
+    persist_preflight_failure(
+        report, failures, "strict preflight failed",
+        out_path=out, summary_path=summary,
+    )
+    assert '"gamerules_clock_preflight"' in out.read_text()
+    assert '"strict preflight failed"' in out.read_text()
+    assert "GameRules / round-clock preflight" in summary.read_text()
+    assert "FAIL" in summary.read_text()

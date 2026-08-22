@@ -353,6 +353,7 @@ jobs:
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/sql:/work/sql:ro" \
+            -v "${PWD}/config:/work/config:ro" \
             -w /work ktp-lane-b:ci \
             python3 -m pytest tests/e2e_stats -q
 
@@ -371,6 +372,7 @@ jobs:
             python3 -u scripts/lane_b_e2e.py \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
+              --amxx-gamedata /work/build/artifacts/gamedata \
               --plugin /work/build/artifacts/stats_logging.amxx \
               --config-dir /work/config/local \
               --hlstats /work/build/daemon/hlstats.pl \
@@ -388,6 +390,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
                        /work/build/artifacts/sql/migrate_016_life_events.sql \
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
+                       /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
+                       /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -456,6 +460,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
                        /work/build/artifacts/sql/migrate_016_life_events.sql \
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
+                       /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
+                       /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

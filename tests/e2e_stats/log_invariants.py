@@ -33,19 +33,32 @@ _PLAYER = r'"([^"<]*)<(\d+)><[^<>]*><([^<>]*)>"'
 _KILL_RE = re.compile(rf'{_PLAYER} killed {_PLAYER} with "([^"]*)"')
 _ASSIST_RE = re.compile(rf'{_PLAYER} triggered "assist" against {_PLAYER}')
 _BREAK_RE = re.compile(rf'{_PLAYER} triggered "cap_break"')
+_FRAG_CONTEXT_RE = re.compile(
+    rf'{_PLAYER} triggered "frag_context" against {_PLAYER}'
+)
 _TS_RE = re.compile(r"^L \d\d/\d\d/\d{4} - (\d\d):(\d\d):(\d\d):")
+_COMBAT_TEAMS = frozenset({"Allies", "Axis"})
 
-# KTPBreakDrive's kill scenarios deliberately call the DODX test death
-# dispatcher and then kill the victim with a self-kill.  Capture therefore
-# emits a truthful frag_context marker for the dispatched death, but HLStatsX
-# has no corresponding ordinary frag row to claim.  Keep the marker narrow:
-# an ABORT, scan, walkoff, or a similarly-worded line from another plugin must
-# never buy an exception from the strict frag reconciliation gate.
+# KTPBreakDrive's kill and restart-queue scenarios deliberately call the DODX
+# test death dispatcher. Capture therefore emits a truthful frag_context marker
+# for the dispatched death, but HLStatsX has no corresponding ordinary frag row
+# to claim. Keep both successful marker shapes narrow: an ABORT, scan, arm, or
+# similarly-worded line from another plugin must never buy an exception.
 _BREAKDRIVE_SYNTHETIC_KILL = "[KTPBreakDrive.amxx] [BD] kill flag="
 _BREAKDRIVE_SYNTHETIC_KILL_RE = re.compile(
     r"\[KTPBreakDrive\.amxx\] \[BD\] kill flag=\d+ capteam=-?\d+ "
     r"mode=\w+ victim=\d+ vname=(?P<victim_name>\S+) killer=\d+ "
     r"kname=(?P<killer_name>\S+)"
+)
+_BREAKDRIVE_SYNTHETIC_RESTART_RE = re.compile(
+    r"\[KTPBreakDrive\.amxx\] \[BD\] restart_queue seq=\d+ flag=\d+ "
+    r"fname=\S+ capteam=-?\d+ victim=\d+ "
+    r"vname=(?P<victim_name>\S+) killer=\d+ killer_userid=\d+ "
+    r"kname=(?P<killer_name>\S+)"
+)
+_BREAKDRIVE_SYNTHETIC_RES = (
+    _BREAKDRIVE_SYNTHETIC_KILL_RE,
+    _BREAKDRIVE_SYNTHETIC_RESTART_RE,
 )
 _DAEMON_PLAYER_RE = re.compile(
     r'"(?P<name>[^"]+)" <P:(?P<player_id>\d+),U:\d+,W:[^,>]+,T:[^>]*>'
@@ -84,6 +97,85 @@ def _seconds(line: str) -> int | None:
 def _actor(groups: tuple, offset: int) -> Actor:
     return Actor(name=groups[offset], userid=groups[offset + 1],
                  team=groups[offset + 2])
+
+
+def _combat_relation(killer: Actor, victim: Actor) -> str:
+    """Classify only exact engine combat-team labels; never guess unknowns."""
+    if killer.userid == victim.userid:
+        return "unclassified"
+    if killer.team not in _COMBAT_TEAMS or victim.team not in _COMBAT_TEAMS:
+        return "unclassified"
+    return "teamkills" if killer.team == victim.team else "frags"
+
+
+def kill_classification(log_text: str) -> dict:
+    """Split engine ``killed`` lines into frag/teamkill/unclassified counts."""
+    evidence = {"frags": 0, "teamkills": 0, "unclassified": 0,
+                "unclassified_lines": []}
+    for line in log_text.splitlines():
+        match = _KILL_RE.search(line)
+        if not match:
+            continue
+        killer = _actor(match.groups(), 0)
+        victim = _actor(match.groups(), 3)
+        relation = _combat_relation(killer, victim)
+        evidence[relation] += 1
+        if relation == "unclassified":
+            evidence["unclassified_lines"].append(line.strip())
+    evidence["kills"] = (
+        evidence["frags"] + evidence["teamkills"] + evidence["unclassified"]
+    )
+    return evidence
+
+
+def frag_context_classification(log_text: str, *, match_only: bool = False) -> dict:
+    """Classify context markers; teamkill/unknown markers are product defects."""
+    lines = log_text.splitlines()
+    if match_only:
+        start = end = None
+        for index, line in enumerate(lines):
+            if start is None and "KTP_MATCH_START" in line:
+                start = index
+            elif start is not None and end is None and "KTP_MATCH_END" in line:
+                end = index
+        if start is None:
+            lines = []
+        else:
+            lines = lines[start:end if end is not None else len(lines)]
+
+    evidence = {"frags": 0, "teamkills": 0, "unclassified": 0,
+                "headshots": 0, "violations": []}
+    for line in lines:
+        match = _FRAG_CONTEXT_RE.search(line)
+        if not match:
+            continue
+        killer = _actor(match.groups(), 0)
+        victim = _actor(match.groups(), 3)
+        relation = _combat_relation(killer, victim)
+        evidence[relation] += 1
+        if relation == "frags":
+            if '(headshot "1")' in line:
+                evidence["headshots"] += 1
+        elif relation == "teamkills":
+            evidence["violations"].append(
+                f"teamkill emitted frag_context: {killer} and {victim} are both "
+                f"{killer.team}; teamkills must be suppressed from canonical "
+                f"frag context\n    {line.strip()}"
+            )
+        else:
+            evidence["violations"].append(
+                f"unclassifiable frag_context teams: {killer} against {victim}; "
+                f"only exact Allies/Axis opponents may emit canonical frag "
+                f"context\n    {line.strip()}"
+            )
+    evidence["total"] = (
+        evidence["frags"] + evidence["teamkills"] + evidence["unclassified"]
+    )
+    return evidence
+
+
+def check_frag_context_teamkills(log_text: str) -> list[str]:
+    return frag_context_classification(log_text)["violations"]
 
 
 def check_assist_attribution(log_text: str, *, window: int = 10) -> list[str]:
@@ -189,17 +281,33 @@ def match_window(log_text: str) -> dict:
         elif start is not None and end is None and "KTP_MATCH_END" in line:
             end = i
 
+    zero_window = {"before": 0, "during": 0, "after": 0}
     if start is None:
-        return {"found": False, "during": 0, "after": 0, "before": 0}
+        return {"found": False, "during": 0, "after": 0, "before": 0,
+                "frags": dict(zero_window), "teamkills": dict(zero_window),
+                "unclassified": dict(zero_window)}
     stop = end if end is not None else len(lines)
 
-    def kills(seq):
-        return sum(1 for ln in seq if _KILL_RE.search(ln))
+    def classified(seq):
+        return kill_classification("\n".join(seq))
+
+    before = classified(lines[:start])
+    during = classified(lines[start:stop])
+    after = classified(lines[stop:])
 
     return {"found": True,
-            "before": kills(lines[:start]),
-            "during": kills(lines[start:stop]),
-            "after": kills(lines[stop:]),
+            "before": before["kills"],
+            "during": during["kills"],
+            "after": after["kills"],
+            "frags": {"before": before["frags"],
+                      "during": during["frags"],
+                      "after": after["frags"]},
+            "teamkills": {"before": before["teamkills"],
+                          "during": during["teamkills"],
+                          "after": after["teamkills"]},
+            "unclassified": {"before": before["unclassified"],
+                             "during": during["unclassified"],
+                             "after": after["unclassified"]},
             "ended": end is not None}
 
 
@@ -232,7 +340,8 @@ def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
     ``KTP_NO_ROW_MATCHED: frag_context:`` diagnostic.  Returning the marker
     text as well as a count leaves enough evidence in the Lane B report to
     distinguish the intentional test injection from a genuine dropped frag.
-    Events outside the first KTP_MATCH_START/END window are never exempted.
+    This includes restart_queue's queue-only dispatch. Events outside the first
+    KTP_MATCH_START/END window are never exempted.
     """
     lines = log_text.splitlines()
     start = end = None
@@ -247,7 +356,7 @@ def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
     return [
         line.strip()
         for line in lines[start:stop]
-        if _BREAKDRIVE_SYNTHETIC_KILL in line
+        if any(pattern.search(line) for pattern in _BREAKDRIVE_SYNTHETIC_RES)
     ]
 
 
@@ -283,7 +392,9 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
     expected_identities: list[str] = []
     unresolved_expected: list[dict] = []
     for marker in markers:
-        parsed = _BREAKDRIVE_SYNTHETIC_KILL_RE.search(marker)
+        parsed = next((pattern.search(marker)
+                       for pattern in _BREAKDRIVE_SYNTHETIC_RES
+                       if pattern.search(marker)), None)
         if not parsed:
             unresolved_expected.append({
                 "marker": marker,
@@ -334,17 +445,29 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
 
 def summarise(log_text: str) -> dict:
     """Counts plus violations, for the run report."""
+    kill_evidence = kill_classification(log_text)
+    frag_evidence = frag_context_classification(log_text)
     return {
-        "kills": len(_KILL_RE.findall(log_text)),
+        "kills": kill_evidence["kills"],
+        "frags": kill_evidence["frags"],
+        "teamkills": kill_evidence["teamkills"],
+        "unclassified_kills": kill_evidence["unclassified"],
+        "unclassified_kill_lines": kill_evidence["unclassified_lines"],
+        "kill_classification_violations": [
+            "unclassifiable engine kill teams; expected exact Allies/Axis:\n    "
+            + line
+            for line in kill_evidence["unclassified_lines"]
+        ],
         "assists": len(_ASSIST_RE.findall(log_text)),
         "breaks": len(_BREAK_RE.findall(log_text)),
         # Phase 5 retired the dedicated "headshot_kill" marker in favour of
-        # `(headshot "1")` as one property on the unconditional "frag_context"
-        # marker every kill now emits -- count that instead. The old string
+        # `(headshot "1")` as one property on the canonical "frag_context"
+        # marker every non-teamkill player frag emits. The old string
         # will never appear again; a plugin built before Phase 5 landed would
         # correctly show 0 here, which is the accurate answer for that build.
-        "headshot_markers": log_text.count('(headshot "1")'),
+        "headshot_markers": frag_evidence["headshots"],
         "damage_markers": log_text.count('triggered "damage"'),
         "assist_violations": check_assist_attribution(log_text),
         "break_violations": check_break_attribution(log_text),
+        "frag_context_teamkill_violations": frag_evidence["violations"],
     }

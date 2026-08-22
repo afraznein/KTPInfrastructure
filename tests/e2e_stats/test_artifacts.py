@@ -20,11 +20,14 @@ from .artifacts import (
     ArtifactSet,
     BuildError,
     DEFAULT_SCHEMA_FILES,
+    directory_tree_provenance,
     extract,
+    load_gamedata_provenance,
     load_bundle_provenance,
     record_bundle_provenance,
     render_bundle_provenance_markdown,
     resolve_ref,
+    validate_gamedata_bundle_source,
 )
 
 
@@ -54,6 +57,16 @@ def amxx_repo(tmp_path):
         b"// v2\r\n#include \"ktp_stats_capture.inc\"\r\n")
     (repo / "plugins" / "dod" / "ktp_stats_capture.inc").write_bytes(
         b"// capture v2\r\nstock ksc_init() {}\r\n")
+    for rel in (
+        "common.games/master.games.txt",
+        "common.games/functions.engine.txt",
+        "common.games/globalvars.engine.txt",
+        "common.games/gamerules.games/master.games.txt",
+        "common.games/gamerules.games/dod/offsets-cdodteamplay.txt",
+    ):
+        path = repo / "gamedata" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(("committed " + rel + "\n").encode())
     _git(repo, "add", "-A")
     _git(repo, "commit", "-qm", "v2 with capture")
     _git(repo, "branch", "feat/stats-positions")
@@ -88,6 +101,8 @@ def daemon_repo(tmp_path):
         (15, "flag_state_events"),
         (16, "life_events"),
         (17, "capture_clocks_and_assists"),
+        (18, "break_context_correlation"),
+        (19, "clear_uncertified_frag_context"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -105,17 +120,20 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     )
     assert arts.plugin_sma.is_file()
     assert arts.plugin_inc.is_file()
+    assert arts.gamedata_dir.is_dir()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 14
+    assert len(arts.schema_sql) == 16
     assert len(arts.seed_sql) == 2
 
 
-def test_default_schema_sequence_includes_retention_flag_state_life_then_clocks():
-    assert DEFAULT_SCHEMA_FILES[-4:] == (
+def test_default_schema_sequence_includes_retention_through_context_corrections():
+    assert DEFAULT_SCHEMA_FILES[-6:] == (
         "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
+        "sql/migrate_018_break_context_correlation.sql",
+        "sql/migrate_019_clear_uncertified_frag_context.sql",
     )
 
 
@@ -141,6 +159,85 @@ def test_extract_ignores_working_tree_edits(amxx_repo, tmp_path):
     body = out.read_bytes()
     assert b"UNCOMMITTED" not in body
     assert b"v2" in body
+
+
+def test_gamedata_tree_is_commit_extracted_and_manifest_bound(
+        amxx_repo, daemon_repo, tmp_path):
+    dirty = amxx_repo / "gamedata/common.games/globalvars.engine.txt"
+    dirty.write_bytes(b"UNCOMMITTED GAMEDATA\x00")
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    assert b"UNCOMMITTED" not in (
+        arts.gamedata_dir / "common.games/globalvars.engine.txt"
+    ).read_bytes()
+    expected = arts.provenance["amxx"]["gamedata"]
+    loaded = load_gamedata_provenance(arts.write_manifest())
+    assert loaded["tree_sha256"] == expected["tree_sha256"]
+    assert loaded["file_count"] == 5
+    assert loaded["bytes"] == sum(item["bytes"] for item in loaded["files"])
+
+
+def test_gamedata_manifest_rejects_byte_or_tree_digest_tampering(
+        amxx_repo, daemon_repo, tmp_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    body = json.loads(manifest.read_text())
+    body["provenance"]["amxx"]["gamedata"]["files"][0]["bytes"] += 1
+    manifest.write_text(json.dumps(body))
+    with pytest.raises(BuildError, match="byte total|tree SHA"):
+        load_gamedata_provenance(manifest)
+
+
+@pytest.mark.parametrize("bad_path", [
+    "../escape", r"..\escape", "C:/escape", "a//b", "a/./b",
+])
+def test_gamedata_manifest_rejects_noncanonical_paths(
+        amxx_repo, daemon_repo, tmp_path, bad_path):
+    arts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="feat/seed-cap-break-action",
+    )
+    manifest = arts.write_manifest()
+    body = json.loads(manifest.read_text())
+    body["provenance"]["amxx"]["gamedata"]["files"][0]["path"] = bad_path
+    manifest.write_text(json.dumps(body))
+    with pytest.raises(BuildError, match="invalid/duplicate"):
+        load_gamedata_provenance(manifest)
+
+
+def test_gamedata_source_label_must_match_bundle_amxx_commit():
+    bundle = {"repositories": {"amxx": {"sha": "a" * 40}}}
+    validate_gamedata_bundle_source(
+        bundle, {"source": f"{'a' * 40}:gamedata"}
+    )
+    with pytest.raises(BuildError, match="expected"):
+        validate_gamedata_bundle_source(
+            bundle, {"source": f"{'b' * 40}:gamedata"}
+        )
+
+
+def test_tree_digest_changes_on_same_length_byte_change_and_path_change(tmp_path):
+    tree = tmp_path / "tree"
+    (tree / "nested").mkdir(parents=True)
+    payload = tree / "nested/data.bin"
+    payload.write_bytes(b"abc\x00")
+    first = directory_tree_provenance(tree)
+    payload.write_bytes(b"abd\x00")
+    second = directory_tree_provenance(tree)
+    assert first["bytes"] == second["bytes"] == 4
+    assert first["files"][0]["sha256"] != second["files"][0]["sha256"]
+    assert first["tree_sha256"] != second["tree_sha256"]
+    payload.rename(tree / "nested/renamed.bin")
+    third = directory_tree_provenance(tree)
+    assert second["tree_sha256"] != third["tree_sha256"]
 
 
 def test_collect_at_an_older_ref_omits_the_include(amxx_repo, daemon_repo, tmp_path):
@@ -206,7 +303,9 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_014_match_type_retention.sql",
                  "migrate_015_flag_state_events.sql",
                  "migrate_016_life_events.sql",
-                 "migrate_017_capture_clocks_and_assists.sql"):
+                 "migrate_017_capture_clocks_and_assists.sql",
+                 "migrate_018_break_context_correlation.sql",
+                 "migrate_019_clear_uncertified_frag_context.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 

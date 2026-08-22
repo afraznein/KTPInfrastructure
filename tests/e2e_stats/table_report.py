@@ -108,6 +108,8 @@ def _cell(value: Any, limit: int = 160) -> str:
 def render_markdown(report: dict) -> str:
     emitted, rows = report.get("emitted", {}), report.get("rows", {})
     frag_diagnostics = report.get("frag_context_diagnostics") or {}
+    gamedata = report.get("amxx_gamedata") or {}
+    preflight = report.get("gamerules_clock_preflight") or {}
     match = report.get("match") or {}
     failures = report.get("failures") or []
     gaps = report.get("coverage_gaps") or []
@@ -125,7 +127,10 @@ def render_markdown(report: dict) -> str:
         "",
         "| Stat | Emitted by game | Recorded in database |",
         "|---|---:|---:|",
-        f"| Kills/frags | {emitted.get('kills', 0)} | {rows.get('frags', 0)} |",
+        f"| Frags | {emitted.get('frags', emitted.get('kills', 0))} | "
+        f"{rows.get('frags', 0)} |",
+        f"| Teamkills | {emitted.get('teamkills', 0)} | "
+        f"{rows.get('teamkills', 0)} |",
         f"| Assists (generic PPA) | {emitted.get('assist', 0)} | "
         f"{(rows.get('assist') or {}).get('ppa', 0)} |",
         f"| Assist contexts (canonical, in-match) | "
@@ -142,6 +147,31 @@ def render_markdown(report: dict) -> str:
         f"| Life boundaries | {emitted.get('life_boundary', 0)} | {rows.get('life_events', 0)} |",
         f"| Match roster | — | {rows.get('match_players', 0)} |",
     ]
+    if gamedata:
+        out += [
+            "",
+            "## Exact AMXX gamedata provenance",
+            "",
+            "| Artifact source | Runtime input | Destination | Files | Bytes | Tree SHA-256 |",
+            "|---|---|---|---:|---:|---|",
+            f"| `{_cell(gamedata.get('artifact_source', gamedata.get('source', '')), 240)}` "
+            f"| `{_cell(gamedata.get('source', ''), 240)}` "
+            f"| `{_cell(gamedata.get('destination', ''))}` "
+            f"| {gamedata.get('file_count', 0)} | {gamedata.get('bytes', 0)} "
+            f"| `{_cell(gamedata.get('tree_sha256', ''))}` |",
+        ]
+    if preflight:
+        crc_paths = ", ".join(
+            item.get("path", "") for item in preflight.get("server_crc", [])
+        ) or "none"
+        out += [
+            "",
+            "## GameRules / round-clock preflight",
+            "",
+            f"- Status: `{_cell(preflight.get('status', ''))}`",
+            f"- Detail: {_cell(preflight.get('detail', ''), 500)}",
+            f"- Server CRC path(s): `{_cell(crc_paths, 500)}`",
+        ]
     if frag_diagnostics:
         def _multiset(values):
             counts = Counter(values)
