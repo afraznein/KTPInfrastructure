@@ -41,14 +41,30 @@ The gate checks:
   present;
 - every observed flag/half has exactly one ownership baseline at game time 0,
   followed by valid neutral/Allies/Axis transitions;
+- producer clocks are populated on the match's frag and damage rows, rather
+  than merely present in the schema;
+- physical-life capture is active and canonical timed assists reconcile with
+  the generic box-score assist count;
+- capout and last-flag-defense classifications are marked untrusted unless
+  every observed flag has a static position and each half's ownership timeline
+  demonstrates at least one complete, non-neutral two-team partition;
+- cap-break credits (individual cappers stopped) are reported separately from
+  the best available lower bound on distinct break incidents;
+- StatsMe kills are reconciled against enemy frags plus teamkills, while its
+  death delta is reported explicitly and never substituted for the canonical
+  frag/teamkill/suicide ledgers;
 - the dump came from the expected server, when `--expected-server-id` is set;
 - supplied logs contain no `KTP_HEALTH` failures/retries/unresolved actions,
   explicit unresolved-action warnings, or SQL errors;
 - the match's retention class, age, and current 14-day eligibility are visible.
 
-Omitting logs produces `WARN`, not a false pass. A failed required source,
-classification, ownership, server, analytics, or log check produces `FAIL` and
-exit code 1. The retention result is evidence only; this tool never purges.
+Omitting logs produces `WARN`, not a false pass. Zero producer-clock coverage,
+inactive physical-life capture, a canonical-assist mismatch, or a failed
+required source, classification, ownership, server, analytics, or log check
+produces `FAIL` and exit code 1. Partial producer-clock coverage and unproven
+objective topology produce `WARN`: raw evidence remains usable, but dependent
+timed or objective classifications must stay suppressed. The retention result
+is evidence only; this tool never purges.
 Draft and draft-OT remain retained. Scrim, 12man, and `*-TEST` remain eligible
 only after the configured retention window.
 

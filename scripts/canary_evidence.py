@@ -125,6 +125,100 @@ WHERE match_id={literal} ORDER BY half, flag_index, game_time, id
 """))
 
 
+def _count_row(db: EphemeralMysql, query: str) -> dict[str, Any]:
+    rows = analytics.tsv_rows(db.sql(query))
+    return rows[0] if rows else {}
+
+
+def collect_capture_activation(
+    db: EphemeralMysql, match_id: str, sources: dict[str, bool],
+) -> dict[str, Any]:
+    """Measure whether optional capture schemas were actually populated.
+
+    A table or column existing only proves that a migration ran.  Denver 4 had
+    every new schema object but no producer clocks, life rows, or canonical
+    assist rows, so schema capability and per-match activation stay separate.
+    """
+    literal = analytics.sql_literal(match_id)
+    frags = _count_row(db, f"""
+SELECT COUNT(*) AS rows_total,
+       SUM(BINARY producer_match_id = BINARY {literal}
+           AND producer_half > 0 AND game_time IS NOT NULL
+           AND event_epoch IS NOT NULL) AS rows_producer_timed,
+       SUM(frag_context_recorded = 1) AS rows_contextual,
+       SUM(is_last_flag_defense = 1) AS rows_last_flag_defense
+FROM hlstats_Events_Frags
+WHERE BINARY match_id = BINARY {literal}
+   OR BINARY producer_match_id = BINARY {literal}
+""") if sources.get("frag_event_clock") else {
+        "rows_total": 0, "rows_producer_timed": None,
+        "rows_contextual": None, "rows_last_flag_defense": None,
+    }
+    damage = _count_row(db, f"""
+SELECT COUNT(*) AS rows_total,
+       SUM(BINARY producer_match_id = BINARY {literal}
+           AND producer_half > 0 AND game_time IS NOT NULL
+           AND event_epoch IS NOT NULL) AS rows_producer_timed
+FROM ktp_damage_events
+WHERE BINARY match_id = BINARY {literal}
+   OR BINARY producer_match_id = BINARY {literal}
+""") if sources.get("damage_event_clock") else {
+        "rows_total": 0, "rows_producer_timed": None,
+    }
+    life = _count_row(db, f"""
+SELECT COUNT(*) AS rows_total,
+       SUM(boundary_kind='start') AS starts,
+       SUM(boundary_kind='end') AS ends
+FROM ktp_life_events WHERE BINARY match_id = BINARY {literal}
+""") if sources.get("life_boundaries") else {
+        "rows_total": None, "starts": None, "ends": None,
+    }
+    assists = _count_row(db, f"""
+SELECT COUNT(*) AS rows_total
+FROM ktp_assist_events WHERE BINARY match_id = BINARY {literal}
+""") if sources.get("assist_context") else {"rows_total": None}
+    return {"frags": frags, "damage": damage, "life_events": life,
+            "canonical_assists": assists}
+
+
+def collect_flag_positions(
+    db: EphemeralMysql, match_id: str, available: bool,
+) -> list[dict[str, Any]]:
+    if not available:
+        return []
+    literal = analytics.sql_literal(match_id)
+    return analytics.tsv_rows(db.sql(f"""
+SELECT DISTINCT fp.flag_index, fp.flag_name, fp.origin_x, fp.origin_y
+FROM ktp_flag_positions fp
+JOIN ktp_matches m
+  ON m.server_id=fp.server_id AND m.map_name=fp.map_name
+WHERE BINARY m.match_id = BINARY {literal}
+ORDER BY fp.flag_index
+"""))
+
+
+def collect_cap_breaks(db: EphemeralMysql, match_id: str) -> list[dict[str, Any]]:
+    literal = analytics.sql_literal(match_id)
+    detail_columns = ("eventTime", "playerId", "pos_x", "pos_y", "pos_z")
+    detailed = all(
+        _column_exists(db, "hlstats_Events_PlayerActions", column)
+        for column in detail_columns
+    )
+    select = (
+        "pa.eventTime AS event_time, pa.playerId AS player_id, "
+        "pa.pos_x, pa.pos_y, pa.pos_z" if detailed else
+        "NULL AS event_time, NULL AS player_id, NULL AS pos_x, "
+        "NULL AS pos_y, NULL AS pos_z"
+    )
+    return analytics.tsv_rows(db.sql(f"""
+SELECT {select}
+FROM hlstats_Events_PlayerActions pa
+JOIN hlstats_Actions a ON a.id=pa.actionId
+WHERE BINARY pa.match_id = BINARY {literal}
+  AND a.game='dod' AND a.code='cap_break'
+"""))
+
+
 def classification_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
     values = [row.get("match_type") for row in rows]
     distinct = sorted({value for value in values if value is not None})
@@ -161,6 +255,131 @@ def ownership_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def capture_activation_evidence(
+    rows: dict[str, Any], *, generic_assists: int,
+) -> dict[str, Any]:
+    def coverage(section: str) -> float | None:
+        values = rows[section]
+        total, timed = values.get("rows_total"), values.get("rows_producer_timed")
+        return round(100.0 * int(timed) / int(total), 3) if total and timed is not None else None
+
+    frag_pct = coverage("frags")
+    damage_pct = coverage("damage")
+    canonical = rows["canonical_assists"].get("rows_total")
+    return {
+        **rows,
+        "frag_producer_coverage_pct": frag_pct,
+        "damage_producer_coverage_pct": damage_pct,
+        "life_active": (
+            rows["life_events"].get("rows_total") is not None
+            and int(rows["life_events"]["rows_total"]) > 0
+        ),
+        "assist_reconciled": (
+            canonical is not None and int(canonical) == int(generic_assists)
+        ),
+        "generic_assists": generic_assists,
+    }
+
+
+def objective_trust_evidence(
+    ownership: dict[str, Any], ownership_rows: list[dict[str, Any]],
+    flag_positions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    observed = {
+        (int(row["flag_index"]), str(row["flag_name"])) for row in ownership_rows
+    }
+    positioned = {
+        (int(row["flag_index"]), str(row["flag_name"])) for row in flag_positions
+    }
+    halves = sorted({int(row["half"]) for row in ownership_rows})
+    complete_partition_by_half: dict[int, bool] = {}
+    for half in halves:
+        state: dict[int, int] = {}
+        exercised = False
+        events = sorted(
+            (row for row in ownership_rows if int(row["half"]) == half),
+            key=lambda row: (
+                float(row["game_time"]), int(row.get("event_id") or 0)
+            ),
+        )
+        for row in events:
+            state[int(row["flag_index"])] = int(row["owner_team"])
+            owners = list(state.values())
+            if (
+                len(state) == len(observed)
+                and owners and all(owner in (1, 2) for owner in owners)
+                and 1 in owners and 2 in owners
+            ):
+                exercised = True
+        complete_partition_by_half[half] = exercised
+    static_complete = bool(observed) and observed.issubset(positioned)
+    competitive_partition_observed = bool(halves) and all(
+        complete_partition_by_half[half] for half in halves
+    )
+    trusted = bool(
+        ownership["baseline_ok"] and ownership["invalid_owner_count"] == 0
+        and static_complete and competitive_partition_observed
+    )
+    return {
+        "trusted_for_capout_and_last_flag": trusted,
+        "observed_flags": len(observed), "positioned_flags": len(positioned),
+        "static_positions_complete": static_complete,
+        "competitive_partition_observed": competitive_partition_observed,
+        "complete_partition_by_half": complete_partition_by_half,
+        "reason": (
+            "Ownership baselines and static map topology support derived objective classifications."
+            if trusted else
+            "Suppress capout and last-flag-defense analytics; map topology is not proven by this fixture."
+        ),
+    }
+
+
+def cap_break_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    detailed = bool(rows) and all(row.get("event_time") is not None for row in rows)
+    incidents = None
+    if detailed:
+        incidents = len({(
+            row.get("event_time"), row.get("player_id"), row.get("pos_x"),
+            row.get("pos_y"), row.get("pos_z"),
+        ) for row in rows})
+    return {
+        "cappers_stopped": len(rows),
+        "incident_lower_bound": incidents,
+        "incident_identity_available": detailed,
+        "schema_gap": (
+            "Rows lack victim/flag/incident IDs; identical multi-capper credits can only be grouped as a lower bound."
+            if rows else None
+        ),
+    }
+
+
+def statsme_reconciliation(
+    players: list[dict[str, Any]], weapons: list[dict[str, Any]],
+) -> dict[str, Any]:
+    enemy_frags = sum(int(row.get("kills") or 0) for row in players)
+    teamkills = sum(int(row.get("team_kills") or 0) for row in players)
+    suicides = sum(int(row.get("suicides") or 0) for row in players)
+    statsme_kills = sum(int(row.get("statsme_kills") or 0) for row in weapons)
+    statsme_deaths = sum(int(row.get("statsme_deaths") or 0) for row in weapons)
+    physical_deaths = enemy_frags + teamkills + suicides
+    statsme_kill_domain = enemy_frags + teamkills
+    return {
+        "canonical_enemy_frags": enemy_frags,
+        "canonical_teamkills": teamkills,
+        "canonical_suicides": suicides,
+        "canonical_physical_deaths": physical_deaths,
+        "statsme_kills": statsme_kills,
+        "statsme_deaths": statsme_deaths,
+        "statsme_expected_kill_domain": statsme_kill_domain,
+        "statsme_kills_reconciled": statsme_kills == statsme_kill_domain,
+        "statsme_death_delta": statsme_deaths - physical_deaths,
+        "canonical_rule": (
+            "Use frag/teamkill/suicide ledgers for K/D and physical deaths; "
+            "StatsMe remains auxiliary weapon accuracy/hitbox telemetry."
+        ),
+    }
+
+
 def retention_evidence(
     match_id: str, classification: dict[str, Any], *, days: int,
     as_of: datetime,
@@ -190,11 +409,30 @@ def retention_evidence(
 def build_evidence(
     analytics_report: dict[str, Any], classifications: list[dict[str, Any]],
     ownership_rows: list[dict[str, Any]], logs: dict[str, Any],
-    provenance: dict[str, Any], *, expected_server_id: int | None = None,
+    provenance: dict[str, Any], *, capture_activation: dict[str, Any] | None = None,
+    flag_positions: list[dict[str, Any]] | None = None,
+    cap_break_rows: list[dict[str, Any]] | None = None,
+    expected_server_id: int | None = None,
     retention_days: int = 14, as_of: datetime | None = None,
 ) -> dict[str, Any]:
     classification = classification_evidence(classifications)
     ownership = ownership_evidence(ownership_rows)
+    generic_assists = sum(row["assists"] for row in analytics_report["assists"])
+    activation = capture_activation_evidence(
+        capture_activation or {
+            "frags": {"rows_total": 0, "rows_producer_timed": None},
+            "damage": {"rows_total": 0, "rows_producer_timed": None},
+            "life_events": {"rows_total": None},
+            "canonical_assists": {"rows_total": None},
+        }, generic_assists=generic_assists,
+    )
+    objective_trust = objective_trust_evidence(
+        ownership, ownership_rows, flag_positions or [],
+    )
+    cap_breaks = cap_break_evidence(cap_break_rows or [])
+    statsme = statsme_reconciliation(
+        analytics_report["players"], analytics_report["weapons"]
+    )
     retention = retention_evidence(
         analytics_report["match_id"], classification, days=retention_days,
         as_of=as_of or datetime.now(timezone.utc),
@@ -213,6 +451,30 @@ def build_evidence(
         "Every observed half/flag starts with exactly one game_time=0 baseline.")
     add("PASS" if ownership["invalid_owner_count"] == 0 else "FAIL", "ownership_values",
         "Ownership values are restricted to neutral, Allies, or Axis.")
+    for source, label in (("frag", "Frag"), ("damage", "Damage")):
+        percent = activation[f"{source}_producer_coverage_pct"]
+        add(
+            "PASS" if percent == 100.0 else
+            "FAIL" if percent is None or percent == 0.0 else "WARN",
+            f"{source}_producer_clock",
+            f"{label} producer-clock coverage: {percent if percent is not None else 'unavailable'}%.",
+        )
+    add("PASS" if activation["life_active"] else "FAIL", "life_capture_active",
+        f"Physical life rows: {activation['life_events'].get('rows_total')}.")
+    assist_level = (
+        "PASS" if activation["assist_reconciled"] and generic_assists > 0 else
+        "WARN" if activation["assist_reconciled"] else "FAIL"
+    )
+    add(assist_level, "canonical_assist_reconciliation",
+        f"Generic assists: {generic_assists}; canonical timed assists: "
+        f"{activation['canonical_assists'].get('rows_total')}.")
+    add("PASS" if objective_trust["trusted_for_capout_and_last_flag"] else "WARN",
+        "objective_classification_trust", objective_trust["reason"])
+    add("PASS" if statsme["statsme_kills_reconciled"] else "WARN",
+        "statsme_kill_domain",
+        f"StatsMe kills: {statsme['statsme_kills']}; enemy frags + teamkills: "
+        f"{statsme['statsme_expected_kill_domain']}. StatsMe deaths are auxiliary, "
+        f"with delta {statsme['statsme_death_delta']} versus physical ledgers.")
     required = ("per_hit_damage", "capture_credits", "positions", "flag_ownership",
                 "statsme", "statsme2", "assists")
     missing = [name for name in required if not sources.get(name)]
@@ -234,10 +496,14 @@ def build_evidence(
     )
     timelines = analytics_report["shadow_timelines"]
     return {
-        "schema_version": 1, "generated_at": datetime.now(timezone.utc).isoformat(),
+        "schema_version": 2, "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": status, "match_id": analytics_report["match_id"],
         "provenance": provenance, "checks": checks,
         "match_type": classification, "ownership": ownership,
+        "capture_activation": activation,
+        "objective_classification": objective_trust,
+        "cap_breaks": cap_breaks,
+        "statsme_reconciliation": statsme,
         "source_coverage": sources,
         "analytics_coverage": {
             "players": len(analytics_report["players"]),
@@ -277,6 +543,24 @@ def render_markdown(evidence: dict[str, Any]) -> str:
         "", "## Ownership", "",
         f"Events: {ownership['event_count']}; transitions: {ownership['transition_count']}; "
         f"baselines valid: `{ownership['baseline_ok']}`.",
+        "", "## Capture activation", "",
+        f"Frag producer clocks: `{evidence['capture_activation']['frag_producer_coverage_pct']}%`; "
+        f"damage producer clocks: `{evidence['capture_activation']['damage_producer_coverage_pct']}%`.  ",
+        f"Life rows: `{evidence['capture_activation']['life_events'].get('rows_total')}`; "
+        f"canonical assists: `{evidence['capture_activation']['canonical_assists'].get('rows_total')}`.",
+        "", "## Objective classification", "",
+        f"Trusted for capout/last-flag: "
+        f"`{evidence['objective_classification']['trusted_for_capout_and_last_flag']}`.  ",
+        evidence["objective_classification"]["reason"],
+        f"Cap-break credits: `{evidence['cap_breaks']['cappers_stopped']}`; "
+        f"incident lower bound: `{evidence['cap_breaks']['incident_lower_bound']}`.",
+        "", "## Counter reconciliation", "",
+        f"StatsMe kills: `{evidence['statsme_reconciliation']['statsme_kills']}`; "
+        f"enemy frags + teamkills: "
+        f"`{evidence['statsme_reconciliation']['statsme_expected_kill_domain']}`.  ",
+        f"StatsMe deaths versus physical-ledger deaths delta: "
+        f"`{evidence['statsme_reconciliation']['statsme_death_delta']}`.  ",
+        evidence["statsme_reconciliation"]["canonical_rule"],
         "", "## Shadow timelines", "",
         "Private/read-only exploratory output; no rating or public API writes.", "",
         "```json", json.dumps(evidence["shadow_timeline_summary"], indent=2), "```", "",
@@ -318,6 +602,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         classifications = collect_classification(db, args.match_id)
         ownership = collect_ownership(db, args.match_id, sources.get("flag_ownership", False))
+        activation = collect_capture_activation(db, args.match_id, sources)
+        flag_positions = collect_flag_positions(
+            db, args.match_id, sources.get("flag_positions", False)
+        )
+        cap_break_rows = collect_cap_breaks(db, args.match_id)
 
     evidence = build_evidence(
         report, classifications, ownership,
@@ -327,7 +616,8 @@ def main(argv: list[str] | None = None) -> int:
             "fixture_sha256": _sha256(fixture), "source_mode": args.source_mode,
             "analytics_schema_version": analytics.SCHEMA_VERSION,
         },
-        expected_server_id=args.expected_server_id,
+        capture_activation=activation, flag_positions=flag_positions,
+        cap_break_rows=cap_break_rows, expected_server_id=args.expected_server_id,
         retention_days=args.retention_days,
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
