@@ -85,6 +85,8 @@ def daemon_repo(tmp_path):
         (15, "flag_state_events"),
         (16, "life_events"),
         (17, "capture_clocks_and_assists"),
+        (18, "break_context_correlation"),
+        (19, "clear_uncertified_frag_context"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -103,16 +105,18 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_sma.is_file()
     assert arts.plugin_inc.is_file()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 14
+    assert len(arts.schema_sql) == 16
     assert len(arts.seed_sql) == 2
 
 
 def test_default_schema_sequence_includes_retention_flag_state_life_then_clocks():
-    assert DEFAULT_SCHEMA_FILES[-4:] == (
+    assert DEFAULT_SCHEMA_FILES[-6:] == (
         "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
+        "sql/migrate_018_break_context_correlation.sql",
+        "sql/migrate_019_clear_uncertified_frag_context.sql",
     )
 
 
@@ -203,7 +207,9 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_014_match_type_retention.sql",
                  "migrate_015_flag_state_events.sql",
                  "migrate_016_life_events.sql",
-                 "migrate_017_capture_clocks_and_assists.sql"):
+                 "migrate_017_capture_clocks_and_assists.sql",
+                 "migrate_018_break_context_correlation.sql",
+                 "migrate_019_clear_uncertified_frag_context.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 
