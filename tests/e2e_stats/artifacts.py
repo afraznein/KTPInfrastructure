@@ -85,6 +85,8 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_015_flag_state_events.sql",
     "sql/migrate_016_life_events.sql",
     "sql/migrate_017_capture_clocks_and_assists.sql",
+    "sql/migrate_018_break_context_correlation.sql",
+    "sql/migrate_019_clear_uncertified_frag_context.sql",
 )
 
 

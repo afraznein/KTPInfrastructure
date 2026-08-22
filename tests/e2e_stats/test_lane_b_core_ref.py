@@ -54,18 +54,22 @@ def test_manual_lane_accepts_and_records_all_four_bundle_refs():
     assert "args.require_complete_coverage and bool(gaps)" in runner
 
 
-def test_full_and_corpus_lanes_apply_capture_clock_migration_after_life():
+def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     workflow = (ROOT / ".github/workflows/lane-b-stats-e2e.yml").read_text()
     life = "/work/build/artifacts/sql/migrate_016_life_events.sql"
     clocks = "/work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql"
+    breaks = "/work/build/artifacts/sql/migrate_018_break_context_correlation.sql"
+    correction = "/work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql"
 
-    assert workflow.count(life) == 2
-    assert workflow.count(clocks) == 2
-    first_life = workflow.index(life)
-    first_clocks = workflow.index(clocks)
-    second_life = workflow.index(life, first_life + 1)
-    second_clocks = workflow.index(clocks, first_clocks + 1)
-    assert first_life < first_clocks < second_life < second_clocks
+    for migration in (life, clocks, breaks, correction):
+        assert workflow.count(migration) == 2
+    first = [workflow.index(migration) for migration in
+             (life, clocks, breaks, correction)]
+    second = [workflow.index(migration, offset + 1) for migration, offset in
+              zip((life, clocks, breaks, correction), first)]
+    assert first == sorted(first)
+    assert second == sorted(second)
+    assert first[-1] < second[0]
 
 
 def test_full_lane_carries_target_producer_clock_release_gates():
