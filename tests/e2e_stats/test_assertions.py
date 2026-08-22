@@ -750,3 +750,102 @@ def test_dropped_capture_lines_fail_the_run():
 
 def test_a_clean_log_passes():
     assertions.assert_no_dropped_lines('"A<1><BOT><Allies>" killed "B<2><BOT><Axis>"')
+
+
+class ContextClearDb:
+    def __init__(self, *, frags, teamkills, tagged_frags, tagged_teamkills):
+        self.frags = frags
+        self.teamkills = teamkills
+        self.tagged_frags = tagged_frags
+        self.tagged_teamkills = tagged_teamkills
+
+    def count(self, query):
+        if "hlstats_Events_Teamkills" in query:
+            return self.tagged_teamkills if "WHERE match_id" in query else self.teamkills
+        if "hlstats_Events_Frags" in query:
+            return self.tagged_frags if "WHERE match_id" in query else self.frags
+        raise AssertionError(f"unexpected query: {query}")
+
+
+def _kill_window(*, frags=(0, 78, 1), teamkills=(0, 5, 0),
+                 unclassified=(0, 0, 0)):
+    names = ("before", "during", "after")
+    return {
+        "frags": dict(zip(names, frags)),
+        "teamkills": dict(zip(names, teamkills)),
+        "unclassified": dict(zip(names, unclassified)),
+    }
+
+
+def test_context_clear_reconciles_84_kills_as_79_frags_plus_5_teamkills():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=79, teamkills=5,
+                       tagged_frags=78, tagged_teamkills=5),
+        match_id="target-TEST", kill_window=_kill_window(),
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["total_frags"] == 79
+    assert verdict["total_teamkills"] == 5
+
+
+def test_context_clear_allows_freeze_kills_to_be_unscoped_within_match_bounds():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=79, teamkills=5,
+                       tagged_frags=74, tagged_teamkills=3),
+        match_id="target-TEST", kill_window=_kill_window(),
+    )
+    assert verdict["status"] == "ok"
+
+
+def test_context_clear_rejects_wrong_table_even_when_combined_total_matches():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=80, teamkills=4,
+                       tagged_frags=78, tagged_teamkills=4),
+        match_id="target-TEST", kill_window=_kill_window(),
+    )
+    assert verdict["status"] == "pipeline"
+    assert "Each table must reconcile exactly" in verdict["detail"]
+
+
+def test_context_clear_rejects_frag_or_teamkill_tag_above_match_window():
+    for tagged_frags, tagged_teamkills in ((79, 5), (78, 6)):
+        verdict = assertions.check_untagged_after_match(
+            ContextClearDb(frags=79, teamkills=5,
+                           tagged_frags=tagged_frags,
+                           tagged_teamkills=tagged_teamkills),
+            match_id="target-TEST", kill_window=_kill_window(),
+        )
+        assert verdict["status"] == "pipeline"
+        assert "above the ordered" in verdict["detail"]
+
+
+def test_context_clear_fails_closed_on_unclassified_engine_kill():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=79, teamkills=5,
+                       tagged_frags=78, tagged_teamkills=5),
+        match_id="target-TEST",
+        kill_window=_kill_window(unclassified=(0, 1, 0)),
+    )
+    assert verdict["status"] == "pipeline"
+    assert "refusing to guess" in verdict["detail"]
+
+
+def test_context_clear_without_post_match_kill_is_not_exercised():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=78, teamkills=5,
+                       tagged_frags=78, tagged_teamkills=5),
+        match_id="target-TEST",
+        kill_window=_kill_window(frags=(0, 78, 0)),
+    )
+    assert verdict["status"] == "not_exercised"
+
+
+def test_context_clear_without_post_probe_still_fails_on_table_loss():
+    verdict = assertions.check_untagged_after_match(
+        ContextClearDb(frags=78, teamkills=4,
+                       tagged_frags=78, tagged_teamkills=4),
+        match_id="target-TEST",
+        kill_window=_kill_window(frags=(0, 78, 0)),
+    )
+    assert verdict["status"] == "pipeline"
+    assert "Each table must reconcile exactly" in verdict["detail"]

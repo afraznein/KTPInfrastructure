@@ -353,6 +353,7 @@ jobs:
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/sql:/work/sql:ro" \
+            -v "${PWD}/config:/work/config:ro" \
             -w /work ktp-lane-b:ci \
             python3 -m pytest tests/e2e_stats -q
 
@@ -371,6 +372,7 @@ jobs:
             python3 -u scripts/lane_b_e2e.py \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
+              --amxx-gamedata /work/build/artifacts/gamedata \
               --plugin /work/build/artifacts/stats_logging.amxx \
               --config-dir /work/config/local \
               --hlstats /work/build/daemon/hlstats.pl \

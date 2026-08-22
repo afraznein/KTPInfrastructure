@@ -334,58 +334,98 @@ def check_match_tagging(db, *, match_id: str, half: int) -> list[dict]:
     return out
 
 
-def check_untagged_after_match(db, *, match_id: str, kills_before_match: int,
-                               kills_during_match: int,
-                               kills_after_match: int) -> dict:
+def check_untagged_after_match(db, *, match_id: str, kill_window: dict) -> dict:
     """Rows created after `KTP_MATCH_END` must not still carry the match.
 
     If the context is not cleared, every later warmup kill silently joins the
     last match played — which is how a scrim's kills end up inside a
     competitive fixture.
 
-    The bound comes from the **log**, not from a mid-run query. Querying the
-    row count at `end_match` would race the daemon's flush and undercount,
-    turning a clean run into a fabricated leak. Every tagged frag must
-    correspond to a kill inside the match window, and `killed` lines are the
-    upper bound on those: teamkills and suicides go to their own tables, so
-    tagged frags can only ever be fewer.
+    Counts come from the **log**, not from a mid-run query. Engine kill lines
+    are split by exact combat-team labels: opponent kills reconcile to
+    ``hlstats_Events_Frags`` and same-team kills reconcile independently to
+    ``hlstats_Events_Teamkills``. A sum-only comparison is forbidden because
+    a row in the wrong table could cancel a missing row in the other.
 
     Requires play after the match to be meaningful — with nothing happening
     afterwards there is nothing that could have leaked, and the check says so
     rather than claiming a pass.
     """
-    tagged = db.count(
+    frag_window = kill_window.get("frags") or {}
+    teamkill_window = kill_window.get("teamkills") or {}
+    unknown_window = kill_window.get("unclassified") or {}
+    window_names = ("before", "during", "after")
+    if any(name not in frag_window or name not in teamkill_window
+           or name not in unknown_window for name in window_names):
+        return {"code": "match_context_cleared", "status": "pipeline",
+                "detail": "engine kill window lacks strict frag/teamkill/"
+                          "unclassified before/during/after evidence"}
+
+    tagged_frags = db.count(
         f"SELECT COUNT(*) FROM hlstats_Events_Frags WHERE match_id = '{match_id}'")
-    total = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
-    if kills_after_match == 0:
+    total_frags = db.count("SELECT COUNT(*) FROM hlstats_Events_Frags")
+    tagged_teamkills = db.count(
+        "SELECT COUNT(*) FROM hlstats_Events_Teamkills "
+        f"WHERE match_id = '{match_id}'")
+    total_teamkills = db.count("SELECT COUNT(*) FROM hlstats_Events_Teamkills")
+    evidence = {
+        "tagged_frags": tagged_frags,
+        "total_frags": total_frags,
+        "tagged_teamkills": tagged_teamkills,
+        "total_teamkills": total_teamkills,
+        "engine_frags": dict(frag_window),
+        "engine_teamkills": dict(teamkill_window),
+        "engine_unclassified": dict(unknown_window),
+    }
+
+    unclassified = sum(int(unknown_window[name]) for name in window_names)
+    if unclassified:
+        return {"code": "match_context_cleared", "status": "pipeline",
+                "detail": f"{unclassified} engine kill line(s) had teams other "
+                          "than exact Allies/Axis; refusing to guess their table",
+                **evidence}
+    post_kills = int(frag_window["after"]) + int(teamkill_window["after"])
+    expected_frags = sum(int(frag_window[name]) for name in window_names)
+    expected_teamkills = sum(
+        int(teamkill_window[name]) for name in window_names
+    )
+    if total_frags != expected_frags or total_teamkills != expected_teamkills:
+        return {"code": "match_context_cleared", "status": "pipeline",
+                "detail":
+                    f"engine classified {expected_frags} frag(s) and "
+                    f"{expected_teamkills} teamkill(s), but the database has "
+                    f"{total_frags} Frags and {total_teamkills} Teamkills. "
+                    "Each table must reconcile exactly before context clearing "
+                    "can be certified.",
+                **evidence}
+
+    if post_kills == 0:
         return {"code": "match_context_cleared", "status": "not_exercised",
                 "detail":
-                    "no kills after the match ended, so nothing could have "
-                    "leaked into it — this run does not test context clearing.",
-                "tagged": tagged}
-    expected_total = kills_before_match + kills_during_match + kills_after_match
-    if total != expected_total:
+                    "Frags and Teamkills reconcile, but no kills happened "
+                    "after the match ended, so this run does not exercise "
+                    "context clearing.",
+                **evidence}
+
+    max_tagged_frags = int(frag_window["during"])
+    max_tagged_teamkills = int(teamkill_window["during"])
+    if (tagged_frags > max_tagged_frags
+            or tagged_teamkills > max_tagged_teamkills):
         return {"code": "match_context_cleared", "status": "pipeline",
                 "detail":
-                    f"{expected_total} kill line(s) across the before/during/after "
-                    f"windows but {total} frag row(s). The post-match probe cannot "
-                    "prove context clearing unless it reaches the database.",
-                "tagged": tagged, "total": total}
-    if tagged > kills_during_match:
-        return {"code": "match_context_cleared", "status": "pipeline",
-                "detail":
-                    f"{tagged} frag row(s) carry {match_id} but only "
-                    f"{kills_during_match} kill(s) happened while it was live. "
-                    f"At least {tagged - kills_during_match} row(s) from the "
-                    f"{kills_after_match} post-match kill(s) joined the match — "
-                    f"the context is not being cleared at KTP_MATCH_END.",
-                "tagged": tagged}
+                    f"match {match_id} tags {tagged_frags} frag(s) and "
+                    f"{tagged_teamkills} teamkill(s), above the ordered "
+                    f"KTP_MATCH_START/END bounds {max_tagged_frags}/"
+                    f"{max_tagged_teamkills}. A before/after row leaked into "
+                    "the match.",
+                **evidence}
     return {"code": "match_context_cleared", "status": "ok",
             "detail":
-                f"{tagged} tagged row(s) against {kills_during_match} in-match "
-                f"kill(s); {kills_after_match} post-match kill(s) stayed "
-                f"untagged",
-            "tagged": tagged, "total": total}
+                f"{tagged_frags}/{max_tagged_frags} possible in-match frag(s) "
+                f"and {tagged_teamkills}/{max_tagged_teamkills} possible "
+                f"teamkill(s) tagged; {post_kills} post-match kill(s) stayed "
+                "outside those bounds",
+            **evidence}
 
 
 def check_statsme_flushed(db, *, weaponstats_lines: int,
@@ -570,9 +610,10 @@ def check_frag_context_diagnostics(
         unparsed_observed: list[str]) -> dict:
     """Only intentional BreakDrive injections may miss a stock frag row.
 
-    The expected count comes from successful ``[BD] kill flag=`` markers in
-    the driven match.  Comparing it exactly with the daemon warnings is
-    load-bearing: subtracting every observed warning would turn a genuinely
+    The expected count comes from successful ``[BD] kill flag=`` and
+    ``[BD] restart_queue`` markers in the driven match. Comparing it exactly
+    with the daemon warnings is load-bearing: subtracting every observed
+    warning would turn a genuinely
     dropped ordinary frag into an allowed diagnostic.
     """
     result = {
@@ -1293,6 +1334,7 @@ def summarise(db, *, match_id: str | None = None) -> dict:
             f"UNION ALL SELECT actionId, COUNT(*) FROM {_PPA} GROUP BY actionId"
         ).strip(),
         "frags": db.count("SELECT COUNT(*) FROM hlstats_Events_Frags"),
+        "teamkills": db.count("SELECT COUNT(*) FROM hlstats_Events_Teamkills"),
         "players": db.count("SELECT COUNT(*) FROM hlstats_Players"),
         "bots": db.count("SELECT COUNT(*) FROM hlstats_Players "
                          "WHERE playerId IN (SELECT playerId FROM hlstats_PlayerUniqueIds "
