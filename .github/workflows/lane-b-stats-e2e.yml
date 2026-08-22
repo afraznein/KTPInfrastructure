@@ -288,6 +288,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
                        /work/build/artifacts/sql/migrate_014_match_type_retention.sql \
                        /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
+                       /work/build/artifacts/sql/migrate_016_life_events.sql \
+                       /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -352,6 +354,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_013_ktp_table_collation.sql \
                        /work/build/artifacts/sql/migrate_014_match_type_retention.sql \
                        /work/build/artifacts/sql/migrate_015_flag_state_events.sql \
+                       /work/build/artifacts/sql/migrate_016_life_events.sql \
+                       /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
