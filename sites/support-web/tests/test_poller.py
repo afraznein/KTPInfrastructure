@@ -194,3 +194,96 @@ def test_write_atomic_applies_the_mode_it_was_given(tmp_path):
     # nginx serves public.json directly, so world-readable is required, not cosmetic.
     assert stat.S_IMODE(os.stat(pub).st_mode) & 0o044
     assert not stat.S_IMODE(os.stat(det).st_mode) & 0o077
+
+
+def _hud_entry(**overrides):
+    """A realistic /api/hq server entry, including fields that must NOT leak."""
+    entry = {
+        "hostname": "KTP - Atlanta 1",
+        "status": "LIVE", "online": True,
+        "lastEventAgeMs": 207, "totalEvents": 1455802,
+        "map": "dod_armory_b6", "half": 2, "roundPhase": None, "phase": "live",
+        "alliesScore": 3, "axisScore": 1,
+        "timeleft": 616.46, "timerFrozen": False,
+        "delayActive": True, "delaySeconds": 60,
+        "flags": [{"flag_id": 0, "flag_name": "backalley", "owner": "allies"}],
+        "allies": [{"user_id": "42", "name": "abe", "kills": 10, "deaths": 4}],
+        "axis": [{"user_id": "77", "name": "zed", "kills": 7, "deaths": 9}],
+        "playerCount": 2, "matchId": "m-123", "matchType": 2,
+    }
+    entry.update(overrides)
+    return entry
+
+
+def test_hud_match_block_is_allowlisted():
+    """Rosters and scores are published on purpose; identifiers and topology
+    must not ride along. Asserted on the serialised bytes, same as the main
+    disclosure test, so a nested value cannot pass a key check and still ship."""
+    results = [_ok("Atlanta 1", "Atlanta", "KTP - Atlanta 1 - KTP - LIVE - 2ND HALF")]
+    hud = {"KTP - Atlanta 1": _hud_entry()}
+    doc = P.public_document(results, hud=hud)
+    blob = json.dumps(doc)
+
+    m = doc["servers"][0]["match"]
+    assert m == {
+        "status": "LIVE", "phase": "live", "half": 2,
+        "allies_score": 3, "axis_score": 1,
+        "timeleft": 616.46, "timer_frozen": False, "delay_seconds": 60,
+        "allies": [{"name": "abe", "kills": 10, "deaths": 4}],
+        "axis": [{"name": "zed", "kills": 7, "deaths": 9}],
+    }
+    for secret in ("matchId", "m-123", "user_id", "totalEvents", "lastEventAgeMs",
+                   "flag_name", "backalley", "playerCount"):
+        assert secret not in blob, f"public.json leaked {secret!r}"
+
+
+def test_hud_absent_or_down_adds_no_match_block():
+    results = [_ok("Atlanta 1", "Atlanta", "KTP - Atlanta 1")]
+    assert "match" not in P.public_document(results)["servers"][0]
+    assert "match" not in P.public_document(results, hud={})["servers"][0]
+    offline = {"KTP - Atlanta 1": _hud_entry(online=False)}
+    assert "match" not in P.public_document(results, hud=offline)["servers"][0]
+
+
+def test_hud_keying_strips_a_mid_match_hostname_rename():
+    # The hud feed identifies servers by hostname, and KTPMatchHandler renames
+    # the hostname during a match -- fetch_hud must key on the parsed base.
+    class _Resp:
+        def __init__(self, payload):
+            self._p = payload
+        def read(self):
+            return self._p
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    payload = json.dumps({"generatedAt": "x", "servers": [
+        _hud_entry(hostname="KTP - Atlanta 1 - 12MAN - LIVE - 1ST HALF"),
+        _hud_entry(hostname="KTP - Denver 5"),
+        {"no_hostname": True},
+    ]}).encode()
+    import urllib.request as _ur
+    orig = _ur.urlopen
+    _ur.urlopen = lambda url, timeout=None: _Resp(payload)
+    try:
+        hud = P.fetch_hud()
+    finally:
+        _ur.urlopen = orig
+    assert set(hud) == {"KTP - Atlanta 1", "KTP - Denver 5"}
+
+
+def test_fetch_hud_swallows_an_unreachable_backend():
+    assert P.fetch_hud("http://127.0.0.1:9/api/hq", timeout=0.2) == {}
+
+
+def test_hud_roster_tolerates_garbage_entries():
+    junk = _hud_entry(allies=[{"name": "  "}, "not-a-dict",
+                              {"name": "ok", "kills": None, "deaths": 3.5},
+                              {"kills": 5}],
+                      axis="not-a-list", half=True, delaySeconds="60")
+    m = P._hud_match(junk)
+    assert m["allies"] == [{"name": "ok", "kills": 0, "deaths": 0}]
+    assert m["axis"] == []
+    assert m["half"] is None          # bool is not a half number
+    assert m["delay_seconds"] is None
