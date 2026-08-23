@@ -127,6 +127,30 @@
       "patternProperties": {"^[1-9][0-9]*$": {"type": "number", "minimum": 0}},
       "additionalProperties": false
     },
+    "position_components": {
+      "description": "Derived per-player life-impact totals only; never raw coordinates or life timelines.",
+      "type": "object",
+      "patternProperties": {
+        "^[1-9][0-9]*$": {
+          "type": "object",
+          "required": [
+            "mid_defense_points", "aggression_points",
+            "enemy_flag_hold_points", "active_flag_defense_points",
+            "sequence_continuity_points", "position_points"
+          ],
+          "properties": {
+            "mid_defense_points": {"type": "number", "minimum": 0},
+            "aggression_points": {"type": "number", "minimum": 0},
+            "enemy_flag_hold_points": {"type": "number", "minimum": 0},
+            "active_flag_defense_points": {"type": "number", "minimum": 0},
+            "sequence_continuity_points": {"type": "number", "minimum": 0},
+            "position_points": {"type": "number", "minimum": 0}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "reliability": {
       "type": "object",
       "properties": {
@@ -137,7 +161,9 @@
         "map_topology": {"type": "boolean"},
         "break_context": {"type": "boolean"},
         "positions": {"type": "boolean"},
-        "flag_positions": {"type": "boolean"}
+        "flag_positions": {"type": "boolean"},
+        "life_impact": {"type": "boolean"},
+        "life_boundaries_inferred": {"type": "boolean"}
       },
       "additionalProperties": false
     }

@@ -35,6 +35,13 @@ COMPONENT_KEYS = (
     "cap_break_points",
     "position_points",
 )
+POSITION_COMPONENT_KEYS = (
+    "mid_defense_points",
+    "aggression_points",
+    "enemy_flag_hold_points",
+    "active_flag_defense_points",
+    "sequence_continuity_points",
+)
 AI_FORBIDDEN_KEYS = {
     "points", "score", "total_points", "event_points", "position_points",
     "component_totals", "quality_gates", "publication_state", "publish",
@@ -99,6 +106,15 @@ def validate_facts(facts: dict[str, Any]) -> None:
     position = facts.get("position_points") or {}
     if any(_i(player_id) not in known for player_id in position):
         raise ValueError("position_points references a player outside the roster")
+    position_components = facts.get("position_components") or {}
+    if any(_i(player_id) not in known for player_id in position_components):
+        raise ValueError("position_components references a player outside the roster")
+    for raw_player_id, components in position_components.items():
+        if any(_f(components.get(key)) < 0 for key in (*POSITION_COMPONENT_KEYS, "position_points")):
+            raise ValueError("position_components cannot contain negative points")
+        component_sum = sum(_f(components.get(key)) for key in POSITION_COMPONENT_KEYS)
+        if not math.isclose(component_sum, _f(components.get("position_points")), abs_tol=0.06):
+            raise ValueError(f"position_components do not sum for player {raw_player_id}")
 
 
 def _reliability(facts: dict[str, Any], key: str, inferred: bool = False) -> bool:
@@ -116,7 +132,9 @@ def _new_player_result(player: dict[str, Any]) -> dict[str, Any]:
         "assists": _i(player.get("assists")),
         "team_kills": _i(player.get("team_kills")),
         "suicides": _i(player.get("suicides")),
+        "opponent_damage": _f(player.get("opponent_damage", player.get("damage_dealt"))),
         **{key: 0.0 for key in COMPONENT_KEYS},
+        **{key: 0.0 for key in POSITION_COMPONENT_KEYS},
     }
 
 
@@ -219,6 +237,8 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             facts, "positions", bool(facts.get("position_points"))
         ),
         "flag_positions": _reliability(facts, "flag_positions"),
+        "life_impact": _reliability(facts, "life_impact"),
+        "life_boundaries_inferred": _reliability(facts, "life_boundaries_inferred"),
     }
     bounded_combat = reliability["life_boundaries"] and reliability["damage_events"]
 
@@ -475,21 +495,35 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
 
     position_enabled = reliability["positions"] and reliability["flag_positions"]
     if position_enabled:
+        component_rows = facts.get("position_components") or {}
         for raw_player_id, value in (facts.get("position_points") or {}).items():
             player_id = _i(raw_player_id)
             if player_id in players:
                 players[player_id]["position_points"] = max(0.0, _f(value))
+        for raw_player_id, components in component_rows.items():
+            player_id = _i(raw_player_id)
+            if player_id not in players:
+                continue
+            for key in POSITION_COMPONENT_KEYS:
+                players[player_id][key] = max(0.0, _f(components.get(key)))
+            players[player_id]["position_points"] = max(
+                0.0, _f(components.get("position_points"))
+            )
 
     duration = max(0.0, _f((facts.get("match") or {}).get("duration_seconds")))
     output_players = []
     for player_id, result in players.items():
         rounded = {key: _rounded(_f(result[key])) for key in COMPONENT_KEYS}
+        rounded_position = {
+            key: _rounded(_f(result[key])) for key in POSITION_COMPONENT_KEYS
+        }
         event_points = sum(rounded[key] for key in COMPONENT_KEYS if key != "position_points")
         total_points = event_points + rounded["position_points"]
         observed = _f(roster[player_id].get("observed_seconds"), duration)
         output_players.append({
             **{key: value for key, value in result.items() if key not in COMPONENT_KEYS},
             **rounded,
+            **rounded_position,
             "event_points": _rounded(event_points),
             "total_points": _rounded(total_points),
             "points_per_minute": _rounded(total_points / (observed / 60.0)) if observed > 0 else None,
@@ -508,6 +542,10 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
     component_shares = {
         key: _rounded(100.0 * value / grand_total) if grand_total > 0 else 0.0
         for key, value in component_totals.items()
+    }
+    position_component_totals = {
+        key: _rounded(sum(_f(player[key]) for player in output_players))
+        for key in POSITION_COMPONENT_KEYS
     }
     quality_gates = {
         "bounded_combat": {
@@ -532,8 +570,23 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         },
         "position": {
             "status": "PASS" if position_enabled else "DISABLED",
-            "detail": "Derived private position points included."
+            "detail": (
+                "Derived per-life impact components included; underlying movement remains private."
+                if reliability["life_impact"]
+                else "Derived private position points included."
+            )
             if position_enabled else "Position samples or objective coordinates are unavailable.",
+        },
+        "life_reconstruction": {
+            "status": "WARN" if reliability["life_boundaries_inferred"] else (
+                "PASS" if reliability["life_impact"] else "DISABLED"
+            ),
+            "detail": (
+                "Lives were reconstructed from deaths and the next observed position sample."
+                if reliability["life_boundaries_inferred"]
+                else "Explicit life boundaries were available."
+                if reliability["life_impact"] else "Per-life impact was not calculated."
+            ),
         },
         "break_context": {
             "status": "PASS" if reliability["break_context"] else "WARN",
@@ -556,6 +609,8 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         "quality_gates": quality_gates,
         "component_totals": component_totals,
         "component_shares_percent": component_shares,
+        "position_component_totals": position_component_totals,
+        "life_impact_contract": profile.get("life_impact"),
         "match_total_points": _rounded(grand_total),
         "players": output_players,
         "events": {
@@ -719,6 +774,103 @@ def render_markdown(report: dict[str, Any]) -> str:
     ]
     for key, value in report["component_totals"].items():
         lines.append(f"| {key} | {value:.2f} | {report['component_shares_percent'][key]:.2f}% |")
+    life_cfg = report.get("life_impact_contract")
+    if life_cfg:
+        position_totals = report["position_component_totals"]
+        lines += [
+            "", "## Per-life positional impact", "",
+            "Only the following derived totals are shareable. Coordinates, routes, sample "
+            "histories, and individual life timelines remain private.", "",
+            "| Component | Match points | Meaning |",
+            "|---|---:|---|",
+            f"| Mid defense | {position_totals['mid_defense_points']:.2f} | "
+            "Presence and kills while defending owned mid under nearby enemy pressure. |",
+            f"| Aggression | {position_totals['aggression_points']:.2f} | "
+            "Crossing beyond mid and sustaining forward pressure. |",
+            f"| Enemy-flag hold | {position_totals['enemy_flag_hold_points']:.2f} | "
+            "Consequential presence at flags beyond mid, with opposition or friendly ownership. |",
+            f"| Active flag defense | {position_totals['active_flag_defense_points']:.2f} | "
+            "Kills near a currently owned, actively threatened non-mid flag. |",
+            f"| Sequence continuity | {position_totals['sequence_continuity_points']:.2f} | "
+            "Same-life defense, capture, forward-push, and enemy-capture transitions. |",
+            "", "### Player positional components", "",
+            "| Rank | Player | Mid defense | Aggression | Enemy-flag hold | Active flag defense | Sequence | Position total |",
+            "|---:|---|---:|---:|---:|---:|---:|---:|",
+        ]
+        for player in report["players"]:
+            lines.append(
+                f"| {player['rank']} | {player['player_name_at_match']} | "
+                f"{player['mid_defense_points']:.2f} | {player['aggression_points']:.2f} | "
+                f"{player['enemy_flag_hold_points']:.2f} | "
+                f"{player['active_flag_defense_points']:.2f} | "
+                f"{player['sequence_continuity_points']:.2f} | "
+                f"{player['position_points']:.2f} |"
+            )
+        lines += [
+            "", "### Exact positional calculation", "",
+            f"Samples use a {life_cfg['sample_seconds']:.0f}-second cadence. Mid defense is "
+            f"`{life_cfg['mid_defense_points_per_second']:.2f} × seconds × proximity × threat`; "
+            f"aggression beyond mid is `{life_cfg['aggression_points_per_second']:.2f} × seconds × "
+            "proximity × pressure`; and enemy-flag holding is "
+            f"`{life_cfg['enemy_flag_hold_points_per_second']:.2f} × seconds × proximity × pressure`.", "",
+            f"Active enemy pressure applies `{life_cfg['active_pressure_multiplier']:.2f}×`. "
+            f"Unopposed aggression uses `{life_cfg['unopposed_aggression_multiplier']:.2f}×`; "
+            f"unopposed enemy-flag holding uses `{life_cfg['unopposed_hold_multiplier']:.2f}×` "
+            "and decays further with time. This preserves a small positive value without "
+            "letting passive presence dominate.", "",
+            f"A first crossing beyond mid adds {life_cfg['cross_mid_points']:.0f} points; first "
+            f"arrival at an enemy-side flag adds {life_cfg['reach_enemy_flag_points']:.0f}. "
+            f"A qualifying mid-defense kill adds {life_cfg['mid_defense_kill_points']:.0f}; "
+            f"another actively defended flag kill adds {life_cfg['active_flag_defense_kill_points']:.0f}.", "",
+            "Continuity rewards verified same-life state changes, not the kills again: "
+            f"defense→mid capture {life_cfg['defense_to_mid_capture_points']:.0f}, "
+            f"defense→forward push {life_cfg['defense_to_forward_push_points']:.0f}, "
+            f"mid capture→forward push {life_cfg['mid_capture_to_forward_push_points']:.0f}, and "
+            f"forward push→enemy capture {life_cfg['forward_push_to_enemy_capture_points']:.0f}. "
+            f"Continuity is capped at {life_cfg['sequence_points_cap_per_life']:.0f} per life, "
+            f"all positional impact at {life_cfg['points_cap_per_life']:.0f} per life, and "
+            f"{life_cfg['points_cap_per_match']:.0f} per player per match.", "",
+            "No positional component can be negative. An immediate death normally earns zero "
+            "positional impact rather than a penalty.", "",
+            "### Evidence limitations", "",
+            "Per-life reconstruction is explicitly labeled when spawn/life rows are absent. "
+            "Ownership-dependent defense is scored only after a canonical capture establishes "
+            "the owner of that flag; an unreliable initial snapshot is never filled in by "
+            "assumption. A zero component can therefore mean that the required evidence was "
+            "unavailable, not that the underlying behavior never occurred.", "",
+        ]
+        top = report["players"][0]
+        bounded = report["quality_gates"]["bounded_combat"]["status"] == "PASS"
+        lines += [f"## Worked scoring example: {top['player_name_at_match']}", ""]
+        if bounded:
+            lines += [
+                f"- Finisher points: {top['combat_finisher_points']:.2f}",
+                f"- Victim-life damage-share points: {top['combat_damage_share_points']:.2f}",
+            ]
+        else:
+            lines += [
+                f"- Kills: {top['kills']} × 100 = {top['combat_finisher_points']:.2f}",
+                f"- Assists: {top['assists']} × 50 = {top['fallback_assist_points']:.2f}",
+                f"- Opponent damage: {top['opponent_damage']:.0f} × 0.02 = "
+                f"{top['fallback_damage_points']:.2f}",
+            ]
+        lines += [
+            f"- Progressive streak: {top['streak_points']:.2f}",
+            f"- Shutdowns: {top['shutdown_points']:.2f}",
+            f"- Fast chains: {top['fast_chain_points']:.2f}",
+            f"- Captures: {top['capture_points']:.2f}",
+            f"- Capture conversions: {top['conversion_points']:.2f}",
+            f"- Cap breaks: {top['cap_break_points']:.2f}",
+            f"- Mid defense: {top['mid_defense_points']:.2f}",
+            f"- Aggression: {top['aggression_points']:.2f}",
+            f"- Enemy-flag hold: {top['enemy_flag_hold_points']:.2f}",
+            f"- Active flag defense: {top['active_flag_defense_points']:.2f}",
+            f"- Sequence continuity: {top['sequence_continuity_points']:.2f}",
+            f"- **Total: {top['total_points']:.2f}**", "",
+            "The combat, streak, chain, and capture awards remain separate. The five "
+            "life-impact lines describe only what changed territorially or defensively "
+            "while that player remained alive.", "",
+        ]
     lines += [
         "", "AI annotations, when present, are advisory and hash-bound to this deterministic "
         "report. They cannot alter points, gates, privacy, or publication state.", "",

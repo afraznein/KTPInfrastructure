@@ -90,8 +90,13 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
     legacy = _aggregate_model(facts, "legacy_v2", 0.10, True)
     damped = _aggregate_model(facts, "damped_no_penalty", 0.02, False)
     bounded_report = score_match(facts, profile)
+    profile_name = str(profile.get("profile", {}).get("name") or "bounded_v3")
+    bounded_name = (
+        "bounded_v4_life_impact"
+        if profile_name == "accumulation_v4_life_impact" else "bounded_v3"
+    )
     bounded = {
-        "name": "bounded_v3",
+        "name": bounded_name,
         "players": [
             {
                 "player_id": row["player_id"],
@@ -120,29 +125,38 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
             "player_name_at_match": player_name,
             "legacy_rank": rank_lookup["legacy_v2"][player_id],
             "damped_rank": rank_lookup["damped_no_penalty"][player_id],
-            "bounded_rank": rank_lookup["bounded_v3"][player_id],
+            "bounded_rank": rank_lookup[bounded_name][player_id],
             "bounded_vs_legacy": rank_lookup["legacy_v2"][player_id]
-            - rank_lookup["bounded_v3"][player_id],
+            - rank_lookup[bounded_name][player_id],
         })
     comparisons.sort(key=lambda row: row["bounded_rank"])
     return {
         "schema_version": 1,
         "match_id": facts["match"]["match_id"],
+        "bounded_model": bounded_name,
+        "comparison_scope": (
+            "All aggregate baselines use the current facts.position_points term so "
+            "the comparison isolates event-formula changes; they are not historical reruns."
+        ),
         "models": [legacy, damped, bounded],
         "rank_comparison": comparisons,
         "interpretation": {
-            "legacy_v2": "Documents the former double-counted damage and penalties.",
-            "damped_no_penalty": "Immediate safe fallback: no penalties and 0.02 damage.",
+            "legacy_v2": "Former event weights and penalties, combined with the current positional term.",
+            "damped_no_penalty": "No penalties and 0.02 damage, combined with the current positional term.",
             "bounded_v3": "Fixed death/objective pools plus contextual positive bonuses.",
+            "bounded_v4_life_impact": "Bounded v3 events plus private-derived per-life territorial impact.",
         },
     }
 
 
 def render_markdown(comparison: dict[str, Any]) -> str:
     by_name = {model["name"]: model for model in comparison["models"]}
+    bounded_name = comparison.get("bounded_model", "bounded_v3")
+    bounded_label = "Bounded v4 life-impact" if bounded_name == "bounded_v4_life_impact" else "Bounded v3"
     lines = [
         f"# Accumulation model comparison — {comparison['match_id']}", "",
-        "| Player | Legacy rank | Damped/no-penalty rank | Bounded v3 rank | Change vs legacy |",
+        comparison.get("comparison_scope", ""), "",
+        f"| Player | Legacy rank | Damped/no-penalty rank | {bounded_label} rank | Change vs legacy |",
         "|---|---:|---:|---:|---:|",
     ]
     for row in comparison["rank_comparison"]:
@@ -153,7 +167,7 @@ def render_markdown(comparison: dict[str, Any]) -> str:
             f"{row['damped_rank']} | {row['bounded_rank']} | {rendered} |"
         )
     lines += ["", "## Match totals", "", "| Model | Total points | Purpose |", "|---|---:|---|"]
-    for name in ("legacy_v2", "damped_no_penalty", "bounded_v3"):
+    for name in ("legacy_v2", "damped_no_penalty", bounded_name):
         lines.append(
             f"| {name} | {by_name[name]['match_total_points']:.2f} | "
             f"{comparison['interpretation'][name]} |"
