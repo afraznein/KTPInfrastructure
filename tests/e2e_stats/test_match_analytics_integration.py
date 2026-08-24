@@ -94,6 +94,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "frag_event_clock": True,
         "life_boundaries": True,
         "assist_context": True,
+        "capture_health": False,
     }
     assert report["schema_version"] == 6
     assert report["shadow_timelines"]["status"] == "available"
