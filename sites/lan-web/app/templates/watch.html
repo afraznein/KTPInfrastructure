@@ -264,40 +264,6 @@
     </div>
   </section>
 
-  <details class="field-manual">
-    <summary>
-      <span class="fm-toggle" aria-hidden="true"></span>
-      Caster's Field Manual — put the overlay on your stream
-      <span class="fm-hint">new to OBS? open this</span>
-    </summary>
-    <div class="manual-body">
-      <p class="manual-intro">
-        The on-screen graphics — scores, flags, timers, kill feed — are a transparent web page
-        you lay over your game video in OBS. First time doing this? These steps take about two minutes.
-      </p>
-      <ol class="manual-steps">
-        <li>Have your <b>game video</b> in OBS already: a <b>Window</b> or <b>Display Capture</b> of your
-            Day of Defeat spectator (HLTV) client. That is the picture — the overlay sits on top of it.</li>
-        <li>In the <b>Sources</b> panel, click <b>+</b>, choose <b>Browser</b>, name it
-            &ldquo;KTP Overlay&rdquo;, and click <b>OK</b>.</li>
-        <li>In the <b>URL</b> field, paste:
-            <span class="manual-url">https://watch.ktpdod.com/screen?server=KTP%20LAN%201</span>
-            &mdash; change the <b>1</b> on the end to whichever server you are casting (2, 3, 4, or 5).</li>
-        <li>Set <b>Width</b> to <b>1920</b> and <b>Height</b> to <b>1080</b> to match your stream
-            resolution. Leave everything else as-is and click <b>OK</b>.</li>
-        <li>In the Sources list, drag &ldquo;KTP Overlay&rdquo; <b>above</b> your game capture so it draws
-            on top. Its background is see-through &mdash; only the graphics show.</li>
-        <li>Done. To cast a different server, double-click the source and change the <b>server=</b>
-            number in the URL &mdash; or add one Browser source per server and switch between them.</li>
-      </ol>
-      <p class="manual-note">
-        <span class="tag">TIP</span> &mdash; right-click the overlay source &rarr; <b>Properties</b> &rarr;
-        tick <b>&ldquo;Refresh browser when scene becomes active&rdquo;</b> so it always loads clean.<br>
-        <span class="tag">BLANK OVERLAY?</span> &mdash; the graphics only fill in while a match is live, and
-        the address must be exact (<b>https</b>, and <b>%20</b> for the spaces in the server name).
-      </p>
-    </div>
-  </details>
 
 {% if twitch_channel %}
 <script src="https://embed.twitch.tv/embed/v1.js"></script>
