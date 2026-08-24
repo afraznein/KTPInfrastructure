@@ -110,12 +110,35 @@ IGNORED_KEYS = {
     'HOST > cpu-cores',          # Chicago 4 vs baremetal 8 expected
     'HOST > mem-total-kb',       # Denver 16GB vs others 32GB expected
     'HOST > cpu-model',          # Denver has older Xeon E3-1240 V2
+    'HOST > cpu-microcode',      # same root cause as cpu-model — Denver's older Xeon
     'SYSCTL (KTP-relevant) > net.ipv4.udp_mem',  # auto-scales with RAM
     'SYSCTL (KTP-relevant) > net.netfilter.nf_conntrack_max',  # auto-scales with RAM
     'KTP SAMPLE PORT > port',    # per-host override to dodge canary ports
 }
 
 # Sections where every line is a standalone fact (no key=value split).
+#
+# NOTE on the host-to-host drift sections (compute_drift / render_drift_section,
+# used for "Baremetal-only drift" and "Fleet-wide drift"): for these sections the
+# "key" IS the full line, so IGNORED_KEYS can only suppress a line that is
+# byte-identical across hosts — it cannot suppress a line that legitimately
+# differs per host in its *content* (a UUID, an interface name, indentation from
+# a differently-styled script). Three known classes read as "drift" here but are
+# not actionable, verified 2026-08-24 against the live fleet:
+#   - GRUB CMDLINE `root=UUID=...` and `BOOT_IMAGE=...` — one distinct line per
+#     host by construction (root partition UUID, kernel image path). These are
+#     already excluded by name in the repo-vs-fleet GRUB section below; the
+#     host-to-host section has no equivalent exclusion.
+#   - /etc/rc.local NIC-name lines (`enp1s0f0` vs `enp2s0f0` vs `eth0`) — same
+#     tuning line, different interface name. The repo-vs-fleet rc.local section
+#     handles this correctly via fnmatch glob patterns; this section does not.
+#   - /etc/rc.local indentation — Chicago's rc.local wraps its NOTRACK block in
+#     `if command -v iptables; then ... fi` and indents it 4 spaces; the same
+#     line unindented on the baremetals reads as "absent on Chicago" even though
+#     the rule is present and active (confirmed live, 2026-08-24).
+# The repo-vs-fleet sections further down (sysctl/binary/cmdline/timer/rc.local)
+# are the authoritative correctness check; treat a host-to-host-only item in one
+# of the three classes above as noise, not as an outstanding action.
 LIST_SECTIONS = {
     'GRUB CMDLINE',
     'CPU GOVERNOR (distinct values)',
