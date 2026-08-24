@@ -19,6 +19,20 @@
 #
 # Adding custom plugins (e.g., HUD Observer):
 #   Drop .amxx files in local/plugins/ — copied into KTPAMXX plugins dir at startup.
+#   (ktp-game-2 reads local/plugins-bots/ instead — see below.)
+#
+# ⚠ THE TWO GAME SERVERS ARE NOT THE SAME STACK:
+#
+#   ktp-game-1  production topology — extension mode, no Metamod, no bots.
+#               The control. Use it to confirm anything found on game-2.
+#   ktp-game-2  BOT SERVER. Metamod-R hosts new_bot, and ktpamx is a
+#               KTP_LANE_B_FAKECLIENTS build stamped NOT FOR PRODUCTION.
+#               `fakemeta` is reachable here and is NOT reachable on the
+#               fleet, so a fakemeta-dependent regression passes here and
+#               fails on all 25 servers.
+#
+#   Bots need a one-off ~10 min build: make local-bots-amxx
+#   Then:                              make local-bots-up && make local-bots-match
 #
 # Environment variables:
 #   VERSION            - Artifact version to use (default: latest)
@@ -67,23 +81,63 @@ services:
       start_period: 15s
 
   # ============================================================
-  # Game Server 2 — dod_flash (optional, comment out if not needed)
+  # Game Server 2 — BOT SERVER, NOT PRODUCTION TOPOLOGY
   # ============================================================
+  #
+  # Unlike ktp-game-1, this server runs Metamod-R (hosting new_bot) and a
+  # ktpamx built with KTP_LANE_B_FAKECLIENTS — a binary stamped NOT FOR
+  # PRODUCTION, because in extension mode AMXX otherwise cannot see bots at
+  # all. See build/bots/Dockerfile for the full topology and why.
+  #
+  # ktp-game-1 is deliberately left alone as the control: it is the only way
+  # to tell "broken in extension mode" from "broken under Metamod". Under
+  # Metamod `fakemeta` becomes reachable, so a fakemeta-dependent regression
+  # passes here and fails on all 25 fleet servers.
+  #
+  # Drive a real 6v6 through go-live with:
+  #   make local-bots-match
+  #
   ktp-game-2:
-    image: ktp-gameserver:${VERSION:-latest}
+    build:
+      context: .
+      dockerfile: build/bots/Dockerfile
+      args:
+        VERSION: ${VERSION:-latest}
+    image: ktp-gameserver-bots:${VERSION:-latest}
     # depends_on removed — see ktp-game-1. Use `--profile full` to include data.
     environment:
-      MAP: dod_flash
-      MAXPLAYERS: "13"
+      # anzio is the map upstream validated bot runs on. Override with BOT_MAP,
+      # but CHECK WAYPOINTS FIRST — new_bot 0.2.2 ships 94 .wpt files and they
+      # cover stock maps only. Verified in the image: anzio, flash, donner,
+      # kalt, avalanche, merderet and jagd have waypoints; the S10 custom pool
+      # (saints2_b3e, railyard_s9d, armory_b6, halle, thunder2, lennon5_b1,
+      # railroad2_s9a) has NONE. An unwaypointed map gives bots that connect
+      # and then stand still, which reads as "the pipeline is broken".
+      #   docker run --rm --entrypoint bash ktp-gameserver-bots:$VERSION \
+      #     -c 'ls /opt/hlds/dod/new_bot/waypoints'
+      MAP: ${BOT_MAP:-dod_anzio}
+      # 12 bots + HLTV + a spectator slot. The production 13 does not fit a
+      # full 6v6 plus anyone watching.
+      MAXPLAYERS: "16"
       RCON_PASSWORD: "${RCON_PASSWORD:-changeme}"
-      SERVER_HOSTNAME: "KTP Local Dev #2"
+      # Surfaced verbatim on /watch and /hq, so the overlay says so too.
+      SERVER_HOSTNAME: "KTP LOCAL BOTS #2 [NON-PROD metamod+patched-amxx]"
     tty: true
     stdin_open: true
-    entrypoint: ["bash", "/entrypoint.sh"]
-    command: ["-console", "-norestart"]
+    entrypoint: ["bash", "/entrypoint-bots.sh"]
+    # Metamod must be told which real game DLL to load underneath: liblist.gam
+    # now points at Metamod itself, so reading it would be circular.
+    command: ["-console", "-norestart", "+localinfo", "mm_gamedll", "dlls/dod.so"]
     volumes:
       - ./config/local:/config:ro
-      - ./local/plugins:/plugins:ro
+      # NOT ./local/plugins — entrypoint.sh copies /plugins/*.amxx over the
+      # image's, so a KTP_TEST_MODE KTPMatchHandler in the shared directory
+      # would leak onto ktp-game-1 and quietly change the control server.
+      - ./local/plugins-bots:/plugins:ro
+      # KTP_LANE_B_FAKECLIENTS ktpamx + matching dodx. Mounted to a side path
+      # and copied into place by the entrypoint, which REFUSES TO BOOT if it
+      # is absent — a bot-blind server is silent and looks healthy.
+      - ./local/lane-b:/opt/ktp-laneb:ro
       - ./config/local/dod-configs:/opt/hlds/dod/configs:ro
     ports:
       - "27017:27015/udp"

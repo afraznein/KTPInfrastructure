@@ -272,6 +272,58 @@ local-build:
 	@echo "Image built: ktp-gameserver:$(VERSION)"
 	@echo "Run 'make local-up' to start."
 
+# ============================================================
+# Local BOT server (ktp-game-2) — NOT PRODUCTION TOPOLOGY
+# ============================================================
+#
+# ktp-game-2 runs Metamod-R hosting new_bot, plus a ktpamx built with
+# KTP_LANE_B_FAKECLIENTS. Both are required and neither is production:
+#
+#   * DoD ships no bot AI, and the only Linux-viable DoD 1.3 bots are Metamod
+#     plugins, while the KTP stack is Metamod-free.
+#   * In extension mode AMXX has no code path that registers a fake client as
+#     a player, so without the patched core every plugin is BLIND to bots —
+#     silently, on a server that otherwise looks completely healthy.
+#
+# ktp-game-1 is deliberately untouched as the control. The logic lives in
+# scripts/local_bots.sh; see build/bots/README.md for the reasoning.
+.PHONY: local-bots-amxx local-bots-plugins local-bots-build local-bots-up local-bots-match
+
+BOTS := bash scripts/local_bots.sh
+
+# One-off, ~10 min. Builds from the LOCAL KTPAMXX checkout at its current
+# commit so game-2 differs from game-1 by the bot patch and nothing else.
+# Refuses on a dirty KTPAMXX tree. Run from WSL, not Git Bash.
+local-bots-amxx:
+	$(BOTS) build-core
+
+# KTP_TEST_MODE KTPMatchHandler (for .testmatch) + the HUD plugin, into a
+# bot-server-only plugin dir so the test-mode build cannot leak onto game-1.
+local-bots-plugins:
+	$(BOTS) stage-plugins
+
+local-bots-build:
+	@docker image inspect ktp-gameserver:$(VERSION) >/dev/null 2>&1 || { echo "ERROR: ktp-gameserver:$(VERSION) not found — run 'make local-build' first."; exit 1; }
+	VERSION=$(VERSION) $(LOCAL_COMPOSE) build ktp-game-2
+	@echo ""
+	@echo "Image built: ktp-gameserver-bots:$(VERSION)  (never push — third-party binaries)"
+
+local-bots-up: check-artifacts
+	$(BOTS) preflight
+	@mkdir -p local/plugins local/plugins-bots
+	VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d
+	@echo ""
+	@echo "  ktp-game-1: localhost:27016  production topology, no bots  [control]"
+	@echo "  ktp-game-2: localhost:27017  BOT SERVER — Metamod-R + new_bot + patched ktpamx"
+	@echo ""
+	@echo "Drive a 6v6 through go-live:  make local-bots-match"
+
+# Fill 6v6 with bots and take the real competitive flow live. Refuses if a
+# human client is connected, so run this BEFORE joining. HLTV may stay.
+local-bots-match:
+	python3 scripts/local_bots_match.py --port 27017 --rcon-password "$${RCON_PASSWORD:-changeme}"
+
+
 # Check artifact freshness against sibling repo HEADs. Warns (does not fail)
 # when the baked KTPAMXX source SHA doesn't match the current working tree —
 # silent staleness has bitten us before (local tests against yesterday's code
@@ -299,12 +351,15 @@ check-artifacts:
 # Start local game server(s) — game servers only, no data service.
 # Works on a fresh KTPInfrastructure checkout without needing any sibling repo.
 local-up: check-artifacts
-	@mkdir -p local/plugins
-	VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d
+	@mkdir -p local/plugins local/plugins-bots
+# ktp-game-2 is the BOT server and cannot boot without a KTP_LANE_B_FAKECLIENTS
+# ktpamx (make local-bots-amxx, ~10 min). Rather than let it crash-loop on a
+# checkout that has never built one, start game-1 alone and say why.
+	@if $(BOTS) has-core; then VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d; else echo ""; echo "NOTE: starting ktp-game-1 only — ktp-game-2 is the BOT server and has no"; echo "      patched ktpamx yet. Without it AMXX cannot see bots at all."; echo "      Build it once with 'make local-bots-amxx', then 'make local-bots-up'."; echo ""; VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d ktp-game-1; fi
 	@echo ""
 	@echo "Game servers running:"
-	@echo "  ktp-game-1: localhost:27016 (dod_anzio, internal 27015)"
-	@echo "  ktp-game-2: localhost:27017 (dod_flash, internal 27015)"
+	@echo "  ktp-game-1: localhost:27016 (dod_anzio, internal 27015)  [production topology]"
+	@if $(BOTS) has-core; then echo "  ktp-game-2: localhost:27017 (BOT SERVER — Metamod-R + patched ktpamx)"; fi
 	@echo ""
 	@echo "Drop .amxx files in local/plugins/ and restart to load custom plugins."
 	@echo "For the full stack (game servers + HUD Observer data service): make local-up-full"
@@ -332,11 +387,12 @@ local-up-full: check-artifacts
 		echo "Clone it as a sibling directory or set DOD_HUD_PATH to point at it."; \
 		exit 1; \
 	fi
-	VERSION=$(VERSION) $(LOCAL_COMPOSE) --profile full up -d
+# Same bot-core guard as local-up: ktp-game-2 cannot boot without one.
+	@if $(BOTS) has-core; then VERSION=$(VERSION) $(LOCAL_COMPOSE) --profile full up -d; else echo ""; echo "NOTE: skipping ktp-game-2 (BOT server) — no patched ktpamx yet."; echo "      Build it once with 'make local-bots-amxx'."; echo ""; VERSION=$(VERSION) $(LOCAL_COMPOSE) --profile full up -d ktp-game-1 data; fi
 	@echo ""
 	@echo "Full stack running:"
-	@echo "  ktp-game-1: localhost:27016 (dod_anzio)"
-	@echo "  ktp-game-2: localhost:27017 (dod_flash)"
+	@echo "  ktp-game-1: localhost:27016 (dod_anzio)  [production topology]"
+	@if $(BOTS) has-core; then echo "  ktp-game-2: localhost:27017 (BOT SERVER — Metamod-R + patched ktpamx)"; fi
 	@echo "  data       (HUD Observer frontend): http://localhost:3000"
 	@echo "  data       (HUD Observer backend):  http://localhost:3001"
 
