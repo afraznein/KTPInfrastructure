@@ -17,7 +17,7 @@ decides how many events happen.
 
 It does not gate merges. Lane B is nightly and advisory — see
 tests/e2e_stats/README.md. A red run here means "look at this", not "the branch
-is broken", because a bot that spends four minutes failing to find a fight
+is broken", because a bot that spends six minutes failing to find a fight
 produces a legitimately empty database.
 
 The one exception is a failure that cannot be bot luck: an assist recorded in
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
@@ -38,8 +39,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
+                                         summary_for_lane)
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
+from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
+                                       REQUIRED_AMXX_GAMEDATA,
+                                       directory_tree_provenance,
+                                       load_bundle_provenance,
+                                       load_gamedata_provenance,
+                                       render_bundle_provenance_markdown,
+                                       validate_gamedata_bundle_source)
 from tests.e2e_stats.table_report import (changed_table_samples,  # noqa: E402
                                           render_markdown, table_counts)
 from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
@@ -53,6 +63,25 @@ from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 # next one with identical arguments succeeds. Isolated by running the same
 # command three times in one container; retried rather than explained.
 BOOT_ATTEMPTS = 3
+
+_AMXX_GAMEDATA_DEST = "dod/addons/ktpamx/data/gamedata"
+_CLOCK_PREFLIGHT_RE = re.compile(
+    r"KTP_BD_CLOCK_PREFLIGHT\s+gamerules=(?P<gamerules>-?\d+)\s+"
+    r"round=(?P<round>\S+)\s+limit=(?P<limit>\S+)"
+)
+_SERVER_CRC_RE = re.compile(
+    r"GameConfig CRC computed server=(?P<crc>[0-9A-Fa-f]{8})\s+"
+    r"\((?P<path>[^)\r\n]+)\)"
+)
+_SERVER_RESOLVER_WARNINGS = (
+    'Unable to find library "server"',
+    'Unable to load library "server"',
+    "Unable to prove declared mm_gamedll",
+    "GameConfig CRC mismatch",
+    'GameConfig CRC unable to resolve path for library "server"',
+    'GameConfig CRC missing for library "server"',
+    "Could not find g_pGameRules address",
+)
 
 
 def compile_sma(src: Path, out: Path, *, scripting: Path,
@@ -131,10 +160,53 @@ def build_test_mode_matchhandler(src_dir: Path, out: Path, *,
                        include_dir=include_dir)
 
 
-def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path, plugin: Path, config_dir: Path,
+def gamedata_tree_provenance(root: Path) -> dict:
+    """Return a path-sensitive, byte-sensitive manifest for a gamedata tree.
+
+    The tree is executable configuration: selecting one checkout's core while
+    retaining another checkout's gamedata can resolve offsets against the
+    wrong binary. Symlinks and non-regular entries are rejected so a digest
+    can never certify content outside the declared checkout.
+    """
+    try:
+        return directory_tree_provenance(root)
+    except BuildError as exc:
+        raise SystemExit(f"invalid AMXX gamedata: {exc}") from exc
+
+
+def stage_amxx_gamedata(tree: EphemeralTree, source: Path) -> dict:
+    """Replace the baked gamedata with the exact KTPAMXX checkout's tree."""
+    source = Path(source)
+    missing = [rel for rel in REQUIRED_AMXX_GAMEDATA
+               if not (source / rel).is_file()]
+    if missing:
+        raise SystemExit(
+            f"Lane B requires the complete KTPAMXX gamedata tree at {source}; "
+            "missing " + ", ".join(missing)
+        )
+
+    source_manifest = gamedata_tree_provenance(source)
+    staged_root = tree.overlay_dir(source, _AMXX_GAMEDATA_DEST)
+    staged_manifest = gamedata_tree_provenance(staged_root)
+    if staged_manifest != source_manifest:
+        raise SystemExit(
+            "staged AMXX gamedata does not byte-for-byte match the declared "
+            f"source tree {source}"
+        )
+    return {
+        "source": str(source),
+        "destination": _AMXX_GAMEDATA_DEST,
+        **source_manifest,
+        "staged_tree_sha256": staged_manifest["tree_sha256"],
+    }
+
+
+def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
+               amxx_gamedata: Path, plugin: Path, config_dir: Path,
                server_cfg_fixture: Path, break_drive: Path | None = None,
                assist_drive: Path | None = None,
-               matchhandler: Path | None = None) -> tuple[EphemeralTree, list[str]]:
+               matchhandler: Path | None = None
+               ) -> tuple[EphemeralTree, list[str], dict]:
     """Lay the branch's artifacts over the image's server tree.
 
     `in_place` rather than a copy: the container is the isolation boundary, so
@@ -146,12 +218,31 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path, plugin: Path, conf
     dll = "dod/addons/ktpamx/dlls/ktpamx_i386.so"
     tree.overlay_file(ktpamx_so, dll)
     tree.overlay_file(dodx_so, "dod/addons/ktpamx/modules/dodx_ktp_i386.so")
+    gamedata_provenance = stage_amxx_gamedata(tree, amxx_gamedata)
 
     # The runtime base image ships no modules.ini/plugins.ini — production's
     # entrypoint mounts them. Without these AMXX loads zero modules and zero
     # plugins, and the run looks like a stack that came up fine.
     for ini in config_dir.glob("*.ini"):
         tree.overlay_file(ini, f"dod/addons/ktpamx/configs/{ini.name}")
+
+    # KTPMatchHandler executes configs/ktp_<map>.cfg when a match goes live;
+    # those map files chain into ktpbasic.cfg, which arms mp_clan_match and
+    # sets mp_timelimit. The base image does not contain them. Omitting this
+    # overlay makes mp_clan_restartround silently no-op and invalidates every
+    # restart assertion, so absence is a setup error rather than an optional
+    # local customization.
+    dod_configs = config_dir / "dod-configs"
+    required_configs = (dod_configs / "ktpbasic.cfg",)
+    missing_configs = [path for path in required_configs if not path.is_file()]
+    if missing_configs:
+        raise SystemExit(
+            "Lane B requires match-time DoD configs under "
+            f"{dod_configs}: missing "
+            + ", ".join(path.name for path in missing_configs)
+        )
+    for cfg in sorted(dod_configs.glob("*.cfg")):
+        tree.overlay_file(cfg, f"dod/configs/{cfg.name}")
     tree.overlay_file(plugin, "dod/addons/ktpamx/plugins/stats_logging.amxx")
 
     if matchhandler is not None:
@@ -184,7 +275,7 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path, plugin: Path, conf
         server_cfg_fixture.read_text()
         + "\nmp_timelimit 0\nmp_limitteams 0\nktp_stats_capture 1\n"
         + "ktp_testmatch_enabled 1\n")
-    return tree, dropped
+    return tree, dropped, gamedata_provenance
 
 
 def configure_bots(handle, *, flag_priority: int = 100,
@@ -259,7 +350,7 @@ def replay_boot_flag_positions(daemon, log_path: Path) -> int:
 
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
               per_team: int = 8, before_play=None, during_play=None,
-              after_match=None) -> dict:
+              after_match=None, after_live=None) -> dict:
     """Take the state machine LIVE, play, and end the match.
 
     This is what makes rows carry `match_id` and `half`. `recordEvent` injects
@@ -283,9 +374,13 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     print(f"  match {out['match_id']} live, half {half}", flush=True)
 
     # Let the state change settle before the play window: the zone poll runs on
-    # a 0.5s task and the capture buffer flushes on a 5s one, so starting the
-    # clock immediately attributes pre-live time to the match.
+    # a 0.5s task, the capture buffer flushes on a 5s one, and MatchHandler
+    # applies the timed map config on a deferred task after setting match_live.
+    # The strict callback therefore runs after setup has completed but before
+    # the kill-switch/play/scenario windows begin.
     time.sleep(5.0)
+    if after_live is not None:
+        after_live()
     if before_play is not None:
         before_play()
     out["live_from"] = _count(log_path, chr(34) + " killed " + chr(34))
@@ -308,6 +403,103 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     out["kills_during_match"] = out["live_to"] - out["live_from"]
     print(f"  match ended after {out['kills_during_match']} kills", flush=True)
     return out
+
+
+def gamerules_clock_preflight(handle, log_path: Path) -> dict:
+    """Prove DODX resolved the real game DLL and exposes a live round clock.
+
+    There is deliberately no retry here. A resolver that is unavailable at
+    the first live timed-match boundary invalidates the run; waiting for a
+    later sample would turn a boot defect into intermittent green evidence.
+    """
+    output = handle.rcon("ktp_bd_clock_preflight")
+    markers = list(_CLOCK_PREFLIGHT_RE.finditer(output))
+    log_text = log_path.read_text(errors="replace")
+    warnings = [line.strip() for line in log_text.splitlines()
+                if any(needle in line for needle in _SERVER_RESOLVER_WARNINGS)]
+    crc_evidence = [
+        {"crc32": match.group("crc").upper(), "path": match.group("path")}
+        for match in _SERVER_CRC_RE.finditer(log_text)
+    ]
+    evidence = {
+        "status": "pipeline",
+        "command": "ktp_bd_clock_preflight",
+        "rcon_output": output.strip(),
+        "resolver_warnings": warnings,
+        "server_crc": crc_evidence,
+    }
+
+    if len(markers) != 1:
+        evidence["detail"] = (
+            "clock preflight returned "
+            f"{len(markers)} parseable marker(s), expected exactly one"
+        )
+        return evidence
+    marker = markers[0]
+    try:
+        gamerules = int(marker.group("gamerules"))
+        round_time = float(marker.group("round"))
+        round_limit = float(marker.group("limit"))
+    except ValueError as exc:
+        evidence["detail"] = f"clock preflight returned invalid numerics: {exc}"
+        return evidence
+    evidence.update({
+        "gamerules": gamerules,
+        "round_time": round_time,
+        "round_limit": round_limit,
+    })
+
+    if warnings:
+        evidence["detail"] = (
+            f"server/GameRules resolver emitted {len(warnings)} warning(s)"
+        )
+        return evidence
+    if not crc_evidence:
+        evidence["detail"] = "no GameConfig CRC evidence for library server"
+        return evidence
+    wrong_paths = [
+        item["path"] for item in crc_evidence
+        if not item["path"].replace("\\", "/").lower()
+        .endswith("/dod/dlls/dod.so")
+    ]
+    if wrong_paths:
+        evidence["detail"] = (
+            "server GameConfig CRC did not identify dod/dlls/dod.so: "
+            + ", ".join(wrong_paths)
+        )
+        return evidence
+    if gamerules != 1:
+        evidence["detail"] = f"dodx_has_gamerules returned {gamerules}, expected 1"
+        return evidence
+    if not math.isfinite(round_time) or round_time < 0.0:
+        evidence["detail"] = (
+            f"dodx_get_round_time returned non-finite/negative {round_time!r}"
+        )
+        return evidence
+    if not math.isfinite(round_limit) or round_limit <= 0.0:
+        evidence["detail"] = (
+            f"live match has no finite positive round limit: {round_limit!r}"
+        )
+        return evidence
+
+    evidence["status"] = "ok"
+    evidence["detail"] = (
+        f"GameRules available; round={round_time:.2f}s limit={round_limit:.2f}s; "
+        f"server CRC resolved {crc_evidence[-1]['path']}"
+    )
+    return evidence
+
+
+def persist_preflight_failure(report: dict, failures: list[str], failure: str,
+                              *, out_path: Path, summary_path: Path) -> None:
+    """Persist the strict capability failure before the server exception exits."""
+    failures.append(failure)
+    report["failures"] = list(failures)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2, default=str),
+                        encoding="utf-8")
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(render_markdown(report), encoding="utf-8")
 
 
 def _count(log_path: Path, needle: str) -> int:
@@ -383,10 +575,12 @@ def main() -> int:
                     help="ktpamx built with KTP_LANE_B_FAKECLIENTS=1")
     ap.add_argument("--dodx-so", type=Path, required=True,
                     help="DODX module built with KTP_LANE_B_FAKECLIENTS=1")
+    ap.add_argument("--amxx-gamedata", type=Path, required=True,
+                    help="complete gamedata tree from the exact KTPAMXX checkout")
     ap.add_argument("--plugin", type=Path, required=True,
                     help="compiled stats_logging.amxx from the branch under test")
     ap.add_argument("--config-dir", type=Path, required=True,
-                    help="config/local — the sv_lan, no-Steam-auth .ini set")
+                    help="config/local — local .ini files plus dod-configs/*.cfg")
     ap.add_argument("--server-cfg", type=Path,
                     default=Path("/work/tests/smoke/fixtures/test_server.cfg"))
     ap.add_argument("--hlstats", type=Path, required=True)
@@ -395,7 +589,9 @@ def main() -> int:
     ap.add_argument("--map", default="dod_anzio")
     ap.add_argument("--per-team", type=int, choices=(6,), default=6,
                     help="Lane B is fixed at tournament-sized 6v6")
-    ap.add_argument("--play-seconds", type=int, default=240)
+    ap.add_argument("--play-seconds", type=int, default=360,
+                    help="full-match play window; v5 ratings require at least "
+                         "the profile minimum (currently 300 seconds)")
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
                          "more lone cappers and so more cap_breaks — untested; "
@@ -431,13 +627,45 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
     ap.add_argument("--summary-out", type=Path,
                     default=Path("/work/build/lane-b-summary.md"))
+    ap.add_argument("--match-report-dir", type=Path,
+                    default=Path("/work/build/match-report"),
+                    help="shareable deterministic v5 bundle, generated before "
+                         "the ephemeral database is destroyed")
+    ap.add_argument("--report-profile", type=Path,
+                    default=Path("/work/config/analytics/accumulation_v5_momentum.toml"))
+    ap.add_argument("--map-objectives", type=Path,
+                    default=Path("/work/config/analytics/map_objectives.toml"))
+    ap.add_argument("--artifact-manifest", type=Path, default=None,
+                    help="artifact manifest carrying the exact four-repository "
+                         "bundle; invalid or incomplete provenance is fatal")
+    ap.add_argument("--require-complete-coverage", action="store_true",
+                    help="return nonzero when any assertion or staged scenario "
+                         "is not exercised; required for release evidence")
     ap.add_argument("--database-dump", type=Path, default=None,
                     help="optional local mysqldump written before the isolated "
                          "database is destroyed; intended for read-only "
                          "post-match analytics")
     args = ap.parse_args()
 
-    report: dict = {"map": args.map, "play_seconds": args.play_seconds}
+    report: dict = {
+        "map": args.map,
+        "play_seconds": args.play_seconds,
+        "require_complete_coverage": args.require_complete_coverage,
+    }
+    expected_gamedata_provenance = None
+    if args.artifact_manifest is not None:
+        try:
+            report["bundle_provenance"] = load_bundle_provenance(
+                args.artifact_manifest
+            )
+            expected_gamedata_provenance = load_gamedata_provenance(
+                args.artifact_manifest
+            )
+            validate_gamedata_bundle_source(
+                report["bundle_provenance"], expected_gamedata_provenance
+            )
+        except BuildError as exc:
+            raise SystemExit(f"invalid --artifact-manifest: {exc}") from exc
     failures: list[str] = []
     # Scenarios that could not be staged. Kept apart from `failures`
     # for the same reason as the other coverage gaps: a scenario that
@@ -486,26 +714,52 @@ def main() -> int:
                 f"Pass --no-match to run the untagged lane deliberately.")
 
         drive_amxx = None
-        if not args.no_break_scenarios and args.break_drive_sma.is_file():
+        needs_break_drive = mh_amxx is not None or not args.no_break_scenarios
+        if needs_break_drive and args.break_drive_sma.is_file():
             drive_amxx = compile_sma(
                 args.break_drive_sma, Path("/tmp/KTPBreakDrive.amxx"),
-                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting",
+                include_dir=args.matchhandler_includes)
             print(f"compiled {drive_amxx.name}", flush=True)
+        elif needs_break_drive:
+            raise SystemExit(
+                f"--break-drive-sma {args.break_drive_sma} is missing; its "
+                "strict GameRules/clock preflight is required for a live match"
+            )
 
         assist_drive_amxx = None
         if args.assist_drive_sma.is_file():
             assist_drive_amxx = compile_sma(
                 args.assist_drive_sma, Path("/tmp/KTPAssistDrive.amxx"),
-                scripting=args.serverfiles / "dod/addons/ktpamx/scripting")
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting",
+                include_dir=args.matchhandler_includes)
             print(f"compiled {assist_drive_amxx.name}", flush=True)
 
-        tree, dropped = stage_tree(args.serverfiles, ktpamx_so=args.ktpamx_so,
-                                   dodx_so=args.dodx_so,
-                                   plugin=args.plugin, config_dir=args.config_dir,
-                                   server_cfg_fixture=args.server_cfg,
-                                   break_drive=drive_amxx,
-                                   assist_drive=assist_drive_amxx,
-                                   matchhandler=mh_amxx)
+        tree, dropped, gamedata_provenance = stage_tree(
+            args.serverfiles, ktpamx_so=args.ktpamx_so,
+            dodx_so=args.dodx_so, amxx_gamedata=args.amxx_gamedata,
+            plugin=args.plugin, config_dir=args.config_dir,
+            server_cfg_fixture=args.server_cfg, break_drive=drive_amxx,
+            assist_drive=assist_drive_amxx, matchhandler=mh_amxx)
+        if expected_gamedata_provenance is not None:
+            identity_fields = (
+                "tree_sha256", "file_count", "directory_count", "bytes",
+                "files", "directories",
+            )
+            mismatched = [
+                field for field in identity_fields
+                if gamedata_provenance.get(field)
+                != expected_gamedata_provenance.get(field)
+            ]
+            if mismatched:
+                raise SystemExit(
+                    "--amxx-gamedata does not match the exact AMXX commit in "
+                    f"--artifact-manifest (mismatched {', '.join(mismatched)})"
+                )
+            gamedata_provenance["artifact_source"] = (
+                expected_gamedata_provenance.get("source")
+            )
+        report["amxx_gamedata"] = gamedata_provenance
         report["containment"]["plugins_dropped"] = dropped
         if dropped:
             print(f"containment: dropped {dropped} from the plugin list", flush=True)
@@ -558,7 +812,7 @@ def main() -> int:
                             print("staging degraded-killer assist scenario", flush=True)
                             report["assist_scenario"] = assist_scenario.run(
                                 handle, args.log)
-                        if drive_amxx is None:
+                        if drive_amxx is None or args.no_break_scenarios:
                             return
                         print("staging cap-break scenarios", flush=True)
                         report["break_scenarios"] = break_scenarios.run_all(
@@ -578,13 +832,32 @@ def main() -> int:
                         report["assists_before_match"] = _count(
                             args.log, 'triggered "assist"')
 
+                    def _strict_live_preflight():
+                        report["gamerules_clock_preflight"] = (
+                            gamerules_clock_preflight(handle, args.log)
+                        )
+                        preflight = report["gamerules_clock_preflight"]
+                        if preflight["status"] != "ok":
+                            failure = (
+                                "strict GameRules/round-clock preflight failed: "
+                                + preflight["detail"]
+                            )
+                            persist_preflight_failure(
+                                report, failures, failure,
+                                out_path=args.out,
+                                summary_path=args.summary_out,
+                            )
+                            raise RuntimeError(failure)
+                        print("  " + preflight["detail"], flush=True)
+
                     if mh_amxx is not None:
                         report["match"] = run_match(
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
                             per_team=args.per_team, before_play=_stage_kill_switch,
                             during_play=_stage_scenarios,
-                            after_match=_stage_post_match_frag)
+                            after_match=_stage_post_match_frag,
+                            after_live=_strict_live_preflight)
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
                         _stage_scenarios()
@@ -620,25 +893,99 @@ def main() -> int:
             log_invariants.count_in_match(log_text, 'triggered "position_sample"')
             if report.get("match") else position_sample_total
         )
+        assist_context_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "assist"')
+            if report.get("match") else 0
+        )
+        frag_context_match_emitted = (
+            log_invariants.frag_context_classification(
+                log_text, match_only=True
+            )["frags"]
+            if report.get("match") else 0
+        )
+        damage_match_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "damage"')
+            if report.get("match") else 0
+        )
+        life_match_emitted = (
+            log_invariants.count_in_match(log_text, 'triggered "life_boundary"')
+            if report.get("match") else 0
+        )
+        frag_diagnostic_evidence = (
+            log_invariants.frag_context_diagnostic_evidence(
+                log_text, daemon_text
+            )
+            if report.get("match") else {
+                "expected_synthetic_unmatched": 0,
+                "observed_unmatched": 0,
+                "expected_identities": [],
+                "observed_identities": [],
+                "unresolved_expected": [],
+                "unparsed_observed": [],
+                "synthetic_kill_markers": [],
+                "unmatched_warnings": [],
+            }
+        )
+        kill_evidence = log_invariants.kill_classification(log_text)
+        frag_context_evidence = log_invariants.frag_context_classification(
+            log_text
+        )
         report["emitted"] = {
-            "kills": log_text.count('" killed "'),
+            "kills": kill_evidence["kills"],
+            "frags": kill_evidence["frags"],
+            "teamkills": kill_evidence["teamkills"],
+            "unclassified_kills": kill_evidence["unclassified"],
             "assist": log_text.count('triggered "assist"'),
             "cap_break": log_text.count('triggered "cap_break"'),
             "suicide": log_text.count('committed suicide with'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
-            # `(headshot "1")` as one property on the unconditional
-            # "frag_context" marker every kill now emits.
-            "headshot": log_text.count('(headshot "1")'),
-            "frag_context": log_text.count('triggered "frag_context"'),
+            # `(headshot "1")` as one property on the canonical
+            # "frag_context" marker each non-teamkill player frag emits.
+            "headshot": frag_context_evidence["headshots"],
+            "frag_context": frag_context_evidence["frags"],
+            "frag_context_total": frag_context_evidence["total"],
+            "frag_context_teamkills": frag_context_evidence["teamkills"],
+            "frag_context_unclassified": frag_context_evidence["unclassified"],
+            "frag_context_match": frag_context_match_emitted,
             "damage": log_text.count('triggered "damage"'),
+            "damage_match": damage_match_emitted,
             "flag_capture": sum(
                 1 for line in log_text.splitlines()
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
-            "flag_state": log_text.count("KTP_FLAG_STATE "),
+            # The ownership poll can observe a final control-point change just
+            # after KTP_MATCH_END. The daemon deliberately rejects that marker
+            # because match context is already closed, so compare persisted
+            # rows only with markers inside the same ordered match window.
+            "flag_state": (
+                log_invariants.count_in_match(log_text, "KTP_FLAG_STATE ")
+                if report.get("match") else log_text.count("KTP_FLAG_STATE ")
+            ),
             "position_sample": position_sample_match,
             "position_sample_total": position_sample_total,
+            "life_boundary": log_text.count('triggered "life_boundary"'),
+            "life_boundary_match": life_match_emitted,
+            # Canonical ktp_assist_events is deliberately match-only.  Keep
+            # this separate from the generic PPA count above, which also
+            # includes diagnostic/warmup assist actions.
+            "assist_context": assist_context_emitted,
+        }
+        expected_frag_diagnostics = frag_diagnostic_evidence[
+            "expected_synthetic_unmatched"
+        ]
+        observed_frag_diagnostics = frag_diagnostic_evidence[
+            "observed_unmatched"
+        ]
+        report["frag_context_diagnostics"] = {
+            **frag_diagnostic_evidence,
+            "claimed_expected_rows": (
+                report["emitted"]["frag_context"] - expected_frag_diagnostics
+            ),
+            "producer_clock_expected_rows": (
+                report["emitted"]["frag_context_match"]
+                - expected_frag_diagnostics
+            ),
         }
         report["lines_fed"] = daemon.lines_fed
         real_sql, benign_sql = daemon.classify_sql_errors()
@@ -652,7 +999,11 @@ def main() -> int:
         # is what capture emitted, so a violation here is a plugin bug and not
         # something the daemon did. Deployment plan Unit 2 steps 4-5 and Unit 3.
         report["log_invariants"] = log_invariants.summarise(log_text)
-        for kind in ("assist_violations", "break_violations"):
+        for kind in (
+            "assist_violations", "break_violations",
+            "frag_context_teamkill_violations",
+            "kill_classification_violations",
+        ):
             for v in report["log_invariants"][kind]:
                 failures.append(v)
 
@@ -660,20 +1011,56 @@ def main() -> int:
         # the bots never produced, which say nothing either way and must not be
         # dressed up as either a pass or a defect.
         carried = [
+            assertions.check_capture_clock_schema(db),
             assertions.check_carried(db, "assist", emitted=report["emitted"]["assist"],
                                      table="hlstats_Events_PlayerPlayerActions",
                                      other_table="hlstats_Events_PlayerActions"),
+            assertions.check_assist_context(
+                db,
+                emitted=report["emitted"]["assist_context"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_carried(db, "cap_break", emitted=report["emitted"]["cap_break"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_frag_context_diagnostics(
+                expected=expected_frag_diagnostics,
+                observed=observed_frag_diagnostics,
+                expected_identities=frag_diagnostic_evidence[
+                    "expected_identities"
+                ],
+                observed_identities=frag_diagnostic_evidence[
+                    "observed_identities"
+                ],
+                unresolved_expected=frag_diagnostic_evidence[
+                    "unresolved_expected"
+                ],
+                unparsed_observed=frag_diagnostic_evidence[
+                    "unparsed_observed"
+                ],
+            ),
             assertions.check_frag_context_claimed(
                 db,
                 emitted=report["emitted"]["frag_context"],
-                unmatched=daemon_text.count(
-                    "KTP_NO_ROW_MATCHED: frag_context:")),
+                expected_unmatched=expected_frag_diagnostics,
+            ),
+            assertions.check_frag_producer_clocks(
+                db,
+                emitted=report["emitted"]["frag_context_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+                expected_unmatched=expected_frag_diagnostics,
+            ),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
+            assertions.check_damage_producer_clocks(
+                db,
+                emitted=report["emitted"]["damage_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_flag_captures(
                 db, emitted=report["emitted"]["flag_capture"]),
             assertions.check_flag_positions(
@@ -684,7 +1071,24 @@ def main() -> int:
                           if report.get("match") else None)),
             assertions.check_flag_states(
                 db, emitted=report["emitted"]["flag_state"]),
+            assertions.check_life_events(
+                db, emitted=report["emitted"]["life_boundary"]),
+            assertions.check_life_event_context(
+                db,
+                emitted=report["emitted"]["life_boundary_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_capture_buffer(log_text),
+            assertions.check_capture_health(
+                db,
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+                # BreakDrive deliberately emits unmatched synthetic frag
+                # markers to prove correlation failures are observable. They
+                # are expected test evidence, not organic capture loss.
+                expected_frag_correlation_failures=expected_frag_diagnostics,
+            ),
         ]
         if report.get("assist_scenario"):
             carried.append(report["assist_scenario"])
@@ -713,10 +1117,7 @@ def main() -> int:
             win = log_invariants.match_window(log_text)
             report["match"]["window"] = win
             carried.append(assertions.check_untagged_after_match(
-                db, match_id=m["match_id"],
-                kills_before_match=win["before"],
-                kills_during_match=win["during"],
-                kills_after_match=win["after"]))
+                db, match_id=m["match_id"], kill_window=win))
 
         if report.get("kill_switch"):
             carried.append(check_kill_switch(
@@ -758,6 +1159,22 @@ def main() -> int:
             )
 
         report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
+        if report.get("match"):
+            try:
+                generated = generate_lane_b_report(
+                    db, report["match"]["match_id"], args.match_report_dir,
+                    expected_players=args.per_team * 2,
+                    profile_path=args.report_profile,
+                    objectives_path=args.map_objectives,
+                )
+                report["v5_match_report"] = summary_for_lane(generated)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                report["v5_match_report"] = {
+                    "status": "FAIL", "bundle_path": "match-report",
+                    "detail": detail,
+                }
+                failures.append(f"v5_match_report: {detail}")
         if args.database_dump is not None:
             args.database_dump.parent.mkdir(parents=True, exist_ok=True)
             dump_args = [
@@ -784,7 +1201,11 @@ def main() -> int:
     for code in ("assist", "cap_break"):
         r = rows[code]
         print(f"  {code:<12} log={e[code]:<4} ppa={r['ppa']:<4} pa={r['pa']}")
-    print(f"  {'kills':<12} log={e['kills']:<4} frags={rows['frags']}")
+    print(f"  {'assist ctx':<12} log={e['assist_context']:<4} "
+          f"canonical={rows['assist_context']}")
+    print(f"  {'frags':<12} log={e['frags']:<4} frags={rows['frags']}")
+    print(f"  {'teamkills':<12} log={e['teamkills']:<4} "
+          f"teamkills={rows['teamkills']}")
     print(f"  {'suicide':<12} log={e['suicide']:<4} suicides={rows['suicides']}"
           f"  {rows['suicide_weapons'].splitlines()[1:] if rows['suicide_weapons'] else ''}")
     print(f"  players {rows['players']} ({rows['bots']} bot)")
@@ -811,10 +1232,16 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, default=str))
     args.summary_out.parent.mkdir(parents=True, exist_ok=True)
-    args.summary_out.write_text(render_markdown(report), encoding="utf-8")
+    summary = render_markdown(report)
+    if report.get("bundle_provenance"):
+        summary += "\n" + render_bundle_provenance_markdown(
+            report["bundle_provenance"]
+        )
+    args.summary_out.write_text(summary, encoding="utf-8")
     print(f"wrote {args.out}")
     print(f"wrote {args.summary_out}")
-    return 1 if failures else 0
+    incomplete_release_evidence = args.require_complete_coverage and bool(gaps)
+    return 1 if failures or incomplete_release_evidence else 0
 
 
 if __name__ == "__main__":

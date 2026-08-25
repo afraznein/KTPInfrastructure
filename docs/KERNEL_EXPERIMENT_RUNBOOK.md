@@ -91,7 +91,12 @@ grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
 # Regenerate grub.cfg (Ubuntu way):
 sudo update-grub
 # Because GRUB_DEFAULT=saved, explicitly set the default menuentry to the lowlatency kernel:
-sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency"
+# POSITIONAL, never a menu title. A title pin outlives the experiment: Atlanta ran
+# the title form of this command and stayed on 6.8.0-110 through every later kernel
+# update -- silently, because the pinned kernel running clears reboot-required.
+# '1>0' = Advanced submenu, first entry = the newest lowlatency kernel, always.
+# See docs/runbooks/GRUB_DEFAULT_KERNEL.md.
+sudo grub-set-default '1>0'
 # Verify:
 sudo grub-editenv list
 # Reboot:
@@ -135,7 +140,7 @@ sudo cp /etc/default/grub /etc/default/grub.idle-poll-experiment-bak-${TS}
 sudo sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\)|\1idle=poll |' /etc/default/grub
 grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
 sudo update-grub
-sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency"
+sudo grub-set-default '1>0'   # positional -- see the warning at the first grub-set-default above
 sudo grub-editenv list
 sudo reboot
 ```
@@ -149,7 +154,7 @@ sudo reboot
 
 **Cost expectations:** isolated cores 2-7 will report ~100% CPU utilization in `top` / `htop` because the idle task is now busy-polling instead of HLTing. This is cosmetic — the SCHED_FIFO game-server tasks still preempt the idle task as needed. Real "useful CPU" stays at the same ~3-5% per game-server core. Power/thermal: baremetal, ATL room, no concern in off-season.
 
-**Rollback:** `sudo cp /etc/default/grub.idle-poll-experiment-bak-<TS> /etc/default/grub && sudo update-grub && sudo grub-set-default 'Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency' && sudo reboot`. ~3 min window.
+**Rollback:** `sudo cp /etc/default/grub.idle-poll-experiment-bak-<TS> /etc/default/grub && sudo update-grub && sudo grub-set-default '1>0' && sudo reboot`. ~3 min window.
 
 **Stop conditions during soak:**
 - Any ATL instance shows >5% fps p50 regression vs control hosts in the same window

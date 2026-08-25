@@ -37,11 +37,31 @@ MATCH_TABLES = (
     "hlstats_Events_Suicides",
     "hlstats_Events_TeamBonuses",
     "hlstats_Events_Teamkills",
+    "ktp_assist_events",
+    "ktp_capture_health",
+    "ktp_capture_manifests",
     "ktp_damage_events",
     "ktp_flag_captures",
+    "ktp_flag_state_events",
+    "ktp_life_events",
     "ktp_match_players",
     "ktp_match_stats",
     "ktp_position_samples",
+)
+
+# These ledgers retain the historical receipt-time match_id for compatibility,
+# but migration 017 adds the producer-authored match as the authoritative scope
+# for timed analytics.  A buffered row can therefore carry different receipt
+# and producer contexts.  Delete by producer context when it exists and use the
+# receipt context only for legacy rows whose producer context is NULL.
+#
+# Keep the two predicates as separate DELETEs.  Besides making the precedence
+# visible in the operator log, this lets MySQL use each table's dedicated
+# producer-context and match-id indexes instead of evaluating an OR/COALESCE
+# predicate across the whole ledger.
+PRODUCER_CONTEXT_TABLES = (
+    "hlstats_Events_Frags",
+    "ktp_damage_events",
 )
 
 
@@ -87,10 +107,23 @@ GROUP BY p.match_id ORDER BY last_activity;
 
     deletes = []
     for table in MATCH_TABLES:
-        deletes.append(
-            f"DELETE t FROM `{table}` t JOIN purge_match_ids p ON p.match_id = t.match_id;\n"
-            f"SELECT '{table}' AS table_name, ROW_COUNT() AS deleted_rows;"
-        )
+        if table in PRODUCER_CONTEXT_TABLES:
+            deletes.append(
+                f"DELETE t FROM `{table}` t "
+                "JOIN purge_match_ids p ON p.match_id = t.producer_match_id;\n"
+                f"SELECT '{table}:producer_match_id' AS table_name, "
+                "ROW_COUNT() AS deleted_rows;\n"
+                f"DELETE t FROM `{table}` t "
+                "JOIN purge_match_ids p ON p.match_id = t.match_id "
+                "WHERE t.producer_match_id IS NULL;\n"
+                f"SELECT '{table}:legacy_match_id' AS table_name, "
+                "ROW_COUNT() AS deleted_rows;"
+            )
+        else:
+            deletes.append(
+                f"DELETE t FROM `{table}` t JOIN purge_match_ids p ON p.match_id = t.match_id;\n"
+                f"SELECT '{table}' AS table_name, ROW_COUNT() AS deleted_rows;"
+            )
     # Metadata is last, so an interrupted run remains discoverable and retryable.
     deletes.append(
         "DELETE t FROM `ktp_matches` t JOIN purge_match_ids p ON p.match_id = t.match_id;\n"

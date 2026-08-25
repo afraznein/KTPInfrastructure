@@ -29,6 +29,12 @@ def _assist(assister, auid, ateam, victim, vuid, vteam, *, at="04:18:12"):
             f'(assister_position "-417 -329 -372") (victim_position "-733 751 -404")')
 
 
+def _frag_context(killer, kuid, kteam, victim, vuid, vteam, *, headshot=0):
+    return (TS + f'"{killer}<{kuid}><BOT><{kteam}>" triggered '
+            f'"frag_context" against "{victim}<{vuid}><BOT><{vteam}>" '
+            f'with "garand" (headshot "{headshot}")')
+
+
 # -- the check parses real lines at all ------------------------------------
 
 
@@ -158,6 +164,59 @@ def test_a_clean_capture_produces_no_violations():
     assert (s["kills"], s["assists"]) == (3, 2)
 
 
+def test_engine_kills_split_exactly_into_frags_teamkills_and_unknowns():
+    log = "\n".join([
+        _kill("A", 1, "Allies", "B", 2, "Axis"),
+        _kill("A", 1, "Allies", "C", 3, "Allies"),
+        _kill("A", 1, "allies", "D", 4, "Axis"),
+        _kill("A", 1, "Allies", "A", 1, "Allies"),
+    ])
+    evidence = li.kill_classification(log)
+    assert evidence["kills"] == 4
+    assert evidence["frags"] == 1
+    assert evidence["teamkills"] == 1
+    assert evidence["unclassified"] == 2
+
+
+def test_teamkill_frag_context_is_forbidden_and_not_counted_as_canonical():
+    marker = _frag_context("A", 1, "Allies", "C", 3, "Allies", headshot=1)
+    evidence = li.frag_context_classification(marker)
+    assert evidence["total"] == 1
+    assert evidence["frags"] == 0
+    assert evidence["teamkills"] == 1
+    assert evidence["headshots"] == 0
+    assert len(evidence["violations"]) == 1
+    assert "teamkill emitted frag_context" in evidence["violations"][0]
+    assert li.breakdrive_synthetic_frag_diagnostics(marker) == []
+
+
+def test_enemy_frag_context_is_canonical_and_headshot_is_counted():
+    marker = _frag_context("A", 1, "Allies", "B", 2, "Axis", headshot=1)
+    evidence = li.frag_context_classification(marker)
+    assert evidence["frags"] == 1
+    assert evidence["headshots"] == 1
+    assert evidence["violations"] == []
+
+
+def test_enemy_non_headshot_frag_context_is_canonical_without_a_violation():
+    marker = _frag_context("A", 1, "Allies", "B", 2, "Axis", headshot=0)
+    evidence = li.frag_context_classification(marker)
+    assert evidence["frags"] == 1
+    assert evidence["headshots"] == 0
+    assert evidence["violations"] == []
+
+
+def test_unknown_or_same_user_frag_context_fails_closed():
+    for marker in (
+        _frag_context("A", 1, "allies", "B", 2, "Axis"),
+        _frag_context("A", 1, "Allies", "A", 1, "Allies"),
+    ):
+        evidence = li.frag_context_classification(marker)
+        assert evidence["unclassified"] == 1
+        assert evidence["frags"] == 0
+        assert len(evidence["violations"]) == 1
+
+
 # -- match window ----------------------------------------------------------
 #
 # The bound for "how many rows may carry this match id". Sampling a counter
@@ -214,6 +273,115 @@ def test_periodic_markers_are_counted_only_inside_the_match():
     assert li.count_in_match(log, 'triggered "position_sample"') == 2
 
 
+def test_post_match_flag_state_is_not_claimed_as_pipeline_loss():
+    """The daemon intentionally drops ownership after match context closes."""
+    marker = 'KTP_FLAG_STATE (map "dod_anzio") (flag_index "1")'
+    log = "\n".join([marker, MATCH_START, marker, marker, MATCH_END, marker])
+    assert li.count_in_match(log, "KTP_FLAG_STATE ") == 2
+
+
 def test_marker_count_without_a_match_is_zero():
     marker = '"Bot<1><BOT><Axis>" triggered "position_sample"'
     assert li.count_in_match(marker, 'triggered "position_sample"') == 0
+
+
+def test_only_successful_in_match_breakdrive_kills_expect_frag_diagnostics():
+    successful = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=3 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1953 "
+        "count_before=2 owner_before=0"
+    )
+    abort = TS + (
+        "[KTPBreakDrive.amxx] [BD] kill ABORT flag=-1 mode=far "
+        "no stageable capture while armed"
+    )
+    other_plugin = successful.replace("KTPBreakDrive.amxx", "NotBreakDrive.amxx")
+    log = "\n".join([
+        successful, MATCH_START, successful, abort, other_plugin, MATCH_END,
+        successful,
+    ])
+
+    diagnostics = li.breakdrive_synthetic_frag_diagnostics(log)
+
+    assert diagnostics == [successful]
+
+
+def test_no_match_never_grants_a_synthetic_frag_exception():
+    marker = TS + (
+        "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=1 mode=near "
+        "victim=2 vname=A killer=3 kname=B dist=4 count_before=2 "
+        "owner_before=2"
+    )
+    assert li.breakdrive_synthetic_frag_diagnostics(marker) == []
+
+
+def test_restart_queue_dispatch_expects_one_exact_frag_diagnostic():
+    marker = (
+        TS + "[KTPBreakDrive.amxx] [BD] restart_queue seq=4 flag=1 "
+        "fname=POINT_BRIDGE capteam=1 victim=2 vname=Lara killer=7 "
+        "killer_userid=41 kname=Master dist=238 count_before=2 "
+        "count_queued=2 owner_before=0 restart_timer=1.00 "
+        "round_before=702.50 drained=1"
+    )
+    log = "\n".join([MATCH_START, marker, MATCH_END])
+    daemon = "\n".join([
+        '"Master" <P:321,U:41,W:BOT:a,T:Axis>',
+        '"Lara" <P:329,U:22,W:BOT:b,T:Allies>',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(log, daemon)
+
+    assert evidence["expected_synthetic_unmatched"] == 1
+    assert evidence["observed_unmatched"] == 1
+    assert evidence["expected_identities"] == ["321->329:amerknife"]
+    assert evidence["observed_identities"] == ["321->329:amerknife"]
+    assert evidence["unresolved_expected"] == []
+
+
+def test_frag_diagnostic_evidence_maps_identity_and_preserves_duplicates():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    log = "\n".join([MATCH_START, synthetic, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '2026-08-20 - E002: "Leon" <P:321,U:1,W:BOT:a,T:Allies> entered',
+        '2026-08-20 - E002: "GLaDOS" <P:329,U:9,W:BOT:b,T:Axis> entered',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife -- diagnostic",
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife -- diagnostic",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(log, daemon)
+
+    assert evidence["expected_synthetic_unmatched"] == 2
+    assert evidence["observed_unmatched"] == 2
+    assert evidence["expected_identities"] == ["321->329:amerknife"] * 2
+    assert evidence["observed_identities"] == ["321->329:amerknife"] * 2
+    assert evidence["unresolved_expected"] == []
+    assert evidence["unparsed_observed"] == []
+
+
+def test_frag_diagnostic_evidence_does_not_guess_ambiguous_names():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=Same killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    log = "\n".join([MATCH_START, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"Same" <P:329,U:9,W:BOT:b,T:Axis>',
+        '"Same" <P:330,U:10,W:BOT:c,T:Axis>',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(log, daemon)
+
+    assert evidence["expected_identities"] == []
+    assert len(evidence["unresolved_expected"]) == 1

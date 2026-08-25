@@ -52,19 +52,44 @@ on:
         type: string
         default: corpus
       infrastructure_ref:
-        description: KTPInfrastructure ref containing the reusable harness
+        description: KTPInfrastructure ref/SHA containing the reusable harness
         required: false
         type: string
         default: preprod
+      matchhandler_ref:
+        description: KTPMatchHandler ref/SHA for the test-mode match driver
+        required: false
+        type: string
+        default: preprod
+      map_name:
+        description: Map to run bots on
+        required: false
+        type: string
+        default: dod_anzio
+      play_seconds:
+        description: Full-match play window (v5 ratings require at least 300 seconds)
+        required: false
+        type: string
+        default: '360'
   workflow_dispatch:
     inputs:
+      infrastructure_ref:
+        description: 'KTPInfrastructure ref/SHA containing the Lane B harness'
+        required: true
+        type: string
+        default: 'preprod'
+      matchhandler_ref:
+        description: 'KTPMatchHandler ref/SHA for the test-mode match driver'
+        required: true
+        type: string
+        default: 'preprod'
       amxx_ref:
-        description: 'KTPAMXX ref under test (e.g. feat/stats-positions)'
+        description: 'KTPAMXX ref/SHA under test (e.g. feat/stats-positions)'
         required: true
         type: string
         default: 'preprod'
       daemon_ref:
-        description: 'KTPHLStatsX ref under test (e.g. feat/seed-cap-break-action)'
+        description: 'KTPHLStatsX ref/SHA under test (e.g. feat/seed-cap-break-action)'
         required: true
         type: string
         default: 'preprod'
@@ -85,7 +110,7 @@ on:
         description: 'How long to let the bots play'
         required: false
         type: string
-        default: '240'
+        default: '360'
   push:
     # Manual preprod-only execution. Push events evaluate the workflow in the
     # tagged commit, so no workflow definition is needed on main.
@@ -127,11 +152,13 @@ jobs:
         run_index: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') && fromJSON('[1,2,3,4,5]') || fromJSON('[1]') }}
 
     env:
+      INFRASTRUCTURE_REF: ${{ matrix.target_ref }}
+      MATCHHANDLER_REF: ${{ inputs.matchhandler_ref || matrix.target_ref }}
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
       DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
       LANE: ${{ inputs.lane || 'full' }}
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
-      PLAY_SECONDS: ${{ inputs.play_seconds || '240' }}
+      PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
@@ -139,7 +166,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/KTPInfrastructure
-          ref: ${{ matrix.target_ref }}
+          ref: ${{ env.INFRASTRUCTURE_REF }}
 
       # Full history: the build step resolves refs with `git show <ref>:<path>`,
       # so a shallow clone that lacks the branch tip cannot produce artifacts.
@@ -162,13 +189,49 @@ jobs:
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
 
       - name: Checkout KTPMatchHandler for the test-mode match driver
-        if: ${{ env.LANE == 'full' }}
         uses: actions/checkout@v6
         with:
           repository: ${{ github.repository_owner }}/KTPMatchHandler
-          ref: preprod
+          ref: ${{ env.MATCHHANDLER_REF }}
           path: KTPMatchHandler
+          fetch-depth: 0
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      # Resolve each checked-out tree once. Every later build consumes these
+      # immutable values (or the exact detached working tree) rather than
+      # resolving a moving branch a second time. For a SHA input, also verify
+      # that actions/checkout landed on the requested commit/prefix.
+      - name: Resolve and validate exact bundle commits
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          infrastructure_sha="$(git rev-parse HEAD)"
+          matchhandler_sha="$(git -C KTPMatchHandler rev-parse HEAD)"
+          amxx_sha="$(git -C KTPAMXX rev-parse HEAD)"
+          daemon_sha="$(git -C KTPHLStatsX rev-parse HEAD)"
+
+          validate_sha_request() {
+            requested="$1"
+            actual="$2"
+            component="$3"
+            if [[ "$requested" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              requested="${requested,,}"
+              if [[ "$actual" != "$requested"* ]]; then
+                echo "::error::$component checkout is $actual, not requested $requested"
+                exit 1
+              fi
+            fi
+          }
+          validate_sha_request "$INFRASTRUCTURE_REF" "$infrastructure_sha" KTPInfrastructure
+          validate_sha_request "$MATCHHANDLER_REF" "$matchhandler_sha" KTPMatchHandler
+          validate_sha_request "$AMXX_REF" "$amxx_sha" KTPAMXX
+          validate_sha_request "$DAEMON_REF" "$daemon_sha" KTPHLStatsX
+
+          echo "infrastructure_sha=$infrastructure_sha" >> "$GITHUB_OUTPUT"
+          echo "matchhandler_sha=$matchhandler_sha" >> "$GITHUB_OUTPUT"
+          echo "amxx_sha=$amxx_sha" >> "$GITHUB_OUTPUT"
+          echo "daemon_sha=$daemon_sha" >> "$GITHUB_OUTPUT"
 
       # AMXX normally ignores fake clients in extension mode. This test-only
       # core build makes the 12 in-container bots visible to the stats plugin.
@@ -177,9 +240,23 @@ jobs:
         id: ktpamx
         uses: ./.github/actions/build-ktpamx-laneb
         with:
-          ref: preprod
+          # Build from the exact checkout above. Using the local repository's
+          # HEAD avoids a branch moving between checkout and the core build.
+          repo: ${{ github.workspace }}/KTPAMXX
+          ref: HEAD
           out: build/lane-b-artifacts/ktpamx_i386.so
-          token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+
+      - name: Verify Lane B core belongs to the exact AMXX bundle commit
+        if: ${{ env.LANE == 'full' }}
+        env:
+          BUNDLE_AMXX_SHA: ${{ steps.bundle.outputs.amxx_sha }}
+          CORE_AMXX_SHA: ${{ steps.ktpamx.outputs.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$CORE_AMXX_SHA" != "$BUNDLE_AMXX_SHA" ]; then
+            echo "::error::Lane B core came from $CORE_AMXX_SHA, but the exact bundle uses $BUNDLE_AMXX_SHA"
+            exit 1
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -204,6 +281,9 @@ jobs:
       # tests/e2e_stats/artifacts.py. The plugin is compiled by amxxpc inside
       # the image, the same way smoke-callable.yml does it.
       - name: Build artifact set from the refs under test
+        env:
+          AMXX_SHA: ${{ steps.bundle.outputs.amxx_sha }}
+          DAEMON_SHA: ${{ steps.bundle.outputs.daemon_sha }}
         run: |
           set -euo pipefail
           mkdir -p build/lane-b-artifacts
@@ -226,11 +306,39 @@ jobs:
             bash -lc "
               set -euo pipefail
               python3 scripts/build_stats_lane_artifacts.py \
-                --amxx-repo   /repos/KTPAMXX      --amxx-ref   '${AMXX_REF}' \
-                --daemon-repo /repos/KTPHLStatsX  --daemon-ref '${DAEMON_REF}' \
+                --amxx-repo   /repos/KTPAMXX      --amxx-ref   '${AMXX_SHA}' \
+                --daemon-repo /repos/KTPHLStatsX  --daemon-ref '${DAEMON_SHA}' \
                 ${PLUGIN_ARGS} \
                 --out /work/build/artifacts
             "
+
+      - name: Record immutable four-repository bundle provenance
+        env:
+          INFRASTRUCTURE_SHA: ${{ steps.bundle.outputs.infrastructure_sha }}
+          MATCHHANDLER_SHA: ${{ steps.bundle.outputs.matchhandler_sha }}
+          AMXX_SHA: ${{ steps.bundle.outputs.amxx_sha }}
+          DAEMON_SHA: ${{ steps.bundle.outputs.daemon_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # The artifact collector ran in Docker, so mutate its root-owned
+          # manifest in the same disposable image instead of relying on host
+          # filesystem ownership details.
+          docker run --rm --network none \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build" \
+            -w /work ktp-lane-b:ci \
+            python3 -m tests.e2e_stats.artifacts \
+            --manifest /work/build/artifacts/artifact-manifest.json \
+            --markdown /work/build/bundle-provenance.md \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --event-sha "$GITHUB_SHA" \
+            --run-url "$RUN_URL" \
+            --repository infrastructure "${{ github.repository_owner }}/KTPInfrastructure" "$INFRASTRUCTURE_REF" "$INFRASTRUCTURE_SHA" \
+            --repository matchhandler "${{ github.repository_owner }}/KTPMatchHandler" "$MATCHHANDLER_REF" "$MATCHHANDLER_SHA" \
+            --repository amxx "${{ github.repository_owner }}/KTPAMXX" "$AMXX_REF" "$AMXX_SHA" \
+            --repository hlstatsx "${{ github.repository_owner }}/KTPHLStatsX" "$DAEMON_REF" "$DAEMON_SHA"
+          cat build/lane-b-artifacts/bundle-provenance.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Assemble full-match daemon and base schema
         if: ${{ env.LANE == 'full' }}
@@ -255,8 +363,16 @@ jobs:
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/sql:/work/sql:ro" \
+            -v "${PWD}/config:/work/config:ro" \
             -w /work ktp-lane-b:ci \
-            python3 -m pytest tests/e2e_stats -q
+            python3 -m pytest \
+              tests/e2e_stats \
+              tests/unit/test_accumulation_v3.py \
+              tests/unit/test_life_impact_v4.py \
+              tests/unit/test_momentum_v5.py \
+              tests/unit/test_points_timeline.py \
+              tests/unit/test_lane_b_match_report.py \
+              -q
 
       - name: Run full synthetic 6v6 match with 12 bots
         if: ${{ env.LANE == 'full' }}
@@ -273,6 +389,7 @@ jobs:
             python3 -u scripts/lane_b_e2e.py \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
+              --amxx-gamedata /work/build/artifacts/gamedata \
               --plugin /work/build/artifacts/stats_logging.amxx \
               --config-dir /work/config/local \
               --hlstats /work/build/daemon/hlstats.pl \
@@ -292,15 +409,22 @@ jobs:
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
+                       /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
+                       /work/build/artifacts/sql/migrate_021_capture_observability.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
               --map "$MAP_NAME" --per-team 6 --play-seconds "$PLAY_SECONDS" \
               --matchhandler-src /src/KTPMatchHandler \
               --matchhandler-includes /src/KTPAMXX/plugins/include \
+              --artifact-manifest /work/build/artifacts/artifact-manifest.json \
+              --require-complete-coverage \
               --log /work/build/lane-b-e2e.log \
               --out /work/build/lane-b-e2e.json \
-              --summary-out /work/build/lane-b-summary.md
+              --summary-out /work/build/lane-b-summary.md \
+              --match-report-dir /work/build/match-report \
+              --report-profile /work/config/analytics/accumulation_v5_momentum.toml \
+              --map-objectives /work/config/analytics/map_objectives.toml
 
       - name: Publish match summary
         if: ${{ always() && env.LANE == 'full' }}
@@ -360,6 +484,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
+                       /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
+                       /work/build/artifacts/sql/migrate_021_capture_observability.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -387,7 +513,53 @@ jobs:
             build/lane-b-artifacts/lane-b-e2e.log
             build/lane-b-artifacts/hlstats-e2e.out
             build/lane-b-artifacts/corpus-replay.out
+            build/lane-b-artifacts/match-report/
+            build/lane-b-artifacts/bundle-provenance.md
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
           if-no-files-found: warn
+          retention-days: 30
+
+  compare-series:
+    name: Compare five Lane B reports
+    needs: lane-b
+    if: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout KTPInfrastructure
+        uses: actions/checkout@v4
+
+      - name: Download all five match-report artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lane-b-reports-${{ github.run_id }}-*
+          path: build/series-input
+
+      - name: Build and verify the five-match comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find build/series-input -type f -path '*/match-report/report.json' -printf '%h\n' | sort)
+          test "${#reports[@]}" -eq 5
+          mkdir -p build/series-report
+          python3 scripts/compare_v5_report_series.py \
+            --output-dir build/series-report \
+            "${reports[@]}"
+          for index in 1 2 3 4 5; do
+            source_dir="build/series-input/lane-b-reports-${GITHUB_RUN_ID}-${index}"
+            test -d "${source_dir}/match-report"
+            mkdir -p "build/series-report/run-${index}"
+            cp -a "${source_dir}/match-report" "build/series-report/run-${index}/match-report"
+            cp -a "${source_dir}/lane-b-summary.md" "build/series-report/run-${index}/lane-b-summary.md"
+            cp -a "${source_dir}/bundle-provenance.md" "build/series-report/run-${index}/bundle-provenance.md"
+          done
+          cat build/series-report/SERIES_COMPARISON.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload five-match comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-b-series-comparison-${{ github.run_id }}
+          path: build/series-report/
+          if-no-files-found: error
           retention-days: 30

@@ -143,6 +143,9 @@ SELECT
     CASE WHEN mc.duration_seconds = 0 THEN NULL
          ELSE ROUND(COALESCE(dmg.damage_dealt, 0) * 60.0 / mc.duration_seconds, 2)
          END AS damage_per_minute,
+    CASE WHEN COALESCE(dth.deaths, 0) = 0 THEN NULL
+         ELSE ROUND(COALESCE(dmg.damage_dealt, 0) / dth.deaths, 2)
+         END AS damage_per_life,
     CASE WHEN COALESCE(k.kills, 0) = 0 THEN NULL
          ELSE ROUND(COALESCE(k.headshots, 0) / k.kills, 3) END AS headshot_rate,
     CASE WHEN COALESCE(w.shots, 0) = 0 THEN NULL
