@@ -82,6 +82,23 @@ def _rounded(value: float) -> float:
     return round(value, 2) or 0.0
 
 
+def normalize_impact_index(
+    points_per_minute: float, reference_ppm: float, log_scale: float,
+    impact_cfg: dict[str, Any],
+) -> float:
+    """Normalize the complete accumulated rate; component scores are already summed."""
+    center = _f(impact_cfg.get("center_index"), 100.0)
+    per_sigma = _f(impact_cfg.get("points_per_robust_sigma"), 30.0)
+    minimum = _f(impact_cfg.get("minimum_index"), 25.0)
+    maximum = _f(impact_cfg.get("maximum_index"), 175.0)
+    if reference_ppm <= 0 or log_scale <= 0:
+        raise ValueError("impact normalization requires a positive center and log scale")
+    return _rounded(min(maximum, max(minimum,
+        center + per_sigma * math.log(max(points_per_minute, 1e-9) / reference_ppm)
+        / log_scale
+    )))
+
+
 def _canonical_hash(payload: Any) -> str:
     encoded = json.dumps(
         payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
@@ -559,19 +576,41 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         and _f(roster[player["player_id"]].get("observed_seconds"), duration)
         >= _f(impact_cfg.get("minimum_observed_seconds"), 300.0)
     ]
-    explicit_reference = _f((facts.get("match") or {}).get("impact_index_reference_ppm"))
+    match_facts = facts.get("match") or {}
+    explicit_reference = _f(match_facts.get("impact_index_reference_ppm"))
+    explicit_log_scale = _f(match_facts.get("impact_index_log_scale"))
     reference_ppm = explicit_reference or (
         statistics.median(eligible_rates) if eligible_rates else 0.0
     )
-    typical_index = _f(impact_cfg.get("typical_index"), 75.0)
-    compression_exponent = _f(impact_cfg.get("compression_exponent"), 1.0)
+    centered_logs = sorted(
+        math.log(rate / reference_ppm) for rate in eligible_rates
+        if rate > 0 and reference_ppm > 0
+    )
+    if len(centered_logs) >= 4:
+        midpoint = len(centered_logs) // 2
+        lower = centered_logs[:midpoint]
+        upper = centered_logs[-midpoint:]
+        observed_log_scale = (
+            statistics.median(upper) - statistics.median(lower)
+        ) / 1.349
+    else:
+        observed_log_scale = 0.0
+    minimum_log_scale = _f(impact_cfg.get("minimum_log_scale"), 0.15)
+    log_scale = max(
+        explicit_log_scale or observed_log_scale
+        or _f(impact_cfg.get("fallback_log_scale"), 0.35),
+        minimum_log_scale,
+    )
+    center_index = _f(impact_cfg.get("center_index"), 100.0)
+    points_per_sigma = _f(impact_cfg.get("points_per_robust_sigma"), 30.0)
+    minimum_index = _f(impact_cfg.get("minimum_index"), 25.0)
+    maximum_index = _f(impact_cfg.get("maximum_index"), 175.0)
     for player in output_players:
         observed = _f(roster[player["player_id"]].get("observed_seconds"), duration)
         player["impact_index"] = (
-            _rounded(typical_index * math.pow(
-                _f(player["points_per_minute"]) / reference_ppm,
-                compression_exponent,
-            ))
+            normalize_impact_index(
+                _f(player["points_per_minute"]), reference_ppm, log_scale, impact_cfg
+            )
             if impact_cfg and reference_ppm > 0 and player["points_per_minute"] is not None
             and observed >= _f(impact_cfg.get("minimum_observed_seconds"), 300.0)
             else None
@@ -649,12 +688,12 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             if momentum_enabled else "Momentum facts unavailable or profile does not enable them.",
         },
         "impact_index": {
-            "status": "PASS" if explicit_reference > 0 else (
+            "status": "PASS" if explicit_reference > 0 and explicit_log_scale > 0 else (
                 "WARN" if impact_cfg and reference_ppm > 0 else "DISABLED"
             ),
-            "detail": "Qualified corpus reference supplied."
-            if explicit_reference > 0 else "Provisional match-median reference; not cross-match comparable."
-            if impact_cfg and reference_ppm > 0 else "Impact Index not enabled.",
+            "detail": "Qualified corpus center and dispersion supplied."
+            if explicit_reference > 0 and explicit_log_scale > 0 else "Provisional match center/dispersion; not cross-match comparable."
+            if impact_cfg and reference_ppm > 0 else "Overall rating not enabled.",
         },
     }
     return {
@@ -677,10 +716,15 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         "momentum_contract": profile.get("momentum"),
         "momentum": facts.get("momentum_summary") if momentum_enabled else None,
         "impact_index": {
-            "typical_index": typical_index,
-            "compression_exponent": compression_exponent,
+            "center_index": center_index,
+            "points_per_robust_sigma": points_per_sigma,
+            "minimum_index": minimum_index,
+            "maximum_index": maximum_index,
             "reference_points_per_minute": _rounded(reference_ppm),
-            "reference_source": "qualified_corpus" if explicit_reference > 0 else "provisional_match_median",
+            "reference_log_scale": _rounded(log_scale),
+            "reference_source": "qualified_corpus"
+            if explicit_reference > 0 and explicit_log_scale > 0
+            else "provisional_match_robust",
         } if impact_cfg and reference_ppm > 0 else None,
         "match_total_points": _rounded(grand_total),
         "players": output_players,
@@ -712,7 +756,7 @@ def build_ai_checkpoint(report: dict[str, Any]) -> dict[str, Any]:
                 "player_id": player["player_id"],
                 "player_name_at_match": player["player_name_at_match"],
                 "rank": player["rank"],
-                "impact_index": player.get("impact_index"),
+                "overall_rating": player.get("impact_index"),
                 "total_points": player["total_points"],
                 "position_points": player["position_points"],
                 "momentum_points": player["momentum_points"],
@@ -831,7 +875,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"Profile: `{report['profile']}` · State: **{report['publication_state']}** · "
         "Experimental, not KTPR", "",
         "No penalties are applied. Teamkills, suicides, and deaths are descriptive only.", "",
-        "| Rank | Player | Impact Index | Raw audit | Combat | Streak/context | Objectives | Life position | Momentum |"
+        ("The overall rating is normalized only after every component below—including "
+         "momentum—is added to the complete raw accumulated score." if is_v5 else ""), "",
+        "| Rank | Player | Overall rating | Raw accumulated | Combat | Streak/context | Objectives | Life position | Momentum |"
         if is_v5 else "| Rank | Player | Combat | Streak/context | Objectives | Position | Total | Pts/min |",
         "|---:|---|---:|---:|---:|---:|---:|---:|---:|"
         if is_v5 else "|---:|---|---:|---:|---:|---:|---:|---:|",
@@ -965,12 +1011,14 @@ def render_markdown(report: dict[str, Any]) -> str:
                     f"{allocation_text} |"
                 )
             lines += [
-                "", "## Impact Index normalization", "",
+                "", "## Overall accumulated-score normalization", "",
                 f"The provisional qualified-player match median "
                 f"({impact_index.get('reference_points_per_minute', 0):.2f} raw points/minute) "
-                f"is displayed as {impact_index.get('typical_index', 75):.0f}. Formula: "
-                f"`75 × (player raw points/minute ÷ reference)^{impact_index.get('compression_exponent', 1):.2f}`. "
-                "The compression prevents event-volume outliers from exploding the display. Raw deterministic points remain in "
+                f"is displayed as {impact_index.get('center_index', 100):.0f}. Formula: "
+                f"`100 + {impact_index.get('points_per_robust_sigma', 30):.0f} × "
+                f"ln(player raw points/minute ÷ reference) ÷ {impact_index.get('reference_log_scale', 1):.2f}`. "
+                f"The display is bounded to {impact_index.get('minimum_index', 25):.0f}–"
+                f"{impact_index.get('maximum_index', 175):.0f}. Raw deterministic points remain in "
                 "the audit column. Until a real-match corpus reference is approved, values are not "
                 "comparable across matches.", "",
             ]

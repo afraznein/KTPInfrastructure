@@ -1,6 +1,6 @@
 # Momentum iteration. Keeps bounded combat/objectives and v4 per-life spatial
 # impact, replaces capture conversion + sequence continuity with one bounded
-# team-momentum swing pool, then adds a separately displayed Impact Index.
+# team-momentum swing pool, then normalizes the complete raw total for display.
 
 [profile]
 name = "accumulation_v5_momentum"
@@ -113,7 +113,11 @@ replace_conversion_points = true
 replace_sequence_continuity_points = true
 
 [impact_index]
-typical_index = 75.0
-compression_exponent = 0.80
+center_index = 100.0
+points_per_robust_sigma = 30.0
+minimum_index = 25.0
+maximum_index = 175.0
+fallback_log_scale = 0.35
+minimum_log_scale = 0.15
 provisional_reference = "match_median_points_per_minute"
 minimum_observed_seconds = 300.0

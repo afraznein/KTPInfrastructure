@@ -1,11 +1,12 @@
 import json
+import math
 from pathlib import Path
 
 import pytest
 
 from scripts.accumulation_v3 import (
     build_ai_checkpoint, load_profile, render_markdown, score_match,
-    validate_ai_response,
+    normalize_impact_index, validate_ai_response,
 )
 from scripts.build_automated_match_report import build_bundle
 from scripts.momentum_v5 import derive_momentum, render_momentum_svg
@@ -98,10 +99,16 @@ def test_v5_replaces_duplicate_pools_and_normalizes_index(tmp_path):
     report = score_match(facts, PROFILE)
     assert report["component_totals"]["conversion_points"] == 0
     assert report["position_component_totals"]["sequence_continuity_points"] == 0
+    assert all(row["total_points"] == pytest.approx(
+        row["event_points"] + row["position_points"], abs=.02
+    ) for row in report["players"])
+    assert report["component_totals"]["momentum_points"] == pytest.approx(
+        sum(points.values()), abs=.1
+    )
     indices = sorted(row["impact_index"] for row in report["players"])
-    assert indices[1] <= 75 <= indices[2]
+    assert indices[1] <= 100 <= indices[2]
     rendered = render_markdown(report)
-    assert "Team momentum over time" in rendered and "Impact Index normalization" in rendered
+    assert "Team momentum over time" in rendered and "Overall accumulated-score normalization" in rendered
     request = build_ai_checkpoint(report)
     validate_ai_response(request, {"input_sha256": request["input_sha256"],
         "summary": "A swing changed the aggregate match state.",
@@ -139,3 +146,14 @@ def test_stable_team_identity_survives_halftime_side_switch():
     _, public, _ = derive_momentum(players, samples, FLAGS, [], [], PROFILE, TOPOLOGY, [])
     assert public["team1"] == 1
     assert public["curve"][-1]["momentum"] > 0
+
+
+def test_overall_rating_targets_50_100_150_and_is_bounded():
+    cfg = PROFILE["impact_index"]
+    reference, scale = 100.0, 0.30
+    assert normalize_impact_index(reference, reference, scale, cfg) == 100
+    exceptional = reference * math.exp(scale * 50 / 30)
+    weak = reference * math.exp(-scale * 50 / 30)
+    assert normalize_impact_index(exceptional, reference, scale, cfg) == 150
+    assert normalize_impact_index(weak, reference, scale, cfg) == 50
+    assert normalize_impact_index(0, reference, scale, cfg) == 25

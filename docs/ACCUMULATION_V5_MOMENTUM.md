@@ -1,4 +1,4 @@
-# Accumulation v5: team momentum and Impact Index
+# Accumulation v5: team momentum and overall rating
 
 Status: experimental shadow scoring. It is not KTPR and it applies no penalties.
 
@@ -11,7 +11,7 @@ bounded team-momentum swing pool.
 
 The public result has two deliberately separate values:
 
-- **Impact Index** is the readable headline number.
+- **Overall rating** (internally `impact_index` for compatibility) is the readable headline number.
 - **Raw audit points** preserve the exact deterministic component calculation.
 
 ## Team momentum curve
@@ -78,24 +78,30 @@ three-kill swing, taking mid, and continuing forward. A defensive player can ear
 meaningful share when the defense actually changes team state; passive defense is not
 punished but does not automatically produce a swing award.
 
-## Impact Index
+## Overall accumulated-score rating
 
-For this experimental iteration, players observed for at least five minutes are
-normalized against the qualified-player median raw points per minute:
+The overall rating is calculated only after every positive component—including momentum—
+has been added to the raw accumulated score. Players observed for at least five minutes
+are normalized against the qualified-player median raw points per minute and the robust
+spread of log rates:
 
 ```text
-Impact Index = 75 × (player raw points per minute ÷ reference points per minute)^0.80
+log ratio = ln(player raw points per minute ÷ reference points per minute)
+Overall rating = 100 + 30 × log ratio ÷ reference log scale
+displayed range = 25..175
 ```
 
-This places the middle of a match near 75 while allowing the strongest one or two
-performances to rise toward or above 100. The `0.80` exponent dampens extreme event
-volume without changing rank. It is intentionally not clamped.
+This places the middle of the reference population at 100, exceptional performances
+near 150, and weak performances near 50. The log transform and robust dispersion prevent
+event-volume outliers from exploding the display without changing rank. The 25–175 bound
+is a presentation guard, not a penalty; raw accumulated points remain non-negative and
+fully auditable.
 
-The current match-median reference is provisional and **must not be compared between
-matches**. Production automation should replace it with a versioned reference learned
-from a qualified real-match corpus. The profile already accepts that external reference
-as `match.impact_index_reference_ppm`, allowing historical reports to be regenerated
-without changing the scoring formula.
+The current match center and dispersion are provisional and **must not be compared between
+matches**. Production automation should replace both with a versioned reference learned
+from a qualified real-match corpus. The profile accepts the external values as
+`match.impact_index_reference_ppm` and `match.impact_index_log_scale`, allowing historical
+reports to be regenerated without changing the scoring formula.
 
 ## Privacy and automation boundary
 
