@@ -83,6 +83,12 @@ USER = os.environ.get("KTP_TIER2_SSH_USER", "root")
 TREE = os.environ.get("KTP_TIER2_TREE", "/opt/ktp-tier2-runner/serverfiles")
 PLUGIN_DIR = "dod/addons/ktpamx/plugins"
 MODULE_DIR = "dod/addons/ktpamx/modules"
+DLLS_DIR = "dod/addons/ktpamx/dlls"
+
+# The KTPAMXX core ships here, not in MODULE_DIR -- same "everything .so is a
+# module" trap this file already hit once for dodx. ktp-tier2-stack-drift.py's
+# STACK_FILES confirms the split path.
+CORE_BASENAMES = {"ktpamx_i386.so"}
 
 
 def artifact_dir(name: str) -> str:
@@ -95,6 +101,8 @@ def artifact_dir(name: str) -> str:
     A tool that reports a missing artifact when the artifact is fine is worse
     than one that reports nothing.
     """
+    if name in CORE_BASENAMES:
+        return DLLS_DIR
     return MODULE_DIR if name.endswith(".so") else PLUGIN_DIR
 MANIFEST = os.environ.get(
     "KTP_TIER2_MANIFEST", posixpath.join(posixpath.dirname(TREE), "stage-manifest.json")

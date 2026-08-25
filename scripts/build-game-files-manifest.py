@@ -107,8 +107,8 @@ ALTERNATE_HASHES = {
 # `.mdl` extension implicit. Primary variants only: the _l/l lowered/left-hand
 # pose variants were PRUNED 2026-05-13 (operator call — not stock DoD, likely
 # community-mod files; they put MissingFiles noise in every clean-install
-# session without contributing verdict weight). Do not re-add without checking
-# CHANGES_SUMMARY_2026-06-26.md § "AC manifest prune".
+# session without contributing verdict weight). Do not re-add without confirming
+# they are stock DoD files.
 WEAPON_FAMILIES = [
     ("amerk_grenade",  "p_amerk",   "w_amerk"),
     ("bar",            "p_bar",     "w_bar"),

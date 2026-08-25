@@ -28,7 +28,24 @@ staging safe:
      that was newer than the fleet by mtime and still two versions behind the
      artifact being waved. Staging a test-mode plugin without this flag warns.
 
-Then it stages every artifact as `<name>.new` to all active instances,
+  4. SINGLE-INSTANCE TARGETING. `--ports` narrows the wave to named instances --
+     `--hosts denver --ports 27018` stages one instance and nothing else. The
+     attribution gate, mode-match and md5 verify all scope to the SAME set, so a
+     narrowed stage can neither be blocked by an unrelated `.new` elsewhere nor
+     report "clean" on the strength of instances it never writes to. A port that
+     is not an active instance is fatal, never silently dropped (Chicago has no
+     27019). Output says NOT A FLEET WAVE so a soak cannot be misread as one.
+
+  5. ROLLBACK PRESERVATION. `--pull-live DIR` downloads each artifact's LIVE
+     counterpart from every target instance BEFORE staging, verifies the md5 of
+     the copy that landed, and names it `<basename>.<host>-<port>.<md5>` so the
+     file carries its own provenance. The fleet keeps no rollback copies and the
+     swap is `mv -f`, so the running build is the only copy of itself that
+     exists. Any failure -- including a live file that is ABSENT -- is fatal and
+     nothing stages: "nothing to back up" and "the probe looked in the wrong
+     place" must not be indistinguishable.
+
+Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
 permissions are correct), re-verifies md5 24/24, and prints the exact
 morning-after verification command.
@@ -44,6 +61,9 @@ Usage:
                 -f compiled/ktp_cvar.amxx        --expect ktp_cvar.amxx=6e55811b716a03e294941ab03ddd85c1
   # a module wave
   stage-wave.py -f dodx_ktp_i386.so --expect dodx_ktp_i386.so=<md5>
+  # a single-instance soak, preserving the live build first
+  stage-wave.py --hosts denver --ports 27018 --pull-live local/rollback/soak-20260824 \
+                -f dodx_ktp_i386.so --expect dodx_ktp_i386.so=<md5>
   # just check attribution is clean, stage nothing
   stage-wave.py --preflight-only
   # inspect intent without connecting
@@ -98,16 +118,30 @@ def _connect(host_info):
     return ssh
 
 
-def _target_instances(host_keys):
-    """(host_key, port) for every ACTIVE instance -- CHI has no 27019."""
-    return [(hk, p) for hk in host_keys for p in d2f.SERVERS[hk].get("ports", d2f.PORTS)]
+def _ports_for(hk, port_filter=None):
+    """ACTIVE ports on a host, narrowed by --ports. CHI has no 27019."""
+    ports = d2f.SERVERS[hk].get("ports", d2f.PORTS)
+    if port_filter is None:
+        return list(ports)
+    return [p for p in ports if p in port_filter]
 
 
-def preflight_attribution(host_keys):
-    """Return {(*host*): [existing .new paths]} across the swap globs. Empty = clean."""
+def _target_instances(host_keys, port_filter=None):
+    """(host_key, port) for every selected ACTIVE instance."""
+    return [(hk, p) for hk in host_keys for p in _ports_for(hk, port_filter)]
+
+
+def preflight_attribution(host_keys, port_filter=None):
+    """Return {(*host*): [existing .new paths]} across the swap globs. Empty = clean.
+
+    Scoped to the SELECTED instances. A soak stage to one instance must not be
+    blocked by an unrelated `.new` on an instance it is not touching -- and,
+    more importantly, must not report "clean" on the strength of instances it
+    never intends to write to.
+    """
     def scan(hk):
         info = d2f.SERVERS[hk]
-        ports = info.get("ports", d2f.PORTS)
+        ports = _ports_for(hk, port_filter)
         globs = " ".join(f"~/dod-{p}/{g}" for p in ports for g in SWAP_GLOBS)
         try:
             ssh = _connect(info)
@@ -129,10 +163,10 @@ def preflight_attribution(host_keys):
 # to the fleet without the runner holding the matching test build means the next
 # suite run certifies a build nobody is about to ship. Mirrors PLUGINS_TESTMODE
 # in ktp-tier2-stack-drift.py -- keep the two in step.
+# KTPHudObserver is externally maintained -- never staged or waved from here.
 RUNNER_TESTMODE_PLUGINS = {
     "KTPMatchHandler.amxx",
     "KTPPracticeMode.amxx",
-    "KTPHudObserver.amxx",
 }
 
 # Runner location. No default host: this tool deliberately holds no IPs, and a
@@ -163,11 +197,11 @@ def runner_md5s(basenames):
         ssh.close()
 
 
-def mode_match(host_keys, artifacts):
+def mode_match(host_keys, artifacts, port_filter=None):
     """chmod each staged .new to match the live file it will replace (else 644)."""
     def fix(hk):
         info = d2f.SERVERS[hk]
-        ports = info.get("ports", d2f.PORTS)
+        ports = _ports_for(hk, port_filter)
         cmds = []
         for p in ports:
             for a in artifacts:
@@ -190,9 +224,70 @@ def mode_match(host_keys, artifacts):
     return errs
 
 
-def stage(host_keys, artifacts, parallel):
+def pull_live(host_keys, artifacts, dest, port_filter=None):
+    """Download the LIVE counterpart of every artifact from every target instance.
+
+    The fleet keeps no rollback copies and the nightly swap is `mv -f`, so the
+    running build is the only copy of itself that exists anywhere. Staging over
+    it without pulling it first makes the change one-way.
+
+    Saved as `<basename>.<host>-<port>.<md5>` so the filename carries its own
+    provenance -- a rollback copy whose identity rests on a sidecar note is one
+    lost note away from being unusable.
+
+    Returns (saved, errors). An instance whose live file is ABSENT is recorded
+    as an error, not skipped: "there was nothing to back up" and "the probe
+    looked in the wrong place" are indistinguishable from a silent skip.
+    """
+    os.makedirs(dest, exist_ok=True)
+    saved, errors = [], []
+
+    def worker(hk):
+        info = d2f.SERVERS[hk]
+        got, errs = [], []
+        try:
+            ssh = _connect(info)
+            sftp = ssh.open_sftp()
+        except Exception as e:
+            return [], [(hk, None, None, f"connect: {e!r}")]
+        for p in _ports_for(hk, port_filter):
+            for a in artifacts:
+                remote = f"/home/{info['user']}/dod-{p}/{a.remote_dir}/{a.basename}"
+                try:
+                    _, so, _ = ssh.exec_command(f"md5sum '{remote}'", timeout=30)
+                    out = so.read().decode().split()
+                    if not out:
+                        errs.append((hk, p, a.basename, "live file ABSENT (nothing to roll back to)"))
+                        continue
+                    md5 = out[0]
+                    local = os.path.join(dest, f"{a.basename}.{hk}-{p}.{md5}")
+                    sftp.get(remote, local)
+                    # Verify the copy that landed, not the one we asked for.
+                    import hashlib
+                    h = hashlib.md5()
+                    with open(local, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
+                    if h.hexdigest() != md5:
+                        errs.append((hk, p, a.basename, f"md5 mismatch after download: {h.hexdigest()} != {md5}"))
+                        continue
+                    got.append((hk, p, a.basename, md5, local))
+                except Exception as e:
+                    errs.append((hk, p, a.basename, repr(e)))
+        sftp.close()
+        ssh.close()
+        return got, errs
+
+    with ThreadPoolExecutor(max_workers=max(1, len(host_keys))) as pool:
+        for got, errs in pool.map(worker, host_keys):
+            saved.extend(got)
+            errors.extend(errs)
+    return saved, errors
+
+
+def stage(host_keys, artifacts, parallel, port_filter=None):
     """Reuse deploy-to-fleet's push + coverage backstop. Returns (outcomes, missing)."""
-    targets = _target_instances(host_keys)
+    targets = _target_instances(host_keys, port_filter)
     outcomes = []
 
     def host_worker(hk):
@@ -230,6 +325,15 @@ def main():
                     help="Pin an artifact's local md5 to its reviewed build. Repeatable.")
     ap.add_argument("--hosts", default="all",
                     help=f'Comma-separated (or "all"). Choices: {",".join(d2f.SERVERS)}')
+    ap.add_argument("--ports", default="all",
+                    help='Comma-separated instance ports, or "all". Narrows the wave to specific '
+                         'instances -- e.g. --hosts denver --ports 27018 for a single-instance soak. '
+                         'The attribution gate, mode-match and md5 verify all scope to the same set.')
+    ap.add_argument("--pull-live", metavar="DIR",
+                    help="Before staging, download each artifact's LIVE counterpart from every target "
+                         "instance into DIR. The fleet keeps no rollback copies and the swap is `mv -f`, "
+                         "so the running build is the only copy that exists. Any download failure is "
+                         "FATAL and nothing is staged.")
     ap.add_argument("--allow-existing-new", action="store_true",
                     help="Skip the attribution gate (deliberate stacked activation only).")
     ap.add_argument("--expect-runner", action="append", default=[], metavar="BASENAME=MD5",
@@ -248,10 +352,27 @@ def main():
         if hk not in d2f.SERVERS:
             sys.exit(f"FATAL: unknown host '{hk}' (choices: {','.join(d2f.SERVERS)})")
 
+    port_filter = None
+    if args.ports != "all":
+        try:
+            port_filter = {int(p.strip()) for p in args.ports.split(",") if p.strip()}
+        except ValueError:
+            sys.exit(f"FATAL: --ports must be integers or 'all', got '{args.ports}'")
+        selected = _target_instances(host_keys, port_filter)
+        if not selected:
+            sys.exit(f"FATAL: --ports {args.ports} selects ZERO active instances on "
+                     f"{','.join(host_keys)}. Nothing staged.")
+        # A filter that silently drops a port the operator asked for is the same
+        # class of defect as a wave that silently stages fewer than 24.
+        unmatched = sorted(port_filter - {p for _, p in selected})
+        if unmatched:
+            sys.exit(f"FATAL: --ports names {unmatched}, which is not an active instance on "
+                     f"{','.join(host_keys)}. Nothing staged.")
+
     # ---- Attribution gate (always runs; the whole point of the tool) ----
     if not args.allow_existing_new:
         print("Preflight: checking fleet for existing .new (clean-attribution gate)...")
-        pf = preflight_attribution(host_keys)
+        pf = preflight_attribution(host_keys, port_filter)
         dirty, errored = [], []
         for hk, r in pf.items():
             if r["err"]:
@@ -301,8 +422,13 @@ def main():
     for a in artifacts:
         pin = " [pinned]" if a.basename in expect else ""
         print(f"  {a.basename} -> dod-*/{a.remote_dir}/  ({a.size}B, md5 {a.md5}){pin}")
-    targets = _target_instances(host_keys)
-    print(f"Targets: {len(targets)} active instances across {len(host_keys)} host(s).\n")
+    targets = _target_instances(host_keys, port_filter)
+    if port_filter is None:
+        print(f"Targets: {len(targets)} active instances across {len(host_keys)} host(s).\n")
+    else:
+        listed = ", ".join(f"{hk}:{p}" for hk, p in targets)
+        print(f"Targets: {len(targets)} instance(s) -- NARROWED by --ports: {listed}")
+        print("  ** This is NOT a fleet wave. The other instances keep their current build. **\n")
 
     # ---- Wave-time runner gate ----
     # The drift checker answers "has the runner fallen behind the FLEET". It
@@ -362,14 +488,32 @@ def main():
         print("DRY-RUN: no connection made. Above is what would stage.")
         return
 
+    # ---- Pull the live artifacts before overwriting them ----
+    # The fleet has no rollback copies. This is the last moment they exist.
+    if args.pull_live:
+        print(f"Pulling LIVE artifacts to {args.pull_live} before staging...")
+        saved, pull_errs = pull_live(host_keys, artifacts, args.pull_live, port_filter)
+        for hk, p, base, md5, local in saved:
+            print(f"  [{hk}:{p}] {base} md5 {md5} -> {os.path.basename(local)}")
+        if pull_errs:
+            print("FATAL: could not preserve every live artifact:", file=sys.stderr)
+            for hk, p, base, err in pull_errs:
+                print(f"  [{hk}:{p or '-'}] {base or '-'}: {err}", file=sys.stderr)
+            sys.exit("Aborting -- NOTHING STAGED. A stage with no rollback copy is one-way.")
+        distinct = sorted({m for _, _, _, m, _ in saved})
+        print(f"  preserved {len(saved)} file(s), {len(distinct)} distinct md5(s).")
+        if len(distinct) > len(artifacts):
+            print("  ** The target instances are NOT uniform -- more distinct md5s than artifacts. **")
+        print()
+
     # ---- Stage + mode-match ----
-    outcomes, missing = stage(host_keys, artifacts, args.parallel)
+    outcomes, missing = stage(host_keys, artifacts, args.parallel, port_filter)
     fails = sum(1 for o in outcomes if o.status in d2f.FAIL_STATUSES)
     if fails or missing:
         sys.exit("\n*** STAGING FAILED -- see summary above. Do NOT assume the wave is staged. ***")
 
     print("\nMode-matching .new permissions to the live files...")
-    mm_err = mode_match(host_keys, artifacts)
+    mm_err = mode_match(host_keys, artifacts, port_filter)
     if mm_err:
         for hk, e in mm_err.items():
             print(f"  [{hk}] mode-match error: {e}", file=sys.stderr)

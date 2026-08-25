@@ -1,6 +1,6 @@
 #!/bin/bash
 # Denver Data Server Integration Script
-# Run this on the data server (74.91.112.242) as root
+# Run this on the data server (<DATA_SERVER_IP>) as root
 #
 # This script:
 # 1. Creates HLTV instances 27030-27034 for Denver
@@ -36,14 +36,17 @@ echo ""
 # ============================================
 log_info "Setting up SSH key access to Denver..."
 
-SSH_KEY_PATH="/var/www/fastdl/.ssh/id_rsa"
+# Never under a web docroot: ftpuser's home IS /var/www/fastdl and vsftpd chroots
+# there, so a key here is readable by anyone with the FTP credential.
+SSH_KEY_PATH="/opt/ktp-file-distributor/.ssh/id_distributor_ed25519"
 
 if [ ! -f "$SSH_KEY_PATH" ]; then
     log_error "SSH key not found at $SSH_KEY_PATH"
     log_info "Creating new SSH key..."
-    mkdir -p /var/www/fastdl/.ssh
-    ssh-keygen -t rsa -b 4096 -f "$SSH_KEY_PATH" -N "" -C "ktp-file-distributor"
-    chown -R www-data:www-data /var/www/fastdl/.ssh
+    install -d -m 700 -o ftpuser -g ftpuser /opt/ktp-file-distributor/.ssh
+    ssh-keygen -t ed25519 -a 100 -f "$SSH_KEY_PATH" -N "" -C "ktp-file-distributor"
+    chown ftpuser:ftpuser "$SSH_KEY_PATH" "$SSH_KEY_PATH.pub"
+    chmod 600 "$SSH_KEY_PATH"
 fi
 
 # Copy key to Denver

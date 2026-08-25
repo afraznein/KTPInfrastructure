@@ -255,6 +255,10 @@ Scheduled restart script for all HLTV instances with Discord notification.
 
 **Note:** This script reads credentials from `/etc/ktp/discord-relay.conf` on the data server.
 
+**Note:** It restarts the `hltv@<port>` units only. The `hltv-api` service is not
+in its scope, so a change to `hltv-api.py` needs an explicit
+`systemctl restart hltv-api` - waiting for the scheduled restart will not pick it up.
+
 **Deployed to:** `/usr/local/bin/hltv-restart-all.sh` (data server)
 
 **Cron:**

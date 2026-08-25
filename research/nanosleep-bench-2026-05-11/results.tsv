@@ -1,5 +1,5 @@
 # Phase 3a kernel diagnostic — 2026-05-11 12:01-12:06 ET
-# Host: ATL baremetal (74.91.121.9), kernel 6.8.0-110-lowlatency
+# Host: ATL baremetal (<ATL_BM_GAME_IP>), kernel 6.8.0-110-lowlatency
 # Cmdline: intel_idle.max_cstate=0 mitigations=off processor.max_cstate=0
 #          isolcpus=2,3,4,5,6,7 nohz_full=2,3,4,5,6,7 rcu_nocbs=2,3,4,5,6,7
 # Iterations: 10000 per request interval

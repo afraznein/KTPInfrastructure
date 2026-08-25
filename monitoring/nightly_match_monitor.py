@@ -19,7 +19,7 @@ from datetime import datetime
 
 # Server configurations
 # Repointed to the live fleet 2026-08-09. This had monitored two DECOMMISSIONED
-# VPS hosts (74.91.112.182 / 74.91.114.195) and had been erroring on every run
+# VPS hosts (<ATL_VPS_GAME_IP> / <DAL_VPS_GAME_IP>) and had been erroring on every run
 # for at least three weeks. Those addresses have since been reassigned — the old
 # Dallas IP now answers with a different host key — so the failures were never a
 # credential problem, which is how they were first misread.
