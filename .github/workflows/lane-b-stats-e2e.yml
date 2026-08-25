@@ -408,6 +408,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
+                       /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -481,6 +482,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_017_capture_clocks_and_assists.sql \
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
+                       /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -513,4 +515,48 @@ jobs:
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
           if-no-files-found: warn
+          retention-days: 30
+
+  compare-series:
+    name: Compare five Lane B reports
+    needs: lane-b
+    if: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout KTPInfrastructure
+        uses: actions/checkout@v4
+
+      - name: Download all five match-report artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lane-b-reports-${{ github.run_id }}-*
+          path: build/series-input
+
+      - name: Build and verify the five-match comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t reports < <(find build/series-input -type f -path '*/match-report/report.json' -printf '%h\n' | sort)
+          test "${#reports[@]}" -eq 5
+          mkdir -p build/series-report
+          python3 scripts/compare_v5_report_series.py \
+            --output-dir build/series-report \
+            "${reports[@]}"
+          for index in 1 2 3 4 5; do
+            source_dir="build/series-input/lane-b-reports-${GITHUB_RUN_ID}-${index}"
+            test -d "${source_dir}/match-report"
+            mkdir -p "build/series-report/run-${index}"
+            cp -a "${source_dir}/match-report" "build/series-report/run-${index}/match-report"
+            cp -a "${source_dir}/lane-b-summary.md" "build/series-report/run-${index}/lane-b-summary.md"
+            cp -a "${source_dir}/bundle-provenance.md" "build/series-report/run-${index}/bundle-provenance.md"
+          done
+          cat build/series-report/SERIES_COMPARISON.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload five-match comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-b-series-comparison-${{ github.run_id }}
+          path: build/series-report/
+          if-no-files-found: error
           retention-days: 30
