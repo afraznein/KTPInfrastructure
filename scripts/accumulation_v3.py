@@ -15,10 +15,12 @@ import json
 import math
 import statistics
 import tomllib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from scripts.points_timeline import build_points_timeline
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -101,7 +103,8 @@ def normalize_impact_index(
 
 def _canonical_hash(payload: Any) -> str:
     encoded = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -134,6 +137,19 @@ def validate_facts(facts: dict[str, Any]) -> None:
         component_sum = sum(_f(components.get(key)) for key in POSITION_COMPONENT_KEYS)
         if not math.isclose(component_sum, _f(components.get("position_points")), abs_tol=0.06):
             raise ValueError(f"position_components do not sum for player {raw_player_id}")
+    for row in facts.get("team_position_contributions") or []:
+        if set(row) != {"half", "bin_end", "team", "points", "timing"}:
+            raise ValueError(
+                "team_position_contributions must contain only fixed team/bin totals"
+            )
+        numeric = (_f(row.get("bin_end")), _f(row.get("points")))
+        if (not all(math.isfinite(value) for value in numeric)
+                or _i(row.get("half")) <= 0 or _i(row.get("team")) not in (1, 2)
+                or numeric[0] <= 0 or not math.isclose(numeric[0] % 15.0, 0.0, abs_tol=1e-9)
+                or numeric[1] < 0 or row.get("timing") not in {
+                    "team_bin", "privacy_deferred_reconciliation"
+                }):
+            raise ValueError("team_position_contributions contains an invalid team/bin total")
     momentum = facts.get("momentum_points") or {}
     if any(_i(player_id) not in known for player_id in momentum):
         raise ValueError("momentum_points references a player outside the roster")
@@ -161,6 +177,54 @@ def _new_player_result(player: dict[str, Any]) -> dict[str, Any]:
         **{key: 0.0 for key in COMPONENT_KEYS},
         **{key: 0.0 for key in POSITION_COMPONENT_KEYS},
     }
+
+
+def _stable_player_teams(facts: dict[str, Any]) -> dict[int, int]:
+    """Resolve stable team identity for internal team-only aggregation."""
+    known = {_i(row.get("player_id")) for row in facts.get("players") or []}
+    votes: dict[int, Counter[int]] = defaultdict(Counter)
+    for row in facts.get("players") or []:
+        player_id, team = _i(row.get("player_id")), _i(row.get("team"))
+        if player_id in known and team > 0:
+            votes[player_id][team] += 10
+    for frag in facts.get("frags") or []:
+        for actor, field, fallback in (
+            ("killer_id", "killer_momentum_team", "killer_team"),
+            ("victim_id", "victim_momentum_team", "victim_team"),
+        ):
+            player_id = _i(frag.get(actor))
+            team = _i(frag.get(field, frag.get(fallback)))
+            if player_id in known and team > 0:
+                votes[player_id][team] += 1
+    for episode in ((facts.get("momentum_summary") or {}).get("episodes") or []):
+        team = _i(episode.get("team"))
+        for raw_player_id in (episode.get("allocations") or {}):
+            player_id = _i(raw_player_id)
+            if player_id in known and team > 0:
+                votes[player_id][team] += 2
+    resolved = {
+        player_id: team_votes.most_common(1)[0][0]
+        for player_id, team_votes in votes.items() if team_votes
+    }
+    # Legacy fixtures may expose only a label. Map the two labels
+    # deterministically to the public momentum team identities.
+    team_ids = [
+        _i((facts.get("momentum_summary") or {}).get(key))
+        for key in ("team1", "team2")
+    ]
+    team_ids = [team for team in team_ids if team > 0]
+    unresolved = [
+        row for row in facts.get("players") or []
+        if _i(row.get("player_id")) not in resolved
+    ]
+    labels = sorted({str(row.get("team_name") or "") for row in unresolved})
+    label_teams = dict(zip(labels, team_ids)) if len(labels) == len(team_ids) else {}
+    for row in unresolved:
+        player_id = _i(row.get("player_id"))
+        team = label_teams.get(str(row.get("team_name") or ""), 0)
+        if team > 0:
+            resolved[player_id] = team
+    return resolved
 
 
 def _enemy_frag(frag: dict[str, Any]) -> bool:
@@ -275,6 +339,14 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         momentum_cfg.get("replace_sequence_continuity_points")
     )
     bounded_combat = reliability["life_boundaries"] and reliability["damage_events"]
+    contribution_sources: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+
+    def record_source(player_id: int, component: str, points: float,
+                      half: int = 1, when: float = 0.0) -> None:
+        if player_id in players and points > 0:
+            contribution_sources[(player_id, component)].append({
+                "half": max(1, half), "time": max(0.0, when), "points": points,
+            })
 
     damage_by_event: dict[str, list[dict[str, Any]]] = defaultdict(list)
     damage_by_life: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -326,6 +398,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
 
         if bounded_combat:
             players[killer]["combat_finisher_points"] += finisher
+            record_source(killer, "combat_finisher_points", finisher, half, event_time)
             contribution[killer] += finisher
             damage_rows = _damage_for_death(frag, damage_by_event, damage_by_life)
             by_attacker: dict[int, float] = defaultdict(float)
@@ -340,10 +413,12 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             for attacker, damage in by_attacker.items():
                 share = damage_pool * damage / total_damage
                 players[attacker]["combat_damage_share_points"] += share
+                record_source(attacker, "combat_damage_share_points", share, half, event_time)
                 contribution[attacker] += share
         else:
             fallback_kill = _f(combat_cfg.get("fallback_kill_points"))
             players[killer]["combat_finisher_points"] += fallback_kill
+            record_source(killer, "combat_finisher_points", fallback_kill, half, event_time)
             contribution[killer] += fallback_kill
 
         streak_steps = min(
@@ -353,6 +428,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             streak_cfg.get("finisher_increment_per_kill")
         ) * streak_steps
         players[killer]["streak_points"] += streak_bonus
+        record_source(killer, "streak_points", streak_bonus, half, event_time)
 
         shutdown = min(
             max(0, victim_streak - _i(streak_cfg.get("shutdown_starts_after")))
@@ -360,6 +436,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             _f(streak_cfg.get("shutdown_points_cap")),
         )
         players[killer]["shutdown_points"] += shutdown
+        record_source(killer, "shutdown_points", shutdown, half, event_time)
         combat_events.append({
             "event_id": str(frag["event_id"]),
             "half": half,
@@ -382,6 +459,14 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             players[player_id]["fallback_damage_points"] = (
                 _f(source.get("opponent_damage", source.get("damage_dealt")))
                 * _f(combat_cfg.get("fallback_damage_points"))
+            )
+            record_source(
+                player_id, "fallback_assist_points",
+                players[player_id]["fallback_assist_points"],
+            )
+            record_source(
+                player_id, "fallback_damage_points",
+                players[player_id]["fallback_damage_points"],
             )
 
     # Maximal personal chains: no overlapping 2k/3k awards.
@@ -408,6 +493,10 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
                 continue
             bonus = _fast_chain_bonus(len(chain), chain_cfg)
             players[player_id]["fast_chain_points"] += bonus
+            record_source(
+                player_id, "fast_chain_points", bonus,
+                chain[-1]["half"], chain[-1]["time"],
+            )
             chain_id = f"h{chain[0]['half']}-p{player_id}-t{chain[0]['time']:.3f}"
             for event in chain:
                 event_chain_size[event["event_id"]] = len(chain)
@@ -437,6 +526,10 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         share = pool / len(credited) if credited else 0.0
         for player_id in credited:
             players[player_id]["capture_points"] += share
+            record_source(
+                player_id, "capture_points", share,
+                _i(capture.get("half")), _f(capture.get("time")),
+            )
         outcome = _outcome(capture, reliability)
         capture_context[event_id] = {
             **capture,
@@ -496,6 +589,10 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             for player_id, weight in weights.items():
                 share = pool * weight / total_weight
                 players[player_id]["conversion_points"] += share
+                record_source(
+                    player_id, "conversion_points", share,
+                    _i(capture.get("half")), _f(capture.get("time")),
+                )
                 allocations[str(player_id)] = _rounded(share)
         distinct_killers = sorted({death["killer_id"] for death in deaths})
         conversion_events.append({
@@ -519,6 +616,10 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             event, break_cfg, reliability["break_context"], reliability["ownership"]
         )
         players[player_id]["cap_break_points"] += awarded
+        record_source(
+            player_id, "cap_break_points", awarded,
+            _i(event.get("half")), _f(event.get("time")),
+        )
         break_events.append({
             "event_id": str(event.get("event_id") or f"break-{index}"),
             "player_id": player_id,
@@ -551,6 +652,12 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             player_id = _i(raw_player_id)
             if player_id in players:
                 players[player_id]["momentum_points"] = max(0.0, _f(value))
+        for episode in ((facts.get("momentum_summary") or {}).get("episodes") or []):
+            for raw_player_id, value in (episode.get("allocations") or {}).items():
+                record_source(
+                    _i(raw_player_id), "momentum_points", _f(value),
+                    _i(episode.get("half")), _f(episode.get("end_time")),
+                )
 
     duration = max(0.0, _f((facts.get("match") or {}).get("duration_seconds")))
     output_players = []
@@ -716,7 +823,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             if impact_cfg and reference_ppm > 0 else "Overall rating not enabled.",
         },
     }
-    return {
+    report = {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "status": "experimental_shadow",
@@ -763,6 +870,52 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "penalty_points": 0.0,
         },
     }
+    if momentum_enabled:
+        stable_teams = _stable_player_teams(facts)
+        annotations = []
+        for capture in capture_context.values():
+            credited = capture.get("credited_player_ids") or []
+            team = _i(capture.get("momentum_team")) or next(
+                (stable_teams.get(_i(player_id), 0) for player_id in credited
+                 if stable_teams.get(_i(player_id), 0)),
+                _i(capture.get("team")),
+            )
+            outcome = str(capture.get("outcome") or "flag")
+            annotations.append({
+                "half": _i(capture.get("half")), "time": _f(capture.get("time")),
+                "team": team, "kind": "capture",
+                "label": f"Team {team} {outcome} capture",
+            })
+        for event in facts.get("cap_breaks") or []:
+            team = stable_teams.get(_i(event.get("player_id")), 0)
+            annotations.append({
+                "half": _i(event.get("half")), "time": _f(event.get("time")),
+                "team": team, "kind": "cap_break",
+                "label": f"Team {team} active flag defense",
+            })
+        for episode in ((facts.get("momentum_summary") or {}).get("episodes") or []):
+            team = _i(episode.get("team"))
+            annotations.append({
+                "half": _i(episode.get("half")),
+                "time": _f(episode.get("end_time")), "team": team,
+                "kind": "momentum_swing",
+                "label": f"Team {team} momentum swing ({_f(episode.get('swing')):.1f})",
+            })
+        report["points_timeline"] = build_points_timeline(
+            match_id=str((facts.get("match") or {}).get("match_id") or ""),
+            components=COMPONENT_KEYS,
+            component_totals=component_totals,
+            match_total_points=report["match_total_points"],
+            player_rows=output_players,
+            player_teams=stable_teams,
+            contribution_sources=contribution_sources,
+            team_position_contributions=(
+                facts.get("team_position_contributions") or []
+            ),
+            momentum=facts.get("momentum_summary") or {},
+            annotations=annotations,
+        )
+    return report
 
 
 def build_ai_checkpoint(report: dict[str, Any]) -> dict[str, Any]:
@@ -1000,8 +1153,23 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]
         if is_v5:
             momentum = report.get("momentum") or {}
+            points_timeline = report.get("points_timeline") or {}
             impact_index = report.get("impact_index") or {}
             lines += [
+                "", "## Accumulated points over time", "",
+                "[Open the full-size three-panel graph](points-timeline.svg) Â· "
+                "[Inspect the sanitized 15-second data](points-timeline.json)", "",
+                "The panels align cumulative raw team points, raw points gained in each "
+                "15-second window, and the existing public momentum curve. Life and positional "
+                "awards are aggregated to the team before entering this timeline; no individual "
+                "timing, coordinates, or routes are exported.", "",
+                "A positional team/bin is timed only when at least three distinct players "
+                "contributed. Sparser awards are pooled into an end-of-half privacy "
+                "reconciliation entry; its placement preserves cumulative totals and does not "
+                "represent when those points were earned. Match-specific contributor counts "
+                "are not exported.", "",
+                f"Timeline conservation: {points_timeline.get('conservation', {}).get('timeline_match_total_points', 0):.2f} "
+                f"timeline points versus {report['match_total_points']:.2f} report points.", "",
                 "", "## Team momentum over time", "",
                 "[Open the full-size momentum graph](momentum.svg)", "",
                 f"Positive favors team `{momentum.get('team1', 'team 1')}`; negative favors "

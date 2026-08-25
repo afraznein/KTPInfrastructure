@@ -90,9 +90,32 @@ def test_capping_team_death_in_far_kill_window_makes_it_inconclusive():
 
 def test_far_probe_waits_past_production_candidate_ttl():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    assert "#define BD_OFFPOINT_DEATH_QUIET_SECS 3.0" in source
+    assert "#define BD_OFFPOINT_DEATH_QUIET_SECS 4.1" in source
     assert ("get_gametime() - g_bdLastTeamDeath[team] <\n"
             "\t\t\tBD_OFFPOINT_DEATH_QUIET_SECS") in source
+
+
+def test_far_probe_freezes_all_live_players_past_its_death_window():
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    seconds = float(next(
+        line.rsplit(" ", 1)[1]
+        for line in source.splitlines()
+        if line.startswith("#define BD_OFFPOINT_ISOLATION_SECS ")
+    ))
+    assert seconds >= bs.BreakDriver.SETTLE + 0.5
+    assert "isolated = bd_begin_test_isolation()" in source
+    assert 'set_task(BD_OFFPOINT_ISOLATION_SECS, "bd_isolation_end"' in source
+    assert "bd_hold_test_players()" in source
+    assert bs._ISOLATION_END_RE.search("[BD] isolation END")
+
+
+def test_far_kill_parser_reports_isolation_coverage_and_accepts_old_logs():
+    old = ("[BD] kill flag=3 capteam=1 mode=far victim=4 vname=Link "
+           "killer=7 kname=Diablo dist=3456 count_before=2 owner_before=2")
+    old_match = bs._KILL_RE.search(old)
+    new_match = bs._KILL_RE.search(old + " isolated=12")
+    assert old_match is not None and old_match.group(11) is None
+    assert new_match is not None and int(new_match.group(11)) == 12
 
 
 def test_a_death_on_the_other_team_does_not_contaminate():
@@ -264,6 +287,21 @@ def test_arm_kill_reports_plugin_abort(monkeypatch):
     assert handle.fired == ["ktp_bd_arm_kill far"]
 
 
+def test_isolation_close_waits_for_explicit_restore_marker(monkeypatch):
+    prefix = "old\n"
+    restored = prefix + "[BD] isolation END\norganic play resumed\n"
+    driver = bs.BreakDriver(_FakeHandle([]), _FakeLog([prefix, restored]))
+    sleeps = []
+    monkeypatch.setattr(bs.time, "sleep", sleeps.append)
+
+    closed, tail = driver._wait_for_isolation_end(len(prefix), timeout=1.0)
+
+    assert closed is True
+    assert bs._ISOLATION_END_RE.search(tail)
+    assert "organic play resumed" not in tail
+    assert sleeps == [0.05]
+
+
 # -- deterministic round-restart evidence ---------------------------------
 
 
@@ -323,13 +361,29 @@ def test_probe_allows_only_frozen_monotonic_rebased_collapse_before_completion()
         'kind=state_before_completion count=%d owner=%d')
 
 
-def test_restart_probe_freezes_and_userid_safely_restores_capping_team():
+def test_restart_probe_freezes_world_and_userid_safely_restores_players():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    assert "bd_freeze_restart_team(team)" in source
-    assert "set_entvar(id, var_flags, flags | FL_FROZEN)" in source
-    assert "get_user_userid(id) == g_bdRestartFrozenUserid[id]" in source
-    assert "set_entvar(id, var_flags, flags & ~FL_FROZEN)" in source
-    assert source.count("bd_restore_restart_players()") >= 3
+    assert "g_bdRestartFrozenCount = bd_begin_test_isolation()" in source
+    freeze = source[source.index("stock bd_isolate_test_players()"):
+                    source.index("stock bd_hold_test_players()")]
+    assert "get_user_team(id)" not in freeze
+    assert "flags | FL_FROZEN | FL_GODMODE" in freeze
+    assert "g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)" in source
+    assert "get_user_userid(id) == g_bdIsolationUserid[id]" in source
+    assert "if (g_bdIsolationWasGodmode[id]) flags |= FL_GODMODE" in source
+    assert "else flags &= ~FL_GODMODE" in source
+    assert source.count("bd_end_test_isolation(false)") >= 3
+
+    kill_fn = source[source.index("stock bool:bd_execute_kill"):
+                     source.index("public cmd_kill()")]
+    dispatch = kill_fn.index("dodx_test_dispatch_client_death(killer, victim")
+    allow = kill_fn.index("bd_allow_isolated_death(victim)", dispatch)
+    kill = kill_fn.index("dod_user_kill(victim)", dispatch)
+    assert dispatch < allow < kill
+    allow_fn = source[source.index("stock bd_allow_isolated_death(id)"):
+                      source.index("stock bd_begin_test_isolation()")]
+    assert "g_bdIsolationWasGodmode[id])" in allow_fn
+    assert "flags & ~FL_GODMODE" in allow_fn
 
     insufficient = RESTART_QUEUE.replace("frozen=6", "frozen=1")
     insufficient_result = RESTART_RESULT.replace("frozen=6", "frozen=1")

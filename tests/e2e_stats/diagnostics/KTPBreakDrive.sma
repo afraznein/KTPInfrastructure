@@ -70,13 +70,16 @@
 #define BD_TASK_RESTART_ARM_POLL 77132
 #define BD_TASK_RESTART_POLL 77133
 #define BD_TASK_RESTART_FINISH 77134
+#define BD_TASK_ISOLATION_HOLD 77135
+#define BD_TASK_ISOLATION_END 77136
 #define BD_TASK_UNPROTECT_BASE 77140
 #define BD_WALKOFF_MAX_POLLS 2400
 #define BD_KILL_MAX_POLLS 600
 #define BD_RESTART_MAX_POLLS 60
 #define BD_RESTART_TIMER_SECS 1.0
 #define BD_BREAK_CANDIDATE_SECS 2.5
-#define BD_OFFPOINT_DEATH_QUIET_SECS 3.0
+#define BD_OFFPOINT_DEATH_QUIET_SECS 4.1
+#define BD_OFFPOINT_ISOLATION_SECS 7.5
 #define BD_WALKOFF_DEATH_QUIET_SECS 5.0
 #define BD_WALKOFF_PROTECT_SECS 5.0
 
@@ -111,9 +114,11 @@ new Float:g_bdRestartTimerUsed = -1.0
 new bool:g_bdRestartTimerPending = false
 new g_bdRestartFlagName[32]
 new g_bdRestartKillerName[32]
-new bool:g_bdRestartFrozen[33]
-new bool:g_bdRestartWasFrozen[33]
-new g_bdRestartFrozenUserid[33]
+new bool:g_bdIsolationHeld[33]
+new bool:g_bdIsolationWasFrozen[33]
+new bool:g_bdIsolationWasGodmode[33]
+new g_bdIsolationUserid[33]
+new bool:g_bdIsolationActive = false
 
 public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
@@ -128,7 +133,12 @@ public plugin_init() {
 }
 
 public plugin_end() {
-	bd_restore_restart_players()
+	remove_task(BD_TASK_KILL_POLL)
+	remove_task(BD_TASK_WALKOFF_POLL)
+	remove_task(BD_TASK_RESTART_ARM_POLL)
+	remove_task(BD_TASK_RESTART_POLL)
+	remove_task(BD_TASK_RESTART_FINISH)
+	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
 }
 
@@ -200,43 +210,119 @@ stock bd_restore_restart_timer() {
 	g_bdRestartTimerPending = false
 }
 
-stock bd_freeze_restart_team(team) {
+/** Isolate every currently live test player and remember their prior state.
+ *
+ * FL_FROZEN only stops movement; a frozen bot can still fire and kill another
+ * frozen player. FL_GODMODE closes that hole without changing health or using
+ * a production plugin API. `bd_hold_test_players` reapplies both bits every
+ * 0.1s, including after a respawn resets entity flags.
+ */
+stock bd_isolate_test_players() {
 	new Float:stopped[3]
 	new players[32], num
-	new frozen = 0
+	new isolated = 0
 	get_players(players, num)
 	for (new i = 0; i < num; i++) {
 		new id = players[i]
-		if (!is_user_connected(id) || !is_user_alive(id) ||
-				get_user_team(id) != team)
+		if (!is_user_connected(id) || !is_user_alive(id))
 			continue
 
 		new flags = get_entvar(id, var_flags)
-		g_bdRestartFrozen[id] = true
-		g_bdRestartWasFrozen[id] = bool:(flags & FL_FROZEN)
-		g_bdRestartFrozenUserid[id] = get_user_userid(id)
+		g_bdIsolationHeld[id] = true
+		g_bdIsolationWasFrozen[id] = bool:(flags & FL_FROZEN)
+		g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)
+		g_bdIsolationUserid[id] = get_user_userid(id)
 		set_entvar(id, var_velocity, stopped)
-		set_entvar(id, var_flags, flags | FL_FROZEN)
-		frozen++
+		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
+		isolated++
 	}
-	return frozen
+	return isolated
 }
 
-stock bd_restore_restart_players() {
+stock bd_hold_test_players() {
+	new Float:stopped[3]
+	new players[32], num
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (!is_user_connected(id) || !is_user_alive(id))
+			continue
+
+		new userid = get_user_userid(id)
+		new flags = get_entvar(id, var_flags)
+		if (!g_bdIsolationHeld[id] || g_bdIsolationUserid[id] != userid) {
+			g_bdIsolationHeld[id] = true
+			g_bdIsolationWasFrozen[id] = bool:(flags & FL_FROZEN)
+			g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)
+			g_bdIsolationUserid[id] = userid
+		}
+		set_entvar(id, var_velocity, stopped)
+		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
+	}
+}
+
+/** Remove only the immunity this diagnostic added from the staged victim.
+ *
+ * This runs in the same call frame immediately before dod_user_kill. The
+ * repeating hold task cannot run between these statements. A player that had
+ * godmode before isolation keeps it; the diagnostic must never erase state it
+ * did not own.
+ */
+stock bd_allow_isolated_death(id) {
+	if (!g_bdIsolationHeld[id] || !is_user_connected(id) ||
+			get_user_userid(id) != g_bdIsolationUserid[id] ||
+			g_bdIsolationWasGodmode[id])
+		return
+
+	new flags = get_entvar(id, var_flags)
+	set_entvar(id, var_flags, flags & ~FL_GODMODE)
+}
+
+stock bd_begin_test_isolation() {
+	bd_end_test_isolation(false)
+	g_bdIsolationActive = true
+	new isolated = bd_isolate_test_players()
+	set_task(0.1, "bd_isolation_hold", BD_TASK_ISOLATION_HOLD, .flags="b")
+	return isolated
+}
+
+public bd_isolation_hold() {
+	if (g_bdIsolationActive)
+		bd_hold_test_players()
+	return PLUGIN_HANDLED
+}
+
+public bd_isolation_end() {
+	bd_end_test_isolation(true)
+	return PLUGIN_HANDLED
+}
+
+stock bd_end_test_isolation(bool:log_end) {
+	remove_task(BD_TASK_ISOLATION_HOLD)
+	remove_task(BD_TASK_ISOLATION_END)
+	g_bdIsolationActive = false
+	bd_restore_isolated_players()
+	if (log_end)
+		log_amx("[BD] isolation END")
+}
+
+stock bd_restore_isolated_players() {
 	for (new id = 1; id <= 32; id++) {
-		if (!g_bdRestartFrozen[id])
+		if (!g_bdIsolationHeld[id])
 			continue
 		if (is_user_connected(id) &&
-				get_user_userid(id) == g_bdRestartFrozenUserid[id]) {
+				get_user_userid(id) == g_bdIsolationUserid[id]) {
 			new flags = get_entvar(id, var_flags)
-			if (g_bdRestartWasFrozen[id])
-				set_entvar(id, var_flags, flags | FL_FROZEN)
-			else
-				set_entvar(id, var_flags, flags & ~FL_FROZEN)
+			if (g_bdIsolationWasFrozen[id]) flags |= FL_FROZEN
+			else flags &= ~FL_FROZEN
+			if (g_bdIsolationWasGodmode[id]) flags |= FL_GODMODE
+			else flags &= ~FL_GODMODE
+			set_entvar(id, var_flags, flags)
 		}
-		g_bdRestartFrozen[id] = false
-		g_bdRestartWasFrozen[id] = false
-		g_bdRestartFrozenUserid[id] = 0
+		g_bdIsolationHeld[id] = false
+		g_bdIsolationWasFrozen[id] = false
+		g_bdIsolationWasGodmode[id] = false
+		g_bdIsolationUserid[id] = 0
 	}
 	g_bdRestartFrozenCount = 0
 }
@@ -423,13 +509,24 @@ stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
 	// with `auto` the harness does not know which flag was picked, so it cannot
 	// know which column of the follow-up count report to read.
 	new before = bd_zone_count(f, team)
-	log_amx("[BD] kill flag=%d capteam=%d mode=%s victim=%d vname=%s killer=%d kname=%s dist=%.0f count_before=%d owner_before=%d",
+	new isolated = 0
+	if (!want_near) {
+		// The far negative must prove that its candidate aged out without an
+		// organic kill changing the same capping count. Isolate every live bot
+		// past the full 7.0s harness settle window.
+		isolated = bd_begin_test_isolation()
+		set_task(BD_OFFPOINT_ISOLATION_SECS, "bd_isolation_end",
+			BD_TASK_ISOLATION_END)
+	}
+	log_amx("[BD] kill flag=%d capteam=%d mode=%s victim=%d vname=%s killer=%d kname=%s dist=%.0f count_before=%d owner_before=%d isolated=%d",
 		f, team, arg_mode, victim, vname, killer, kname, dist, before,
-		dodx_area_get_data(f, CA_owning_team))
+		dodx_area_get_data(f, CA_owning_team), isolated)
 
 	// Dispatch first: the detector reads its baseline here, and the victim has
 	// to still be in the zone for that baseline to be the pre-death count.
 	dodx_test_dispatch_client_death(killer, victim, 1, 0, 0)
+	if (!want_near)
+		bd_allow_isolated_death(victim)
 	dod_user_kill(victim)
 
 	set_task(1.5, "bd_report_after", f)
@@ -553,10 +650,11 @@ stock bool:bd_execute_restart(f) {
 	g_bdRestartClockComplete = false
 	g_bdRestartContaminated = false
 	g_bdRestartActive = true
-	// Keep the live occupants from walking off during the one-second test
-	// countdown. Organic deaths are still recorded as contamination, and the
-	// userid guard below prevents restoration from touching a reused slot.
-	g_bdRestartFrozenCount = bd_freeze_restart_team(team)
+	// Stop the whole synthetic world during the one-second test countdown.
+	// Freezing only the capping team left them exposed to opposing bots and let
+	// opponents alter other flag state. The restart poll reapplies this after
+	// respawn; the userid guard prevents restoration from touching a reused slot.
+	g_bdRestartFrozenCount = bd_begin_test_isolation()
 
 	// Dispatching the DODX death forward is the production-shaped queue input.
 	// Deliberately omit dod_user_kill: the live area count must remain unchanged
@@ -604,7 +702,7 @@ public cmd_arm_restart() {
 	remove_task(BD_TASK_RESTART_ARM_POLL)
 	remove_task(BD_TASK_RESTART_POLL)
 	remove_task(BD_TASK_RESTART_FINISH)
-	bd_restore_restart_players()
+	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
 	g_bdRestartTimerSaved = get_cvar_float("mp_clan_timer")
 	g_bdRestartTimerPending = true
@@ -649,6 +747,7 @@ public bd_restart_arm_poll() {
 
 public bd_restart_poll() {
 	g_bdRestartPolls++
+	bd_hold_test_players()
 	new Float:now = dodx_get_round_time()
 	if (now > g_bdRestartRoundPeak)
 		g_bdRestartRoundPeak = now
@@ -713,6 +812,9 @@ public bd_restart_poll() {
 }
 
 public bd_restart_finish() {
+	remove_task(BD_TASK_RESTART_ARM_POLL)
+	remove_task(BD_TASK_RESTART_POLL)
+	remove_task(BD_TASK_RESTART_FINISH)
 	// Give stats_logging's 0.5s detector poll two full chances to observe it,
 	// then drain it. Every relevant cap_break is now before restart_result;
 	// later organic play cannot be mistaken for this candidate.
@@ -728,7 +830,8 @@ public bd_restart_finish() {
 		g_bdRestartOwnerBefore,
 		g_bdRestartOwnerAfter, g_bdRestartContaminated, flushed)
 	g_bdRestartActive = false
-	bd_restore_restart_players()
+	g_bdRestartSyntheticDispatch = false
+	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
 	return PLUGIN_HANDLED
 }
