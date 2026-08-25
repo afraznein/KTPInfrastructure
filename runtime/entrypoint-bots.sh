@@ -106,7 +106,10 @@ if ! grep -q 'ktpamx' /opt/hlds/dod/addons/extensions.ini; then
     exit 1
 fi
 
-if grep -q 'ktpamx' /opt/hlds/dod/addons/metamod/plugins.ini; then
+# Strip comments before matching: plugins.ini's own header explains that ktpamx
+# is deliberately absent, so a naive grep matches the explanation and fails a
+# correct topology.
+if grep -v '^[[:space:]]*;' /opt/hlds/dod/addons/metamod/plugins.ini | grep -q 'ktpamx'; then
     echo "[entrypoint-bots] FATAL: metamod plugins.ini lists ktpamx." >&2
     echo "[entrypoint-bots] ktpamx installs ReHLDS hookchains even when Metamod" >&2
     echo "[entrypoint-bots] loads it, so this topology segfaults during plugin" >&2

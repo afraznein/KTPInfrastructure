@@ -68,6 +68,36 @@ So `runtime/entrypoint-bots.sh` **refuses to boot** without the patched core
 rather than warning. The acceptance test is likewise not "`status` shows a
 player" — it is "the HUD backend logged a `player_connect` for `BOT_<n>`".
 
+## The other silent failure: engine/core API mismatch
+
+Hit for real while bringing this up the first time. ktpamx asserts a minimum
+ReHLDS API at load:
+
+```
+[KTP AMX] FATAL: ReHLDS API rejected (need >= 3.16). Engine is older than this
+          build; stage engine+core+reapi+dodx together.
+```
+
+When that fires **AMXX loads no plugins at all**. The server still boots, still
+accepts bots, `status` still lists twelve of them, `meta list` still shows
+new_bot running — and the HUD receives nothing. It presents exactly like a
+bot-blind core, and it is easy to spend an hour blaming the bot patch.
+
+Two things make it easy to walk into:
+
+- It is **not** bot-specific. `ktp-game-1` hits it too, from the same artifacts.
+  If `/api/servers` is empty for *both* servers, suspect this before anything in
+  this directory.
+- Pinning `VERSION=` to an older image is enough to cause it, because the base
+  image carries the engine while `make local-bots-amxx` builds the core from
+  KTPAMXX HEAD.
+
+`local_bots.sh preflight` now compares the core's source SHA against
+`artifacts/<VERSION>/ktpamx/SOURCE_SHA` and warns when they differ. The fix is
+what the error says: `make build` (which stages engine + core together and
+republishes `artifacts/latest`), then `make local-build`, then
+`make local-bots-amxx`.
+
 ## Keeping it in sync with `ktp-game-1`
 
 The invariant worth holding is **not** "matches the fleet" — neither server does.

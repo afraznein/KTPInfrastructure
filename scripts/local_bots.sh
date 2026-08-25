@@ -15,6 +15,23 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Git Bash / MSYS mangles container-internal paths in docker argv (see
+# scripts/docker-nopathconv.sh for the full story). Route docker through the
+# wrapper via the extension point the upstream builder already exposes, rather
+# than changing the environment for the whole script — `git -C /d/Git/...`
+# needs the conversion that docker must not have.
+#
+# Upstream's answer is "run from a real Linux shell"; this box has no WSL
+# distro but Docker Desktop, so the wrapper is what makes the lane usable here.
+case "$(uname -s 2>/dev/null || echo unknown)" in
+    MINGW*|MSYS*|CYGWIN*)
+        export LANEB_DOCKER="${LANEB_DOCKER:-$REPO_ROOT/scripts/docker-nopathconv.sh}"
+        ;;
+esac
+
+# Our own docker calls need the same treatment as the builder's.
+DOCKER="${LANEB_DOCKER:-docker}"
 LANEB_DIR="${LANEB_DIR:-$REPO_ROOT/local/lane-b}"
 BOT_PLUGIN_DIR="${BOT_PLUGIN_DIR:-$REPO_ROOT/local/plugins-bots}"
 PROJECT_ROOT="${KTP_PROJECT_ROOT:-$(cd "$REPO_ROOT/.." && pwd)}"
@@ -88,12 +105,80 @@ cmd_stage_plugins() {
     # `.testmatch` is behind `#if defined KTP_TEST_MODE`. A production build
     # does not register the command at all, and the symptom is an unhelpful
     # "Unknown command".
-    echo "[bots] building KTP_TEST_MODE KTPMatchHandler"
-    ( cd "$MATCHHANDLER_DIR" && KTP_TEST_MODE=1 bash compile.sh )
+    #
+    # KTPMatchHandler's own compile.sh cannot be used here: it hardcodes
+    # KTPAMXX_DIR="/mnt/n/Nein_/KTP Git Projects/KTPAMXX" with no override, and
+    # runs amxxpc natively (it is a 32-bit Linux binary). So this reproduces its
+    # recipe step for step in a container -- same temp-tree layout, same CRLF
+    # strip, same build_info.inc, same amxxpc argv including the trailing
+    # KTP_TEST_MODE=1 positional.
+    #
+    # Compiler comes from the Lane B checkout, so the plugin is built by the
+    # SAME KTPAMXX source as the core it will run against.
+    local laneb_checkout="${LANEB_WORK:-$HOME/ktp}/KTPAMXX-laneb"
+    local scripting="$laneb_checkout/obj-linux/packages/base/addons/ktpamx/scripting"
+    [ -f "$scripting/amxxpc" ] || die "no amxxpc at $scripting
+       run 'make local-bots-amxx' first — it builds the compiler as a side
+       effect of building the core, from the same source"
 
-    local built="$MATCHHANDLER_DIR/compiled/test/KTPMatchHandler.amxx"
-    [ -f "$built" ] || die "expected test-mode build at $built"
-    cp "$built" "$BOT_PLUGIN_DIR/"
+    local sha dirty="" build_time
+    sha="$(git -C "$MATCHHANDLER_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    if [ "$sha" != "unknown" ] && [ -n "$(git -C "$MATCHHANDLER_DIR" status --porcelain)" ]; then
+        dirty="-dirty"
+    fi
+    build_time="$(date -u +%Y-%m-%dT%H:%MZ)"
+
+    echo "[bots] compiling KTPMatchHandler ${sha}${dirty} with KTP_TEST_MODE=1"
+    "$DOCKER" run --rm \
+        -v "$scripting:/ktpamx/scripting:ro" \
+        -v "$laneb_checkout/plugins/include:/ktpamx/include:ro" \
+        -v "$MATCHHANDLER_DIR:/src:ro" \
+        -v "$BOT_PLUGIN_DIR:/out" \
+        -e KTP_BUILD_SHA="${sha}${dirty}" \
+        -e KTP_BUILD_TIME="$build_time" \
+        ktp-amxx-builder:laneb bash -c '
+            set -e
+            rm -rf /tmp/ktpbuild && mkdir -p /tmp/ktpbuild
+            cd /tmp/ktpbuild
+            cp /ktpamx/scripting/amxxpc /ktpamx/scripting/amxxpc32.so .
+            cp -r /ktpamx/include ./include
+            chmod +x amxxpc
+            sed "s/\r$//" /src/KTPMatchHandler.sma > KTPMatchHandler.sma
+            for inc in /src/*.inc; do
+                [ -f "$inc" ] && sed "s/\r$//" "$inc" > "$(basename "$inc")"
+            done
+            printf "#define KTP_BUILD_SHA \"%s\"\n#define KTP_BUILD_TIME \"%s\"\n" \
+                "$KTP_BUILD_SHA" "$KTP_BUILD_TIME" > include/build_info.inc
+
+            # Compile BOTH ways and compare code size.
+            #
+            # This is the only cheap way to prove the define actually took. An
+            # .amxx is a compressed XXMA container, so grepping the artifact for
+            # "amx_ktp_testmatch" finds nothing whether the flag worked or not
+            # -- no string in any .amxx is greppable, not even "amxmodx". And
+            # amxxpc exits 0 on failure, so the exit code proves nothing either.
+            #
+            # Same source, one extra -D: if KTP_TEST_MODE were ignored the two
+            # code sizes would be identical. amxxpc runs in about a second, so
+            # the second compile is free.
+            ./amxxpc KTPMatchHandler.sma -i./include -i. -obase.amxx > base.log 2>&1
+            ./amxxpc KTPMatchHandler.sma -i./include -i. -oKTPMatchHandler.amxx KTP_TEST_MODE=1 > test.log 2>&1
+            cat test.log
+            base_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" base.log | grep -oE "[0-9]+")
+            test_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" test.log | grep -oE "[0-9]+")
+            echo "[bots] code size: base=${base_code} test-mode=${test_code}"
+            test -s KTPMatchHandler.amxx
+            if [ -z "$base_code" ] || [ -z "$test_code" ] || [ "$test_code" -le "$base_code" ]; then
+                echo "KTP_TEST_MODE did not take: test-mode build is not larger" >&2
+                echo "than the plain build, so amx_ktp_testmatch is absent and" >&2
+                echo ".testmatch would fail at runtime with Unknown command." >&2
+                exit 1
+            fi
+            cp KTPMatchHandler.amxx /out/
+        '
+
+    local built="$BOT_PLUGIN_DIR/KTPMatchHandler.amxx"
+    [ -s "$built" ] || die "no KTPMatchHandler.amxx produced"
 
     # The bot server gets its OWN plugin dir: the entrypoint copies
     # /plugins/*.amxx over the image's, so a test-mode KTPMatchHandler left in
@@ -123,6 +208,37 @@ exactly like a working server.
 
 EOF
         exit 1
+    fi
+
+    # The core has to match the ENGINE, not just KTPAMXX HEAD.
+    #
+    # ktpamx asserts a minimum ReHLDS API at load and REFUSES if the engine is
+    # older: "[KTP AMX] FATAL: ReHLDS API rejected (need >= 3.16) ... stage
+    # engine+core+reapi+dodx together." When that fires, AMXX loads no plugins
+    # at all -- so the HUD receives nothing while the server looks completely
+    # healthy and `status` still lists bots. Same silent shape as a bot-blind
+    # core, different cause, and it is why this is checked and not assumed.
+    #
+    # The base image is built from artifacts/<VERSION>/, engine and ktpamx
+    # together, so the artifacts' own ktpamx SHA is the right thing to compare
+    # the core against: equal means they came out of one staging.
+    local art_sha_file="$REPO_ROOT/artifacts/${ARTIFACTS_VERSION:-latest}/ktpamx/SOURCE_SHA"
+    if [ -f "$CORE_SHA_FILE" ] && [ -f "$art_sha_file" ]; then
+        local core_sha art_sha
+        core_sha="$(cat "$CORE_SHA_FILE")"
+        art_sha="$(cat "$art_sha_file")"
+        if [ "$core_sha" != "$art_sha" ]; then
+            echo ""
+            echo "WARNING: bot core and the base image come from different stagings"
+            echo "  bot core:   $core_sha"
+            echo "  artifacts:  $art_sha"
+            echo "  If the engine is the older of the two, ktpamx will reject it at"
+            echo "  load and NO AMXX plugin will run -- the server still boots and"
+            echo "  still accepts bots, so this looks like a working stack."
+            echo "  Fix: 'make build' (stages engine+core together), then"
+            echo "       'make local-build' and 'make local-bots-amxx'."
+            echo ""
+        fi
     fi
 
     # Same shape as the existing check-artifacts warning, and the same honest
