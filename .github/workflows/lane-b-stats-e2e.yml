@@ -410,6 +410,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
+                       /work/build/artifacts/sql/migrate_021_capture_observability.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -484,6 +485,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_018_break_context_correlation.sql \
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
+                       /work/build/artifacts/sql/migrate_021_capture_observability.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

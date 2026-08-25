@@ -61,13 +61,14 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     breaks = "/work/build/artifacts/sql/migrate_018_break_context_correlation.sql"
     correction = "/work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql"
     certification = "/work/build/artifacts/sql/migrate_020_frag_context_certified.sql"
+    observability = "/work/build/artifacts/sql/migrate_021_capture_observability.sql"
 
-    for migration in (life, clocks, breaks, correction, certification):
+    for migration in (life, clocks, breaks, correction, certification, observability):
         assert workflow.count(migration) == 2
     first = [workflow.index(migration) for migration in
-             (life, clocks, breaks, correction, certification)]
+             (life, clocks, breaks, correction, certification, observability)]
     second = [workflow.index(migration, offset + 1) for migration, offset in
-              zip((life, clocks, breaks, correction, certification), first)]
+              zip((life, clocks, breaks, correction, certification, observability), first)]
     assert first == sorted(first)
     assert second == sorted(second)
     assert first[-1] < second[0]
