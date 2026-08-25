@@ -63,9 +63,46 @@ _ABORT_RE = re.compile(r"\[BD\] (\w+) ABORT flag=(-?\d+) (.*)")
 _SCAN_RE = re.compile(
     r"\[BD\] flag (\d+) name=(\S+) owner=(-?\d+) capping=(-?\d+) "
     r"capteam=(-?\d+) allies=(-?\d+) axis=(-?\d+)")
+_RESTART_QUEUE_RE = re.compile(
+    r"\[BD\] restart_queue seq=(?P<seq>\d+) flag=(?P<flag>\d+) "
+    r"fname=(?P<flag_name>\S+) capteam=(?P<capteam>-?\d+) "
+    r"victim=(?P<victim>\d+) vname=(?P<victim_name>\S+) "
+    r"killer=(?P<killer>\d+) killer_userid=(?P<killer_userid>\d+) "
+    r"kname=(?P<killer_name>\S+) "
+    r"dist=(?P<dist>-?\d+) count_before=(?P<count_before>-?\d+) "
+    r"count_queued=(?P<count_queued>-?\d+) "
+    r"frozen=(?P<frozen>\d+) "
+    r"owner_before=(?P<owner_before>-?\d+) "
+    r"restart_timer=(?P<restart_timer>-?\d+(?:\.\d+)?) "
+    r"round_before=(?P<round_before>-?\d+(?:\.\d+)?) "
+    r"drained=(?P<drained>[01])")
+_RESTART_RESULT_RE = re.compile(
+    r"\[BD\] restart_result seq=(?P<seq>\d+) flag=(?P<flag>\d+) "
+    r"fname=(?P<flag_name>\S+) killer=(?P<killer>\d+) "
+    r"killer_userid=(?P<killer_userid>\d+) "
+    r"kname=(?P<killer_name>\S+) rebase=(?P<rebase>[01]) "
+    r"completion=(?P<completion>[01]) "
+    r"restart_timer=(?P<restart_timer>-?\d+(?:\.\d+)?) "
+    r"round_before=(?P<round_before>-?\d+(?:\.\d+)?) "
+    r"round_peak=(?P<round_peak>-?\d+(?:\.\d+)?) "
+    r"round_after=(?P<round_after>-?\d+(?:\.\d+)?) "
+    r"round_limit=(?P<round_limit>-?\d+(?:\.\d+)?) "
+    r"count_before=(?P<count_before>-?\d+) "
+    r"count_queued=(?P<count_queued>-?\d+) "
+    r"count_after=(?P<count_after>-?\d+) "
+    r"frozen=(?P<frozen>\d+) "
+    r"owner_before=(?P<owner_before>-?\d+) "
+    r"owner_after=(?P<owner_after>-?\d+) "
+    r"contaminated=(?P<contaminated>[01]) flushed=(?P<flushed>[01])")
+_RESTART_CONTAMINATION_RE = re.compile(
+    r"\[BD\] restart_contamination seq=(?P<seq>\d+) "
+    r"kind=(?P<kind>\w+)")
 
 # Breaker NAME, so a break can be attributed to the kill that caused it.
 _BREAK_RE = re.compile(r'"([^"<]*)<\d+><[^<>]*><[^<>]*>" triggered "cap_break"')
+_BREAK_DETAIL_RE = re.compile(
+    r'"(?P<breaker>[^"<]*)<(?P<userid>\d+)><[^<>]*><[^<>]*>" triggered '
+    r'"cap_break" \(flag "(?P<flag>[^"]+)"\)')
 # victim name and victim team, for the contamination check.
 _KILLED_RE = re.compile(
     r'^L \S+ - (\d\d):(\d\d):(\d\d): "[^"<]*<\d+><[^<>]*><[^<>]*>" killed '
@@ -103,11 +140,12 @@ def _line_seconds(line: str) -> int | None:
 class BreakDriver:
     """Stages scenarios over rcon and reads the verdict out of the game log."""
 
-    # The detector ages a candidate out after KSC_BREAK_WINDOW polls
-    # (5 x 0.5s = ~2.5s) and emits on the poll after a count drop. 6s covers
-    # both with room; a scenario needing longer would itself be a finding
-    # rather than something to paper over with a bigger sleep.
-    SETTLE = 6.0
+    # The detector emits on a 0.5s poll, then stats_logging may retain the
+    # marker until its next 5s buffer flush.  The former 6s boundary raced that
+    # flush in a real FULL run: the correct cap_break appeared in the very
+    # second the harness declared it missing.  Seven seconds covers the full
+    # production pipeline plus scheduler jitter without widening attribution.
+    SETTLE = 7.0
 
     def __init__(self, handle, log_path):
         self.handle = handle
@@ -278,10 +316,19 @@ class BreakDriver:
         capteam = int(staged.group(2))
         killer = staged.group(7)
         dist = int(staged.group(8))
+        deaths = self._capping_deaths_near(
+            tail, capteam, marker="[BD] kill flag=")
         breakers = _BREAK_RE.findall(tail)
         s.breaks_seen = len(breakers)
         s.extra = {"dist": dist, "count_before": int(staged.group(9)),
-                   "killer": killer, "breakers": breakers}
+                   "killer": killer, "breakers": breakers,
+                   "capping_team_deaths": deaths}
+
+        if deaths:
+            s.detail = ("off-point evidence window contains a real death on "
+                        f"the capping team ({deaths}); an organic break "
+                        "candidate could own any observed cap_break")
+            return s
 
         if killer in breakers:
             s.status = "violation"
@@ -447,59 +494,203 @@ class BreakDriver:
         return s
 
     def negative_round_restart(self) -> Scenario:
-        """A round restart must not produce a burst of phantom breaks.
+        """Queue a near candidate, then prove a neutral round reset is clean.
 
-        Deployment plan Unit 3 step 5. A restart zeroes every zone count at
-        once, which is the largest possible drop the detector will ever see —
-        so if its queue is not cleared, this is where it empties itself into
-        the database.
-
-        A candidate is deliberately queued first. Restarting with nothing
-        pending would prove only that an empty queue emits nothing, which is
-        not in doubt.
-
-        Runs LAST: it restarts the round out from under everything else.
+        The diagnostic owns queueing and restart in one server frame. It
+        drains the capture buffer before its queue marker and again before its
+        result marker, making those markers a closed evidence window.
         """
         s = Scenario("negative_round_restart")
         mark = len(self._read())
-        if not self._arm_kill("far"):
+        self.handle.rcon("ktp_bd_arm_restart")
+
+        ack_deadline = time.monotonic() + 3.0
+        while time.monotonic() < ack_deadline:
+            if "[BD] restart ARMED" in _tail(self._read(), mark):
+                break
+            time.sleep(0.1)
+        else:
+            s.detail = ("restart arm produced no acknowledgment; diagnostic "
+                        "plugin is not running")
+            return s
+
+        deadline = time.monotonic() + 68.0
+        tail = ""
+        while time.monotonic() < deadline:
             tail = _tail(self._read(), mark)
-            s.detail = (self._abort_reason(tail)
-                        or "armed far kill did not stage within the wait")
+            queued = _RESTART_QUEUE_RE.search(tail)
+            if queued:
+                seq = queued.group("seq")
+                if any(m.group("seq") == seq
+                       for m in _RESTART_RESULT_RE.finditer(tail)):
+                    break
+            elif _ABORT_RE.search(tail):
+                s.detail = self._abort_reason(tail) or "restart probe aborted"
+                return s
+            time.sleep(0.1)
+        else:
+            s.detail = ("restart probe did not produce a complete queue/result "
+                        "evidence pair")
+            if "[BD] restart_queue" in tail:
+                s.extra["restart_issued"] = True
             return s
-        time.sleep(2.0)
-        staged = _KILL_RE.search(_tail(self._read(), mark))
-        if not staged:
-            s.detail = (self._abort_reason(_tail(self._read(), mark))
-                        or "could not queue a candidate to restart against")
+
+        return self._judge_round_restart(tail)
+
+    @staticmethod
+    def _judge_round_restart(tail: str) -> Scenario:
+        """Judge one closed restart window and fail closed on ambiguity."""
+        s = Scenario("negative_round_restart")
+        queues = list(_RESTART_QUEUE_RE.finditer(tail))
+        if len(queues) != 1:
+            s.detail = (f"expected exactly one restart_queue marker, found "
+                        f"{len(queues)}")
+            if queues:
+                s.extra["restart_issued"] = True
+            return s
+        queued = queues[0]
+        seq = queued.group("seq")
+        all_results = list(_RESTART_RESULT_RE.finditer(tail))
+        results = [m for m in all_results
+                   if m.group("seq") == seq and m.start() > queued.end()]
+        if len(results) != 1 or len(all_results) != 1:
+            s.detail = (f"expected exactly one restart_result for seq {seq}, "
+                        f"found {len(results)} matching / "
+                        f"{len(all_results)} total")
+            s.extra = {"restart_issued": True, "seq": int(seq)}
+            return s
+        result = results[0]
+        window = tail[queued.start():result.start()]
+
+        all_breakers = _BREAK_RE.findall(window)
+        breaks = [m.groupdict() for m in _BREAK_DETAIL_RE.finditer(window)]
+        killed_lines = [line.strip() for line in window.splitlines()
+                        if _KILLED_RE.match(line)]
+        contamination = [m.group("kind")
+                         for m in _RESTART_CONTAMINATION_RE.finditer(window)
+                         if m.group("seq") == seq]
+        s.breaks_seen = len(breaks)
+
+        qints = {name: int(queued.group(name)) for name in (
+            "flag", "killer", "killer_userid", "dist", "count_before",
+            "count_queued", "frozen", "owner_before", "drained")}
+        rints = {name: int(result.group(name)) for name in (
+            "flag", "killer", "killer_userid", "rebase", "completion",
+            "count_before", "count_queued", "count_after", "owner_before",
+            "owner_after", "frozen", "contaminated", "flushed")}
+        clocks = {name: float(result.group(name)) for name in (
+            "restart_timer", "round_before", "round_peak", "round_after",
+            "round_limit")}
+        candidate = (queued.group("killer_name"),
+                     queued.group("killer_userid"),
+                     queued.group("flag_name"))
+        exact = [b for b in breaks
+                 if (b["breaker"], b["userid"], b["flag"]) == candidate]
+
+        s.extra = {
+            "restart_issued": True,
+            "seq": int(seq),
+            "flag": qints["flag"],
+            "flag_name": queued.group("flag_name"),
+            "killer": queued.group("killer_name"),
+            "killer_userid": qints["killer_userid"],
+            "breakers": breaks,
+            "unparsed_breaks": len(all_breakers) - len(breaks),
+            "contamination": contamination,
+            "organic_kills": killed_lines,
+            **clocks,
+            **{f"queue_{k}": v for k, v in qints.items()},
+            **{f"result_{k}": v for k, v in rints.items()},
+        }
+
+        repeated = ("flag", "killer", "killer_userid", "count_before",
+                    "count_queued", "frozen", "owner_before")
+        mismatched = [name for name in repeated
+                      if qints[name] != rints[name]]
+        if (queued.group("flag_name") != result.group("flag_name") or
+                queued.group("killer_name") != result.group("killer_name") or
+                float(queued.group("restart_timer")) !=
+                clocks["restart_timer"] or
+                float(queued.group("round_before")) != clocks["round_before"]):
+            mismatched.append("snapshot")
+        if mismatched:
+            s.detail = ("restart queue/result identity mismatch: "
+                        f"{', '.join(mismatched)}")
+            return s
+        if not qints["drained"] or not rints["flushed"]:
+            s.detail = ("restart evidence window was not synchronously drained "
+                        "at both boundaries")
+            return s
+        if contamination or killed_lines or rints["contaminated"]:
+            s.detail = ("restart evidence window was contaminated by organic "
+                        f"play (markers={contamination or 'none'}, "
+                        f"kills={len(killed_lines)})")
+            return s
+        if len(all_breakers) != len(breaks):
+            s.detail = ("restart evidence window contains a cap_break whose "
+                        "actor/flag identity could not be parsed")
+            return s
+        if not (0 < qints["dist"] <= 512):
+            s.detail = (f"queued candidate was not inside the production "
+                        f"512-unit break radius (dist={qints['dist']})")
+            return s
+        if (qints["count_before"] < 1 or
+                qints["count_queued"] != qints["count_before"]):
+            s.detail = ("synthetic queue dispatch changed the engine capture "
+                        f"count ({qints['count_before']} -> "
+                        f"{qints['count_queued']})")
+            return s
+        if qints["frozen"] < qints["count_queued"]:
+            s.detail = ("restart probe did not freeze enough capping-team "
+                        f"players ({qints['frozen']} frozen for "
+                        f"{qints['count_queued']} occupants)")
+            return s
+        if not rints["rebase"] or not rints["completion"]:
+            s.detail = ("no authoritative dodx round-clock rebase/completion "
+                        "was observed; mp_clan_restartround may have been ignored")
+            return s
+        projected_countdown = clocks["round_peak"] - clocks["round_limit"]
+        if not (0.99 <= clocks["restart_timer"] <= 1.01
+                and 0.01 < projected_countdown < 2.5):
+            s.detail = ("tested restart countdown was not shorter than the "
+                        "2.5-second break-candidate lifetime: "
+                        f"timer={clocks['restart_timer']:.2f}, "
+                        f"projected={projected_countdown:.2f}")
+            return s
+        if not (clocks["round_peak"] > clocks["round_limit"] + 0.01
+                and clocks["round_peak"] > clocks["round_before"] + 0.01
+                and clocks["round_limit"] - 5.0 <= clocks["round_after"]
+                <= clocks["round_limit"] + 0.01):
+            s.detail = ("restart clock markers do not prove a projected rebase "
+                        "followed by authoritative completion")
+            return s
+        if rints["count_after"] != 0:
+            s.detail = ("authoritative restart completed but the staged flag "
+                        f"did not collapse to zero ({qints['count_queued']} -> "
+                        f"{rints['count_after']})")
+            return s
+        if qints["owner_before"] != 0 or rints["owner_after"] != 0:
+            s.detail = ("probe did not exercise the neutral 0 -> 0 owner case "
+                        f"({qints['owner_before']} -> {rints['owner_after']}); "
+                        "an owner-change clear would make this inconclusive")
             return s
 
-        killer = staged.group(7)
-        restart_mark = len(self._read())
-        self.handle.rcon("mp_clan_restartround 1")
-        time.sleep(self.SETTLE + 4.0)
-        tail = _tail(self._read(), restart_mark)
-
-        breakers = _BREAK_RE.findall(tail)
-        s.breaks_seen = len(breakers)
-        s.extra = {"killer": killer, "breakers": breakers}
-
-        if killer in breakers:
+        unrelated = [b for b in breaks if b not in exact]
+        if unrelated:
+            s.detail = ("restart evidence window contains cap_break activity "
+                        f"unrelated to the exact queued actor/flag: {unrelated}")
+            return s
+        if exact:
             s.status = "violation"
-            s.detail = (f"a round restart credited {killer} with a cap_break "
-                        f"from a candidate queued beforehand. FALSE POSITIVE — "
-                        f"the restart zeroes every zone count and the queue is "
-                        f"emptying into it.")
-        elif len(breakers) > 1:
-            s.status = "violation"
-            s.detail = (f"{len(breakers)} cap_breaks in the restart window "
-                        f"({breakers}) — a burst, which is what a restart "
-                        f"should never produce.")
+            s.detail = (f"verified neutral restart collapsed flag "
+                        f"{candidate[2]} {qints['count_queued']} -> 0 and "
+                        f"credited queued actor {candidate[0]}<{candidate[1]}> "
+                        "with cap_break. FALSE POSITIVE")
         else:
             s.status = "ok"
-            s.detail = (f"round restart produced no break for {killer}"
-                        + (f" (one unrelated break by {breakers} ignored)"
-                           if breakers else ""))
+            s.detail = (f"authoritative neutral 0 -> 0 restart collapsed flag "
+                        f"{candidate[2]} {qints['count_queued']} -> 0 with no "
+                        "cap_break for the exact queued actor")
         return s
 
     # -- helpers -----------------------------------------------------------
@@ -587,7 +778,10 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
         s = None
         for attempt in range(1, attempts + 1):
             s = fn()
-            if s.status != "not_staged":
+            # Once restart_queue exists the diagnostic has already issued a
+            # real round restart. An inconclusive result is fail-closed and
+            # one-shot; retrying would silently shop for a cleaner reset.
+            if s.status != "not_staged" or s.extra.get("restart_issued"):
                 break
             print(f"  scenario {s.name:<28} attempt {attempt}/{attempts} "
                   f"did not stage: {s.detail}", flush=True)

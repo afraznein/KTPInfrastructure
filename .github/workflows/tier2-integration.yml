@@ -59,7 +59,7 @@ on:
         type: string
         default: '1.0'
       matchhandler_version:
-        description: 'Pre-activation gate: KTPMatchHandler version to assert (e.g. 0.10.149). Blank = the committed pin, which tracks the FLEET.'
+        description: 'Pre-activation gate: KTPMatchHandler version to assert (e.g. 0.10.149). Blank = the version of the pinned reviewed build this workflow compiles, which tracks THE PIN, not the fleet.'
         required: false
         type: string
         default: ''
@@ -122,12 +122,13 @@ jobs:
       # a Discord embed via the relay. Unset in dev to preserve the
       # "no extra files written" loop.
       KTP_TIER2_REPORT_PATH: tier2-report.json
-      # Pre-activation gate override. The committed pin in
-      # tests/integration/test_match_flow_spine.py tracks the FLEET and is bumped
-      # only after post-activation verify. When the runner deliberately leads the
-      # fleet — a reviewed build being smoked before a wave — that pin would
-      # otherwise hard-fail the run, which is the one state the gate exists for.
-      # Empty on scheduled/PR runs, so those still assert against the fleet pin.
+      # Pre-activation gate override. Resolution is env -> stage manifest ->
+      # the literal floor in tests/integration/test_match_flow_spine.py (see
+      # _stage_manifest.py). This workflow compiles its OWN pinned reviewed
+      # KTPMatchHandler and derives the expected version from that source, so
+      # the assertion tracks THE PIN — which can legitimately sit behind the
+      # fleet, and currently does. Set this input to smoke a build that leads
+      # the pin; it is now honoured rather than silently overwritten.
       KTP_EXPECTED_MATCHHANDLER_VERSION: ${{ inputs.matchhandler_version || '' }}
 
     steps:
@@ -245,8 +246,29 @@ jobs:
               -oKTPMatchHandler.amxx KTP_TEST_MODE=1 )
           install -D "$WORK/KTPMatchHandler.amxx" \
             "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"
-          echo "KTP_EXPECTED_MATCHHANDLER_VERSION=0.10.161" >> "$GITHUB_ENV"
-          echo "Installed reviewed KTPMatchHandler 0.10.161 test build ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
+
+          # Derive the version from the source we just compiled. It used to be
+          # hardcoded here as well as pinned by `ref:` above -- two places that
+          # had to be bumped together by hand, with nothing checking. Bumping
+          # the ref alone would make the gate assert a version it did not
+          # install: either a confusing red, or a green against the wrong build.
+          VER="$(sed -n 's/.*#define PLUGIN_VERSION "\([^"]*\)".*/\1/p' \
+                 "$SRC/KTPMatchHandler.sma" | head -1)"
+          if [ -z "$VER" ]; then
+            echo "::error::could not read PLUGIN_VERSION from the pinned KTPMatchHandler source"
+            exit 1
+          fi
+
+          # An explicit dispatch input wins -- that is the documented escape
+          # hatch for smoking a build that leads the pin. Unconditionally
+          # writing GITHUB_ENV here silently overrode it, because a value
+          # written to GITHUB_ENV beats the job-level `env:` for later steps.
+          if [ -n "${KTP_EXPECTED_MATCHHANDLER_VERSION:-}" ]; then
+            echo "Dispatch input pins the assertion to ${KTP_EXPECTED_MATCHHANDLER_VERSION}; installed build is ${VER}."
+          else
+            echo "KTP_EXPECTED_MATCHHANDLER_VERSION=$VER" >> "$GITHUB_ENV"
+          fi
+          echo "Installed reviewed KTPMatchHandler $VER test build ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
 
       # Re-landed 2026-08-04 from the closed-unmerged PR #33. The runner's copy
       # had drifted a MONTH (staged Jul 3) because it was hand-staged and nothing

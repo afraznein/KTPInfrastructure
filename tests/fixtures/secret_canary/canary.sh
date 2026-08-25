@@ -1,0 +1,2 @@
+#!/bin/bash
+export RCON_PASSWORD="KTPCANARY-Zm9vYmFy-DO-NOT-ROTATE"
