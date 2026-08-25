@@ -629,8 +629,13 @@ grep -h 'Pdata offset' ~/dod-*/log/console/*.log | tail -1
 #   [DODX] Pdata offset forced to +4 via config file                     <- wrong
 ```
 
-**The production fleet ships no `dodx.ini` and auto-detects `+5` correctly.** Only pin the
-offset if you know why you're doing it:
+**All 24 production instances ship a `dodx.ini` carrying `pdata_offset = 5`** — measured
+2026-08-24, 5+5+5+5+4 across the five hosts. The earlier claim here, that the fleet ships none
+and auto-detects, was a doc assertion rather than a measurement and it was wrong.
+
+⛔ **And there is no longer an auto-detect to fall back on.** dodx 2.7.32 deleted
+`DODX_DetectPdataOffset` entirely and moved the compiled default 4 → 5. Under 2.7.28 a wrong or
+absent ini self-corrected — it does not now, so the value in the file is the value you get:
 
 ```bash
 grep -r pdata_offset ~/dod-*/serverfiles/dod/addons/ktpamx/configs/dodx.ini
