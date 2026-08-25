@@ -330,7 +330,11 @@ local-bots-match:
 # PYTHON (line 41) is hardcoded python3, which Git Bash on Windows does not
 # have. Resolve at shell level rather than via $(shell ...), which is itself
 # unreliable there (it already returns empty for KTP_PROJECT_ROOT).
-	@P=$$(command -v python3 || command -v python) && "$$P" scripts/local_bots_match.py --port 27017 --rcon-password "$${RCON_PASSWORD:-changeme}"
+# No --rcon-password pass-through: RCON_PASSWORD is inert inside the container
+# (runtime/entrypoint.sh reads it but never passes it to hlds, and
+# config/local/dodserver.cfg hardcodes rcon_password "changeme"). Honouring
+# it here would just make this target fail as a 60s wait_ready timeout.
+	@P=$$(command -v python3 || command -v python) && "$$P" scripts/local_bots_match.py --port 27017
 
 
 # Check artifact freshness against sibling repo HEADs. Warns (does not fail)
@@ -547,6 +551,14 @@ help:
 	@echo "  make local-up-full   - Start game servers + HUD Observer data service (needs sibling repo)"
 	@echo "  make local-down      - Stop local stack"
 	@echo "  make local-logs      - Tail logs"
+	@echo ""
+	@echo "Local BOT server (ktp-game-2 — NOT production topology):"
+	@echo "  make local-bots-amxx    - Build the KTP_LANE_B_FAKECLIENTS ktpamx + dodx (~10 min, one-off)"
+	@echo "  make local-bots-plugins - Build KTP_TEST_MODE KTPMatchHandler + stage the HUD plugin"
+	@echo "  make local-bots-build   - Build the bot image (Metamod-R + new_bot)"
+	@echo "  make local-bots-up      - Start game-1 + the bot server + the HUD data service"
+	@echo "  make local-bots-match   - Fill 6v6 with bots and take it LIVE, then watch"
+	@echo "                            https://localhost/caster  (see build/bots/README.md)"
 	@echo "  make local-clean     - Remove local runtime image"
 	@echo "  make check-artifacts - Warn if baked artifact SHA != sibling repo HEAD"
 	@echo ""

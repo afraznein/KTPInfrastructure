@@ -71,7 +71,6 @@ def main() -> int:
                     help="ktp-game-2's published port (docker-compose.local.yml)")
     ap.add_argument("--rcon-password", default="changeme",
                     help="must match RCON_PASSWORD in the compose env")
-    ap.add_argument("--per-team", type=int, default=6)
     ap.add_argument("--timeout", type=float, default=120.0,
                     help="how long to wait for LIVE; bots take a while to "
                          "connect and ready up")
@@ -96,13 +95,32 @@ def main() -> int:
             except Exception as exc:  # an unrecognised cvar is a console gripe
                 print(f"[bots] (ignored) {cmd}: {exc}")
 
+    # Prove the bot mod is actually loaded before asking for a match. Without
+    # this, a Metamod/new_bot problem surfaces as `.testmatch` timing out on a
+    # ready-check that can never pass, which reads as a match-state bug.
+    # `meta list` answers over rcon even in extension mode (AMXX commands are a
+    # separate question), so it is a cheap, direct check.
+    meta = handle.rcon("meta list")
+    if "new_bot" not in meta:
+        print("\n[bots] FAILED: Metamod is not running new_bot.", file=sys.stderr)
+        print("  `meta list` returned:", (meta or "(empty)").strip()[:200], file=sys.stderr)
+        print("  Without the bot mod there is nobody to fill the server, and", file=sys.stderr)
+        print("  .testmatch would just time out waiting for a ready check.", file=sys.stderr)
+        print("  Check the boot log for 'new_bot: plugin attaching'.", file=sys.stderr)
+        return 1
+    print("[bots] meta list: new_bot loaded")
+
     print("[bots] arming ktp_testmatch_enabled 1")
     handle.rcon("ktp_testmatch_enabled 1")
 
     driver = MatchDriver(handle)
-    print(f"[bots] .testmatch {args.per_team}v{args.per_team} — filling and readying up ...")
+    # 6v6 is not configurable: begin_testmatch() clamps targetPerTeam to 6
+    # unconditionally (KTPMatchHandler.sma:9973), deliberately, so an rcon
+    # argument cannot quietly turn a contained test server into a larger one.
+    # Exposing a --per-team flag here would just be a lie.
+    print("[bots] .testmatch 6v6 — filling and readying up ...")
     try:
-        match_id = driver.testmatch(per_team=args.per_team, timeout=args.timeout)
+        match_id = driver.testmatch(per_team=6, timeout=args.timeout)
     except MatchDriverError as exc:
         print(f"\n[bots] FAILED: {exc}\n", file=sys.stderr)
         print("Common causes, in the order they actually happen:", file=sys.stderr)

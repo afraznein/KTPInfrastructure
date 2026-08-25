@@ -50,18 +50,32 @@ cat <<'BANNER'
 BANNER
 
 # --- (2) the patched core, or nothing ------------------------------------
-# KTPAMXX_SOURCE_SHA is written only by a successful Lane B build, so requiring
-# it makes this a provenance check rather than a filename check: any production
-# core copied to this path satisfies -f alone and boots bot-blind, which is the
-# exact failure the banner below promises to prevent.
-if [ ! -f "$LANEB_DIR/ktpamx_i386.so" ] || [ ! -f "$LANEB_DIR/KTPAMXX_SOURCE_SHA" ]; then
+# Provenance, not just a filename: any production core copied to this path
+# satisfies -f alone and boots bot-blind, which is the exact failure the banner
+# above promises to prevent.
+#
+# The stamp to require is `ktpamx_i386.so.sha`, written by
+# scripts/build_ktpamx_laneb.sh:182 -- and only AFTER that script has verified
+# KTP_LANE_B_FAKECLIENTS is present in both guarded sources at the ref it is
+# building, and only on success. So its existence really does mean "a Lane B
+# build produced this".
+#
+# NOT KTPAMXX_SOURCE_SHA: that one is written by scripts/local_bots.sh, so
+# requiring it would refuse a perfectly good core built by running
+# build_ktpamx_laneb.sh directly -- which is its own documented interface and
+# the path .github/actions/build-ktpamx-laneb uses.
+#
+# A hand-copied core must bring its .sha along.
+if [ ! -f "$LANEB_DIR/ktpamx_i386.so" ] || [ ! -f "$LANEB_DIR/ktpamx_i386.so.sha" ]; then
     cat >&2 <<EOF
 
-[entrypoint-bots] FATAL: no patched ktpamx at $LANEB_DIR/ktpamx_i386.so
+[entrypoint-bots] FATAL: no Lane B ktpamx at $LANEB_DIR/
 
-Without a KTP_LANE_B_FAKECLIENTS build, AMXX cannot see bots at all. The
-server would boot, accept bots, play a map, and emit NOTHING — a failure that
-looks exactly like a working server. Refusing to boot instead.
+Need BOTH ktpamx_i386.so and its ktpamx_i386.so.sha stamp. The stamp is what
+distinguishes a KTP_LANE_B_FAKECLIENTS build from a production core copied to
+the same path -- and without the patch AMXX cannot see bots at all: the server
+boots, accepts bots, plays a map, and emits NOTHING, which looks exactly like a
+working server. Refusing to boot instead.
 
 Build it with:
     make local-bots-amxx
@@ -90,9 +104,11 @@ install_laneb() {
 install_laneb "$LANEB_DIR/ktpamx_i386.so"   "$KTPAMX_DLL" "Lane B ktpamx core"
 install_laneb "$LANEB_DIR/dodx_ktp_i386.so" "$DODX_MOD"   "Lane B dodx module"
 
-# Was reading ktpamx_i386.so.sha, which nothing writes -- the line could never
-# print. The build writes KTPAMXX_SOURCE_SHA.
-echo "[entrypoint-bots] built from KTPAMXX $(cat "$LANEB_DIR/KTPAMXX_SOURCE_SHA")"
+# The stamp is `<sha>-<recipe_hash>`. The recipe half is deliberate upstream:
+# build_ktpamx_laneb.sh hashes its own source into it so a toolchain or
+# configure-flag change invalidates a cached artifact even when KTPAMXX has not
+# moved. Print the whole thing -- the bare SHA alone would hide exactly that.
+echo "[entrypoint-bots] built from KTPAMXX $(cat "$LANEB_DIR/ktpamx_i386.so.sha")"
 
 # --- (3) topology assertions ---------------------------------------------
 # Cheap, and they catch a botched image at boot instead of three hours into

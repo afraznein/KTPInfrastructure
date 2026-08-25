@@ -25,7 +25,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Upstream's answer is "run from a real Linux shell"; this box has no WSL
 # distro but Docker Desktop, so the wrapper is what makes the lane usable here.
 case "$(uname -s 2>/dev/null || echo unknown)" in
-    MINGW*|MSYS*|CYGWIN*)
+    MINGW*|MSYS*)
         export LANEB_DOCKER="${LANEB_DOCKER:-$REPO_ROOT/scripts/docker-nopathconv.sh}"
         ;;
 esac
@@ -42,6 +42,25 @@ CORE_SO="$LANEB_DIR/ktpamx_i386.so"
 CORE_SHA_FILE="$LANEB_DIR/KTPAMXX_SOURCE_SHA"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+
+# The KTPAMXX commit the installed core was built from, as a bare SHA.
+#
+# Two files can carry it and only one is always present:
+#   ktpamx_i386.so.sha   "<sha>-<recipe_hash>", written by build_ktpamx_laneb.sh
+#                        on success -- EVERY producer path writes this one
+#   KTPAMXX_SOURCE_SHA   bare sha, written by cmd_build_core below -- only the
+#                        `make local-bots-amxx` path writes it
+#
+# Prefer the bare file, fall back to the stamp's first field, so a core built by
+# running build_ktpamx_laneb.sh directly still gets the skew warnings instead of
+# silently skipping them.
+core_source_sha() {
+    if [ -f "$CORE_SHA_FILE" ]; then
+        cat "$CORE_SHA_FILE"
+    elif [ -f "$CORE_SO.sha" ]; then
+        cut -d- -f1 < "$CORE_SO.sha"
+    fi
+}
 
 # ---------------------------------------------------------------------------
 
@@ -106,12 +125,15 @@ cmd_stage_plugins() {
     # does not register the command at all, and the symptom is an unhelpful
     # "Unknown command".
     #
-    # KTPMatchHandler's own compile.sh cannot be used here: it hardcodes
-    # KTPAMXX_DIR="/mnt/n/Nein_/KTP Git Projects/KTPAMXX" with no override, and
-    # runs amxxpc natively (it is a 32-bit Linux binary). So this reproduces its
-    # recipe step for step in a container -- same temp-tree layout, same CRLF
-    # strip, same build_info.inc, same amxxpc argv including the trailing
-    # KTP_TEST_MODE=1 positional.
+    # KTPMatchHandler's own compile.sh is not used here, but NOT because it
+    # hardcodes a path -- it honours $KTPAMXX_ROOT and falls back to ../KTPAMXX
+    # (compile.sh:57-62). The reason is that it runs amxxpc directly, and amxxpc
+    # is a 32-bit Linux binary: there is nothing to run it on a Windows host, and
+    # it needs the Lane B checkout's compiler rather than whatever tree it finds.
+    #
+    # So this reproduces its recipe step for step in a container -- same
+    # temp-tree layout, same CRLF strip, same build_info.inc, same amxxpc argv
+    # including the trailing KTP_TEST_MODE=1 positional. Keep the two in step.
     #
     # Compiler comes from the Lane B checkout, so the plugin is built by the
     # SAME KTPAMXX source as the core it will run against.
@@ -164,8 +186,12 @@ cmd_stage_plugins() {
             ./amxxpc KTPMatchHandler.sma -i./include -i. -obase.amxx > base.log 2>&1
             ./amxxpc KTPMatchHandler.sma -i./include -i. -oKTPMatchHandler.amxx KTP_TEST_MODE=1 > test.log 2>&1
             cat test.log
-            base_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" base.log | grep -oE "[0-9]+")
-            test_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" test.log | grep -oE "[0-9]+")
+            # || true: under set -e a non-matching grep exits 1 and kills the
+            # script HERE, before the explanatory branch below ever runs -- so
+            # the failure this check exists to explain would surface as a bare
+            # non-zero exit.
+            base_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" base.log | grep -oE "[0-9]+" || true)
+            test_code=$(grep -oE "Code size:[[:space:]]+[0-9]+" test.log | grep -oE "[0-9]+" || true)
             echo "[bots] code size: base=${base_code} test-mode=${test_code}"
             test -s KTPMatchHandler.amxx
             if [ -z "$base_code" ] || [ -z "$test_code" ] || [ "$test_code" -le "$base_code" ]; then
@@ -227,9 +253,9 @@ EOF
     # staging than the image actually came from -- and this guard would then
     # compare against a core nobody is running.
     local art_sha_file="$REPO_ROOT/artifacts/${ARTIFACTS_VERSION:-${VERSION:-latest}}/ktpamx/SOURCE_SHA"
-    if [ -f "$CORE_SHA_FILE" ] && [ -f "$art_sha_file" ]; then
-        local core_sha art_sha
-        core_sha="$(cat "$CORE_SHA_FILE")"
+    local core_sha art_sha
+    core_sha="$(core_source_sha)"
+    if [ -n "$core_sha" ] && [ -f "$art_sha_file" ]; then
         art_sha="$(cat "$art_sha_file")"
         if [ "$core_sha" != "$art_sha" ]; then
             echo ""
@@ -248,9 +274,9 @@ EOF
     # Same shape as the existing check-artifacts warning, and the same honest
     # scope: it answers "were these built from the same commit", nothing about
     # the fleet. Neither local server tracks the fleet.
-    if [ -f "$CORE_SHA_FILE" ] && [ -d "$KTPAMXX_DIR/.git" ]; then
-        local bot_sha current_sha
-        bot_sha="$(cat "$CORE_SHA_FILE")"
+    local bot_sha current_sha
+    bot_sha="$(core_source_sha)"
+    if [ -n "$bot_sha" ] && [ -d "$KTPAMXX_DIR/.git" ]; then
         current_sha="$(git -C "$KTPAMXX_DIR" rev-parse HEAD)"
         if [ "$bot_sha" != "$current_sha" ]; then
             echo ""
