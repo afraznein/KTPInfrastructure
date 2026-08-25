@@ -48,6 +48,7 @@ def render_html(report: dict[str, Any]) -> str:
             "<tr>"
             f"<td>{row.get('rank', '')}</td><td>{esc(row.get('player_name_at_match'))}</td>"
             f"<td>{esc(row.get('team_name'))}</td><td><b>{rating}</b></td>"
+            f"<td>{float(row.get('observed_seconds') or 0) / 60:.1f}</td>"
             f"<td>{float(row.get('total_points') or 0):.2f}</td>"
             f"<td>{combat:.2f}</td><td>{context:.2f}</td>"
             f"<td>{float(row.get('position_points') or 0):.2f}</td>"
@@ -85,7 +86,7 @@ svg{{max-width:100%;height:auto;background:white;border-radius:6px}}code{{color:
 </style></head><body><main>
 <h1>KTP accumulated match report</h1><p class="sub"><code>{esc(match.get('match_id'))}</code> · {esc(match.get('map_name'))} · profile <code>{esc(report.get('profile'))}</code> · experimental shadow</p>
 <div class="panel"><h2>Player scoreboard</h2><p>Overall rating uses the complete accumulated score. The provisional match median is {float(normalization.get('center_index') or 100):.0f}; momentum is one bounded additive component.</p>
-<table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Rating</th><th>Raw</th><th>Combat</th><th>Context</th><th>Position</th><th>Momentum</th><th>K/D/A</th><th>Damage</th></tr></thead><tbody>{''.join(players)}</tbody></table></div>
+<table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Rating</th><th>Minutes</th><th>Raw</th><th>Combat</th><th>Context</th><th>Position</th><th>Momentum</th><th>K/D/A</th><th>Damage</th></tr></thead><tbody>{''.join(players)}</tbody></table></div>
 <div class="panel"><h2>Team momentum</h2>{graph}</div>
 <div class="panel"><h2>Component totals</h2><table><thead><tr><th>Component</th><th>Points</th><th>Share</th></tr></thead><tbody>{components}</tbody></table></div>
 <div class="panel"><h2>Evidence quality</h2><table><thead><tr><th>Gate</th><th>Status</th><th>Detail</th></tr></thead><tbody>{gates}</tbody></table></div>

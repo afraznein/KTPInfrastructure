@@ -1,5 +1,7 @@
 import copy
 import json
+import statistics
+from pathlib import Path
 
 import pytest
 
@@ -213,6 +215,28 @@ def test_points_per_minute_and_markdown_are_automatable(scored):
     assert "No penalties are applied" in markdown
     assert "Reliability gates" in markdown
     assert "Private" not in markdown
+
+
+def test_partial_appearance_is_visible_but_does_not_move_match_reference():
+    source = facts()
+    source["match"]["duration_seconds"] = 1200
+    for player in source["players"]:
+        player["observed_seconds"] = 1200
+    source["players"][-1]["observed_seconds"] = 400
+    profile = load_profile(Path("config/analytics/accumulation_v5_momentum.toml"))
+    report = score_match(source, profile)
+    full_rates = [
+        row["points_per_minute"] for row in report["players"]
+        if row["observed_seconds"] >= 600
+    ]
+    assert report["impact_index"]["reference_minimum_observed_seconds"] == 600
+    assert report["impact_index"]["reference_points_per_minute"] == pytest.approx(
+        statistics.median(full_rates), abs=0.01
+    )
+    partial = by_id(report)[4]
+    assert partial["observed_seconds"] == 400
+    assert partial["participation_percent"] == pytest.approx(33.33, abs=0.01)
+    assert partial["impact_index"] is not None
 
 
 def test_ai_checkpoint_is_hash_bound_advisory_and_cannot_change_scores(scored):

@@ -115,9 +115,12 @@ replace_sequence_continuity_points = true
 [impact_index]
 center_index = 100.0
 points_per_robust_sigma = 30.0
-minimum_index = 25.0
-maximum_index = 175.0
+minimum_index = 50.0
+maximum_index = 150.0
 fallback_log_scale = 0.35
-minimum_log_scale = 0.15
+minimum_log_scale = 0.30
 provisional_reference = "match_median_points_per_minute"
 minimum_observed_seconds = 300.0
+# Partial appearances still receive a rating, but players present for less than
+# half the match do not move that match's provisional median baseline.
+reference_minimum_match_fraction = 0.50

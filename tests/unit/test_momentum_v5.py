@@ -156,4 +156,4 @@ def test_overall_rating_targets_50_100_150_and_is_bounded():
     weak = reference * math.exp(-scale * 50 / 30)
     assert normalize_impact_index(exceptional, reference, scale, cfg) == 150
     assert normalize_impact_index(weak, reference, scale, cfg) == 50
-    assert normalize_impact_index(0, reference, scale, cfg) == 25
+    assert normalize_impact_index(0, reference, scale, cfg) == 50

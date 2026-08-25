@@ -157,6 +157,7 @@ def _new_player_result(player: dict[str, Any]) -> dict[str, Any]:
         "team_kills": _i(player.get("team_kills")),
         "suicides": _i(player.get("suicides")),
         "opponent_damage": _f(player.get("opponent_damage", player.get("damage_dealt"))),
+        "observed_seconds": _f(player.get("observed_seconds")),
         **{key: 0.0 for key in COMPONENT_KEYS},
         **{key: 0.0 for key in POSITION_COMPONENT_KEYS},
     }
@@ -568,13 +569,20 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "event_points": _rounded(event_points),
             "total_points": _rounded(total_points),
             "points_per_minute": _rounded(total_points / (observed / 60.0)) if observed > 0 else None,
+            "observed_seconds": _rounded(observed),
+            "participation_percent": _rounded(100.0 * observed / duration)
+            if duration > 0 else None,
         })
     impact_cfg = profile.get("impact_index") or {}
+    reference_minimum_observed = max(
+        _f(impact_cfg.get("minimum_observed_seconds"), 300.0),
+        duration * _f(impact_cfg.get("reference_minimum_match_fraction"), 0.0),
+    )
     eligible_rates = [
         _f(player["points_per_minute"]) for player in output_players
         if player["points_per_minute"] is not None
         and _f(roster[player["player_id"]].get("observed_seconds"), duration)
-        >= _f(impact_cfg.get("minimum_observed_seconds"), 300.0)
+        >= reference_minimum_observed
     ]
     match_facts = facts.get("match") or {}
     explicit_reference = _f(match_facts.get("impact_index_reference_ppm"))
@@ -637,6 +645,13 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         for key in POSITION_COMPONENT_KEYS
     }
     quality_gates = {
+        "match_classification": {
+            "status": "PASS" if (facts.get("match") or {}).get("match_type_consistent")
+            else "WARN",
+            "detail": "All halves carry one consistent match type."
+            if (facts.get("match") or {}).get("match_type_consistent")
+            else "One or more halves are unclassified or use inconsistent match types.",
+        },
         "bounded_combat": {
             "status": "PASS" if bounded_combat else "WARN",
             "detail": "60/40 victim-life contribution pools enabled."
@@ -683,9 +698,14 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             if reliability["break_context"] else "Only the bounded base break value is used.",
         },
         "momentum": {
-            "status": "PASS" if momentum_enabled else "DISABLED",
+            "status": "PASS" if momentum_enabled and reliability["ownership"] else (
+                "WARN" if momentum_enabled else "DISABLED"
+            ),
             "detail": "Aggregate team momentum and bounded swing attribution included."
-            if momentum_enabled else "Momentum facts unavailable or profile does not enable them.",
+            if momentum_enabled and reliability["ownership"] else (
+                "Positions, combat, and swings are included, but territory ownership is incomplete."
+                if momentum_enabled else "Momentum facts unavailable or profile does not enable them."
+            ),
         },
         "impact_index": {
             "status": "PASS" if explicit_reference > 0 and explicit_log_scale > 0 else (
@@ -725,6 +745,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "reference_source": "qualified_corpus"
             if explicit_reference > 0 and explicit_log_scale > 0
             else "provisional_match_robust",
+            "reference_minimum_observed_seconds": _rounded(reference_minimum_observed),
         } if impact_cfg and reference_ppm > 0 else None,
         "match_total_points": _rounded(grand_total),
         "players": output_players,
@@ -877,9 +898,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "No penalties are applied. Teamkills, suicides, and deaths are descriptive only.", "",
         ("The overall rating is normalized only after every component below—including "
          "momentum—is added to the complete raw accumulated score." if is_v5 else ""), "",
-        "| Rank | Player | Overall rating | Raw accumulated | Combat | Streak/context | Objectives | Life position | Momentum |"
+        "| Rank | Player | Overall rating | Minutes | Raw accumulated | Combat | Streak/context | Objectives | Life position | Momentum |"
         if is_v5 else "| Rank | Player | Combat | Streak/context | Objectives | Position | Total | Pts/min |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|---:|"
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|"
         if is_v5 else "|---:|---|---:|---:|---:|---:|---:|---:|",
     ]
     for player in report["players"]:
@@ -891,7 +912,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             impact = "—" if player["impact_index"] is None else f"{player['impact_index']:.1f}"
             lines.append(
                 f"| {player['rank']} | {player['player_name_at_match']} | **{impact}** | "
-                f"{player['total_points']:.2f} | {combat:.2f} | {context:.2f} | "
+                f"{player['observed_seconds'] / 60:.1f} | {player['total_points']:.2f} | "
+                f"{combat:.2f} | {context:.2f} | "
                 f"{objective:.2f} | {player['position_points']:.2f} | "
                 f"{player['momentum_points']:.2f} |"
             )

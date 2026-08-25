@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 
 from scripts.lane_b_match_report import (
+    _ownership_is_reliable,
+    _participation_seconds,
     _associate_damage_to_deaths,
     build_facts,
     generate_lane_b_report,
@@ -248,3 +250,40 @@ def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: P
     monkeypatch.setattr(lane_b_match_report, "build_bundle", leaking_bundle)
     with pytest.raises(ValueError, match="public report contains private keys"):
         generate_lane_b_report(object(), facts["match"]["match_id"], tmp_path)
+
+
+def test_participation_windows_handle_a_mid_match_substitution():
+    samples = [
+        {"player_id": 1, "half": 1, "game_time": when}
+        for when in (0, 5, 10, 15)
+    ] + [
+        {"player_id": 2, "half": 1, "game_time": when}
+        for when in (20, 25, 30)
+    ] + [
+        {"player_id": 2, "half": 2, "game_time": when}
+        for when in (0, 5, 10)
+    ]
+    observed = _participation_seconds(samples, 60)
+    assert observed == {1: 20.0, 2: 30.0}
+
+
+def test_ownership_requires_a_two_team_partition_in_every_half():
+    flags = [
+        {"flag_name": "left"}, {"flag_name": "mid"}, {"flag_name": "right"},
+    ]
+    incomplete = [
+        {"id": index + 1, "half": 1, "flag_name": name,
+         "owner_team": 0, "is_initial": 1, "game_time": 0}
+        for index, name in enumerate(("left", "mid", "right"))
+    ] + [
+        {"id": 4, "half": 1, "flag_name": "mid",
+         "owner_team": 1, "is_initial": 0, "game_time": 10},
+    ]
+    assert not _ownership_is_reliable(incomplete, flags, {1})
+    complete = incomplete + [
+        {"id": 5, "half": 1, "flag_name": "left",
+         "owner_team": 1, "is_initial": 0, "game_time": 20},
+        {"id": 6, "half": 1, "flag_name": "right",
+         "owner_team": 2, "is_initial": 0, "game_time": 20},
+    ]
+    assert _ownership_is_reliable(complete, flags, {1})
