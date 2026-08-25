@@ -370,6 +370,7 @@ jobs:
               tests/unit/test_accumulation_v3.py \
               tests/unit/test_life_impact_v4.py \
               tests/unit/test_momentum_v5.py \
+              tests/unit/test_points_timeline.py \
               tests/unit/test_lane_b_match_report.py \
               -q
 

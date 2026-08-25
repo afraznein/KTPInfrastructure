@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 _KILL_RE = re.compile(
     r"\[BD\] kill flag=(\d+) capteam=(-?\d+) mode=(\w+) victim=(\d+) "
     r"vname=(\S+) killer=(\d+) kname=(\S+) dist=(-?\d+) count_before=(-?\d+) "
-    r"owner_before=(-?\d+)")
+    r"owner_before=(-?\d+)(?: isolated=(\d+))?")
 _WALKOFF_RE = re.compile(
     r"\[BD\] walkoff flag=(\d+) mover=(\d+) mname=(\S+) anchor=(\d+) "
     r"capteam=(-?\d+) count_before=(-?\d+)")
@@ -60,6 +60,7 @@ _AFTER_RE = re.compile(
     r"\[BD\] after flag=(\d+) allies=(-?\d+) axis=(-?\d+) capping=(-?\d+) "
     r"owner=(-?\d+)")
 _ABORT_RE = re.compile(r"\[BD\] (\w+) ABORT flag=(-?\d+) (.*)")
+_ISOLATION_END_RE = re.compile(r"\[BD\] isolation END\b")
 _SCAN_RE = re.compile(
     r"\[BD\] flag (\d+) name=(\S+) owner=(-?\d+) capping=(-?\d+) "
     r"capteam=(-?\d+) allies=(-?\d+) axis=(-?\d+)")
@@ -225,6 +226,25 @@ class BreakDriver:
             time.sleep(poll)
         return False
 
+    def _wait_for_isolation_end(self, since: int, *, timeout: float = 2.0,
+                                poll: float = 0.05) -> tuple[bool, str]:
+        """Wait for the diagnostic to restore bots after a closed window.
+
+        The far-kill isolation intentionally outlives ``SETTLE``. Waiting for
+        its explicit end marker prevents the next scenario from racing the
+        restore and trying to stage while every bot is still held.
+        """
+        deadline = time.monotonic() + timeout
+        tail = _tail(self._read(), since)
+        while not _ISOLATION_END_RE.search(tail) and time.monotonic() < deadline:
+            time.sleep(poll)
+            tail = _tail(self._read(), since)
+        closed = _ISOLATION_END_RE.search(tail)
+        # The close marker is the exact evidence boundary. A single filesystem
+        # read can also contain resumed organic play after restoration; never
+        # let those later lines contaminate the adjudicated far-kill window.
+        return bool(closed), tail[:closed.end()] if closed else tail
+
     # -- scenarios ---------------------------------------------------------
 
     def positive_kill_on_point(self) -> Scenario:
@@ -306,7 +326,7 @@ class BreakDriver:
                         or "armed far kill did not stage within the wait")
             return s
         time.sleep(self.SETTLE)
-        tail = _tail(self._read(), mark)
+        isolation_closed, tail = self._wait_for_isolation_end(mark)
 
         staged = _KILL_RE.search(tail)
         if not staged:
@@ -322,7 +342,18 @@ class BreakDriver:
         s.breaks_seen = len(breakers)
         s.extra = {"dist": dist, "count_before": int(staged.group(9)),
                    "killer": killer, "breakers": breakers,
-                   "capping_team_deaths": deaths}
+                   "capping_team_deaths": deaths,
+                   "isolated_players": int(staged.group(11) or 0)}
+
+        if s.extra["isolated_players"] < 2:
+            s.detail = ("off-point evidence window was not isolated from "
+                        "organic bot play")
+            return s
+
+        if not isolation_closed:
+            s.detail = ("off-point evidence window did not emit its isolation "
+                        "close marker; bots may still be held")
+            return s
 
         if deaths:
             s.detail = ("off-point evidence window contains a real death on "
