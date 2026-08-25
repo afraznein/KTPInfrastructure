@@ -1360,7 +1360,8 @@ def summarise(db, *, match_id: str | None = None) -> dict:
     }
 
 
-def check_capture_health(db, *, match_id: str, half: int) -> dict:
+def check_capture_health(db, *, match_id: str, half: int,
+                         expected_frag_correlation_failures: int = 0) -> dict:
     """Require the 1.17.0 producer manifest and exact end-to-end counts."""
     literal = _sql_literal(match_id)
     manifest = db.count(f"""
@@ -1376,7 +1377,9 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
   AND (dropped <> 0 OR emitted <> daemon_received OR emitted <> daemon_accepted
-       OR daemon_rejected <> 0 OR correlation_failure_count <> 0
+       OR daemon_rejected <> 0
+       OR correlation_failure_count <> CASE WHEN event_type='frag'
+            THEN {int(expected_frag_correlation_failures)} ELSE 0 END
        OR sequence_gap_count <> 0 OR duplicate_or_reordered_count <> 0)
 """)
     ok = manifest == 1 and rows == 8 and bad == 0

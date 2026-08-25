@@ -1065,6 +1065,10 @@ def main() -> int:
                 db,
                 match_id=((report.get("match") or {}).get("match_id")),
                 half=((report.get("match") or {}).get("half")),
+                # BreakDrive deliberately emits unmatched synthetic frag
+                # markers to prove correlation failures are observable. They
+                # are expected test evidence, not organic capture loss.
+                expected_frag_correlation_failures=expected_frag_diagnostics,
             ),
         ]
         if report.get("assist_scenario"):
