@@ -36,3 +36,15 @@ POINT_BRIDGE = 0.80
 POINT_ANZIO_STREET = 1.10
 POINT_ANZIO_PLAZA = 1.75
 POINT_ANZIO_LAUNDRY = 2.25
+
+[maps.dod_thunder2]
+# Provisional reviewed geometry for shadow scoring. The Denver match did not
+# provide a trustworthy initial ownership baseline, so ownership-dependent
+# awards still require a subsequent canonical capture event.
+team1_first = "POINT_DONNER_ALLIEDHQ"
+team1_second = "POINT_ALLIEDSTREET"
+middle = "POINT_DONNER_MAINSTREET"
+team2_second = "POINT_AXISSTREET"
+team2_first = "POINT_DONNER_AXISHQ"
+double_caps = []
+high_contest = ["POINT_DONNER_MAINSTREET"]

@@ -5,6 +5,7 @@ def _report():
     codes = (
         "assist", "cap_break", "suicide", "headshot", "damage_ledger",
         "flag_captures", "flag_positions", "flag_states", "position_samples",
+        "life_events", "assist_context", "capture_clock_schema",
         "capture_buffer_drops", "projectile_killer_not_assister",
         "match_players", "match_frags_tagged", "match_half_set",
         "match_context_cleared", "match_stats_reconciled", "kill_switch",
@@ -13,10 +14,10 @@ def _report():
         "failures": [],
         "coverage_gaps": ["statsme: bots are skipped"],
         "sql_errors": [],
-        "emitted": {"kills": 10, "assist": 2, "cap_break": 1,
+        "emitted": {"kills": 10, "assist": 2, "assist_context": 2, "cap_break": 1,
                     "damage": 20, "flag_capture": 3, "flag_state": 8,
-                    "position_sample": 40},
-        "rows": {"match_players": 16},
+                    "position_sample": 40, "life_boundary": 60},
+        "rows": {"match_players": 16, "assist_context": 2},
         "carried": [{"code": code, "status": "ok", "detail": "ok"}
                     for code in codes],
         "break_scenarios": [{"name": "negative_voluntary_walkoff",
@@ -39,4 +40,6 @@ def test_five_clean_reports_render_ready(tmp_path):
                for i in range(5)]
     body = render(reports, expected=5)
     assert "Promotion verdict: READY" in body
+    assert "| 1 | PASS | 10 | 2 | 2 |" in body
+    assert "Canonical assist contexts | 2 | 2 | 2.0" in body
     assert "every required assertion passed" in body

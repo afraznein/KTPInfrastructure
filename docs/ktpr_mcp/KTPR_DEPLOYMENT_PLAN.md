@@ -998,7 +998,9 @@ guessing game once the doc-comment issue itself is fixed.
 
 ```
 python3 scripts/lane_b_match_series.py \
-    --ktpamx-so <path> --plugin <path> --hlstats <path> \
+    --ktpamx-so <path> --dodx-so <path> \
+    --amxx-gamedata <artifact-set>/gamedata \
+    --plugin <path> --hlstats <path> \
     --schema <base-schema.sql> \
     --seed migrate_003 migrate_004 migrate_005 migrate_006 \
     --matchhandler-includes <KTPAMXX>/plugins/include \

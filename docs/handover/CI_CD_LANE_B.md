@@ -117,6 +117,8 @@ Mirror what `run_e2e.sh` does locally. Arguments that matter:
 ```
 python3 -u scripts/lane_b_e2e.py \
     --ktpamx-so  <cached .so> \
+    --dodx-so    <cached DODX .so> \
+    --amxx-gamedata <artifacts>/gamedata \
     --plugin     <artifacts>/stats_logging.amxx \
     --config-dir config/local \
     --hlstats    <daemon tree>/hlstats.pl \
@@ -131,7 +133,7 @@ Also run the unit suite — it is fast and catches harness regressions before th
 expensive part:
 
 ```
-python3 -m pytest tests/e2e_stats -q     # ~20s, 106 tests
+python3 -m pytest tests/e2e_stats -q     # run the complete, evolving harness suite
 ```
 
 ### 5. Make the three-way verdict survive a pass/fail system

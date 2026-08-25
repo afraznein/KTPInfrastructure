@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "map_name": "dod_thunder2",
+  "display_name": "Thunder2",
+  "source": {
+    "kind": "curated_competitive_map_catalog",
+    "dataset_id": "competitive-2026-08-20-5x1200-statsanalysis-handover-v1",
+    "fixtures_checked": 5
+  },
+  "overview": {
+    "origin_x": -96.0,
+    "origin_y": 143.98,
+    "zoom": 1.15,
+    "rotated": false,
+    "width": 1024,
+    "height": 768
+  },
+  "analysis": {
+    "sample_seconds": 5.0,
+    "objective_radius_units": 512.0,
+    "isolation_radius_units": 768.0
+  },
+  "flags": [
+    {"index": 0, "name": "POINT_DONNER_ALLIEDHQ", "code": "POINT_DONNER_ALLIEDHQ", "x": 260.0, "y": -2140.0},
+    {"index": 1, "name": "POINT_ALLIEDSTREET", "code": "POINT_ALLIEDSTREET", "x": -524.0, "y": -1568.0},
+    {"index": 2, "name": "POINT_DONNER_MAINSTREET", "code": "POINT_DONNER_MAINSTREET", "x": -1617.0, "y": 95.0},
+    {"index": 3, "name": "POINT_AXISSTREET", "code": "POINT_AXISSTREET", "x": -400.0, "y": 1376.0},
+    {"index": 4, "name": "POINT_DONNER_AXISHQ", "code": "POINT_DONNER_AXISHQ", "x": -1120.0, "y": 2176.0}
+  ]
+}

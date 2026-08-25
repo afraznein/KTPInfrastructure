@@ -4,6 +4,58 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `analytics`: coordinated FPS-stat private-shadow bundle (2026-08-19)
+
+- Match analytics schema version 6 adds symmetric basic trades, all-death-reset
+  revenge, producer-clock damage conversion, temporally gated sampled objective
+  pressure, weapon kill-time player separation, and physical-life KAT coverage.
+  Every exploration reports definition parameters, source coverage, confidence,
+  private visibility, and zero rating effect; unavailable sources never become
+  observed zeroes.
+- Adds read-only SQL feeds for canonical assist context, producer-clock frag and
+  damage facts, life boundaries, positions, flag geometry, and ownership. Raw
+  coordinates, paths, position timelines, and reconstructed lives are excluded
+  from aggregate explorations; the separately named private kill/objective
+  diagnostic timeline remains local-only and rating-neutral.
+- Extends Lane B for migrations 016/017, life and canonical-assist reconciliation,
+  and a fail-closed four-repository SHA manifest. Manual full runs can pin exact
+  Infrastructure, MatchHandler, AMXX, and HLStatsX refs instead of mutable
+  branch tips.
+- Extends 14-day scrim/12man/`*-TEST` retention to `ktp_life_events` and
+  `ktp_assist_events`; draft and official retention rules are unchanged.
+- Documents the coordinated collection-branch, validation, dependency-order,
+  full-HLDS-restart, privacy, and human-canary gates in
+  `docs/FPS_STAT_EXPLORATION_BUNDLE.md`.
+
+### `analytics`: canary evidence and private event timelines (2026-08-19)
+
+- Adds a local-dump-only canary evidence bundle covering match classification,
+  current capture sources, ownership baselines/transitions, operational log
+  errors, retention eligibility, and fixture provenance.
+- Match analytics schema version 3 adds configurable fast multikills, basic
+  trades, opening duels, head-to-head results, and post-multikill objective
+  conversion. These remain private, read-only shadow outputs with no public API
+  or rating writes; replay-compressed fixtures suppress timed inferences.
+- Extends the isolated MySQL query-contract fixture and tests the new tools
+  against the same Lane B database engine used in CI.
+
+### `scripts`: the lan-web drift check now says which tree it compared (2026-08-18)
+
+`ktp-lan-web-drift.py` reads a working tree, so its verdict was about whichever
+branch was checked out — "in sync" read as "in sync with `main`" no matter what
+was actually out, and the same box could be reported clean and drifted on the
+same day with neither report wrong about anything it said.
+
+- Every report opens with a `source:` line naming the checkout and whether
+  `sites/lan-web/app` matches `LAN_WEB_BASE_REF` (default `origin/main`).
+  `UNKNOWN` is said out loud rather than omitted. Exit codes are unchanged —
+  `deploy-lan-web.sh` branches on them, so they stay an interface.
+- `deploy-lan-web.sh --apply` refuses when that tree differs from the base ref,
+  alongside the existing box-only refusal. An unresolvable base ref is refused
+  too, rather than skipped. Override: `--force-unreviewed-source`.
+- `tests/unit/test_lan_web_drift_provenance.py` pins all five states, including
+  that an edit outside `sites/lan-web/app` is not a divergence.
+
 ### `docs`: one production runbook for the stats and retention release (2026-08-17)
 
 - Adds `docs/STATS_RETENTION_PRODUCTION_DEPLOY.md`: exact reviewed source pins,

@@ -328,6 +328,8 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--serverfiles", type=Path, default=Path("/opt/hlds"))
     ap.add_argument("--ktpamx-so", type=Path, required=True)
+    ap.add_argument("--dodx-so", type=Path, required=True)
+    ap.add_argument("--amxx-gamedata", type=Path, required=True)
     ap.add_argument("--plugin", type=Path, required=True)
     ap.add_argument("--config-dir", type=Path, required=True)
     ap.add_argument("--server-cfg", type=Path,
@@ -387,11 +389,14 @@ def main() -> int:
                             Path("/tmp/KTPMatchDrive.amxx"), scripting=scripting)
         print(f"compiled test-mode KTPMatchHandler + {drive.name}", flush=True)
 
-        tree, dropped = stage_tree(
-            args.serverfiles, ktpamx_so=args.ktpamx_so, plugin=args.plugin,
+        tree, dropped, gamedata_provenance = stage_tree(
+            args.serverfiles, ktpamx_so=args.ktpamx_so,
+            dodx_so=args.dodx_so, amxx_gamedata=args.amxx_gamedata,
+            plugin=args.plugin,
             config_dir=args.config_dir, server_cfg_fixture=args.server_cfg,
             break_drive=drive, matchhandler=mh)
         report["containment"]["plugins_dropped"] = dropped
+        report["amxx_gamedata"] = gamedata_provenance
         # stage_tree appends whatever it is handed as `break_drive` to
         # plugins.ini under its own filename, so the diagnostic loads.
         topo = metamod.enable_metamod(tree, bot_spec=NEW_BOT, host_ktpamx=False)

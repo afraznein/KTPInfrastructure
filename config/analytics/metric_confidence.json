@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "contract_version": "1.0.0",
+  "thresholds": {
+    "minimum_player_minutes": 5.0,
+    "minimum_damage_per_life_deaths": 3,
+    "minimum_headshot_rate_kills": 5,
+    "minimum_accuracy_shots": 25,
+    "minimum_sequence_events": 10,
+    "emerging_baseline_matches": 5,
+    "reviewable_baseline_matches": 20,
+    "established_baseline_matches": 50
+  },
+  "labels": {
+    "unavailable": "Source unavailable",
+    "synthetic": "Synthetic validation only",
+    "low_sample": "Low sample",
+    "descriptive": "Descriptive",
+    "emerging": "Emerging baseline",
+    "reviewable": "Reviewable baseline",
+    "established": "Established baseline",
+    "shadow_only": "Shadow-only experimental metric"
+  }
+}

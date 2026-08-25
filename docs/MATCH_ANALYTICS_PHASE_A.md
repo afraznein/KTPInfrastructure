@@ -12,11 +12,18 @@ rating, or publish positional data.
 - per-player/per-weapon descriptive facts
 - capture credits, separately from unique capture events
 - explicit `PASS`, `WARN`, or `FAIL` source-quality checks
-- one all-player aggregate position-sample count used only as a coverage check
+- one all-player aggregate position-sample count used as a coverage check
+- private per-player objective, weapon-separation, damage-conversion, trade,
+  revenge, and physical-life KAT aggregates with explicit source confidence
 
-Raw individual position samples, paths, zones, and heatmaps are deliberately
-excluded. Coordinates can support later kill-angle derivation, but only pooled
-positional products may be published.
+Raw individual position samples, coordinates, paths, zones, heatmaps, and
+reconstructed lives are deliberately excluded from the report. The separately
+named private `shadow_timelines` section retains event-level kill/objective
+records (including event identifiers and times) for offline diagnostic review;
+those records are not part of the aggregate `shadow_explorations` section and
+are never public or rating-eligible. Private per-player aggregates are permitted
+for shadow review. No positional product is public or rating-eligible through
+this implementation.
 
 ## Run locally in the Lane B image
 
@@ -78,3 +85,8 @@ raw match-tagged event tables produce the canonical totals.
 
 Raw accuracy is reported by weapon with a Garand chamber-clearing caveat. It is
 not a player-ranking or KTPR input.
+
+The aggregate readiness gate, supported Anzio atlas command, and first-real-
+match procedure are documented in `MATCH_REPORT_READINESS.md`. Normative metric
+definitions and null/privacy behavior are versioned in
+`MATCH_METRIC_CONTRACT_V1.md`.

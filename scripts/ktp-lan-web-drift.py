@@ -35,6 +35,15 @@ drifted and the real signal is buried under 57 false positives. Files holding a
 NUL byte are hashed raw -- rewriting bytes inside a PNG to decide whether two
 PNGs match is how a real difference gets called a match.
 
+WHICH SOURCE IT COMPARED. The repo side is a WORKING TREE, so the verdict is
+about whichever branch is checked out and whatever is uncommitted in it. "In
+sync" then reads as "in sync with main" when it may mean "in sync with
+somebody's feature branch", and every future answer silently depends on who ran
+it from where. So each report opens with a source: line naming the checkout and
+whether sites/lan-web/app matches LAN_WEB_BASE_REF (default origin/main). It is
+reported, not enforced -- refusing is deploy-lan-web.sh's job, and this stays a
+reporter with a fixed exit-code contract.
+
 Exit codes -- the deploy script branches on these, so they are an interface:
   0  in sync
   1  drift, but nothing box-only (safe to deploy: --delete destroys nothing)
@@ -49,16 +58,17 @@ import hashlib
 import os
 import posixpath
 import stat
+import subprocess
 import sys
 
 # paramiko is imported in main(), not here: the exclude parsing and the local
 # walk are what tests/unit exercises, and a hard import would make the module
 # unimportable on a runner that has no SSH stack.
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REMOTE_ROOT = os.environ.get("LAN_WEB_REMOTE", "/opt/lan-web/app")
-EXCLUDE_FILE = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "provision", "lan-web-sync.exclude")
+EXCLUDE_FILE = os.path.join(REPO_ROOT, "provision", "lan-web-sync.exclude")
+BASE_REF = os.environ.get("LAN_WEB_BASE_REF", "origin/main")
 
 EXIT_SYNC, EXIT_DRIFT, EXIT_FAILED, EXIT_BOX_ONLY = 0, 1, 2, 3
 
@@ -111,6 +121,38 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _git(repo_root: str, *args: str):
+    return subprocess.run(("git", "-C", repo_root) + args,
+                          capture_output=True, text=True, timeout=30)
+
+
+def source_provenance(repo_root: str, src_root: str, base_ref: str) -> str:
+    """One line naming the checkout the repo side came from.
+
+    UNKNOWN is a real answer and is said out loud: silently omitting the line
+    would leave a report that looks like it was measured against base_ref.
+    """
+    rel = os.path.relpath(os.path.abspath(src_root), repo_root).replace(os.sep, "/")
+    if rel.startswith(".."):
+        return "source: %s -- OUTSIDE the repo, no ref to compare against" % src_root
+    try:
+        head = _git(repo_root, "rev-parse", "--short", "HEAD")
+        name = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
+        if head.returncode or name.returncode:
+            return "source: %s -- provenance UNKNOWN (not a git checkout)" % rel
+        at = "%s %s" % (name.stdout.strip(), head.stdout.strip())
+        cmp_ = _git(repo_root, "diff", "--quiet", base_ref, "--", rel)
+        if cmp_.returncode == 0:
+            return "source: %s @ %s -- matches %s" % (rel, at, base_ref)
+        if cmp_.returncode == 1:
+            return ("source: %s @ %s -- DIFFERS from %s; this report is about "
+                    "that tree, not %s" % (rel, at, base_ref, base_ref))
+        return ("source: %s @ %s -- provenance UNKNOWN (%s not resolvable here)"
+                % (rel, at, base_ref))
+    except (OSError, subprocess.SubprocessError):
+        return "source: %s -- provenance UNKNOWN (git unavailable)" % rel
+
+
 def local_manifest(root: str, dir_globs, file_globs) -> dict[str, str]:
     out = {}
     for dirpath, dirnames, filenames in os.walk(root):
@@ -158,13 +200,15 @@ def remote_manifest(sftp, root: str, dir_globs, file_globs) -> dict[str, str]:
 
 
 def main() -> int:
-    repo_root = os.environ.get(
+    src_root = os.environ.get(
         "LAN_WEB_SRC",
-        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                     "sites", "lan-web", "app"))
-    if not os.path.isdir(repo_root):
-        print("source tree not found: %s" % repo_root, file=sys.stderr)
+        os.path.join(REPO_ROOT, "sites", "lan-web", "app"))
+    if not os.path.isdir(src_root):
+        print("source tree not found: %s" % src_root, file=sys.stderr)
         return EXIT_FAILED
+
+    # Printed before the SSH work so it survives a check that fails there.
+    print(source_provenance(REPO_ROOT, src_root, BASE_REF))
 
     try:
         dir_globs, file_globs = load_excludes(EXCLUDE_FILE)
@@ -196,7 +240,7 @@ def main() -> int:
     finally:
         client.close()
 
-    repo = local_manifest(repo_root, dir_globs, file_globs)
+    repo = local_manifest(src_root, dir_globs, file_globs)
     if not repo or not box:
         # an empty manifest compares "clean" against anything; refuse to say OK
         print("empty manifest (repo=%d box=%d) -- check the paths, not the result"

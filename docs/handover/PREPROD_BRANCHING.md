@@ -7,6 +7,15 @@ gate before its production branch (`main`). Contributors open PRs into
 `preprod`; after those changes pass the same automated checks used for
 production, a separate `preprod` PR promotes them into `main`.
 
+Cross-repository changes must first be collected on a consistently named
+feature branch in every affected repository. Finish and validate the whole
+bundle against immutable repository SHAs before opening the coordinated PRs
+to `preprod`. Do not merge a component PR merely because that repository is
+green in isolation. Open and review all bundle PRs together, then merge them in
+a short dependency-safe window and rerun the cross-repository gate on the
+resulting `preprod` SHAs. This preserves the `preprod` integration gate while
+avoiding a partially assembled feature on it.
+
 KTPAMXX is being normalized from `master` to `main`. Both refs currently
 exist, but the GitHub default remains `master` until an administrator changes
 it.

@@ -26,10 +26,18 @@
 # suffixes while --delete saw everything. Both now read the same
 # provision/lan-web-sync.exclude, so what survives a deploy and what the
 # pre-flight inspects are the same set by construction.
+#
+# It also refuses --apply when the source tree is not the reviewed one. SRC is a
+# working tree, so without this the branch someone happened to have checked out
+# decides what production runs -- and the drift check, reading the same tree,
+# would call the result "in sync" afterwards. Override with
+# --force-unreviewed-source, or point LAN_WEB_BASE_REF somewhere else.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO_ROOT/sites/lan-web/app/"
+SRC_REL="sites/lan-web/app"
+BASE_REF="${LAN_WEB_BASE_REF:-origin/main}"
 HOST="${DATA_SSH_HOST:-74.91.112.242}"
 USER="${DATA_SSH_USER:-root}"
 DST="/opt/lan-web/app/"
@@ -38,10 +46,12 @@ STAMP="$(date +%Y%m%d-%H%M%S)"
 
 APPLY=0
 FORCE=0
+FORCE_SRC=0
 for arg in "$@"; do
   case "$arg" in
-    --apply)                  APPLY=1 ;;
-    --force-delete-box-only)  FORCE=1 ;;
+    --apply)                     APPLY=1 ;;
+    --force-delete-box-only)     FORCE=1 ;;
+    --force-unreviewed-source)   FORCE_SRC=1 ;;
     *) echo "unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -93,6 +103,29 @@ if [ "$DRIFT_RC" -eq 3 ] && [ "$FORCE" -ne 1 ]; then
   echo "REFUSING: files exist only on the box and --delete would destroy them." >&2
   echo "Commit them, or re-run with --force-delete-box-only." >&2
   exit 1
+fi
+
+# Only --apply is gated: a dry run showing an unreviewed tree is information,
+# not a deploy. An unresolvable BASE_REF is refused rather than skipped -- a
+# guard that cannot run must not read as one that passed.
+if [ "$APPLY" -eq 1 ] && [ "$FORCE_SRC" -ne 1 ]; then
+  echo
+  echo "== pre-flight: source is the reviewed tree =="
+  if ! git -C "$REPO_ROOT" rev-parse --verify --quiet "$BASE_REF^{commit}" >/dev/null; then
+    echo "cannot resolve $BASE_REF (fetch first, or set LAN_WEB_BASE_REF)" >&2
+    echo "— refusing to deploy a tree of unknown provenance." >&2
+    exit 2
+  fi
+  if git -C "$REPO_ROOT" diff --quiet "$BASE_REF" -- "$SRC_REL"; then
+    echo "$SRC_REL matches $BASE_REF"
+  else
+    echo >&2
+    echo "REFUSING: $SRC_REL differs from $BASE_REF — this would deploy an" >&2
+    echo "unreviewed tree, and the post-deploy drift check would then call it" >&2
+    echo "\"in sync\". Merge it first, or re-run with --force-unreviewed-source." >&2
+    git -C "$REPO_ROOT" diff --stat "$BASE_REF" -- "$SRC_REL" >&2
+    exit 1
+  fi
 fi
 
 RSYNC_ARGS=(-rlpt --delete --itemize-changes --exclude-from "$EXCLUDES")

@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -30,11 +31,30 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
+from scripts.damage_conversion import (  # noqa: E402
+    DamageConversionConfig,
+    build_damage_conversion,
+)
+from scripts.fps_stat_explorations import (  # noqa: E402
+    EngagementDistanceConfig,
+    ObjectivePressureConfig,
+    build_objective_pressure_shadow,
+    build_weapon_engagement_shadow,
+)
+from scripts.life_exploration import (  # noqa: E402
+    LifeExplorationConfig,
+    build_life_exploration,
+)
+from scripts.match_timelines import (  # noqa: E402
+    TimelineConfig,
+    _revenge_analysis,
+    build_shadow_timelines,
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 6
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 
 INTEGER_COLUMNS = {
@@ -50,10 +70,20 @@ INTEGER_COLUMNS = {
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
     "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
     "legacy_damage_dealt",
+    "event_id", "event_unix", "killer_id", "killer_team", "victim_team",
+    "match_type", "flag_index", "owner_team", "is_initial",
+    "attacker_id", "attacker_team", "assister_id", "assister_team",
+    "damage_capped", "hitplace", "sample_id", "origin_x", "origin_y",
+    "killer_pos_x", "killer_pos_y", "killer_pos_z", "victim_pos_x",
+    "victim_pos_y", "victim_pos_z", "killer_prone", "killer_scoped",
+    "killer_clip", "killer_ammo", "is_last_flag_defense",
+    "frag_context_recorded",
+    "player_slot", "engine_userid", "player_class", "round_live",
+    "event_epoch", "stored_half", "producer_half",
 }
 FLOAT_COLUMNS = {
-    "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
-    "raw_accuracy",
+    "kd_ratio", "kda_ratio", "damage_per_minute", "damage_per_life",
+    "headshot_rate", "raw_accuracy", "game_time",
 }
 
 
@@ -145,6 +175,10 @@ SELECT
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_damage_events')
     AS per_hit_damage,
+  ((SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_damage_events'
+      AND column_name IN ('producer_match_id', 'producer_half', 'event_epoch')) = 3)
+    AS damage_event_clock,
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_captures')
     AS capture_credits,
@@ -154,6 +188,32 @@ SELECT
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_state_events')
     AS flag_ownership,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_positions')
+    AS flag_positions,
+  EXISTS(SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Frags'
+      AND column_name = 'frag_context_recorded')
+    AND EXISTS(SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Frags'
+      AND column_name = 'pos_victim_x')
+    AS frag_context,
+  ((SELECT COUNT(*) FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Frags'
+      AND column_name IN
+        ('producer_match_id', 'producer_half', 'game_time', 'event_epoch')) = 4)
+    AS frag_event_clock,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_life_events')
+    AS life_boundaries,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_assist_events')
+    AS assist_context,
+  (EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_capture_manifests')
+   AND EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_capture_health'))
+    AS capture_health,
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme')
     AS statsme,
@@ -428,6 +488,14 @@ def markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) -
 def render_markdown(report: dict[str, Any]) -> str:
     match = report.get("match") or {}
     quality = report["quality"]
+    timelines = report.get("shadow_timelines", {})
+    explorations = report.get("shadow_explorations", {})
+    damage_shadow = explorations.get("damage_conversion", {})
+    objective_shadow = explorations.get("objective_pressure", {})
+    engagement_shadow = explorations.get("weapon_engagement", {})
+    life_shadow = explorations.get("life_kat", {})
+    trade_analysis = timelines.get("trade_analysis", {})
+    revenge_analysis = timelines.get("revenge_analysis", {})
     out = [
         f"# Match analytics — {report['match_id']}", "",
         f"Quality: **{quality['status']}**", "",
@@ -462,6 +530,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("headshots", "HS"), ("capture_credits", "Caps"),
             ("cap_breaks", "Breaks"), ("raw_accuracy", "Raw acc."),
             ("damage_per_minute", "Dmg/min"),
+            ("damage_per_life", "Dmg/life"),
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
@@ -473,6 +542,83 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "Assist weapon is not reported because the assist event does not carry "
         "one; nearby damage is not treated as a safe substitute.",
+        "", "## Private shadow timelines", "",
+        f"Status: `{timelines.get('status', 'not_collected')}`  ",
+        "Exploratory only: no database writes, public API output, or rating impact.",
+        "",
+        markdown_table(timelines.get("opening_duels", []), [
+            ("half", "Half"), ("event_time", "Opening time"),
+            ("weapon", "Weapon"), ("headshot", "Headshot"),
+        ]),
+        f"Fast multikills: {len(timelines.get('fast_multikills', []))}  ",
+        f"Basic trades: {len(timelines.get('trades', []))}  ",
+        f"Deaths traded: {md(trade_analysis.get('deaths_traded'))}  ",
+        f"Team-death response denominator: "
+        f"{md(trade_analysis.get('team_death_response_opportunities'))}  ",
+        f"Basic trade team-death response rate: "
+        f"{md(trade_analysis.get('team_death_response_rate'))}  ",
+        f"Revenge status: `{revenge_analysis.get('status', 'not_collected')}`  ",
+        f"Revenge responses: {md(revenge_analysis.get('revenge_events'))}  ",
+        f"Head-to-head pairs: {len(timelines.get('head_to_head', []))}",
+        "The trade denominator is every opposing-team death suffered, not proof "
+        "that a specific teammate was alive, nearby, or had line of sight.",
+        "", "## Private FPS explorations", "",
+        "Aggregate exploratory output only. No database/site writes and no rating effect.",
+        "", "### Damage conversion", "",
+        f"Status: `{damage_shadow.get('status', 'not_collected')}`  ",
+        f"Definition: `{damage_shadow.get('definition', 'unavailable')}`", "",
+        markdown_table(damage_shadow.get("players", []), [
+            ("name", "Player"), ("team", "Team"),
+            ("damage_total", "Damage"),
+            ("damage_to_own_kill", "Own kill"),
+            ("damage_to_credited_assist", "Assist"),
+            ("damage_to_teammate_finish", "Team finish"),
+            ("unconverted_damage", "Unconverted"),
+            ("outcome_linked_share", "Linked share"),
+            ("team_damage_share", "Team share"),
+        ]),
+        "Damage links are time associations, not causal claims.",
+        "", "### Sampled objective pressure", "",
+        f"Status: `{objective_shadow.get('status', 'not_collected')}`  ",
+        f"Confidence: `{objective_shadow.get('confidence', {}).get('level', 'unavailable')}`",
+        "",
+        markdown_table(objective_shadow.get("players", []), [
+            ("player_name_at_match", "Player"),
+            ("eligible_samples", "Samples"),
+            ("near_objective_seconds", "Near sec."),
+            ("enemy_owned_pressure_seconds", "Enemy sec."),
+            ("friendly_owned_proximity_seconds", "Friendly sec."),
+            ("neutral_proximity_seconds", "Neutral sec."),
+            ("sampled_contest_seconds", "Contest sec."),
+        ]),
+        "Seconds are sample-count estimates for alive players, not exact capture-volume time.",
+        "", "### Weapon kill-time player separation", "",
+        f"Status: `{engagement_shadow.get('status', 'not_collected')}`  ",
+        f"Confidence: `{engagement_shadow.get('confidence', {}).get('level', 'unavailable')}`",
+        "",
+        markdown_table(engagement_shadow.get("weapon_profiles", []), [
+            ("weapon", "Weapon"), ("kills_observed", "Kills"),
+            ("separation_eligible_kills", "Endpoint rows"),
+            ("mean_kill_time_separation_units", "Mean units"),
+            ("median_kill_time_separation_units", "Median units"),
+            ("headshot_rate", "HS rate"),
+            ("scoped_kill_rate", "Scoped rate"),
+            ("prone_kill_rate", "Prone rate"),
+            ("profile_confidence", "Confidence"),
+        ]),
+        "Separation uses killer and victim positions at the kill event. It does "
+        "not establish firing origin, line of sight, or general weapon effectiveness; "
+        "delayed grenade/projectile kills need particular caution.",
+        "", "### DoD-native KAT coverage", "",
+        f"Status: `{life_shadow.get('status', 'not_collected')}`  ",
+        f"Confidence: `{life_shadow.get('confidence', {}).get('level', 'unavailable')}`  ",
+        f"Eligible death-ended lives: "
+        f"{md(life_shadow.get('aggregate', {}).get('eligible_lives'))}  ",
+        f"Covered lives: {md(life_shadow.get('aggregate', {}).get('covered_lives'))}  ",
+        f"KAT coverage: {md(life_shadow.get('aggregate', {}).get('kat_coverage'))}",
+        "KAT means kill, assist, or death traded in a completed physical life. "
+        "Disconnect, open, and ambiguous lives are censored; no round-survival "
+        "term is invented for continuous-respawn DoD.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -499,8 +645,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         out.append(f"| {item['level']} | `{item['code']}` | {md(item['message'])} |")
     out += [
         "", "## Positional privacy", "",
-        "Raw player positions and individual positional coverage are intentionally "
-        "excluded. Only the aggregate sample count is used as an internal quality check.",
+        "Raw coordinates, paths, heatmaps, timestamps, and ordered positional "
+        "timelines are excluded. Private per-player objective and kill-endpoint "
+        "aggregates may be reviewed, but are not public or rating inputs.",
         "",
     ]
     return "\n".join(out)
@@ -512,7 +659,13 @@ def build_report(
     fixture: Path,
     sources: dict[str, bool] | None = None,
     source_mode: str = "database",
+    timeline_config: TimelineConfig | None = None,
+    damage_config: DamageConversionConfig | None = None,
+    objective_config: ObjectivePressureConfig | None = None,
+    engagement_config: EngagementDistanceConfig | None = None,
+    life_config: LifeExplorationConfig | None = None,
 ) -> dict[str, Any]:
+    sources = sources or source_capabilities(db)
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
@@ -522,10 +675,42 @@ def build_report(
                if sources is None or sources.get("capture_credits", True) else [])
     events = (query_rows(db, "capture_event_fact.sql", match_id)
               if sources is None or sources.get("capture_credits", True) else [])
+    frag_timeline = query_rows(db, "frag_timeline_fact.sql", match_id)
+    objective_timeline = (query_rows(db, "objective_timeline_fact.sql", match_id)
+                          if sources is None or sources.get("capture_credits", True)
+                          else [])
+    damage_timeline = (
+        query_rows(db, "damage_timeline_fact.sql", match_id)
+        if (
+            sources.get("per_hit_damage", False)
+            and sources.get("damage_event_clock", False)
+        ) else None
+    )
+    assist_timeline = (query_rows(db, "assist_timeline_fact.sql", match_id)
+                       if sources.get("assist_context", False) else None)
+    frag_context = (
+        query_rows(db, "frag_context_fact.sql", match_id)
+        if (
+            sources.get("frag_context", False)
+            and sources.get("frag_event_clock", False)
+        ) else None
+    )
+    position_timeline = (query_rows(db, "position_sample_fact.sql", match_id)
+                         if sources.get("positions", False) else [])
+    flag_positions = (query_rows(db, "flag_position_fact.sql", match_id)
+                      if sources.get("flag_positions", False) else [])
+    flag_states = (query_rows(db, "flag_state_timeline_fact.sql", match_id)
+                   if sources.get("flag_ownership", False) else [])
+    life_boundaries = (query_rows(db, "life_boundary_fact.sql", match_id)
+                       if sources.get("life_boundaries", False) else None)
+    enriched_frag_available = bool(
+        sources.get("frag_context", False)
+        and sources.get("frag_event_clock", False)
+        and frag_context is not None
+    )
     inventory_rows = query_rows(db, "quality_inventory.sql", match_id)
     inventory = inventory_rows[0] if inventory_rows else {}
     match = match_rows[0] if match_rows else None
-    sources = sources or source_capabilities(db)
     if not sources["per_hit_damage"]:
         cached = {
             row["player_id"]: row["legacy_damage_dealt"]
@@ -541,6 +726,11 @@ def build_report(
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
             )
+            deaths = player.get("deaths") or 0
+            player["damage_per_life"] = (
+                round(damage / deaths, 2)
+                if damage is not None and deaths else None
+            )
     if source_mode == "replay":
         for player in players:
             player["damage_per_minute"] = None
@@ -548,6 +738,69 @@ def build_report(
         match_id, match, players, inventory, sources, source_mode
     )
     players_public = public_players(players)
+    resolved_objective_config = objective_config or ObjectivePressureConfig()
+    expected_live_seconds = float((match or {}).get("duration_seconds") or 0)
+    if (
+        resolved_objective_config.expected_live_seconds is None
+        and expected_live_seconds > 0
+    ):
+        resolved_objective_config = replace(
+            resolved_objective_config,
+            expected_live_seconds=expected_live_seconds,
+        )
+    objective_pressure = build_objective_pressure_shadow(
+        position_timeline, flag_positions, flag_states,
+        resolved_objective_config,
+    )
+    resolved_timeline_config = timeline_config or TimelineConfig()
+    # Stock frag rows have an immediate, coherent eventTime and remain the
+    # compatibility source for opening, multikill, and trade exploration.
+    # Producer-context rows deliberately include malformed/legacy rows so the
+    # timed analyzers can report their coverage. Feeding a NULL producer half
+    # into generic grouping would either crash or silently invent half zero.
+    shadow_timelines = build_shadow_timelines(
+        frag_timeline, objective_timeline, resolved_timeline_config,
+        temporal_valid=source_mode != "replay",
+        source_available={
+            "frags": True,
+            "frag_event_clock": False,
+            "life_boundaries": False,
+        },
+    )
+    revenge_analysis, revenge_events = _revenge_analysis(
+        frag_context or [],
+        life_boundaries,
+        resolved_timeline_config,
+        temporal_valid=source_mode != "replay",
+        frag_source_available=enriched_frag_available,
+        producer_clock_available=sources.get("frag_event_clock", False),
+        boundary_source_available=sources.get("life_boundaries", False),
+    )
+    shadow_timelines["revenge_analysis"] = revenge_analysis
+    shadow_timelines["revenge_events"] = revenge_events
+    life_kat = build_life_exploration(
+        life_boundaries,
+        frag_context,
+        assist_timeline,
+        shadow_timelines.get("trades", []),
+        life_config,
+        source_available={
+            "life_boundaries": sources.get("life_boundaries", False),
+            "frags": enriched_frag_available,
+            "assists": sources.get("assist_context", False),
+            "basic_trades": True,
+        },
+        temporal_valid=source_mode != "replay",
+    )
+    if source_mode == "replay":
+        objective_pressure["status"] = "timed_metrics_suppressed"
+        objective_pressure["players"] = []
+        objective_pressure["summary"] = {}
+        objective_pressure["confidence"]["level"] = "unavailable"
+        objective_pressure["caveats"].insert(
+            0,
+            "Replay timing is compressed; sampled objective time is unavailable.",
+        )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -565,6 +818,34 @@ def build_report(
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
         "capture_events": events,
+        "shadow_timelines": shadow_timelines,
+        "shadow_explorations": {
+            "definition_version": 2,
+            "privacy": "private_shadow_only",
+            "writes": False,
+            "rating_impact": False,
+            "damage_conversion": build_damage_conversion(
+                damage_timeline or [], frag_context or [], assist_timeline or [],
+                damage_config,
+                source_available={
+                    "damage": (
+                        sources.get("per_hit_damage", False)
+                        and sources.get("damage_event_clock", False)
+                    ),
+                    "producer_frag_clock": enriched_frag_available,
+                    "assist_context": sources.get("assist_context", False),
+                    "life_boundaries": sources.get("life_boundaries", False),
+                },
+                life_boundaries=life_boundaries,
+                temporal_valid=source_mode != "replay",
+            ),
+            "objective_pressure": objective_pressure,
+            "weapon_engagement": build_weapon_engagement_shadow(
+                frag_context if frag_context is not None else frag_timeline,
+                engagement_config,
+            ),
+            "life_kat": life_kat,
+        },
         "positional": {
             "privacy": "aggregate_only",
             "aggregate_sample_count": inventory.get("position_samples", 0),
@@ -581,6 +862,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--source-mode", choices=("database", "replay"),
                         default="database",
                         help="replay suppresses invalid time-normalized metrics")
+    parser.add_argument("--multikill-seconds", type=float, default=10.0)
+    parser.add_argument("--trade-seconds", type=float, default=5.0)
+    parser.add_argument("--objective-conversion-seconds", type=float, default=30.0)
+    parser.add_argument("--damage-conversion-seconds", type=float, default=15.0)
+    parser.add_argument("--assist-grace-seconds", type=float, default=2.0)
+    parser.add_argument("--position-sample-seconds", type=float, default=5.0)
+    parser.add_argument("--objective-radius-units", type=float, default=512.0)
+    parser.add_argument("--contest-radius-units", type=float, default=768.0)
+    parser.add_argument("--simultaneous-tolerance-seconds", type=float, default=1.0)
+    parser.add_argument("--minimum-objective-snapshots", type=int, default=3)
+    parser.add_argument("--minimum-objective-player-samples", type=int, default=3)
+    parser.add_argument("--maximum-objective-sample-gap-seconds", type=float,
+                        default=15.0)
+    parser.add_argument("--minimum-objective-coverage-fraction", type=float,
+                        default=0.5)
+    parser.add_argument("--minimum-profile-kills", type=int, default=10)
+    parser.add_argument("--maximum-kill-distance-units", type=float, default=20000.0)
+    parser.add_argument("--life-death-match-tolerance-seconds", type=float,
+                        default=1.0)
     return parser.parse_args(argv)
 
 
@@ -605,7 +905,39 @@ def main(argv: list[str] | None = None) -> int:
                 f"Available: {match_ids}"
             )
         report = build_report(
-            db, match_id, args.fixture, sources, args.source_mode
+            db, match_id, args.fixture, sources, args.source_mode,
+            TimelineConfig(
+                multikill_seconds=args.multikill_seconds,
+                trade_seconds=args.trade_seconds,
+                objective_conversion_seconds=args.objective_conversion_seconds,
+            ),
+            DamageConversionConfig(
+                conversion_seconds=args.damage_conversion_seconds,
+                assist_grace_seconds=args.assist_grace_seconds,
+            ),
+            ObjectivePressureConfig(
+                sample_seconds=args.position_sample_seconds,
+                objective_radius_units=args.objective_radius_units,
+                contest_radius_units=args.contest_radius_units,
+                simultaneous_tolerance_seconds=args.simultaneous_tolerance_seconds,
+                minimum_distinct_snapshots=args.minimum_objective_snapshots,
+                minimum_player_samples=args.minimum_objective_player_samples,
+                maximum_sample_gap_seconds=(
+                    args.maximum_objective_sample_gap_seconds
+                ),
+                minimum_expected_coverage_fraction=(
+                    args.minimum_objective_coverage_fraction
+                ),
+            ),
+            EngagementDistanceConfig(
+                maximum_distance_units=args.maximum_kill_distance_units,
+                minimum_profile_kills=args.minimum_profile_kills,
+            ),
+            LifeExplorationConfig(
+                death_match_tolerance_seconds=(
+                    args.life_death_match_tolerance_seconds
+                ),
+            ),
         )
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
