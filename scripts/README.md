@@ -10,6 +10,57 @@ Operational scripts for KTP game servers and data server.
 
 ## Scripts
 
+### Bounded match accumulation and automated reports
+
+Generate a deterministic v3 report bundle from normalized match facts:
+
+```bash
+python scripts/build_automated_match_report.py \
+  --facts build/match-facts/MATCH_ID.json \
+  --output-dir build/match-reports/MATCH_ID/v3
+```
+
+The bundle contains the bounded score, three-model comparison, immutable
+manifest, and optional AI-review request. AI review is advisory and separate;
+it cannot alter points, reliability gates, privacy, or publication state. See
+`docs/ACCUMULATION_V3_BOUNDED.md` and
+`docs/AUTOMATED_MATCH_REPORTS_AND_AI_CHECKPOINTS.md`.
+
+### Match readiness, report bundle, and spatial map registry
+
+`match_readiness.py` applies an aggregate-only `PASS`/`WARN`/`FAIL` gate to a
+local `.sql` or `.sql.gz` match fixture without starting MySQL or contacting a
+shared service. `build_anzio_spatial_atlas.ps1` turns one or more Anzio fixtures
+into the supported heatmap/report image set. Map geometry and analytical
+windows live in `config/analytics/spatial_maps/dod_anzio.json`.
+
+For checksum-pinned multi-map handovers, `analyze_competitive_corpus.py`
+restores every listed fixture into a separate ephemeral database and keeps
+public aggregate/derived totals separate from private positional working data.
+`build_competitive_spatial_configs.py`, `build_all_competitive_atlases.ps1`,
+and `build_spatial_atlas.ps1` extend the aggregate atlas to dataset-scoped map
+configs without treating those configs as reviewed scoring weights.
+`build_competitive_report_site.py` produces a static, directly viewable report
+site; `verify_competitive_report_site.py` checks its manifest, local links,
+expected map/match coverage, and public privacy boundary before distribution.
+
+`match_report_bundle.py` joins the canonical analytics JSON, readiness JSON,
+optional shareable accumulation JSON, and optional atlas metadata into one
+privacy-checked Markdown/JSON bundle. `metric_confidence.py` supplies versioned
+source/sample labels. `spatial_map_registry.py` discovers all KTP match configs
+and produces the map readiness matrix; it does not infer geometry or waypoints.
+
+`match_fixture_storage.py` measures SQL archive/transfer size and match-tagged
+payload without mislabeling that value as InnoDB allocation or a human-match
+average. `release_candidate_manifest.py` binds the three release repositories,
+test-only dependencies, built artifacts, and migrations to exact commits and
+SHA-256 values. `measure_command.py` writes elapsed/CPU/peak-RSS evidence for a
+local command and preserves its exit status.
+
+See `docs/MATCH_REPORT_READINESS.md` for commands and
+`docs/MATCH_METRIC_CONTRACT_V1.md` for normative metric definitions. The first
+human-match procedure is `docs/runbooks/FIRST_REAL_MATCH_ANALYTICS.md`.
+
 ### draft_day_monitor.py
 Monitors CPU steal time, RAM, load, and game server stats during high-load events.
 

@@ -17,7 +17,7 @@ decides how many events happen.
 
 It does not gate merges. Lane B is nightly and advisory — see
 tests/e2e_stats/README.md. A red run here means "look at this", not "the branch
-is broken", because a bot that spends four minutes failing to find a fight
+is broken", because a bot that spends six minutes failing to find a fight
 produces a legitimately empty database.
 
 The one exception is a failure that cannot be bot luck: an assist recorded in
@@ -39,6 +39,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
+                                         summary_for_lane)
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
 from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
@@ -587,7 +589,9 @@ def main() -> int:
     ap.add_argument("--map", default="dod_anzio")
     ap.add_argument("--per-team", type=int, choices=(6,), default=6,
                     help="Lane B is fixed at tournament-sized 6v6")
-    ap.add_argument("--play-seconds", type=int, default=240)
+    ap.add_argument("--play-seconds", type=int, default=360,
+                    help="full-match play window; v5 ratings require at least "
+                         "the profile minimum (currently 300 seconds)")
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
                          "more lone cappers and so more cap_breaks — untested; "
@@ -623,6 +627,14 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=Path("/work/build/lane-b-e2e.json"))
     ap.add_argument("--summary-out", type=Path,
                     default=Path("/work/build/lane-b-summary.md"))
+    ap.add_argument("--match-report-dir", type=Path,
+                    default=Path("/work/build/match-report"),
+                    help="shareable deterministic v5 bundle, generated before "
+                         "the ephemeral database is destroyed")
+    ap.add_argument("--report-profile", type=Path,
+                    default=Path("/work/config/analytics/accumulation_v5_momentum.toml"))
+    ap.add_argument("--map-objectives", type=Path,
+                    default=Path("/work/config/analytics/map_objectives.toml"))
     ap.add_argument("--artifact-manifest", type=Path, default=None,
                     help="artifact manifest carrying the exact four-repository "
                          "bundle; invalid or incomplete provenance is fatal")
@@ -942,7 +954,14 @@ def main() -> int:
                 if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
-            "flag_state": log_text.count("KTP_FLAG_STATE "),
+            # The ownership poll can observe a final control-point change just
+            # after KTP_MATCH_END. The daemon deliberately rejects that marker
+            # because match context is already closed, so compare persisted
+            # rows only with markers inside the same ordered match window.
+            "flag_state": (
+                log_invariants.count_in_match(log_text, "KTP_FLAG_STATE ")
+                if report.get("match") else log_text.count("KTP_FLAG_STATE ")
+            ),
             "position_sample": position_sample_match,
             "position_sample_total": position_sample_total,
             "life_boundary": log_text.count('triggered "life_boundary"'),
@@ -1140,6 +1159,22 @@ def main() -> int:
             )
 
         report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
+        if report.get("match"):
+            try:
+                generated = generate_lane_b_report(
+                    db, report["match"]["match_id"], args.match_report_dir,
+                    expected_players=args.per_team * 2,
+                    profile_path=args.report_profile,
+                    objectives_path=args.map_objectives,
+                )
+                report["v5_match_report"] = summary_for_lane(generated)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                report["v5_match_report"] = {
+                    "status": "FAIL", "bundle_path": "match-report",
+                    "detail": detail,
+                }
+                failures.append(f"v5_match_report: {detail}")
         if args.database_dump is not None:
             args.database_dump.parent.mkdir(parents=True, exist_ok=True)
             dump_args = [

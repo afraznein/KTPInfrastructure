@@ -1363,6 +1363,20 @@ def summarise(db, *, match_id: str | None = None) -> dict:
 def check_capture_health(db, *, match_id: str, half: int,
                          expected_frag_correlation_failures: int = 0) -> dict:
     """Require the 1.17.0 producer manifest and exact end-to-end counts."""
+    expected_frag_failures = int(expected_frag_correlation_failures)
+    if expected_frag_failures < 0:
+        return {
+            "code": "capture_health",
+            "status": "pipeline",
+            "detail": (
+                "expected frag correlation failures cannot be negative: "
+                f"{expected_frag_failures}"
+            ),
+            "manifest_rows": 0,
+            "health_rows": 0,
+            "unhealthy_rows": 1,
+        }
+
     literal = _sql_literal(match_id)
     manifest = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_manifests
@@ -1376,11 +1390,18 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
     bad = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND (dropped <> 0 OR emitted <> daemon_received OR emitted <> daemon_accepted
-       OR daemon_rejected <> 0
-       OR correlation_failure_count <> CASE WHEN event_type='frag'
-            THEN {int(expected_frag_correlation_failures)} ELSE 0 END
-       OR sequence_gap_count <> 0 OR duplicate_or_reordered_count <> 0)
+  AND (event_type IS NULL OR emitted IS NULL OR emitted < 0
+       OR NOT (dropped <=> 0)
+       OR NOT (emitted <=> daemon_received)
+       OR (event_type='frag' AND emitted < {expected_frag_failures})
+       OR NOT (daemon_accepted <=> CASE WHEN event_type='frag'
+            THEN emitted - {expected_frag_failures} ELSE emitted END)
+       OR NOT (daemon_rejected <=> CASE WHEN event_type='frag'
+            THEN {expected_frag_failures} ELSE 0 END)
+       OR NOT (correlation_failure_count <=> CASE WHEN event_type='frag'
+            THEN {expected_frag_failures} ELSE 0 END)
+       OR NOT (sequence_gap_count <=> 0)
+       OR NOT (duplicate_or_reordered_count <=> 0))
 """)
     ok = manifest == 1 and rows == 8 and bad == 0
     return {

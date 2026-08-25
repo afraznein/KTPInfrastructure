@@ -66,9 +66,9 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     for migration in (life, clocks, breaks, correction, certification, observability):
         assert workflow.count(migration) == 2
     first = [workflow.index(migration) for migration in
-             (life, clocks, breaks, correction, observability)]
+             (life, clocks, breaks, correction, certification, observability)]
     second = [workflow.index(migration, offset + 1) for migration, offset in
-              zip((life, clocks, breaks, correction, observability), first)]
+              zip((life, clocks, breaks, correction, certification, observability), first)]
     assert first == sorted(first)
     assert second == sorted(second)
     assert first[-1] < second[0]
