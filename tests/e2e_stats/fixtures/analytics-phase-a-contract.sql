@@ -16,7 +16,8 @@ CREATE TABLE hlstats_Actions (
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE hlstats_Events_Frags (
   id int NOT NULL AUTO_INCREMENT PRIMARY KEY, eventTime datetime,
-  match_id varchar(64), killerId int, victimId int, weapon varchar(64),
+  match_id varchar(64), map varchar(64) NOT NULL DEFAULT 'dod_anzio',
+  killerId int, victimId int, weapon varchar(64),
   headshot tinyint, half tinyint,
   killerRole varchar(64) NOT NULL DEFAULT '',
   victimRole varchar(64) NOT NULL DEFAULT '',
