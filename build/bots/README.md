@@ -13,12 +13,25 @@ wave clocks, cap-break attribution, the halftime side swap.
 make local-bots-amxx      # one-off, ~10 min: patched ktpamx + dodx
 make local-bots-plugins   # KTP_TEST_MODE KTPMatchHandler + HUD plugin
 make local-bots-build     # the image
-make local-bots-up
+make local-bots-up        # game-1 + game-2 + the HUD data service
 make local-bots-match     # fill 6v6 with bots and take it LIVE
 ```
 
+Then watch it at **`https://localhost/caster`** — the minimap and stats board.
+Accept the self-signed cert once.
+
+> **`https://localhost`, never `http://localhost:3000`.** The data container
+> serves the React bundle on :3000 with no `/socket.io` proxy, so a page opened
+> there loads and then silently receives nothing — an empty board with a `0:00`
+> clock, which reads as "no match running" rather than "wrong origin". The
+> single-origin nginx on :443 is the one that works.
+
 Run `local-bots-match` **before** joining the server — `.testmatch` refuses to
 start while a human client is connected. HLTV is exempt and may stay.
+
+`make local-bots-up` brings up the `data` service too (`--profile full`), since
+watching the match is the point; it falls back to game servers only if the
+sibling `DoD-hud-observer` checkout is missing, and says so.
 
 ## Why any of this is necessary
 

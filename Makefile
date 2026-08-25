@@ -311,12 +311,18 @@ local-bots-build:
 local-bots-up: check-artifacts
 	$(BOTS) preflight
 	@mkdir -p local/plugins local/plugins-bots
-	VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d
+# Includes the data service (--profile full) on purpose: watching the match on
+# the HUD is the entire point, and without it you get a live 6v6 with nowhere
+# to see it. Falls back to game servers only if the sibling repo is missing.
+	@if [ -d "$${DOD_HUD_PATH:-../DoD-hud-observer}" ]; then VERSION=$(VERSION) $(LOCAL_COMPOSE) --profile full up -d; else echo ""; echo "NOTE: no DoD-hud-observer at $${DOD_HUD_PATH:-../DoD-hud-observer} — starting game"; echo "      servers only. There will be no HUD to watch the match on."; echo ""; VERSION=$(VERSION) $(LOCAL_COMPOSE) up -d; fi
 	@echo ""
 	@echo "  ktp-game-1: localhost:27016  production topology, no bots  [control]"
 	@echo "  ktp-game-2: localhost:27017  BOT SERVER — Metamod-R + new_bot + patched ktpamx"
 	@echo ""
 	@echo "Drive a 6v6 through go-live:  make local-bots-match"
+# https://localhost, NOT :3000 — the React static server has no /socket.io
+# proxy, so a page opened there shows an empty board with a 0:00 clock.
+	@echo "Then watch it at:             https://localhost/caster  (self-signed cert)"
 
 # Fill 6v6 with bots and take the real competitive flow live. Refuses if a
 # human client is connected, so run this BEFORE joining. HLTV may stay.
