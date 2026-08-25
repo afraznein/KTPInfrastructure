@@ -95,6 +95,13 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "life_boundaries": True,
         "assist_context": True,
     }
+    for player in report["players"]:
+        if player["deaths"]:
+            assert player["damage_per_life"] == round(
+                player["damage_dealt"] / player["deaths"], 2
+            )
+        else:
+            assert player["damage_per_life"] is None
     assert report["schema_version"] == 6
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2

@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "matches": {
+    "match-1": {
+      "match_id": "1786721179-TEST",
+      "status": "WARN",
+      "event_players": 16,
+      "frags": 140,
+      "coordinate_frags": 130,
+      "damage_events": 334,
+      "position_samples": 1848,
+      "capture_credits": 32,
+      "unique_capture_events": 15,
+      "assists": 13,
+      "cap_breaks": 4
+    },
+    "match-2": {
+      "match_id": "1786721560-TEST",
+      "status": "WARN",
+      "event_players": 16,
+      "frags": 106,
+      "coordinate_frags": 101,
+      "damage_events": 271,
+      "position_samples": 1459,
+      "capture_credits": 24,
+      "unique_capture_events": 11,
+      "assists": 14,
+      "cap_breaks": 3
+    },
+    "match-3": {
+      "match_id": "1786721570-TEST",
+      "status": "WARN",
+      "event_players": 16,
+      "frags": 185,
+      "coordinate_frags": 182,
+      "damage_events": 478,
+      "position_samples": 2567,
+      "capture_credits": 37,
+      "unique_capture_events": 16,
+      "assists": 26,
+      "cap_breaks": 8
+    },
+    "match-4": {
+      "match_id": "1786721656-TEST",
+      "status": "WARN",
+      "event_players": 16,
+      "frags": 114,
+      "coordinate_frags": 110,
+      "damage_events": 319,
+      "position_samples": 1822,
+      "capture_credits": 36,
+      "unique_capture_events": 16,
+      "assists": 12,
+      "cap_breaks": 0
+    },
+    "match-5": {
+      "match_id": "1786721661-TEST",
+      "status": "WARN",
+      "event_players": 16,
+      "frags": 194,
+      "coordinate_frags": 191,
+      "damage_events": 488,
+      "position_samples": 3286,
+      "capture_credits": 56,
+      "unique_capture_events": 25,
+      "assists": 20,
+      "cap_breaks": 2
+    }
+  }
+}

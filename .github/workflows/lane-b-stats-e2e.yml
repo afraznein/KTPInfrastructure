@@ -61,6 +61,16 @@ on:
         required: false
         type: string
         default: preprod
+      map_name:
+        description: Map to run bots on
+        required: false
+        type: string
+        default: dod_anzio
+      play_seconds:
+        description: Full-match play window (v5 ratings require at least 300 seconds)
+        required: false
+        type: string
+        default: '360'
   workflow_dispatch:
     inputs:
       infrastructure_ref:
@@ -100,7 +110,7 @@ on:
         description: 'How long to let the bots play'
         required: false
         type: string
-        default: '240'
+        default: '360'
   push:
     # Manual preprod-only execution. Push events evaluate the workflow in the
     # tagged commit, so no workflow definition is needed on main.
@@ -148,7 +158,7 @@ jobs:
       DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
       LANE: ${{ inputs.lane || 'full' }}
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
-      PLAY_SECONDS: ${{ inputs.play_seconds || '240' }}
+      PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
@@ -355,7 +365,13 @@ jobs:
             -v "${PWD}/sql:/work/sql:ro" \
             -v "${PWD}/config:/work/config:ro" \
             -w /work ktp-lane-b:ci \
-            python3 -m pytest tests/e2e_stats -q
+            python3 -m pytest \
+              tests/e2e_stats \
+              tests/unit/test_accumulation_v3.py \
+              tests/unit/test_life_impact_v4.py \
+              tests/unit/test_momentum_v5.py \
+              tests/unit/test_lane_b_match_report.py \
+              -q
 
       - name: Run full synthetic 6v6 match with 12 bots
         if: ${{ env.LANE == 'full' }}
@@ -402,7 +418,10 @@ jobs:
               --require-complete-coverage \
               --log /work/build/lane-b-e2e.log \
               --out /work/build/lane-b-e2e.json \
-              --summary-out /work/build/lane-b-summary.md
+              --summary-out /work/build/lane-b-summary.md \
+              --match-report-dir /work/build/match-report \
+              --report-profile /work/config/analytics/accumulation_v5_momentum.toml \
+              --map-objectives /work/config/analytics/map_objectives.toml
 
       - name: Publish match summary
         if: ${{ always() && env.LANE == 'full' }}
@@ -489,6 +508,7 @@ jobs:
             build/lane-b-artifacts/lane-b-e2e.log
             build/lane-b-artifacts/hlstats-e2e.out
             build/lane-b-artifacts/corpus-replay.out
+            build/lane-b-artifacts/match-report/
             build/lane-b-artifacts/bundle-provenance.md
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE

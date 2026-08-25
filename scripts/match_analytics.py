@@ -82,8 +82,8 @@ INTEGER_COLUMNS = {
     "event_epoch", "stored_half", "producer_half",
 }
 FLOAT_COLUMNS = {
-    "kd_ratio", "kda_ratio", "damage_per_minute", "headshot_rate",
-    "raw_accuracy", "game_time",
+    "kd_ratio", "kda_ratio", "damage_per_minute", "damage_per_life",
+    "headshot_rate", "raw_accuracy", "game_time",
 }
 
 
@@ -525,6 +525,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("headshots", "HS"), ("capture_credits", "Caps"),
             ("cap_breaks", "Breaks"), ("raw_accuracy", "Raw acc."),
             ("damage_per_minute", "Dmg/min"),
+            ("damage_per_life", "Dmg/life"),
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
@@ -719,6 +720,11 @@ def build_report(
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
+            )
+            deaths = player.get("deaths") or 0
+            player["damage_per_life"] = (
+                round(damage / deaths, 2)
+                if damage is not None and deaths else None
             )
     if source_mode == "replay":
         for player in players:

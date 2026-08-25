@@ -1,0 +1,126 @@
+# Momentum iteration. Keeps bounded combat/objectives and v4 per-life spatial
+# impact, replaces capture conversion + sequence continuity with one bounded
+# team-momentum swing pool, then normalizes the complete raw total for display.
+
+[profile]
+name = "accumulation_v5_momentum"
+status = "experimental_shadow"
+schema_version = 1
+
+[combat]
+finisher_points = 60.0
+damage_contribution_pool = 40.0
+assist_damage_threshold = 50.0
+fallback_kill_points = 100.0
+fallback_assist_points = 50.0
+fallback_damage_points = 0.02
+
+[streaks]
+finisher_increment_per_kill = 0.10
+finisher_increment_steps_cap = 5
+shutdown_starts_after = 3
+shutdown_points_per_level = 5.0
+shutdown_points_cap = 25.0
+
+[fast_chains]
+max_personal_gap_seconds = 5.0
+minimum_kills = 2
+bonus_2 = 10.0
+bonus_3 = 25.0
+bonus_4 = 45.0
+bonus_5_plus = 70.0
+
+[objectives]
+capture_event_pool = 100.0
+conversion_window_seconds = 30.0
+flag_conversion_pool = 25.0
+middle_conversion_pool = 50.0
+capout_conversion_pool = 150.0
+
+[cap_breaks]
+base_points = 25.0
+urgent_seconds = 3.0
+urgency_points_cap = 35.0
+extra_contester_points = 10.0
+extra_contester_count_cap = 2
+validated_last_flag_points = 20.0
+total_points_cap = 100.0
+
+[position]
+sample_seconds = 5.0
+objective_radius_units = 512.0
+points_per_second_at_flag = 0.50
+grid_size_units = 256
+max_points_per_half = 150.0
+
+[life_impact]
+sample_seconds = 5.0
+sample_alignment_seconds = 3.0
+objective_radius_units = 512.0
+territory_radius_units = 1024.0
+enemy_threat_radius_units = 768.0
+mid_defense_points_per_second = 0.80
+aggression_points_per_second = 1.20
+enemy_flag_hold_points_per_second = 1.50
+active_pressure_multiplier = 1.50
+unopposed_aggression_multiplier = 0.20
+unopposed_hold_multiplier = 0.25
+unopposed_full_value_seconds = 30.0
+unopposed_reduced_value_seconds = 90.0
+unopposed_reduced_multiplier = 0.50
+unopposed_floor_multiplier = 0.25
+mid_defense_kill_points = 60.0
+active_flag_defense_kill_points = 70.0
+cross_mid_points = 40.0
+reach_enemy_flag_points = 60.0
+defense_to_mid_capture_points = 60.0
+defense_to_forward_push_points = 40.0
+mid_capture_to_forward_push_points = 50.0
+forward_push_to_enemy_capture_points = 80.0
+sequence_points_cap_per_life = 120.0
+points_cap_per_life = 300.0
+points_cap_per_match = 1600.0
+
+[momentum]
+tick_seconds = 5.0
+public_curve_seconds = 15.0
+combat_half_life_seconds = 15.0
+manpower_half_life_seconds = 10.0
+combat_normalizer = 3.0
+smoothing_current_weight = 0.55
+territory_weight = 0.35
+field_position_weight = 0.25
+recent_combat_weight = 0.20
+manpower_weight = 0.10
+objective_pressure_weight = 0.10
+middle_flag_value = 1.50
+second_flag_value = 1.25
+first_flag_value = 1.00
+double_cap_multiplier = 1.25
+episode_window_seconds = 40.0
+capture_before_seconds = 20.0
+capture_after_seconds = 20.0
+minimum_swing = 15.0
+maximum_episodes_per_half = 12
+points_per_momentum = 2.0
+episode_pool_cap = 150.0
+player_match_cap = 600.0
+kill_attribution_weight = 1.0
+capture_credit_weight = 1.5
+forward_progress_weight = 1.0
+forward_presence_weight = 0.5
+replace_conversion_points = true
+replace_sequence_continuity_points = true
+
+[impact_index]
+center_index = 100.0
+points_per_robust_sigma = 30.0
+minimum_index = 50.0
+maximum_index = 150.0
+fallback_log_scale = 0.35
+minimum_log_scale = 0.30
+provisional_reference = "match_median_points_per_minute"
+minimum_observed_seconds = 300.0
+# Partial appearances still receive a rating, but players present for less than
+# half the match do not move that match's provisional median baseline.
+reference_minimum_match_fraction = 0.50
