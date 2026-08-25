@@ -321,7 +321,10 @@ local-bots-up: check-artifacts
 # Fill 6v6 with bots and take the real competitive flow live. Refuses if a
 # human client is connected, so run this BEFORE joining. HLTV may stay.
 local-bots-match:
-	python3 scripts/local_bots_match.py --port 27017 --rcon-password "$${RCON_PASSWORD:-changeme}"
+# PYTHON (line 41) is hardcoded python3, which Git Bash on Windows does not
+# have. Resolve at shell level rather than via $(shell ...), which is itself
+# unreliable there (it already returns empty for KTP_PROJECT_ROOT).
+	@P=$$(command -v python3 || command -v python) && "$$P" scripts/local_bots_match.py --port 27017 --rcon-password "$${RCON_PASSWORD:-changeme}"
 
 
 # Check artifact freshness against sibling repo HEADs. Warns (does not fail)

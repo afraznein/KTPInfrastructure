@@ -59,6 +59,10 @@ from tests.e2e_stats.bot_driver import NEW_BOT  # noqa: E402
 from tests.integration.match_flow import MatchDriver, MatchDriverError  # noqa: E402
 from tests.smoke.server_handle import ServerHandle  # noqa: E402
 
+# Must match SERVER_HOSTNAME for ktp-game-2 in docker-compose.local.yml — the
+# HUD keys its socket rooms on X-Server-Hostname, which is that cvar.
+SERVER_HOSTNAME = "KTP LOCAL BOTS #2 [NON-PROD metamod+patched-amxx]"
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -113,10 +117,19 @@ def main() -> int:
         return 1
 
     print(f"\n[bots] LIVE — match_id={match_id}")
-    print("[bots] watch the overlay at:")
-    print("       http://localhost:3000/screen?server=KTP LOCAL BOTS #2 "
-          "[NON-PROD metamod+patched-amxx]")
-    print("       http://localhost:3000/hq")
+
+    # https://localhost, NOT :3000. The data container serves the React bundle
+    # on :3000 with no /socket.io proxy, so a page opened there loads fine and
+    # then silently receives no state — an empty board with a 0:00 clock, which
+    # reads as "no match running" rather than "wrong origin". The single-origin
+    # nginx on :443 is the one that works. It self-signs, so the browser warns
+    # once.
+    from urllib.parse import quote
+    q = quote(SERVER_HOSTNAME)
+    print("[bots] watch it (accept the self-signed cert once):")
+    print(f"       https://localhost/caster?server={q}   <- minimap + stats")
+    print(f"       https://localhost/screen?server={q}   <- the on-air overlay")
+    print("       https://localhost/hq")
     return 0
 
 
