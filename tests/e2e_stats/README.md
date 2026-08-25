@@ -606,13 +606,35 @@ context is closed. Lane B therefore compares `ktp_flag_state_events` only with
 `KTP_FLAG_STATE` markers between the ordered start/end markers. Counting the
 whole server log would fabricate a one-row pipeline loss at shutdown.
 
-### Known all-bot artifact
+### V5 report generation is part of the match
 
-`ktp_match_players.steam_id` is `VARCHAR(32)`; the daemon gives bots a
-synthetic `BOT:` + 32-char md5 uniqueid, which is 36. Every insert fails with
-`Data too long`. Real Steam IDs are ~19 characters so production never hits it,
-but `ktp_match_players` stays empty here and per-match player tracking cannot
-be asserted. Classified as benign in `classify_sql_errors` and reported as a
+The full lane keeps its ephemeral MySQL alive long enough to run
+`scripts/lane_b_match_report.py`. The same completed `-TEST` match is extracted into
+sanitized normalized facts, scored with `accumulation_v5_momentum`, rendered, and verified
+before database teardown. This is a hard pipeline check, not bot-behaviour coverage: Lane B
+fails if the report has anything other than 12 players, lacks normalized overall ratings,
+does not pass position and momentum gates, leaks raw positional/platform identity fields,
+breaks component or momentum-pool conservation, fails a manifest hash, or cannot reproduce
+the same semantic result from identical inputs.
+
+The normal full play window is 360 seconds because the v5 profile requires 300 observed
+seconds before issuing an overall rating. A shorter manually requested run may still be
+useful for capture diagnostics, but it deliberately fails v5 report verification rather than
+publishing misleading normalized ratings.
+
+The job summary contains the all-player rating/raw/momentum table. The uploaded
+`match-report/` directory contains `report.html` (download and open for the simplest UI),
+`report.md`, `report.json`, `momentum.svg`, `facts.normalized.json`, comparison files, the
+optional-AI request, manifest, and verification result. Raw player coordinates are used only
+in memory for derivation and are neither written to normalized facts nor included in the
+public bundle.
+
+### Historical all-bot roster artifact
+
+Early runs used `ktp_match_players.steam_id VARCHAR(32)` while the daemon gives bots a
+36-character synthetic ID. Migration 011 widens that identity column, so the current full
+lane requires all 12 roster rows and the v5 report requires the same 12 players. Older saved
+fixtures can still exhibit the former `Data too long` condition. It was reported as a
 coverage gap — never silently dropped, because those rows genuinely did not get
 written.
 

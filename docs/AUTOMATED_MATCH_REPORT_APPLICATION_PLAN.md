@@ -1,6 +1,7 @@
 # Automated match-report application plan
 
-Status: proposed implementation plan for preprod. No production deployment is authorized.
+Status: Lane B integration implemented on the v5 feature branch; server application work is
+still proposed for preprod. No production deployment is authorized.
 
 ## Decision summary
 
@@ -24,17 +25,22 @@ Status: proposed implementation plan for preprod. No production deployment is au
 - `scripts/momentum_v5.py` derives a private momentum audit, a sanitized team curve, and
   bounded swing allocations.
 - `scripts/build_automated_match_report.py` produces an immutable JSON/Markdown/SVG bundle,
-  hashes its files, and creates a constrained optional-AI checkpoint.
+  a portable `report.html`, hashes its files and scoring profile, and creates a constrained
+  optional-AI checkpoint.
+- `scripts/lane_b_match_report.py` extracts a completed Lane B match directly from the live
+  ephemeral MySQL database, derives private positional/life and momentum facts, removes the
+  raw movement data, generates the bundle, and runs hard verification checks.
 - `scripts/evaluate_bot_momentum_v5.py` proves the v5 momentum engine against SQL bot
   fixtures without MySQL.
 - `.github/workflows/lane-b-stats-e2e.yml` runs a real 6v6 bot match against ephemeral
-  MySQL and uploads capture artifacts.
+  MySQL, generates the v5 report before teardown, places its scoreboard in the GitHub job
+  summary, and uploads the complete report directory.
 - `docs/ktpr_mcp/` contains an older season-oriented KTPR MCP proof of concept. It reads
   live data over SSH and uses a separate calculation. It is not the v5 match-report service.
 
-The important missing link is a general database-to-v5 fact extractor and one orchestration
-command. Denver currently uses a match-specific extractor; Lane B currently stops after its
-capture/reconciliation report.
+The remaining implementation boundary is to promote the proven Lane B adapter into the
+general `ktp_report` package/CLI and add persistence, worker, API, and website layers. Denver
+currently uses a match-specific extractor; production discovery remains disabled.
 
 ## Target command
 
@@ -222,18 +228,19 @@ report still becomes ready; the narrative remains pending.
 
 ### Every full Lane B bot match
 
-After `lane_b_e2e.py` completes, the workflow must run the production report command against
-the same ephemeral MySQL before teardown. The workflow fails unless it produces:
+`lane_b_e2e.py` now generates the report against the same ephemeral MySQL before teardown.
+The workflow fails unless it produces and verifies:
 
 - `facts.normalized.json`;
-- `report.json` and `report.md`;
+- `report.json`, `report.md`, and portable `report.html`;
 - `momentum.svg`;
 - `manifest.json` with verified hashes;
 - `report-verification.json` showing schema, sums, identity, normalization, and privacy pass.
 
-The GitHub summary should embed the top player table and link the uploaded bundle. Upload the
-entire report directory, not only the capture summary. Assertions use the synthetic reference
-and broad versioned bounds, not a hard-coded winner name or exact bot ranking.
+The GitHub summary embeds the full player table and identifies the uploaded bundle. The
+entire report directory is uploaded, not only the capture summary. The current implementation
+uses a clearly labeled per-match provisional median (100) and verifies invariants rather than
+a hard-coded winner name or exact bot ranking; `lane_b_bot_v1` remains future calibration.
 
 ### Nightly/preprod
 
@@ -256,10 +263,12 @@ and broad versioned bounds, not a hard-coded winner name or exact bot ranking.
 
 ## Implementation sequence
 
-1. Build the general MySQL-to-normalized-facts extractor and golden fixture tests.
-2. Add the unified `ktp_report generate/verify` CLI and versioned reference format.
-3. Invoke it inside the existing Lane B container before ephemeral MySQL teardown; upload the
-   complete bundle and make verification a hard workflow gate.
+1. **Done for Lane B:** build the live MySQL-to-normalized-facts adapter, query-contract tests,
+   bundle verifier, and portable report.
+2. **Done for Lane B:** invoke it inside the existing container before ephemeral MySQL
+   teardown, upload the complete bundle, and make verification a hard workflow gate.
+3. Promote the adapter into the unified `ktp_report generate/verify` CLI, add JSON schemas,
+   golden SQL fixtures, idempotency, and a versioned reference format.
 4. Add report persistence migrations, idempotent store logic, and worker state machine.
 5. Add the read-only API and simple report browser.
 6. Add optional read-only MCP tools backed by stored reports.

@@ -141,6 +141,7 @@ def derive_life_impact(
     profile: dict[str, Any],
     topology: dict[str, Any],
     death_resets: list[dict[str, Any]] | None = None,
+    flag_states: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[int, dict[str, float]], list[dict[str, Any]]]:
     """Return sanitized player totals plus private per-life audit records."""
     cfg = profile["life_impact"]
@@ -166,12 +167,22 @@ def derive_life_impact(
         deaths[key] = sorted(set(deaths[key]))
 
     owner_timeline: dict[tuple[int, str], list[tuple[float, int]]] = defaultdict(list)
-    for capture in captures:
-        name = str(capture.get("flag_name") or "")
+    # A capture-only timeline cannot describe flags that have not changed hands
+    # yet. Prefer the explicit initial/change stream when it is available, then
+    # retain captures as a compatibility source for older fixtures.
+    for state in flag_states or []:
+        name = str(state.get("flag_name") or "")
         if name:
-            owner_timeline[(_i(capture.get("half")), name)].append(
-                (_time(capture), _i(capture.get("team")))
+            owner_timeline[(_i(state.get("half")), name)].append(
+                (_time(state), _i(state.get("owner_team")))
             )
+    if not flag_states:
+        for capture in captures:
+            name = str(capture.get("flag_name") or "")
+            if name:
+                owner_timeline[(_i(capture.get("half")), name)].append(
+                    (_time(capture), _i(capture.get("team")))
+                )
     for rows in owner_timeline.values():
         rows.sort()
 

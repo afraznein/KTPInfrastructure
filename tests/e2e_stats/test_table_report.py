@@ -73,3 +73,24 @@ def test_render_markdown_includes_summary_and_samples():
     assert "SQL `NULL` / not applicable" in body
     assert "`hlstats_Events_Frags`" in body
     assert "garand\\|scoped" in body
+
+
+def test_render_markdown_includes_verified_v5_scoreboard():
+    report = {
+        "map": "dod_anzio", "play_seconds": 360,
+        "match": {"match_id": "scored-TEST", "half": 1},
+        "emitted": {}, "rows": {"players": 12, "bots": 12},
+        "carried": [], "failures": [], "coverage_gaps": [],
+        "table_samples": [],
+        "v5_match_report": {
+            "status": "PASS",
+            "normalization": {"center_index": 100},
+            "players": [{"rank": 1, "name": "Bot One", "overall_rating": 150.0,
+                         "raw_points": 500.0, "momentum_points": 25.0}],
+        },
+    }
+    body = render_markdown(report)
+    assert "V5 accumulated match report" in body
+    assert "complete accumulated score" in body
+    assert "| 1 | Bot One | 150.00 | 500.00 | 25.00 |" in body
+    assert "`momentum.svg`" in body

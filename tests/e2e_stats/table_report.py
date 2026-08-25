@@ -155,6 +155,34 @@ def render_markdown(report: dict) -> str:
     if gaps:
         out += ["", "## Coverage gaps", ""] + [f"- {_cell(item, 500)}" for item in gaps]
 
+    scored = report.get("v5_match_report")
+    if scored:
+        out += [
+            "", "## V5 accumulated match report", "",
+            f"Verification: **{_cell(scored.get('status', ''))}**. The complete "
+            "bundle is in the uploaded Lane B artifact under `match-report/` "
+            "(`report.html`, `report.md`, `report.json`, `momentum.svg`, normalized facts, "
+            "comparison, manifest, and verification).", "",
+        ]
+        if scored.get("detail"):
+            out.append(f"Generation error: {_cell(scored['detail'], 500)}")
+        else:
+            normalization = scored.get("normalization") or {}
+            out += [
+                f"Overall rating normalizes the **complete accumulated score**: "
+                f"the provisional match median is "
+                f"{normalization.get('center_index', 100):.0f}. Momentum is one "
+                "bounded additive component, not a separate rating.", "",
+                "| Rank | Player | Overall rating | Raw accumulated points | Momentum points |",
+                "|---:|---|---:|---:|---:|",
+            ]
+            for player in scored.get("players") or []:
+                out.append(
+                    f"| {player['rank']} | {_cell(player['name'])} | "
+                    f"{player['overall_rating']:.2f} | {player['raw_points']:.2f} | "
+                    f"{player['momentum_points']:.2f} |"
+                )
+
     samples = report.get("table_samples") or []
     out += [
         "",

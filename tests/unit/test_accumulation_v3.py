@@ -260,10 +260,11 @@ def test_automated_bundle_keeps_ai_separate_and_requires_human_review(tmp_path):
     assert manifest["publication_checkpoint"] == "HUMAN_REVIEW_REQUIRED"
     assert manifest["ai_status"] == "PENDING_OPTIONAL"
     assert {path.name for path in output.iterdir()} == {
-        "report.json", "report.md", "comparison.json", "comparison.md",
+        "report.json", "report.md", "report.html", "comparison.json", "comparison.md",
         "ai-request.json", "manifest.json",
     }
     stored = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+    assert len(stored["profile_sha256"]) == 64
     assert stored["invariants"]["ai_can_change_scores"] is False
     assert stored["invariants"]["raw_individual_positions_exported"] is False
 
