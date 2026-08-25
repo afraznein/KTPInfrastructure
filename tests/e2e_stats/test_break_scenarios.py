@@ -95,18 +95,29 @@ def test_far_probe_waits_past_production_candidate_ttl():
             "\t\t\tBD_OFFPOINT_DEATH_QUIET_SECS") in source
 
 
-def test_far_probe_freezes_all_live_players_past_its_death_window():
+def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     seconds = float(next(
         line.rsplit(" ", 1)[1]
         for line in source.splitlines()
-        if line.startswith("#define BD_OFFPOINT_ISOLATION_SECS ")
+        if line.startswith("#define BD_KILL_ISOLATION_SECS ")
     ))
     assert seconds >= bs.BreakDriver.SETTLE + 0.5
     assert "isolated = bd_begin_test_isolation()" in source
-    assert 'set_task(BD_OFFPOINT_ISOLATION_SECS, "bd_isolation_end"' in source
+    assert 'set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end"' in source
     assert "bd_hold_test_players()" in source
     assert bs._ISOLATION_END_RE.search("[BD] isolation END")
+
+    kill_fn = source[source.index("stock bool:bd_execute_kill"):
+                     source.index("public cmd_kill()")]
+    victim = kill_fn.index("new victim = bd_pick")
+    killer = kill_fn.index("new killer = bd_pick_enemy")
+    isolate = kill_fn.index("isolated = bd_begin_test_isolation()")
+    dispatch = kill_fn.index("dodx_test_dispatch_client_death(killer, victim")
+    allow = kill_fn.index("bd_allow_isolated_death(victim)", dispatch)
+    kill = kill_fn.index("dod_user_kill(victim)", dispatch)
+    assert victim < killer < isolate < dispatch < allow < kill
+    assert "if (!want_near) {" not in kill_fn[isolate:kill]
 
 
 def test_far_kill_parser_reports_isolation_coverage_and_accepts_old_logs():
@@ -147,8 +158,10 @@ def test_the_lookback_reaches_backwards_as_well_as_forwards():
 
 KILL_LINE = ("L 08/10/2026 - 14:24:43: [KTPBreakDrive.amxx] [BD] kill flag=3 "
              "capteam=2 mode=near victim=11 vname=Pyramid killer=1 kname=Jill "
-             "dist=134 count_before=2 owner_before=1")
+             "dist=134 count_before=2 owner_before=1 isolated=12")
 AFTER_LINE = "[BD] after flag=3 allies=0 axis=1 capping=1 owner=1"
+BREAK_LINE = ('L 08/10/2026 - 14:24:44: "Jill<1><0><Allies>" triggered '
+              '"cap_break" (flag "POINT_ANZIO_PLAZA") (position "1 2 3")')
 
 
 def test_kill_line_parses_with_capteam_and_owner():
@@ -300,6 +313,64 @@ def test_isolation_close_waits_for_explicit_restore_marker(monkeypatch):
     assert bs._ISOLATION_END_RE.search(tail)
     assert "organic play resumed" not in tail
     assert sleeps == [0.05]
+
+
+def _positive_result(monkeypatch, tail, *, closed=True):
+    driver = bs.BreakDriver(_FakeHandle([]), _FakeLog(["old\n"]))
+    monkeypatch.setattr(driver, "_arm_kill", lambda _mode: True)
+    monkeypatch.setattr(driver, "_wait_for_isolation_end",
+                        lambda _mark: (closed, tail))
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+    return driver.positive_kill_on_point()
+
+
+def test_positive_count_drop_named_break_and_close_passes(monkeypatch):
+    tail = "\n".join([KILL_LINE, AFTER_LINE, BREAK_LINE,
+                       "[BD] isolation END"])
+    result = _positive_result(monkeypatch, tail)
+
+    assert result.status == "ok"
+    assert result.breaks_seen == 1
+    assert result.extra["isolated_players"] == 12
+
+
+def test_positive_ignores_organic_lines_after_isolation_end(monkeypatch):
+    prefix = "old\n"
+    organic = ('L 08/10/2026 - 14:24:50: "Organic<8><0><Axis>" triggered '
+               '"cap_break" (flag "POINT_ANZIO_PLAZA") (position "4 5 6")')
+    complete = prefix + "\n".join([
+        KILL_LINE, AFTER_LINE, BREAK_LINE, "[BD] isolation END", organic,
+    ])
+    driver = bs.BreakDriver(
+        _FakeHandle([]),
+        _FakeLog([prefix, prefix, prefix + KILL_LINE, complete]),
+    )
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+
+    result = driver.positive_kill_on_point()
+
+    assert result.status == "ok"
+    assert result.breaks_seen == 1
+    assert result.extra["breakers"] == ["Jill"]
+
+
+def test_positive_missing_or_weak_isolation_is_not_staged(monkeypatch):
+    evidence = "\n".join([KILL_LINE, AFTER_LINE, BREAK_LINE,
+                            "[BD] isolation END"])
+
+    weak = _positive_result(
+        monkeypatch, evidence.replace("isolated=12", "isolated=1"))
+    assert weak.status == "not_staged"
+    assert "not isolated" in weak.detail
+
+    missing_coverage = _positive_result(
+        monkeypatch, evidence.replace(" isolated=12", ""))
+    assert missing_coverage.status == "not_staged"
+    assert "not isolated" in missing_coverage.detail
+
+    missing_close = _positive_result(monkeypatch, evidence, closed=False)
+    assert missing_close.status == "not_staged"
+    assert "close marker" in missing_close.detail
 
 
 # -- deterministic round-restart evidence ---------------------------------

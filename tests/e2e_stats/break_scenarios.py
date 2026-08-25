@@ -230,9 +230,9 @@ class BreakDriver:
                                 poll: float = 0.05) -> tuple[bool, str]:
         """Wait for the diagnostic to restore bots after a closed window.
 
-        The far-kill isolation intentionally outlives ``SETTLE``. Waiting for
-        its explicit end marker prevents the next scenario from racing the
-        restore and trying to stage while every bot is still held.
+        Staged-kill isolation intentionally outlives ``SETTLE``. Waiting for
+        its explicit end marker prevents adjudication from accepting organic
+        play after restore and the next scenario from racing held bots.
         """
         deadline = time.monotonic() + timeout
         tail = _tail(self._read(), since)
@@ -258,7 +258,7 @@ class BreakDriver:
                         or "armed near kill did not stage within the wait")
             return s
         time.sleep(self.SETTLE)
-        tail = _tail(self._read(), mark)
+        isolation_closed, tail = self._wait_for_isolation_end(mark)
 
         staged = _KILL_RE.search(tail)
         if not staged:
@@ -276,7 +276,18 @@ class BreakDriver:
         s.extra = {"count_before": before, "count_after": after,
                    "owner_before": owner_before, "owner_after": owner_after,
                    "dist": int(staged.group(8)), "killer": killer,
-                   "breakers": breakers}
+                   "breakers": breakers,
+                   "isolated_players": int(staged.group(11) or 0)}
+
+        if s.extra["isolated_players"] < 2:
+            s.detail = ("positive evidence window was not isolated from "
+                        "organic bot play")
+            return s
+
+        if not isolation_closed:
+            s.detail = ("positive evidence window did not emit its isolation "
+                        "close marker; bots may still be held")
+            return s
 
         if after is None or after >= before:
             s.detail = (f"in-zone count did not drop ({before} -> {after}), so "
