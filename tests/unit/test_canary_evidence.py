@@ -190,7 +190,7 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
     rows = {
         "manifests": [{
             "half": 1, "producer": "stats_logging", "producer_version": "1.17.0",
-            "schema_version": 20,
+            "schema_version": 21,
         }],
         "health": [
             {
@@ -205,7 +205,7 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
     }
     result = canary_evidence.capture_health_evidence(rows, {1})
     assert result["trusted"] is True
-    assert result["manifest_versions"] == ["stats_logging@1.17.0/schema-20"]
+    assert result["manifest_versions"] == ["stats_logging@1.17.0/schema-21"]
 
 
 def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():

@@ -1367,7 +1367,7 @@ def check_capture_health(db, *, match_id: str, half: int,
     manifest = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_manifests
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND producer='stats_logging' AND schema_version >= 20
+  AND producer='stats_logging' AND schema_version >= 21
 """)
     rows = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
