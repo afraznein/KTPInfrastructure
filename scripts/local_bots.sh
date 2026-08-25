@@ -222,7 +222,11 @@ EOF
     # The base image is built from artifacts/<VERSION>/, engine and ktpamx
     # together, so the artifacts' own ktpamx SHA is the right thing to compare
     # the core against: equal means they came out of one staging.
-    local art_sha_file="$REPO_ROOT/artifacts/${ARTIFACTS_VERSION:-latest}/ktpamx/SOURCE_SHA"
+    # VERSION, not latest: the Makefile builds images from artifacts/$(VERSION)
+    # and publish-latest OVERLAYS without deleting, so latest can name a different
+    # staging than the image actually came from -- and this guard would then
+    # compare against a core nobody is running.
+    local art_sha_file="$REPO_ROOT/artifacts/${ARTIFACTS_VERSION:-${VERSION:-latest}}/ktpamx/SOURCE_SHA"
     if [ -f "$CORE_SHA_FILE" ] && [ -f "$art_sha_file" ]; then
         local core_sha art_sha
         core_sha="$(cat "$CORE_SHA_FILE")"

@@ -50,7 +50,11 @@ cat <<'BANNER'
 BANNER
 
 # --- (2) the patched core, or nothing ------------------------------------
-if [ ! -f "$LANEB_DIR/ktpamx_i386.so" ]; then
+# KTPAMXX_SOURCE_SHA is written only by a successful Lane B build, so requiring
+# it makes this a provenance check rather than a filename check: any production
+# core copied to this path satisfies -f alone and boots bot-blind, which is the
+# exact failure the banner below promises to prevent.
+if [ ! -f "$LANEB_DIR/ktpamx_i386.so" ] || [ ! -f "$LANEB_DIR/KTPAMXX_SOURCE_SHA" ]; then
     cat >&2 <<EOF
 
 [entrypoint-bots] FATAL: no patched ktpamx at $LANEB_DIR/ktpamx_i386.so
@@ -86,9 +90,9 @@ install_laneb() {
 install_laneb "$LANEB_DIR/ktpamx_i386.so"   "$KTPAMX_DLL" "Lane B ktpamx core"
 install_laneb "$LANEB_DIR/dodx_ktp_i386.so" "$DODX_MOD"   "Lane B dodx module"
 
-if [ -f "$LANEB_DIR/ktpamx_i386.so.sha" ]; then
-    echo "[entrypoint-bots] built from KTPAMXX $(cat "$LANEB_DIR/ktpamx_i386.so.sha")"
-fi
+# Was reading ktpamx_i386.so.sha, which nothing writes -- the line could never
+# print. The build writes KTPAMXX_SOURCE_SHA.
+echo "[entrypoint-bots] built from KTPAMXX $(cat "$LANEB_DIR/KTPAMXX_SOURCE_SHA")"
 
 # --- (3) topology assertions ---------------------------------------------
 # Cheap, and they catch a botched image at boot instead of three hours into
@@ -99,7 +103,10 @@ if ! grep -q 'metamod_i386.so' /opt/hlds/dod/liblist.gam; then
     exit 1
 fi
 
-if ! grep -q 'ktpamx' /opt/hlds/dod/addons/extensions.ini; then
+# Strip comments first: a commented-out ktpamx line satisfies a bare grep, so
+# the assert passes on exactly the topology it exists to reject. The plugins.ini
+# check below already does this; this one did not.
+if ! grep -vE '^[[:space:]]*([;#]|//)' /opt/hlds/dod/addons/extensions.ini | grep -q 'ktpamx'; then
     echo "[entrypoint-bots] FATAL: extensions.ini no longer loads ktpamx." >&2
     echo "[entrypoint-bots] Extension mode is the one production property this" >&2
     echo "[entrypoint-bots] server keeps. Without it the run proves nothing." >&2
