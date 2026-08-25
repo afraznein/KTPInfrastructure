@@ -79,7 +79,7 @@
 #define BD_RESTART_TIMER_SECS 1.0
 #define BD_BREAK_CANDIDATE_SECS 2.5
 #define BD_OFFPOINT_DEATH_QUIET_SECS 4.1
-#define BD_OFFPOINT_ISOLATION_SECS 7.5
+#define BD_KILL_ISOLATION_SECS 7.5
 #define BD_WALKOFF_DEATH_QUIET_SECS 5.0
 #define BD_WALKOFF_PROTECT_SECS 5.0
 
@@ -509,15 +509,13 @@ stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
 	// with `auto` the harness does not know which flag was picked, so it cannot
 	// know which column of the follow-up count report to read.
 	new before = bd_zone_count(f, team)
-	new isolated = 0
-	if (!want_near) {
-		// The far negative must prove that its candidate aged out without an
-		// organic kill changing the same capping count. Isolate every live bot
-		// past the full 7.0s harness settle window.
-		isolated = bd_begin_test_isolation()
-		set_task(BD_OFFPOINT_ISOLATION_SECS, "bd_isolation_end",
-			BD_TASK_ISOLATION_END)
-	}
+	// Both kill probes need a closed world. For the positive, an unrelated
+	// death can change the same count or emit a same-name break; for the far
+	// negative it can create the candidate being tested. Selection happens
+	// first so isolation never manufactures a qualifying victim or capture.
+	new isolated = bd_begin_test_isolation()
+	set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end",
+		BD_TASK_ISOLATION_END)
 	log_amx("[BD] kill flag=%d capteam=%d mode=%s victim=%d vname=%s killer=%d kname=%s dist=%.0f count_before=%d owner_before=%d isolated=%d",
 		f, team, arg_mode, victim, vname, killer, kname, dist, before,
 		dodx_area_get_data(f, CA_owning_team), isolated)
@@ -525,8 +523,7 @@ stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
 	// Dispatch first: the detector reads its baseline here, and the victim has
 	// to still be in the zone for that baseline to be the pre-death count.
 	dodx_test_dispatch_client_death(killer, victim, 1, 0, 0)
-	if (!want_near)
-		bd_allow_isolated_death(victim)
+	bd_allow_isolated_death(victim)
 	dod_user_kill(victim)
 
 	set_task(1.5, "bd_report_after", f)
