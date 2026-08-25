@@ -9,7 +9,18 @@ the same "not in the dir I swept" failure one level deeper.
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 from pathlib import Path
+
+# stage-runner.py sys.exit()s at import when paramiko is absent, which pytest
+# surfaces as a collection INTERNALERROR that takes the whole tier-1 job down.
+# artifact_dir() never touches paramiko, so a stub is enough for these tests.
+if "paramiko" not in sys.modules:
+    try:
+        import paramiko  # noqa: F401
+    except ImportError:
+        sys.modules["paramiko"] = types.ModuleType("paramiko")
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "stage-runner.py"
 SPEC = importlib.util.spec_from_file_location("stage_runner", SCRIPT)
