@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import statistics
 import tomllib
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ COMPONENT_KEYS = (
     "conversion_points",
     "cap_break_points",
     "position_points",
+    "momentum_points",
 )
 POSITION_COMPONENT_KEYS = (
     "mid_defense_points",
@@ -115,6 +117,11 @@ def validate_facts(facts: dict[str, Any]) -> None:
         component_sum = sum(_f(components.get(key)) for key in POSITION_COMPONENT_KEYS)
         if not math.isclose(component_sum, _f(components.get("position_points")), abs_tol=0.06):
             raise ValueError(f"position_components do not sum for player {raw_player_id}")
+    momentum = facts.get("momentum_points") or {}
+    if any(_i(player_id) not in known for player_id in momentum):
+        raise ValueError("momentum_points references a player outside the roster")
+    if any(_f(value) < 0 for value in momentum.values()):
+        raise ValueError("momentum_points cannot contain negative points")
 
 
 def _reliability(facts: dict[str, Any], key: str, inferred: bool = False) -> bool:
@@ -239,7 +246,16 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         "flag_positions": _reliability(facts, "flag_positions"),
         "life_impact": _reliability(facts, "life_impact"),
         "life_boundaries_inferred": _reliability(facts, "life_boundaries_inferred"),
+        "momentum": _reliability(facts, "momentum"),
     }
+    momentum_cfg = profile.get("momentum") or {}
+    momentum_enabled = bool(momentum_cfg) and reliability["momentum"]
+    replace_conversion = momentum_enabled and bool(
+        momentum_cfg.get("replace_conversion_points")
+    )
+    replace_sequence = momentum_enabled and bool(
+        momentum_cfg.get("replace_sequence_continuity_points")
+    )
     bounded_combat = reliability["life_boundaries"] and reliability["damage_events"]
 
     damage_by_event: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -447,7 +463,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             by_event_id[death_id] for death_id, target in assigned.items()
             if target == event_id
         ]
-        pool = _conversion_pool(capture["outcome"], objective_cfg)
+        pool = 0.0 if replace_conversion else _conversion_pool(capture["outcome"], objective_cfg)
         weights: dict[int, float] = defaultdict(float)
         for death in deaths:
             decay = max(0.0, 1.0 - ((_f(capture.get("time")) - death["time"]) / window))
@@ -473,6 +489,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "team_push": len(deaths) >= 3 and len(distinct_killers) >= 2,
             "participant_count": len(weights),
             "allocations": allocations,
+            "replaced_by_momentum": replace_conversion,
         })
 
     break_events = []
@@ -506,9 +523,16 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
                 continue
             for key in POSITION_COMPONENT_KEYS:
                 players[player_id][key] = max(0.0, _f(components.get(key)))
-            players[player_id]["position_points"] = max(
-                0.0, _f(components.get("position_points"))
+            if replace_sequence:
+                players[player_id]["sequence_continuity_points"] = 0.0
+            players[player_id]["position_points"] = sum(
+                players[player_id][key] for key in POSITION_COMPONENT_KEYS
             )
+    if momentum_enabled:
+        for raw_player_id, value in (facts.get("momentum_points") or {}).items():
+            player_id = _i(raw_player_id)
+            if player_id in players:
+                players[player_id]["momentum_points"] = max(0.0, _f(value))
 
     duration = max(0.0, _f((facts.get("match") or {}).get("duration_seconds")))
     output_players = []
@@ -528,9 +552,35 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "total_points": _rounded(total_points),
             "points_per_minute": _rounded(total_points / (observed / 60.0)) if observed > 0 else None,
         })
-    output_players.sort(
-        key=lambda row: (-row["total_points"], row.get("player_name_at_match") or "")
+    impact_cfg = profile.get("impact_index") or {}
+    eligible_rates = [
+        _f(player["points_per_minute"]) for player in output_players
+        if player["points_per_minute"] is not None
+        and _f(roster[player["player_id"]].get("observed_seconds"), duration)
+        >= _f(impact_cfg.get("minimum_observed_seconds"), 300.0)
+    ]
+    explicit_reference = _f((facts.get("match") or {}).get("impact_index_reference_ppm"))
+    reference_ppm = explicit_reference or (
+        statistics.median(eligible_rates) if eligible_rates else 0.0
     )
+    typical_index = _f(impact_cfg.get("typical_index"), 75.0)
+    compression_exponent = _f(impact_cfg.get("compression_exponent"), 1.0)
+    for player in output_players:
+        observed = _f(roster[player["player_id"]].get("observed_seconds"), duration)
+        player["impact_index"] = (
+            _rounded(typical_index * math.pow(
+                _f(player["points_per_minute"]) / reference_ppm,
+                compression_exponent,
+            ))
+            if impact_cfg and reference_ppm > 0 and player["points_per_minute"] is not None
+            and observed >= _f(impact_cfg.get("minimum_observed_seconds"), 300.0)
+            else None
+        )
+    output_players.sort(key=lambda row: (
+        -(row["impact_index"] if row["impact_index"] is not None else -1)
+        if impact_cfg else -row["total_points"],
+        -row["total_points"], row.get("player_name_at_match") or "",
+    ))
     for rank, player in enumerate(output_players, start=1):
         player["rank"] = rank
 
@@ -593,6 +643,19 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "detail": "Urgency and contester evidence included."
             if reliability["break_context"] else "Only the bounded base break value is used.",
         },
+        "momentum": {
+            "status": "PASS" if momentum_enabled else "DISABLED",
+            "detail": "Aggregate team momentum and bounded swing attribution included."
+            if momentum_enabled else "Momentum facts unavailable or profile does not enable them.",
+        },
+        "impact_index": {
+            "status": "PASS" if explicit_reference > 0 else (
+                "WARN" if impact_cfg and reference_ppm > 0 else "DISABLED"
+            ),
+            "detail": "Qualified corpus reference supplied."
+            if explicit_reference > 0 else "Provisional match-median reference; not cross-match comparable."
+            if impact_cfg and reference_ppm > 0 else "Impact Index not enabled.",
+        },
     }
     return {
         "schema_version": 1,
@@ -611,6 +674,14 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
         "component_shares_percent": component_shares,
         "position_component_totals": position_component_totals,
         "life_impact_contract": profile.get("life_impact"),
+        "momentum_contract": profile.get("momentum"),
+        "momentum": facts.get("momentum_summary") if momentum_enabled else None,
+        "impact_index": {
+            "typical_index": typical_index,
+            "compression_exponent": compression_exponent,
+            "reference_points_per_minute": _rounded(reference_ppm),
+            "reference_source": "qualified_corpus" if explicit_reference > 0 else "provisional_match_median",
+        } if impact_cfg and reference_ppm > 0 else None,
         "match_total_points": _rounded(grand_total),
         "players": output_players,
         "events": {
@@ -618,6 +689,8 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "objectives": objective_events,
             "conversions": conversion_events,
             "cap_breaks": break_events,
+            "momentum_swings": (facts.get("momentum_summary") or {}).get("episodes", [])
+            if momentum_enabled else [],
         },
         "descriptive_only": {
             "team_kills": sum(_i(player.get("team_kills")) for player in roster.values()),
@@ -639,7 +712,10 @@ def build_ai_checkpoint(report: dict[str, Any]) -> dict[str, Any]:
                 "player_id": player["player_id"],
                 "player_name_at_match": player["player_name_at_match"],
                 "rank": player["rank"],
+                "impact_index": player.get("impact_index"),
                 "total_points": player["total_points"],
+                "position_points": player["position_points"],
+                "momentum_points": player["momentum_points"],
                 "kills": player["kills"],
                 "assists": player["assists"],
             }
@@ -706,6 +782,8 @@ def validate_ai_response(request: dict[str, Any], response: dict[str, Any]) -> N
         event_ids.add(str(event.get("capture_event_id")))
     for event in events.get("cap_breaks") or []:
         event_ids.add(str(event.get("event_id")))
+    for event in events.get("momentum_swings") or []:
+        event_ids.add(str(event.get("event_id")))
 
     if not isinstance(response.get("storylines"), list):
         raise ValueError("AI storylines must be a list")
@@ -747,24 +825,36 @@ def validate_ai_response(request: dict[str, Any], response: dict[str, Any]) -> N
 
 
 def render_markdown(report: dict[str, Any]) -> str:
+    is_v5 = report.get("profile") == "accumulation_v5_momentum"
     lines = [
         f"# Bounded accumulation shadow — {report['match']['match_id']}", "",
         f"Profile: `{report['profile']}` · State: **{report['publication_state']}** · "
         "Experimental, not KTPR", "",
         "No penalties are applied. Teamkills, suicides, and deaths are descriptive only.", "",
-        "| Rank | Player | Combat | Streak/context | Objectives | Position | Total | Pts/min |",
-        "|---:|---|---:|---:|---:|---:|---:|---:|",
+        "| Rank | Player | Impact Index | Raw audit | Combat | Streak/context | Objectives | Life position | Momentum |"
+        if is_v5 else "| Rank | Player | Combat | Streak/context | Objectives | Position | Total | Pts/min |",
+        "|---:|---|---:|---:|---:|---:|---:|---:|---:|"
+        if is_v5 else "|---:|---|---:|---:|---:|---:|---:|---:|",
     ]
     for player in report["players"]:
         combat = player["combat_finisher_points"] + player["combat_damage_share_points"] + player["fallback_assist_points"] + player["fallback_damage_points"]
         context = player["streak_points"] + player["shutdown_points"] + player["fast_chain_points"]
         objective = player["capture_points"] + player["conversion_points"] + player["cap_break_points"]
         ppm = "—" if player["points_per_minute"] is None else f"{player['points_per_minute']:.2f}"
-        lines.append(
-            f"| {player['rank']} | {player['player_name_at_match']} | {combat:.2f} | "
-            f"{context:.2f} | {objective:.2f} | {player['position_points']:.2f} | "
-            f"{player['total_points']:.2f} | {ppm} |"
-        )
+        if is_v5:
+            impact = "—" if player["impact_index"] is None else f"{player['impact_index']:.1f}"
+            lines.append(
+                f"| {player['rank']} | {player['player_name_at_match']} | **{impact}** | "
+                f"{player['total_points']:.2f} | {combat:.2f} | {context:.2f} | "
+                f"{objective:.2f} | {player['position_points']:.2f} | "
+                f"{player['momentum_points']:.2f} |"
+            )
+        else:
+            lines.append(
+                f"| {player['rank']} | {player['player_name_at_match']} | {combat:.2f} | "
+                f"{context:.2f} | {objective:.2f} | {player['position_points']:.2f} | "
+                f"{player['total_points']:.2f} | {ppm} |"
+            )
     lines += ["", "## Reliability gates", "", "| Component | Status | Detail |", "|---|---|---|"]
     for name, gate in report["quality_gates"].items():
         lines.append(f"| {name} | {gate['status']} | {gate['detail']} |")
@@ -792,7 +882,8 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"| Active flag defense | {position_totals['active_flag_defense_points']:.2f} | "
             "Kills near a currently owned, actively threatened non-mid flag. |",
             f"| Sequence continuity | {position_totals['sequence_continuity_points']:.2f} | "
-            "Same-life defense, capture, forward-push, and enemy-capture transitions. |",
+            + ("Replaced by the v5 momentum pool to avoid duplicate push rewards. |"
+               if is_v5 else "Same-life defense, capture, forward-push, and enemy-capture transitions. |"),
             "", "### Player positional components", "",
             "| Rank | Player | Mid defense | Aggression | Enemy-flag hold | Active flag defense | Sequence | Position total |",
             "|---:|---|---:|---:|---:|---:|---:|---:|",
@@ -822,7 +913,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"arrival at an enemy-side flag adds {life_cfg['reach_enemy_flag_points']:.0f}. "
             f"A qualifying mid-defense kill adds {life_cfg['mid_defense_kill_points']:.0f}; "
             f"another actively defended flag kill adds {life_cfg['active_flag_defense_kill_points']:.0f}.", "",
-            "Continuity rewards verified same-life state changes, not the kills again: "
+            "The v4 continuity baseline rewarded verified same-life state changes, not the kills again: "
             f"defense→mid capture {life_cfg['defense_to_mid_capture_points']:.0f}, "
             f"defense→forward push {life_cfg['defense_to_forward_push_points']:.0f}, "
             f"mid capture→forward push {life_cfg['mid_capture_to_forward_push_points']:.0f}, and "
@@ -839,6 +930,50 @@ def render_markdown(report: dict[str, Any]) -> str:
             "assumption. A zero component can therefore mean that the required evidence was "
             "unavailable, not that the underlying behavior never occurred.", "",
         ]
+        if is_v5:
+            momentum = report.get("momentum") or {}
+            impact_index = report.get("impact_index") or {}
+            lines += [
+                "", "## Team momentum over time", "",
+                "[Open the full-size momentum graph](momentum.svg)", "",
+                f"Positive favors team `{momentum.get('team1', 'team 1')}`; negative favors "
+                f"team `{momentum.get('team2', 'team 2')}`. Known flag ownership covered "
+                f"{momentum.get('ownership_coverage_percent', 0):.1f}% of the weighted timeline.", "",
+                "Every five seconds, the private engine combines territory (35%), aggregate field "
+                "position (25%), recent impactful kills (20%), temporary manpower (10%), and "
+                "pressure beyond mid (10%), then smooths it onto a −100 to +100 scale. The public "
+                "curve is team aggregate only; it contains no player routes or coordinates.", "",
+                "A qualifying swing uses `min(150, max(0, swing − 15) × 2)`. Recent kills, capture "
+                "credit, and private forward progress divide that fixed, non-negative pool. V5 "
+                "replaces conversion and sequence-continuity awards with this one pool so a push "
+                "is not counted repeatedly.", "",
+                "| Swing | Half/time | Team | Momentum | Pool | Top allocations |",
+                "|---|---|---:|---:|---:|---|",
+            ]
+            names = {str(row["player_id"]): row["player_name_at_match"] for row in report["players"]}
+            for episode in sorted(momentum.get("episodes") or [], key=lambda row: -_f(row.get("swing")))[:10]:
+                allocations = sorted((episode.get("allocations") or {}).items(), key=lambda item: -_f(item[1]))[:4]
+                allocation_text = ", ".join(
+                    f"{names.get(player_id, player_id)} {_f(value):.1f}"
+                    for player_id, value in allocations
+                ) or "none"
+                lines.append(
+                    f"| {episode['event_id']} | H{episode['half']} "
+                    f"{episode['start_time']:.0f}–{episode['end_time']:.0f}s | "
+                    f"{episode['team']} | {episode['start_momentum']:.1f} → "
+                    f"{episode['end_momentum']:.1f} | {episode['pool']:.1f} | "
+                    f"{allocation_text} |"
+                )
+            lines += [
+                "", "## Impact Index normalization", "",
+                f"The provisional qualified-player match median "
+                f"({impact_index.get('reference_points_per_minute', 0):.2f} raw points/minute) "
+                f"is displayed as {impact_index.get('typical_index', 75):.0f}. Formula: "
+                f"`75 × (player raw points/minute ÷ reference)^{impact_index.get('compression_exponent', 1):.2f}`. "
+                "The compression prevents event-volume outliers from exploding the display. Raw deterministic points remain in "
+                "the audit column. Until a real-match corpus reference is approved, values are not "
+                "comparable across matches.", "",
+            ]
         top = report["players"][0]
         bounded = report["quality_gates"]["bounded_combat"]["status"] == "PASS"
         lines += [f"## Worked scoring example: {top['player_name_at_match']}", ""]
@@ -866,6 +1001,7 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- Enemy-flag hold: {top['enemy_flag_hold_points']:.2f}",
             f"- Active flag defense: {top['active_flag_defense_points']:.2f}",
             f"- Sequence continuity: {top['sequence_continuity_points']:.2f}",
+            f"- Momentum swing attribution: {top['momentum_points']:.2f}",
             f"- **Total: {top['total_points']:.2f}**", "",
             "The combat, streak, chain, and capture awards remain separate. The five "
             "life-impact lines describe only what changed territorially or defensively "

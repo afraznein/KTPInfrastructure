@@ -18,6 +18,7 @@ from scripts.accumulation_v3 import (
     validate_ai_response,
 )
 from scripts.compare_accumulation_models import compare_models, render_markdown as render_comparison
+from scripts.momentum_v5 import render_momentum_svg
 
 
 def _json_bytes(value: Any) -> bytes:
@@ -44,6 +45,10 @@ def build_bundle(
         "comparison.md": render_comparison(comparison).encode("utf-8"),
         "ai-request.json": _json_bytes(checkpoint),
     }
+    if report.get("momentum"):
+        files["momentum.svg"] = render_momentum_svg(
+            report["momentum"], match_id
+        ).encode("utf-8")
     ai_status = "PENDING_OPTIONAL"
     publication_checkpoint = "HUMAN_REVIEW_REQUIRED"
     if ai_response is not None:

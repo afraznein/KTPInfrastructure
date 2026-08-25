@@ -151,6 +151,64 @@
       },
       "additionalProperties": false
     },
+    "momentum_points": {
+      "description": "Derived player allocations from bounded team-momentum swing pools.",
+      "type": "object",
+      "patternProperties": {"^[1-9][0-9]*$": {"type": "number", "minimum": 0}},
+      "additionalProperties": false
+    },
+    "momentum_summary": {
+      "description": "Aggregate team curve and sanitized swing ledger; never personal positions.",
+      "type": "object",
+      "required": ["status", "curve", "episodes", "ownership_coverage_percent"],
+      "properties": {
+        "status": {"type": "string"},
+        "team1": {"type": "integer"},
+        "team2": {"type": "integer"},
+        "scale": {"type": "object"},
+        "ownership_coverage_percent": {"type": "number", "minimum": 0, "maximum": 100},
+        "component_weights": {"type": "object"},
+        "curve": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["half", "time", "momentum"],
+            "properties": {
+              "half": {"type": "integer", "minimum": 1},
+              "time": {"type": "number", "minimum": 0},
+              "momentum": {"type": "number", "minimum": -100, "maximum": 100}
+            },
+            "additionalProperties": false
+          }
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["event_id", "half", "start_time", "end_time", "team", "start_momentum", "end_momentum", "swing", "pool", "capture_centered", "allocations"],
+            "properties": {
+              "event_id": {"type": "string", "minLength": 1},
+              "half": {"type": "integer", "minimum": 1},
+              "start_time": {"type": "number", "minimum": 0},
+              "end_time": {"type": "number", "minimum": 0},
+              "team": {"type": "integer"},
+              "start_momentum": {"type": "number", "minimum": -100, "maximum": 100},
+              "end_momentum": {"type": "number", "minimum": -100, "maximum": 100},
+              "swing": {"type": "number", "minimum": 0},
+              "pool": {"type": "number", "minimum": 0},
+              "capture_centered": {"type": "boolean"},
+              "allocations": {
+                "type": "object",
+                "patternProperties": {"^[1-9][0-9]*$": {"type": "number", "minimum": 0}},
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "reliability": {
       "type": "object",
       "properties": {
@@ -163,7 +221,8 @@
         "positions": {"type": "boolean"},
         "flag_positions": {"type": "boolean"},
         "life_impact": {"type": "boolean"},
-        "life_boundaries_inferred": {"type": "boolean"}
+        "life_boundaries_inferred": {"type": "boolean"},
+        "momentum": {"type": "boolean"}
       },
       "additionalProperties": false
     }

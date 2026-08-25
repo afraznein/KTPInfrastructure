@@ -91,10 +91,10 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
     damped = _aggregate_model(facts, "damped_no_penalty", 0.02, False)
     bounded_report = score_match(facts, profile)
     profile_name = str(profile.get("profile", {}).get("name") or "bounded_v3")
-    bounded_name = (
-        "bounded_v4_life_impact"
-        if profile_name == "accumulation_v4_life_impact" else "bounded_v3"
-    )
+    bounded_name = {
+        "accumulation_v4_life_impact": "bounded_v4_life_impact",
+        "accumulation_v5_momentum": "bounded_v5_momentum",
+    }.get(profile_name, "bounded_v3")
     bounded = {
         "name": bounded_name,
         "players": [
@@ -145,6 +145,7 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
             "damped_no_penalty": "No penalties and 0.02 damage, combined with the current positional term.",
             "bounded_v3": "Fixed death/objective pools plus contextual positive bonuses.",
             "bounded_v4_life_impact": "Bounded v3 events plus private-derived per-life territorial impact.",
+            "bounded_v5_momentum": "Bounded life impact plus team-momentum swings and a normalized Impact Index.",
         },
     }
 
@@ -152,7 +153,10 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
 def render_markdown(comparison: dict[str, Any]) -> str:
     by_name = {model["name"]: model for model in comparison["models"]}
     bounded_name = comparison.get("bounded_model", "bounded_v3")
-    bounded_label = "Bounded v4 life-impact" if bounded_name == "bounded_v4_life_impact" else "Bounded v3"
+    bounded_label = {
+        "bounded_v4_life_impact": "Bounded v4 life-impact",
+        "bounded_v5_momentum": "Bounded v5 momentum",
+    }.get(bounded_name, "Bounded v3")
     lines = [
         f"# Accumulation model comparison — {comparison['match_id']}", "",
         comparison.get("comparison_scope", ""), "",
