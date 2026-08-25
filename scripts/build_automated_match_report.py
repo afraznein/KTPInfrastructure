@@ -20,10 +20,13 @@ from scripts.accumulation_v3 import (
 )
 from scripts.compare_accumulation_models import compare_models, render_markdown as render_comparison
 from scripts.momentum_v5 import render_momentum_svg
+from scripts.points_timeline import render_points_timeline_svg
 
 
 def _json_bytes(value: Any) -> bytes:
-    return (json.dumps(value, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    return (json.dumps(
+        value, indent=2, ensure_ascii=False, allow_nan=False
+    ) + "\n").encode("utf-8")
 
 
 def _sha256(body: bytes) -> str:
@@ -71,6 +74,9 @@ def render_html(report: dict[str, Any]) -> str:
     momentum = report.get("momentum") or {}
     graph = render_momentum_svg(momentum, str((report.get("match") or {}).get("match_id", ""))) \
         if momentum else "<p>Momentum evidence unavailable.</p>"
+    points_timeline = report.get("points_timeline") or {}
+    points_graph = render_points_timeline_svg(points_timeline) \
+        if points_timeline else "<p>Points timeline unavailable.</p>"
     normalization = report.get("impact_index") or {}
     match = report.get("match") or {}
     return f"""<!doctype html>
@@ -87,6 +93,7 @@ svg{{max-width:100%;height:auto;background:white;border-radius:6px}}code{{color:
 <h1>KTP accumulated match report</h1><p class="sub"><code>{esc(match.get('match_id'))}</code> · {esc(match.get('map_name'))} · profile <code>{esc(report.get('profile'))}</code> · experimental shadow</p>
 <div class="panel"><h2>Player scoreboard</h2><p>Overall rating uses the complete accumulated score. The provisional match median is {float(normalization.get('center_index') or 100):.0f}; momentum is one bounded additive component.</p>
 <table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Rating</th><th>Minutes</th><th>Raw</th><th>Combat</th><th>Context</th><th>Position</th><th>Momentum</th><th>K/D/A</th><th>Damage</th></tr></thead><tbody>{''.join(players)}</tbody></table></div>
+<div class="panel"><h2>Accumulated points over time</h2>{points_graph}<p><a href="points-timeline.svg">Open the full-size graph</a> · <a href="points-timeline.json">Inspect the sanitized 15-second data</a></p></div>
 <div class="panel"><h2>Team momentum</h2>{graph}</div>
 <div class="panel"><h2>Component totals</h2><table><thead><tr><th>Component</th><th>Points</th><th>Share</th></tr></thead><tbody>{components}</tbody></table></div>
 <div class="panel"><h2>Evidence quality</h2><table><thead><tr><th>Gate</th><th>Status</th><th>Detail</th></tr></thead><tbody>{gates}</tbody></table></div>
@@ -114,6 +121,11 @@ def build_bundle(
     if report.get("momentum"):
         files["momentum.svg"] = render_momentum_svg(
             report["momentum"], match_id
+        ).encode("utf-8")
+    if report.get("points_timeline"):
+        files["points-timeline.json"] = _json_bytes(report["points_timeline"])
+        files["points-timeline.svg"] = render_points_timeline_svg(
+            report["points_timeline"]
         ).encode("utf-8")
     ai_status = "PENDING_OPTIONAL"
     publication_checkpoint = "HUMAN_REVIEW_REQUIRED"
@@ -161,6 +173,7 @@ def build_bundle(
             "ai_can_change_quality_gates": False,
             "ai_can_publish": False,
             "raw_individual_positions_exported": False,
+            "points_timeline_team_only": True,
         },
     }
     manifest_body = _json_bytes(manifest)

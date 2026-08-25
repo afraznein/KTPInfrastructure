@@ -18,6 +18,11 @@ from scripts.build_automated_match_report import build_bundle
 from scripts.life_impact_v4 import derive_life_impact
 from scripts.match_analytics import sql_literal, tsv_rows
 from scripts.momentum_v5 import derive_momentum
+from scripts.points_timeline import (
+    BIN_SECONDS,
+    CONSERVATION_TOLERANCE,
+    privacy_violations as timeline_privacy_violations,
+)
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -147,6 +152,79 @@ def _participation_seconds(
         player_id: round(min(seconds, duration_seconds), 2)
         for player_id, seconds in result.items()
     }
+
+
+def _aggregate_team_life_timing(
+    private_lives: list[dict[str, Any]], life_points: dict[int, dict[str, float]],
+    stable_teams: dict[int, int], half_end_bins: dict[int, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Collapse private per-life awards to team/time rows immediately.
+
+    Final per-player match caps and rounding remain authoritative. Private
+    life rows supply only proportional timing weights and are never returned.
+    """
+    by_player: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for life in private_lives:
+        by_player[_i(life.get("player_id"))].append(life)
+    aggregate: dict[tuple[int, float, int], float] = defaultdict(float)
+    contributors: dict[tuple[int, float, int], set[int]] = defaultdict(set)
+    deferred: dict[tuple[int, int], float] = defaultdict(float)
+    observed_half_end: dict[int, float] = defaultdict(lambda: BIN_SECONDS)
+    for player_id, components in sorted(life_points.items()):
+        team = stable_teams.get(player_id, 0)
+        target = max(0.0, _f(components.get("position_points")))
+        if team not in (1, 2) or target <= 0:
+            continue
+        weighted = []
+        for life in by_player.get(player_id, []):
+            awarded = life.get("awarded_components") or {}
+            points = sum(
+                max(0.0, _f(awarded.get(key)))
+                for key in (
+                    "mid_defense_points", "aggression_points",
+                    "enemy_flag_hold_points", "active_flag_defense_points",
+                )
+            )
+            if points > 0:
+                weighted.append((
+                    max(1, _i(life.get("half"), 1)),
+                    max(0.0, _f(life.get("end_time"))), points,
+                ))
+        total = sum(row[2] for row in weighted)
+        if total <= 0:
+            deferred[(1, team)] += target
+            continue
+        scale = target / total
+        for half, when, points in weighted:
+            bin_index = 0 if when <= 0 else math.ceil(when / BIN_SECONDS) - 1
+            bin_end = (bin_index + 1) * BIN_SECONDS
+            key = (half, bin_end, team)
+            aggregate[key] += points * scale
+            contributors[key].add(player_id)
+            observed_half_end[half] = max(observed_half_end[half], bin_end)
+    public = []
+    for (half, bin_end, team), points in sorted(aggregate.items()):
+        if len(contributors[(half, bin_end, team)]) >= 3:
+            public.append({
+                "half": half, "bin_end": round(bin_end, 4), "team": team,
+                "points": round(points, 4), "timing": "team_bin",
+            })
+        else:
+            deferred[(half, team)] += points
+    reconciliation_ends = dict(observed_half_end)
+    reconciliation_ends.update(half_end_bins or {})
+    for (half, team), points in sorted(deferred.items()):
+        if points <= 0:
+            continue
+        public.append({
+            "half": half,
+            "bin_end": round(max(BIN_SECONDS, reconciliation_ends.get(half, BIN_SECONDS)), 4),
+            "team": team, "points": round(points, 4),
+            "timing": "privacy_deferred_reconciliation",
+        })
+    return sorted(public, key=lambda row: (
+        row["half"], row["bin_end"], row["team"], row["timing"]
+    ))
 
 
 def _catalog_flags(map_name: str, catalog_dir: Path | None) -> list[dict[str, Any]]:
@@ -299,6 +377,14 @@ ORDER BY p.half, game_time, p.id
             )
             row["game_time"] = max(0.0, row["game_time"] - baseline)
     sides, stable_teams = _stable_and_side_teams(samples, roster_team)
+    side_stable_votes: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for (half, player_id), side in sides.items():
+        stable = stable_teams.get(player_id, 0)
+        if side in (1, 2) and stable in (1, 2):
+            side_stable_votes[(half, side)].append(stable)
+    side_to_stable = {
+        key: _mode(values) for key, values in side_stable_votes.items()
+    }
     for row in samples:
         row["momentum_team"] = stable_teams.get(row["player_id"], row["team"])
 
@@ -319,6 +405,8 @@ ORDER BY f.half, f.eventTime, f.id
             "time": _f(row["game_time"]), "killer_id": killer, "victim_id": victim,
             "killer_team": sides.get((half, killer), roster_team.get(killer, 0)),
             "victim_team": sides.get((half, victim), roster_team.get(victim, 0)),
+            "killer_momentum_team": stable_teams.get(killer, roster_team.get(killer, 0)),
+            "victim_momentum_team": stable_teams.get(victim, roster_team.get(victim, 0)),
             "victim_life_id": f"h{half}-p{victim}-frag-{row['id']}",
         })
 
@@ -400,6 +488,7 @@ ORDER BY c.half, c.event_time, c.id
         captures.append({
             "event_id": f"capture-{index}", "half": half, "time": when,
             "team": team, "flag_name": flag_name,
+            "momentum_team": side_to_stable.get((half, team), team),
             "flag_role": _flag_role(flag_name, team, topology),
             "credited_player_ids": sorted(credited), "is_capout": False,
         })
@@ -464,6 +553,7 @@ ORDER BY flag_index
     players = [{
         "player_id": _i(row["player_id"]),
         "player_name_at_match": str(row["player_name"]),
+        "team": stable_teams.get(_i(row["player_id"]), _i(row.get("team"))),
         "team_name": f"Team {stable_teams.get(_i(row['player_id']), _i(row.get('team')))}",
         "kills": kills[_i(row["player_id"])], "deaths": deaths[_i(row["player_id"])],
         "assists": assists.get(_i(row["player_id"]), 0),
@@ -486,6 +576,15 @@ ORDER BY flag_index
                 "active_flag_defense_points", "sequence_continuity_points",
             )
         ), 2)
+    half_end_bins = {
+        half: max(BIN_SECONDS, math.ceil(max(
+            row["game_time"] for row in samples if row["half"] == half
+        ) / BIN_SECONDS) * BIN_SECONDS)
+        for half in {row["half"] for row in samples}
+    }
+    team_position_contributions = _aggregate_team_life_timing(
+        private_lives, life_points, stable_teams, half_end_bins
+    )
     momentum_points, momentum_summary, private_momentum = derive_momentum(
         players, samples, flags, frags, captures, profile, topology, flag_states
     )
@@ -517,6 +616,7 @@ ORDER BY flag_index
         "position_points": {str(pid): row["position_points"]
                             for pid, row in sorted(life_points.items())},
         "position_components": {str(pid): row for pid, row in sorted(life_points.items())},
+        "team_position_contributions": team_position_contributions,
         "momentum_points": {str(pid): value for pid, value in sorted(momentum_points.items())},
         "momentum_summary": momentum_summary,
         "reliability": {
@@ -587,6 +687,22 @@ def verify_bundle(
     privacy.extend(facts_privacy)
     if privacy:
         errors.append("public report contains private keys: " + ", ".join(privacy[:10]))
+    timeline = report.get("points_timeline") or {}
+    timeline_privacy = timeline_privacy_violations(timeline)
+    if timeline_privacy:
+        errors.append("points timeline contains private keys: " + ", ".join(timeline_privacy[:10]))
+    conservation = timeline.get("conservation") or {}
+    timeline_conservation_valid = bool(timeline) and math.isclose(
+        _f(conservation.get("timeline_match_total_points")),
+        _f(report.get("match_total_points")), abs_tol=CONSERVATION_TOLERANCE,
+    )
+    for component, expected in (report.get("component_totals") or {}).items():
+        observed = ((conservation.get("component_totals") or {}).get(component) or {}).get("timeline")
+        if not math.isclose(_f(observed), _f(expected), abs_tol=CONSERVATION_TOLERANCE):
+            timeline_conservation_valid = False
+            errors.append(f"points timeline component mismatch: {component}")
+    if not timeline_conservation_valid:
+        errors.append("points timeline does not conserve the report total")
     manifest_hashes_valid = True
     for item in manifest.get("files") or []:
         path = output_dir / item["path"]
@@ -596,6 +712,7 @@ def verify_bundle(
     required_files = {
         "report.json", "report.md", "report.html", "comparison.json", "comparison.md",
         "ai-request.json", "momentum.svg",
+        "points-timeline.json", "points-timeline.svg",
     }
     manifest_files = {item.get("path") for item in manifest.get("files") or []}
     missing_files = sorted(required_files - manifest_files)
@@ -606,12 +723,12 @@ def verify_bundle(
     if (report.get("quality_gates") or {}).get("position", {}).get("status") != "PASS":
         errors.append("position quality gate did not pass")
     facts_hash = hashlib.sha256(
-        (json.dumps(facts, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        (json.dumps(facts, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
     ).hexdigest()
     if facts_hash != manifest.get("facts_sha256"):
         errors.append("normalized facts hash does not match the manifest")
     profile_hash = hashlib.sha256(
-        (json.dumps(profile, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        (json.dumps(profile, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
     ).hexdigest()
     if profile_hash != manifest.get("profile_sha256"):
         errors.append("scoring profile hash does not match the manifest")
@@ -619,7 +736,8 @@ def verify_bundle(
     second = score_match(facts, profile)
     def semantic(value):
         return json.dumps({k: v for k, v in value.items() if k != "generated_at"},
-                          sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                          sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                          allow_nan=False)
     deterministic = hashlib.sha256(semantic(first).encode()).hexdigest() == \
         hashlib.sha256(semantic(second).encode()).hexdigest()
     if not deterministic:
@@ -633,6 +751,8 @@ def verify_bundle(
             "overall_rating": "PASS" if not any("overall rating" in item for item in errors) else "FAIL",
             "momentum_pool_bounds": "PASS" if momentum_pools_valid else "FAIL",
             "public_privacy": "PASS" if not privacy else "FAIL",
+            "points_timeline_privacy": "PASS" if not timeline_privacy else "FAIL",
+            "points_timeline_conservation": "PASS" if timeline_conservation_valid else "FAIL",
             "manifest_hashes": "PASS" if manifest_hashes_valid else "FAIL",
             "required_files": "PASS" if not missing_files else "FAIL",
             "position_and_momentum": "PASS" if not any(
@@ -657,7 +777,10 @@ def generate_lane_b_report(
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     facts_path = output_dir / "facts.normalized.json"
-    facts_path.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    facts_path.write_text(
+        json.dumps(facts, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     profile = load_profile(profile_path)
     manifest = build_bundle(facts, profile, output_dir)
     report = json.loads((output_dir / "report.json").read_text(encoding="utf-8"))
@@ -667,7 +790,8 @@ def generate_lane_b_report(
     )
     verification["private_derivation"] = private_meta
     (output_dir / "report-verification.json").write_text(
-        json.dumps(verification, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        json.dumps(verification, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
+        encoding="utf-8",
     )
     if verification["status"] != "PASS":
         raise ValueError("v5 report verification failed: " + "; ".join(verification["errors"]))

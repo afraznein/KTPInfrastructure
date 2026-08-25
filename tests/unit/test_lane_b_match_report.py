@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scripts.lane_b_match_report import (
+    _aggregate_team_life_timing,
     _ownership_is_reliable,
     _participation_seconds,
     _associate_damage_to_deaths,
@@ -185,6 +186,9 @@ def test_live_database_extractor_builds_private_derived_public_facts():
     assert max(row["time"] for row in facts["momentum_summary"]["curve"]) <= 360
     body = json.dumps(facts).lower()
     assert "pos_x" not in body and "steam_id" not in body
+    position_timing = facts["team_position_contributions"]
+    assert position_timing
+    assert not any("player" in key for row in position_timing for key in row)
     assert private["position_samples"] == 876
 
 
@@ -210,6 +214,82 @@ def test_damage_rows_are_bounded_to_the_victims_next_death():
     ]
 
 
+def test_private_distinct_life_end_times_collapse_to_one_team_bin():
+    private_lives = [
+        {"half": 1, "player_id": 1, "end_time": 10.125,
+         "awarded_components": {"aggression_points": 10}},
+        {"half": 1, "player_id": 2, "end_time": 13.875,
+         "awarded_components": {"mid_defense_points": 20}},
+    ]
+    life_points = {
+        1: {"position_points": 10},
+        2: {"position_points": 20},
+    }
+    public = _aggregate_team_life_timing(
+        private_lives, life_points, {1: 1, 2: 1}, {1: 60}
+    )
+    assert public == [{
+        "half": 1, "bin_end": 60, "team": 1, "points": 30.0,
+        "timing": "privacy_deferred_reconciliation",
+    }]
+    body = json.dumps(public)
+    assert "10.125" not in body and "13.875" not in body
+    assert "player" not in body and "end_time" not in body and "contributor" not in body
+
+
+@pytest.mark.parametrize("player_count", [1, 2])
+def test_sparse_position_bins_never_reveal_the_original_bin(player_count):
+    lives = [
+        {"half": 1, "player_id": player_id, "end_time": 10 + player_id / 10,
+         "awarded_components": {"aggression_points": 10}}
+        for player_id in range(1, player_count + 1)
+    ]
+    totals = {player_id: {"position_points": 10}
+              for player_id in range(1, player_count + 1)}
+    public = _aggregate_team_life_timing(
+        lives, totals, {player_id: 1 for player_id in totals}, {1: 90}
+    )
+    assert public == [{
+        "half": 1, "bin_end": 90, "team": 1,
+        "points": 10.0 * player_count,
+        "timing": "privacy_deferred_reconciliation",
+    }]
+
+
+def test_three_distinct_position_contributors_may_keep_the_team_bin():
+    lives = [
+        {"half": 1, "player_id": player_id, "end_time": 10 + player_id / 10,
+         "awarded_components": {"aggression_points": 10}}
+        for player_id in range(1, 4)
+    ]
+    totals = {player_id: {"position_points": 10} for player_id in range(1, 4)}
+    public = _aggregate_team_life_timing(
+        lives, totals, {1: 1, 2: 1, 3: 1}, {1: 90}
+    )
+    assert public == [{
+        "half": 1, "bin_end": 15.0, "team": 1, "points": 30.0,
+        "timing": "team_bin",
+    }]
+
+
+def test_multiple_sparse_bins_pool_exactly_at_half_reconciliation():
+    lives = [
+        {"half": 1, "player_id": 1, "end_time": 10,
+         "awarded_components": {"aggression_points": 10}},
+        {"half": 1, "player_id": 2, "end_time": 25,
+         "awarded_components": {"mid_defense_points": 20}},
+    ]
+    public = _aggregate_team_life_timing(
+        lives, {1: {"position_points": 10}, 2: {"position_points": 20}},
+        {1: 1, 2: 1}, {1: 120},
+    )
+    assert sum(row["points"] for row in public) == 30
+    assert public == [{
+        "half": 1, "bin_end": 120, "team": 1, "points": 30.0,
+        "timing": "privacy_deferred_reconciliation",
+    }]
+
+
 def test_live_extractor_bundle_is_generated_verified_and_summarized(tmp_path: Path):
     result = generate_lane_b_report(ExtractorDb(), "extractor-TEST", tmp_path)
     assert result["verification"]["status"] == "PASS"
@@ -220,10 +300,15 @@ def test_live_extractor_bundle_is_generated_verified_and_summarized(tmp_path: Pa
     assert result["verification"]["private_derivation"]["retained"] is False
     assert json.loads((tmp_path / "report-verification.json").read_text())["status"] == "PASS"
     assert {"facts.normalized.json", "report.json", "report.md", "report.html",
-            "manifest.json", "momentum.svg"} <= {
+            "manifest.json", "momentum.svg", "points-timeline.json",
+            "points-timeline.svg"} <= {
         path.name for path in tmp_path.iterdir()
     }
     assert "KTP accumulated match report" in (tmp_path / "report.html").read_text()
+    assert "points-timeline.svg" in (tmp_path / "report.html").read_text()
+    assert result["verification"]["checks"]["points_timeline_conservation"] == "PASS"
+    manifest_files = {row["path"] for row in result["manifest"]["files"]}
+    assert {"points-timeline.json", "points-timeline.svg"} <= manifest_files
     summary = summary_for_lane(result)
     assert summary["status"] == "PASS"
     assert len(summary["players"]) == 12
