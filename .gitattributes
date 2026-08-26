@@ -32,3 +32,6 @@ ops/cron-inventory/**/cron.d/* text eol=lf
 scripts/hooks/* text eol=lf
 # Workflow `run:` blocks are bash on a Linux runner; CRLF leaks \r into them.
 .github/workflows/*.yml text eol=lf
+# auditd rule files are parsed by augenrules on the host; a CRLF line makes it
+# skip the rule and still exit 0, so the audit reads as "nothing ever wrote there".
+*.rules text eol=lf
