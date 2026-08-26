@@ -190,23 +190,28 @@ def test_match_epoch_interval_is_exactly_match_and_half_scoped():
 
         def sql(self, query):
             self.query = query
-            return "start_epoch\tend_epoch\n105\t120\n"
+            return "start_epoch\tend_epoch\tactivation_epoch\n105\t120\t107\n"
 
     db = FakeDb()
     interval = match_epoch_interval(
         db, match_id="diagnostic-TEST", half=1
     )
 
-    assert interval == {"start_epoch": 105, "end_epoch": 120}
+    assert interval == {
+        "start_epoch": 105, "end_epoch": 120, "activation_epoch": 107,
+    }
     assert "BINARY 'diagnostic-TEST'" in db.query
     assert "half=1" in db.query
+    assert "ktp_capture_manifests" in db.query
 
 
 def test_full_lane_scopes_statsme_and_frag_markers_per_match():
     runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
 
-    assert "log_invariants.producer_markers_for_match(" in runner
+    assert "log_invariants.producer_marker_scopes(" in runner
+    assert "log_invariants.objective_attempt_marker_scopes(" in runner
     assert "ignored_producer_markers=buffered_frag_markers" in runner
+    assert '"objective_attempt_marker_scope"' in runner
     assert "log_invariants.count_in_match(" in runner
     assert "source_rows_by_context=statsme_source_rows" in runner
     assert "diagnostic_match_log" in runner

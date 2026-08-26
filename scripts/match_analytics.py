@@ -251,6 +251,8 @@ def evaluate_capture_authorization(
     observed_halves: set[int],
     manifests: list[dict[str, Any]],
     health: list[dict[str, Any]],
+    *,
+    require_activation: bool = False,
 ) -> dict[str, Any]:
     """Validate per-match schema-22 authorization without vacuous passes."""
     expected_types = set(CAPTURE_EVENT_TYPES)
@@ -279,6 +281,21 @@ def evaluate_capture_authorization(
             or not {"objective_attempt", "grenade_entity"}.issubset(capabilities)
         ):
             errors.append(f"half {row.get('half')} manifest is not schema22/2.00 authorized")
+        if require_activation:
+            activation = row.get("activation_epoch")
+            match_start = row.get("match_start_epoch")
+            try:
+                latency = int(activation) - int(match_start)
+            except (TypeError, ValueError):
+                errors.append(
+                    f"half {row.get('half')} manifest activation epoch is missing"
+                )
+            else:
+                if not 0 <= latency <= 3:
+                    errors.append(
+                        f"half {row.get('half')} manifest activation latency "
+                        f"{latency}s is outside inclusive 0..3s policy"
+                    )
     streams: dict[str, dict[str, int]] = {}
     for half in sorted(observed):
         rows = [row for row in health if int(row.get("half") or 0) == half]
@@ -342,9 +359,14 @@ def match_capture_authorization(
     if not capture_tables_available:
         return evaluate_capture_authorization(observed, [], [])
     manifests = tsv_rows(db.sql(f"""
-SELECT half, schema_version, capabilities, position_interval
-FROM ktp_capture_manifests WHERE BINARY match_id=BINARY {literal}
-ORDER BY half, id
+SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
+       cm.event_epoch AS activation_epoch,
+       UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
+FROM ktp_capture_manifests cm
+LEFT JOIN ktp_matches m
+  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE BINARY cm.match_id=BINARY {literal}
+ORDER BY cm.half, cm.id
 """))
     health = tsv_rows(db.sql(f"""
 SELECT half, event_type, attempted, enqueued, dropped, emitted,
@@ -354,7 +376,9 @@ SELECT half, event_type, attempted, enqueued, dropped, emitted,
 FROM ktp_capture_health WHERE BINARY match_id=BINARY {literal}
 ORDER BY half, event_type
 """))
-    return evaluate_capture_authorization(observed, manifests, health)
+    return evaluate_capture_authorization(
+        observed, manifests, health, require_activation=True
+    )
 
 
 def install_legacy_compatibility(db: EphemeralMysql) -> None:

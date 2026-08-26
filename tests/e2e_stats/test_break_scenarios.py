@@ -95,6 +95,25 @@ def test_far_probe_waits_past_production_candidate_ttl():
             "\t\t\tBD_OFFPOINT_DEATH_QUIET_SECS") in source
 
 
+def test_far_probe_uses_walkoff_capture_horizon_and_rearms_cleanly():
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    assert bs.BreakDriver.FAR_STAGE_TIMEOUT >= 245.0
+    assert "#define BD_FAR_KILL_MAX_POLLS BD_WALKOFF_MAX_POLLS" in source
+    arm = source[source.index("public cmd_arm_kill()"):
+                 source.index("public bd_kill_poll()")]
+    assert arm.index("remove_task(BD_TASK_KILL_POLL)") < arm.index(
+        "g_bdKillPolls = 0"
+    ) < arm.index('set_task(0.1, "bd_kill_poll"')
+    poll = source[source.index("public bd_kill_poll()"):
+                  source.index("stock bool:bd_execute_restart")]
+    assert "g_bdKillNear ? BD_KILL_MAX_POLLS : BD_FAR_KILL_MAX_POLLS" in poll
+    assert 'register_srvcmd("ktp_bd_disarm_kill", "cmd_disarm_kill")' in source
+    disarm = source[source.index("public cmd_disarm_kill()"):
+                    source.index("public bd_kill_poll()")]
+    assert "remove_task(BD_TASK_KILL_POLL)" in disarm
+    assert 'server_print("KTP_BD_KILL_DISARMED")' in disarm
+
+
 def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     seconds = float(next(
@@ -242,6 +261,8 @@ class _FakeHandle:
             # monkeypatched _read, so this branch just records nothing.
             return
         self.fired.append(cmd)
+        if cmd == "ktp_bd_disarm_kill":
+            return "KTP_BD_KILL_DISARMED"
 
 
 class _FakeLog:
@@ -297,6 +318,50 @@ def test_arm_kill_reports_plugin_abort(monkeypatch):
 
     ok = driver._arm_kill("far", timeout=5.0, poll=0.01)
     assert ok is False
+    assert handle.fired == ["ktp_bd_arm_kill far", "ktp_bd_disarm_kill"]
+    assert driver.last_kill_disarm_ack is True
+
+
+def test_arm_kill_timeout_disarms_and_requires_ack(monkeypatch):
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog(["old\n"] * 5))
+    ticks = iter((0.0, 0.0, 5.1))
+    monkeypatch.setattr(bs.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+
+    assert driver._arm_kill("far", timeout=5.0) is False
+    assert handle.fired == ["ktp_bd_arm_kill far", "ktp_bd_disarm_kill"]
+    assert driver.last_kill_disarm_ack is True
+
+
+def test_arm_kill_timeout_without_disarm_ack_fails_closed(monkeypatch):
+    class NoAckHandle:
+        def __init__(self):
+            self.fired = []
+
+        def rcon(self, command):
+            self.fired.append(command)
+            return None
+
+    handle = NoAckHandle()
+    driver = bs.BreakDriver(handle, _FakeLog(["old\n"] * 8))
+    ticks = iter((0.0, 5.1, 5.1, 7.2))
+    monkeypatch.setattr(bs.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+
+    assert driver._arm_kill("far", timeout=5.0) is False
+    assert handle.fired == ["ktp_bd_arm_kill far", "ktp_bd_disarm_kill"]
+    assert driver.last_kill_disarm_ack is False
+
+
+def test_far_arm_default_outlives_r1_sixty_second_capture_drought(monkeypatch):
+    handle = _FakeHandle([])
+    log = _FakeLog(["old\n", "old\n" + KILL_LINE])
+    driver = bs.BreakDriver(handle, log)
+    ticks = iter([0.0, 244.0])
+    monkeypatch.setattr(bs.time, "monotonic", lambda: next(ticks))
+
+    assert driver._arm_kill("far") is True
     assert handle.fired == ["ktp_bd_arm_kill far"]
 
 
@@ -632,3 +697,87 @@ def test_inconclusive_issued_restart_is_not_retried(monkeypatch):
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     bs.run_all(object(), object(), attempts=3)
     assert calls["restart"] == 1
+
+
+def test_far_probe_is_one_shared_horizon_not_three_full_attempts(monkeypatch):
+    calls = {"far": 0}
+
+    class FakeDriver:
+        def __init__(self, *_args):
+            pass
+
+        @staticmethod
+        def _ok(name):
+            return bs.Scenario(name, status="ok")
+
+        def negative_voluntary_walkoff(self):
+            return self._ok("negative_voluntary_walkoff")
+
+        def negative_off_point_kill(self):
+            calls["far"] += 1
+            return bs.Scenario(
+                "negative_off_point_kill", detail="far horizon exhausted"
+            )
+
+        def negative_clean_capture(self):
+            return self._ok("negative_clean_capture")
+
+        def positive_kill_on_point(self):
+            return self._ok("positive_kill_on_point")
+
+        def negative_round_restart(self):
+            return self._ok("negative_round_restart")
+
+    monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+
+    results = bs.run_all(object(), object(), attempts=3)
+
+    far = next(row for row in results
+               if row["name"] == "negative_off_point_kill")
+    assert calls["far"] == 1
+    assert far["attempts"] == 1
+
+
+def test_missing_disarm_ack_hard_stops_all_remaining_diagnostics(monkeypatch):
+    calls = []
+
+    class FakeDriver:
+        def __init__(self, *_args):
+            pass
+
+        @staticmethod
+        def _ok(name):
+            calls.append(name)
+            return bs.Scenario(name, status="ok")
+
+        def negative_voluntary_walkoff(self):
+            return self._ok("negative_voluntary_walkoff")
+
+        def negative_off_point_kill(self):
+            calls.append("negative_off_point_kill")
+            return bs.Scenario(
+                "negative_off_point_kill",
+                detail="kill poller disarm was not acknowledged",
+                extra={"kill_disarm_ack": False},
+            )
+
+        def negative_clean_capture(self):
+            return self._ok("negative_clean_capture")
+
+        def positive_kill_on_point(self):
+            return self._ok("positive_kill_on_point")
+
+        def negative_round_restart(self):
+            return self._ok("negative_round_restart")
+
+    monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+
+    results = bs.run_all(object(), object(), attempts=3)
+
+    assert calls == [
+        "negative_voluntary_walkoff", "negative_off_point_kill",
+    ]
+    assert [row["name"] for row in results] == calls
+    assert results[-1]["kill_disarm_ack"] is False

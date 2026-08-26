@@ -38,6 +38,7 @@ def healthy_tables() -> dict[str, list[dict[str, object]]]:
         "ktp_matches": [{
             "id": "1", "match_id": MATCH_ID, "map_name": "dod_anzio",
             "half": "1",
+            "start_time": "2026-08-19 00:00:00",
             "end_time": "2026-08-19 00:10:00",
         }],
         "ktp_match_players": roster,
@@ -103,6 +104,7 @@ def healthy_tables() -> dict[str, list[dict[str, object]]]:
         ],
         "ktp_capture_manifests": [{
             "id": "1", "match_id": MATCH_ID, "half": "1", "schema_version": "22",
+            "event_epoch": "1787097601",
             "position_interval": "2.00",
             "capabilities": (
                 "life,damage,position,frag,assist,break,flag_state,flag_position,"

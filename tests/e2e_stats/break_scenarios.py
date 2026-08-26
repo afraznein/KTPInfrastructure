@@ -147,10 +147,19 @@ class BreakDriver:
     # second the harness declared it missing.  Seven seconds covers the full
     # production pipeline plus scheduler jitter without widening attribution.
     SETTLE = 7.0
+    # The r3-1 artifact had two complete 60s far-probe windows with no
+    # objective attempt at all; a valid capture did not return until more than
+    # two minutes later.  The far negative has the same natural-capture
+    # prerequisite as the established walkoff watcher, so give it the same
+    # bounded horizon. Each new arm command resets the in-plugin poller.
+    FAR_STAGE_TIMEOUT = 245.0
+    KILL_STAGE_TIMEOUT = 65.0
+    KILL_DISARM_TIMEOUT = 2.0
 
     def __init__(self, handle, log_path):
         self.handle = handle
         self.log_path = log_path
+        self.last_kill_disarm_ack: bool | None = None
 
     def _read(self) -> str:
         # Docker Desktop can expose a short ENODATA window while HLDS turns a
@@ -204,7 +213,7 @@ class BreakDriver:
             time.sleep(poll)
         return None
 
-    def _arm_kill(self, mode: str, *, timeout: float = 65.0,
+    def _arm_kill(self, mode: str, *, timeout: float | None = None,
                   poll: float = 0.1) -> bool:
         """Ask the diagnostic plugin to stage a kill on the next live cap.
 
@@ -214,6 +223,12 @@ class BreakDriver:
         the caller's settle window must begin when the kill actually happened,
         not when the arm command was sent.
         """
+        if timeout is None:
+            timeout = (
+                self.FAR_STAGE_TIMEOUT if mode == "far"
+                else self.KILL_STAGE_TIMEOUT
+            )
+        self.last_kill_disarm_ack = None
         mark = len(self._read())
         self.handle.rcon(f"ktp_bd_arm_kill {mode}")
         deadline = time.monotonic() + timeout
@@ -222,8 +237,23 @@ class BreakDriver:
             if _KILL_RE.search(tail):
                 return True
             if _ABORT_RE.search(tail):
+                self.last_kill_disarm_ack = self._disarm_kill()
                 return False
             time.sleep(poll)
+        self.last_kill_disarm_ack = self._disarm_kill()
+        return False
+
+    def _disarm_kill(self) -> bool:
+        """Stop the in-plugin poller and require an explicit acknowledgement."""
+        mark = len(self._read())
+        output = self.handle.rcon("ktp_bd_disarm_kill")
+        if "KTP_BD_KILL_DISARMED" in str(output or ""):
+            return True
+        deadline = time.monotonic() + self.KILL_DISARM_TIMEOUT
+        while time.monotonic() < deadline:
+            if "[BD] kill DISARMED" in _tail(self._read(), mark):
+                return True
+            time.sleep(0.05)
         return False
 
     def _wait_for_isolation_end(self, since: int, *, timeout: float = 2.0,
@@ -256,6 +286,9 @@ class BreakDriver:
             tail = _tail(self._read(), mark)
             s.detail = (self._abort_reason(tail)
                         or "armed near kill did not stage within the wait")
+            s.extra["kill_disarm_ack"] = self.last_kill_disarm_ack
+            if self.last_kill_disarm_ack is not True:
+                s.detail += "; kill poller disarm was not acknowledged"
             return s
         time.sleep(self.SETTLE)
         isolation_closed, tail = self._wait_for_isolation_end(mark)
@@ -335,6 +368,9 @@ class BreakDriver:
             tail = _tail(self._read(), mark)
             s.detail = (self._abort_reason(tail)
                         or "armed far kill did not stage within the wait")
+            s.extra["kill_disarm_ack"] = self.last_kill_disarm_ack
+            if self.last_kill_disarm_ack is not True:
+                s.detail += "; kill poller disarm was not acknowledged"
             return s
         time.sleep(self.SETTLE)
         isolation_closed, tail = self._wait_for_isolation_end(mark)
@@ -803,33 +839,48 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     from unrelated bot deaths.
 
     `attempts` dropped from 8 to 3 when the kill scenarios started arming an
-    in-process poll for up to 60s rather than firing blind. The old 8×~10s
-    outer schedule did the waiting badly: DoD's active-capture window can be
-    only a few seconds, so a fixed retry mostly landed between captures.
+    in-process poll for up to 60s rather than firing blind. The far probe is
+    deliberately one-shot: its single 245s in-process horizon already spans
+    the accepted capture drought, and repeating that horizon three times
+    would exceed the job's bounded evidence budget. The strict downstream
+    contract still requires all three diagnostic scenarios to stage.
     """
     d = BreakDriver(handle, log_path)
     out = []
     # negative_round_restart is LAST on purpose: it restarts the round out
     # from under everything else, so anything after it would be measuring a
     # server it did not set up.
-    for fn in (d.negative_voluntary_walkoff,
-               d.negative_off_point_kill,
-               d.negative_clean_capture,
-               d.positive_kill_on_point,
-               d.negative_round_restart):
+    scenarios = (
+        (d.negative_voluntary_walkoff, attempts),
+        (d.negative_off_point_kill, 1),
+        (d.negative_clean_capture, attempts),
+        (d.positive_kill_on_point, attempts),
+        (d.negative_round_restart, attempts),
+    )
+    for fn, scenario_attempts in scenarios:
         s = None
-        for attempt in range(1, attempts + 1):
+        for attempt in range(1, scenario_attempts + 1):
             s = fn()
             # Once restart_queue exists the diagnostic has already issued a
             # real round restart. An inconclusive result is fail-closed and
             # one-shot; retrying would silently shop for a cleaner reset.
             if s.status != "not_staged" or s.extra.get("restart_issued"):
                 break
-            print(f"  scenario {s.name:<28} attempt {attempt}/{attempts} "
+            if s.extra.get("kill_disarm_ack") is False:
+                # Without the plugin's explicit ack, the periodic kill poller
+                # may still be live. No later diagnostic may issue commands
+                # into an environment that can be mutated by that stale task.
+                break
+            print(f"  scenario {s.name:<28} attempt "
+                  f"{attempt}/{scenario_attempts} "
                   f"did not stage: {s.detail}", flush=True)
             time.sleep(4.0)
         s.extra["attempts"] = attempt
         print(f"  scenario {s.name:<28} {s.status:<12} {s.detail}", flush=True)
         out.append({"name": s.name, "status": s.status, "detail": s.detail,
                     "breaks_seen": s.breaks_seen, **s.extra})
+        if s.extra.get("kill_disarm_ack") is False:
+            print("  diagnostics HARD STOP: kill poller disarm was not "
+                  "acknowledged", flush=True)
+            break
     return out
