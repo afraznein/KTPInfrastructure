@@ -13,6 +13,17 @@ Deliberate drift is fine (e.g. the runner leading the fleet by a few hours as
 a pre-activation gate) — the caller (ktp-tier2-heartbeat.sh) alerts once on
 the transition and once on recovery, not per run. This checker only reports.
 
+⚠️ "Reports" used to mean a flat md5 diff with no sense of time. A fleet ABI
+wave puts the runner behind the moment it activates — that is routine and
+expected, not an incident — but the message read identically whether the
+drift was six hours old or six weeks old, so every wave night paged like an
+emergency and a genuinely neglected runner paged the same way. This checker
+now tracks, per drifted path, how long it has been drifting (a small state
+file keyed on the actual mismatch, not on the path alone — a runner that
+re-syncs to a DIFFERENT wrong value still counts as newly drifted) and prints
+that age. A human reading "drifting 3h" after a wave night can tell it apart
+from "drifting 9d" without knowing the release calendar.
+
 Invoked by ktp-tier2-heartbeat.sh via the ktp-profile-aggregator venv (for
 paramiko) with the aggregator's .env sourced (GAME_SSH_USER/GAME_SSH_PASSWORD).
 
@@ -23,8 +34,10 @@ flap the drift state).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import sys
+import time
 
 try:
     import paramiko
@@ -37,6 +50,7 @@ REF_HOST = os.environ.get("KTP_DRIFT_REF_HOST", "74.91.121.9")  # Atlanta bm
 REF_TREE = os.environ.get("KTP_DRIFT_REF_TREE", "dod-27015/serverfiles")
 SSH_USER = os.environ.get("GAME_SSH_USER", "dodserver")
 SSH_PASSWORD = os.environ.get("GAME_SSH_PASSWORD", "")
+DRIFT_STATE_PATH = os.environ.get("KTP_TIER2_DRIFT_STATE", "/var/lib/ktp-tier2-stack-drift.state.json")
 
 # Paths relative to the serverfiles root. Configs are runner-specific.
 #
@@ -104,6 +118,136 @@ def local_md5(path: str) -> str:
     return h.hexdigest()
 
 
+def parse_md5sum(raw: str, paths: list[str]) -> dict[str, str]:
+    """md5sum prints the expanded absolute path; match on our suffix."""
+    fleet: dict[str, str] = {}
+    for line in raw.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            for p in paths:
+                if parts[1].strip().endswith(p):
+                    fleet[p] = parts[0]
+    return fleet
+
+
+def parse_mtime(raw: str, paths: list[str]) -> dict[str, int]:
+    mtimes: dict[str, int] = {}
+    for line in raw.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            for p in paths:
+                if parts[1].strip().endswith(p):
+                    mtimes[p] = int(parts[0])
+    return mtimes
+
+
+def compute_drift(
+    hashed: list[str],
+    testmode: list[str],
+    fleet_md5: dict[str, str],
+    fleet_mtime: dict[str, int],
+    runner_tree: str,
+    stale_after_seconds: int,
+    ref_host: str,
+    md5_fn=local_md5,
+    exists_fn=os.path.exists,
+    mtime_fn=os.path.getmtime,
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Compare runner vs fleet. Returns (drift_items, errors).
+
+    Each drift item is (path, message, signature) — signature identifies the
+    SPECIFIC mismatch (e.g. "runner_md5:fleet_md5"), not just the path, so a
+    runner that re-syncs to a still-wrong value is treated as a fresh drift
+    rather than a continuation of the old one.
+    """
+    drifts: list[tuple[str, str, str]] = []
+    errors: list[str] = []
+
+    for p in hashed:
+        if p not in fleet_md5:
+            errors.append(f"{p}: missing on reference host {ref_host}")
+            continue
+        local_path = os.path.join(runner_tree, p)
+        if not exists_fn(local_path):
+            drifts.append((p, f"{p}: missing on runner", "missing"))
+            continue
+        lm = md5_fn(local_path)
+        if lm != fleet_md5[p]:
+            sig = f"{lm}:{fleet_md5[p]}"
+            drifts.append((p, f"{p}: runner {lm[:8]}… vs fleet {fleet_md5[p][:8]}…", sig))
+
+    # Test-mode plugins: md5 is meaningless (they're built with KTP_TEST_MODE),
+    # so the question is only "has the runner fallen behind the fleet".
+    for p in testmode:
+        if p not in fleet_mtime:
+            errors.append(f"{p}: missing on reference host {ref_host}")
+            continue
+        local_path = os.path.join(runner_tree, p)
+        if not exists_fn(local_path):
+            drifts.append((p, f"{p}: missing on runner", "missing"))
+            continue
+        local_mtime = int(mtime_fn(local_path))
+        lag = fleet_mtime[p] - local_mtime
+        if lag > stale_after_seconds:
+            msg = (
+                f"{p}: runner build is {lag // 86400}d older than the fleet's "
+                f"(test-mode, so md5 can't be compared — restage it)"
+            )
+            sig = f"{local_mtime}:{fleet_mtime[p]}"
+            drifts.append((p, msg, sig))
+
+    return drifts, errors
+
+
+def load_drift_state(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save_drift_state(path: str, state: dict) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(state, f)
+    except OSError:
+        pass  # age tracking is enrichment, not correctness — never fail the check over it
+
+
+def update_drift_ages(prev_state: dict, drift_items: list[tuple[str, str, str]], now: int) -> dict:
+    """Carry forward 'since' for paths whose signature is unchanged; start a
+    fresh clock for anything new or whose mismatch changed shape. Paths no
+    longer drifting are dropped, so a state file never reports on resolved
+    drift."""
+    new_state: dict = {}
+    for path, _msg, sig in drift_items:
+        prev = prev_state.get(path)
+        if prev and prev.get("sig") == sig:
+            new_state[path] = prev
+        else:
+            new_state[path] = {"sig": sig, "since": now}
+    return new_state
+
+
+def format_age(age_seconds: int) -> str:
+    if age_seconds < 300:
+        return "just started"
+    if age_seconds < 3600:
+        return f"drifting {age_seconds // 60}m"
+    if age_seconds < 86400:
+        return f"drifting {age_seconds // 3600}h"
+    return f"drifting {age_seconds // 86400}d"
+
+
+def annotate_drift(drift_items: list[tuple[str, str, str]], state: dict, now: int) -> list[str]:
+    out = []
+    for path, msg, _sig in drift_items:
+        since = state.get(path, {}).get("since", now)
+        out.append(f"{msg} [{format_age(now - since)}]")
+    return out
+
+
 def main() -> int:
     if not SSH_PASSWORD:
         print("GAME_SSH_PASSWORD not set — source the aggregator .env")
@@ -127,60 +271,32 @@ def main() -> int:
         print(f"reference-host check failed: {type(exc).__name__}: {exc}")
         return 2
 
-    fleet: dict[str, str] = {}
-    for line in raw.splitlines():
-        parts = line.split(None, 1)
-        if len(parts) == 2:
-            # md5sum prints the expanded absolute path; match on our suffix.
-            for p in hashed:
-                if parts[1].strip().endswith(p):
-                    fleet[p] = parts[0]
+    hashed = STACK_FILES + PLUGINS_STRICT
+    fleet_md5 = parse_md5sum(raw, hashed)
+    fleet_mtime = parse_mtime(mraw, PLUGINS_TESTMODE)
 
-    fleet_mtime: dict[str, int] = {}
-    for line in mraw.splitlines():
-        parts = line.split(None, 1)
-        if len(parts) == 2 and parts[0].isdigit():
-            for p in PLUGINS_TESTMODE:
-                if parts[1].strip().endswith(p):
-                    fleet_mtime[p] = int(parts[0])
-
-    drifts, errors = [], []
-    for p in hashed:
-        if p not in fleet:
-            errors.append(f"{p}: missing on reference host {REF_HOST}")
-            continue
-        local_path = os.path.join(RUNNER_TREE, p)
-        if not os.path.exists(local_path):
-            drifts.append(f"{p}: missing on runner")
-            continue
-        lm = local_md5(local_path)
-        if lm != fleet[p]:
-            drifts.append(f"{p}: runner {lm[:8]}… vs fleet {fleet[p][:8]}…")
-
-    # Test-mode plugins: md5 is meaningless (they're built with KTP_TEST_MODE),
-    # so the question is only "has the runner fallen behind the fleet".
-    for p in PLUGINS_TESTMODE:
-        if p not in fleet_mtime:
-            errors.append(f"{p}: missing on reference host {REF_HOST}")
-            continue
-        local_path = os.path.join(RUNNER_TREE, p)
-        if not os.path.exists(local_path):
-            drifts.append(f"{p}: missing on runner")
-            continue
-        lag = fleet_mtime[p] - int(os.path.getmtime(local_path))
-        if lag > STALE_AFTER_SECONDS:
-            drifts.append(
-                f"{p}: runner build is {lag // 86400}d older than the fleet's "
-                f"(test-mode, so md5 can't be compared — restage it)"
-            )
+    drift_items, errors = compute_drift(
+        hashed, PLUGINS_TESTMODE, fleet_md5, fleet_mtime,
+        RUNNER_TREE, STALE_AFTER_SECONDS, REF_HOST,
+    )
 
     checked = len(STACK_FILES) + len(PLUGINS_STRICT) + len(PLUGINS_TESTMODE)
     if errors:
         print("; ".join(errors))
         return 2
-    if drifts:
-        print(f"runner stack drift vs {REF_HOST} ({len(drifts)} file(s)): " + "; ".join(drifts))
+    if drift_items:
+        now = int(time.time())
+        prev_state = load_drift_state(DRIFT_STATE_PATH)
+        state = update_drift_ages(prev_state, drift_items, now)
+        save_drift_state(DRIFT_STATE_PATH, state)
+        annotated = annotate_drift(drift_items, state, now)
+        print(f"runner stack drift vs {REF_HOST} ({len(drift_items)} file(s)): " + "; ".join(annotated))
         return 1
+
+    # Nothing drifting now — clear any stale state so a future drift starts
+    # its clock from zero instead of inheriting a resolved one's age.
+    if os.path.exists(DRIFT_STATE_PATH):
+        save_drift_state(DRIFT_STATE_PATH, {})
     print(f"runner stack in sync with {REF_HOST} ({checked} files)")
     return 0
 

@@ -7,6 +7,13 @@
 #        The July 2026 LAN uses 5 KTP-stack competitive servers (the stock
 #        warmup server is a separate manual install, not created here).
 #
+#        ./install-linuxgsm.sh --regen-management-scripts
+#        Rewrites ~/restart-all-servers.sh and ~/status.sh from this file and
+#        does nothing else. This is how an ALREADY-PROVISIONED host receives a
+#        fix to those two scripts: the full installer only ever runs once per
+#        host, so without this mode the repo can never reach a live host and
+#        the deployed copies drift until someone notices by hand.
+#
 # Run as: dodserver user
 #
 # This script:
@@ -20,13 +27,20 @@ set -e
 # ============================================
 # Configuration
 # ============================================
-if [ -z "$1" ]; then
+MODE="install"
+if [ "${1:-}" = "--regen-management-scripts" ]; then
+    MODE="regen"
+    shift
+fi
+
+if [ "$MODE" = "install" ] && [ -z "${1:-}" ]; then
     echo "Usage: $0 <SERVER_IP> [NUM_INSTANCES]"
+    echo "       $0 --regen-management-scripts"
     echo "Example: $0 192.168.1.100 6"
     exit 1
 fi
 
-SERVER_IP="$1"
+SERVER_IP="${1:-}"
 BASE_PORT=27015
 # Instance count: env var wins, then positional arg 2, then default 5.
 NUM_INSTANCES="${NUM_INSTANCES:-${2:-5}}"
@@ -51,144 +65,14 @@ log_error() {
 }
 
 # ============================================
-# Pre-flight Checks
+# Management script generation
 # ============================================
-if [ "$EUID" -eq 0 ]; then
-    log_error "Do not run this script as root. Run as 'dodserver' user."
-    exit 1
-fi
-
-if [ "$(whoami)" != "dodserver" ]; then
-    log_warn "This script should run as 'dodserver' user"
-    if [ "${YES:-0}" != "1" ]; then
-        read -p "Continue anyway? (y/n) " -n 1 -r
-        echo
-        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
-    fi
-fi
-
-echo "========================================"
-echo "KTP LinuxGSM Installation"
-echo "========================================"
-echo "Server IP: $SERVER_IP"
-echo "Instances: $NUM_INSTANCES (ports $BASE_PORT-$((BASE_PORT + NUM_INSTANCES - 1)))"
-echo ""
-
-# ============================================
-# 1. Install First Instance (dod-27015)
-# ============================================
-FIRST_DIR="$HOME/dod-$BASE_PORT"
-
-if [ -d "$FIRST_DIR" ]; then
-    log_warn "Directory $FIRST_DIR already exists"
-    if [ "${YES:-0}" != "1" ]; then
-        read -p "Continue with existing installation? (y/n) " -n 1 -r
-        echo
-        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
-    fi
-else
-    log_info "Creating first instance at $FIRST_DIR..."
-
-    mkdir -p "$FIRST_DIR"
-    cd "$FIRST_DIR"
-
-    # Download LinuxGSM
-    log_info "Downloading LinuxGSM..."
-    wget -O linuxgsm.sh https://linuxgsm.sh
-    chmod +x linuxgsm.sh
-
-    # Install DoD server
-    log_info "Installing LinuxGSM DoD server..."
-    ./linuxgsm.sh dodserver
-
-    # Install game files (this downloads from Steam)
-    log_info "Installing Day of Defeat via SteamCMD (this may take a while)..."
-    ./dodserver auto-install
-
-    log_info "First instance installed at $FIRST_DIR"
-fi
-
-# ============================================
-# 2. Configure First Instance
-# ============================================
-log_info "Configuring first instance..."
-
-# Create common.cfg
-mkdir -p "$FIRST_DIR/lgsm/config-lgsm/dodserver"
-cat > "$FIRST_DIR/lgsm/config-lgsm/dodserver/common.cfg" << EOF
-# KTP Common Configuration
-# Shared by all server instances
-
-# Game settings
-gamename="Day of Defeat"
-gameworld="dod"
-appid="30"
-servercfg="dodserver.cfg"
-defaultmap="$DEFAULT_MAP"
-maxplayers="13"
-
-# Performance
-pingboost="2"
-EOF
-
-# Create instance-specific config
-cat > "$FIRST_DIR/lgsm/config-lgsm/dodserver/dodserver.cfg" << EOF
-# KTP Server Instance 1 Configuration
-
-# Network
-port="$BASE_PORT"
-clientport="$((BASE_PORT - 10))"
-ip="$SERVER_IP"
-
-# Startup parameters
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
-EOF
-
-log_info "First instance configured"
-
-# ============================================
-# 3. Clone Additional Instances
-# ============================================
-for i in $(seq 2 $NUM_INSTANCES); do
-    PORT=$((BASE_PORT + i - 1))
-    INSTANCE_DIR="$HOME/dod-$PORT"
-    EXEC_NAME="dodserver$i"
-
-    if [ -d "$INSTANCE_DIR" ]; then
-        log_warn "Instance $INSTANCE_DIR already exists, skipping"
-        continue
-    fi
-
-    log_info "Creating instance $i at $INSTANCE_DIR (port $PORT)..."
-
-    # Copy from first instance
-    cp -r "$FIRST_DIR" "$INSTANCE_DIR"
-
-    # Rename executable
-    mv "$INSTANCE_DIR/dodserver" "$INSTANCE_DIR/$EXEC_NAME"
-
-    # Create instance-specific config
-    # CRITICAL: Config must be in dodserver/ folder, NOT dodserver$i/
-    cat > "$INSTANCE_DIR/lgsm/config-lgsm/dodserver/$EXEC_NAME.cfg" << EOF
-# KTP Server Instance $i Configuration
-
-# Network
-port="$PORT"
-clientport="$((PORT - 10))"
-ip="$SERVER_IP"
-
-# Startup parameters
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
-EOF
-
-    log_info "Instance $i created (port $PORT)"
-done
-
-# ============================================
-# 4. Create Management Scripts
-# ============================================
-log_info "Creating management scripts..."
-
+# Defined up here, not inline in step 4, so --regen-management-scripts can
+# call it without running the install. Both scripts are rewritten from
+# scratch every time; the operation is idempotent.
+# The body is deliberately not indented — every line inside a quoted heredoc
+# is emitted verbatim, so indenting it would indent the generated scripts.
+create_management_scripts() {
 # Instance discovery, emitted verbatim into both management scripts. Written
 # once here so the two cannot disagree about what an instance is.
 emit_instance_discovery() {
@@ -314,7 +198,173 @@ for port in "${KTP_PORTS[@]}"; do
 done
 EOF
 chmod +x "$HOME/status.sh"
+}
 
+# ============================================
+# Pre-flight Checks
+# ============================================
+if [ "$EUID" -eq 0 ]; then
+    log_error "Do not run this script as root. Run as 'dodserver' user."
+    exit 1
+fi
+
+if [ "$(whoami)" != "dodserver" ]; then
+    log_warn "This script should run as 'dodserver' user"
+    if [ "${YES:-0}" != "1" ]; then
+        read -p "Continue anyway? (y/n) " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+fi
+
+if [ "$MODE" = "regen" ]; then
+    if [ ! -d "$HOME" ]; then
+        log_error "\$HOME ($HOME) is not a directory — refusing to write."
+        exit 1
+    fi
+    STAMP=$(date +%Y%m%d-%H%M%S)
+    for f in "$HOME/restart-all-servers.sh" "$HOME/status.sh"; do
+        # An `if`, not `[ -f ] && cp`: under `set -e` that AND-list returns 1
+        # when the file is absent and kills the script before it writes anything.
+        # Timestamped, never a fixed .bak name — a second run must not overwrite
+        # the only copy of what was there before the first one.
+        if [ -f "$f" ]; then
+            cp -p "$f" "$f.bak-$STAMP"
+            log_info "Backed up $(basename "$f") -> $(basename "$f").bak-$STAMP"
+        fi
+    done
+    create_management_scripts
+    for f in "$HOME/restart-all-servers.sh" "$HOME/status.sh"; do
+        bash -n "$f"
+        grep -q 'discover_instances' "$f"
+    done
+    log_info "Regenerated ~/restart-all-servers.sh and ~/status.sh (bash -n clean)"
+    log_info "Nothing was started, stopped or restarted."
+    exit 0
+fi
+
+echo "========================================"
+echo "KTP LinuxGSM Installation"
+echo "========================================"
+echo "Server IP: $SERVER_IP"
+echo "Instances: $NUM_INSTANCES (ports $BASE_PORT-$((BASE_PORT + NUM_INSTANCES - 1)))"
+echo ""
+
+# ============================================
+# 1. Install First Instance (dod-27015)
+# ============================================
+FIRST_DIR="$HOME/dod-$BASE_PORT"
+
+if [ -d "$FIRST_DIR" ]; then
+    log_warn "Directory $FIRST_DIR already exists"
+    if [ "${YES:-0}" != "1" ]; then
+        read -p "Continue with existing installation? (y/n) " -n 1 -r
+        echo
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+else
+    log_info "Creating first instance at $FIRST_DIR..."
+
+    mkdir -p "$FIRST_DIR"
+    cd "$FIRST_DIR"
+
+    # Download LinuxGSM
+    log_info "Downloading LinuxGSM..."
+    wget -O linuxgsm.sh https://linuxgsm.sh
+    chmod +x linuxgsm.sh
+
+    # Install DoD server
+    log_info "Installing LinuxGSM DoD server..."
+    ./linuxgsm.sh dodserver
+
+    # Install game files (this downloads from Steam)
+    log_info "Installing Day of Defeat via SteamCMD (this may take a while)..."
+    ./dodserver auto-install
+
+    log_info "First instance installed at $FIRST_DIR"
+fi
+
+# ============================================
+# 2. Configure First Instance
+# ============================================
+log_info "Configuring first instance..."
+
+# Create common.cfg
+mkdir -p "$FIRST_DIR/lgsm/config-lgsm/dodserver"
+cat > "$FIRST_DIR/lgsm/config-lgsm/dodserver/common.cfg" << EOF
+# KTP Common Configuration
+# Shared by all server instances
+
+# Game settings
+gamename="Day of Defeat"
+gameworld="dod"
+appid="30"
+servercfg="dodserver.cfg"
+defaultmap="$DEFAULT_MAP"
+maxplayers="13"
+
+# Performance
+pingboost="2"
+EOF
+
+# Create instance-specific config
+cat > "$FIRST_DIR/lgsm/config-lgsm/dodserver/dodserver.cfg" << EOF
+# KTP Server Instance 1 Configuration
+
+# Network
+port="$BASE_PORT"
+clientport="$((BASE_PORT - 10))"
+ip="$SERVER_IP"
+
+# Startup parameters
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
+EOF
+
+log_info "First instance configured"
+
+# ============================================
+# 3. Clone Additional Instances
+# ============================================
+for i in $(seq 2 $NUM_INSTANCES); do
+    PORT=$((BASE_PORT + i - 1))
+    INSTANCE_DIR="$HOME/dod-$PORT"
+    EXEC_NAME="dodserver$i"
+
+    if [ -d "$INSTANCE_DIR" ]; then
+        log_warn "Instance $INSTANCE_DIR already exists, skipping"
+        continue
+    fi
+
+    log_info "Creating instance $i at $INSTANCE_DIR (port $PORT)..."
+
+    # Copy from first instance
+    cp -r "$FIRST_DIR" "$INSTANCE_DIR"
+
+    # Rename executable
+    mv "$INSTANCE_DIR/dodserver" "$INSTANCE_DIR/$EXEC_NAME"
+
+    # Create instance-specific config
+    # CRITICAL: Config must be in dodserver/ folder, NOT dodserver$i/
+    cat > "$INSTANCE_DIR/lgsm/config-lgsm/dodserver/$EXEC_NAME.cfg" << EOF
+# KTP Server Instance $i Configuration
+
+# Network
+port="$PORT"
+clientport="$((PORT - 10))"
+ip="$SERVER_IP"
+
+# Startup parameters
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
+EOF
+
+    log_info "Instance $i created (port $PORT)"
+done
+
+# ============================================
+# 4. Create Management Scripts
+# ============================================
+log_info "Creating management scripts..."
+create_management_scripts
 log_info "Management scripts created"
 
 # ============================================

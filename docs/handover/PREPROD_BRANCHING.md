@@ -16,9 +16,13 @@ a short dependency-safe window and rerun the cross-repository gate on the
 resulting `preprod` SHAs. This preserves the `preprod` integration gate while
 avoiding a partially assembled feature on it.
 
-KTPAMXX is being normalized from `master` to `main`. Both refs currently
-exist, but the GitHub default remains `master` until an administrator changes
-it.
+KTPAMXX's normalization from `master` to `main` is complete. The GitHub
+default branch is `main` — confirmed both via `gh repo view afraznein/KTPAMXX
+--json defaultBranchRef` and independently via `git ls-remote --symref origin
+HEAD` (the two can disagree; check both). `master` is not merely superseded
+as the default, it no longer exists as a ref at all: `git ls-remote origin
+'refs/heads/*'` lists `main` and `preprod` plus the active feature branches,
+and no `master`.
 
 The hard stats-capture gate is deterministic corpus replay. It replays the
 committed logs under `tests/e2e_stats/corpus/` through an ephemeral MySQL
@@ -100,14 +104,11 @@ these rules.
 After write access is granted, create `preprod` directly from each repository's
 current `main` tip. Do not infer the tip from a stale local clone.
 
-An administrator must also change KTPAMXX's GitHub default branch after
-confirming `main` still matches the intended `master` tip:
-
-```bash
-gh api -X PATCH repos/afraznein/KTPAMXX -f default_branch=main
-```
-
-Leave `master` in place until downstream consumers have been audited.
+KTPAMXX's GitHub default branch has been changed to `main` (re-verified
+2026-08-26). `master` has since been deleted from the remote outright, rather
+than left in place pending a downstream-consumer audit as this section
+originally planned — so any consumer still assuming a `master` ref needs to
+be repointed to `main`, not merely notified of the default-branch change.
 
 ## Release notes
 
@@ -130,4 +131,7 @@ it disables only the player-facing connect announcement.
 - After branch protection is installed, verify a failing corpus replay blocks
   merges into both `preprod` and `main`.
 - After access is granted, verify `preprod` exists in all three blocked repos.
-- Confirm KTPAMXX reports `main` as its GitHub default branch.
+- ~~Confirm KTPAMXX reports `main` as its GitHub default branch.~~ Confirmed
+  2026-08-26 via `gh repo view --json defaultBranchRef` and `git ls-remote
+  --symref origin HEAD` (both report `main`); `master` no longer exists as a
+  remote ref.
