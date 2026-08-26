@@ -1,0 +1,8 @@
+# KTP weekly MySQL + config backup. Runs /opt/ktp-backup.sh.
+#
+# Lives in /etc/cron.d, NOT root's user crontab: the job was lost on 2026-08-11
+# when root's crontab was reinstalled empty, and nothing noticed for five days.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+0 3 * * 0   root  /opt/ktp-backup.sh >> /var/log/ktp-backup.log 2>&1

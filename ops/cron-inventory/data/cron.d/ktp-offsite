@@ -1,0 +1,12 @@
+# KTP offsite backups. The dump itself runs Sun 03:00 (/etc/cron.d/ktp-backup);
+# these ship it, staggered so they never overlap it or each other.
+#
+# Sourcing a conf file rather than inlining the targets: cron.d has no include,
+# and the scripts REFUSE to run with the variables unset -- so a missing conf
+# fails loudly instead of quietly backing up nowhere.
+SHELL=/bin/bash
+# DB dumps: one hour after the dump, small (~480 MB) and md5-verified far-side.
+0 4 * * 0   root  . /etc/ktp/offsite.conf && /usr/local/bin/ktp-db-offsite.sh >> /var/log/ktp-offsite.log 2>&1
+# Demos: after the DBs. Incremental after the first run -- rsync --checksum
+# skips what already matches, so a weekly pass moves only the new matches.
+0 5 * * 0   root  . /etc/ktp/offsite.conf && /usr/local/bin/ktp-demo-offsite.sh >> /var/log/ktp-offsite.log 2>&1

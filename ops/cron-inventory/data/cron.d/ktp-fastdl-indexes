@@ -7,4 +7,5 @@
 # retention deletes on its own schedule.
 #
 # Only ever writes index.html. It never touches a .dem.
-45 4 * * *   root  /usr/bin/python3 /usr/local/bin/ktp-fastdl-indexes.py --apply >> /var/log/ktp-fastdl-indexes.log 2>&1
+# RETIRED 2026-08-11 -> ktp-demo-publish.timer runs this hourly instead
+#45 4 * * *   root  /usr/bin/python3 /usr/local/bin/ktp-fastdl-indexes.py --apply >> /var/log/ktp-fastdl-indexes.log 2>&1

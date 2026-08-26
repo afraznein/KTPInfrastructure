@@ -1,1 +1,4 @@
-# DISABLED 2026-07-09 (stale pre-rotation rcon password; would feed AdminAudit 2.7.17 rcon-failure Discord consumer): * * * * * /usr/bin/python3 /usr/local/bin/ktp-server-monitor.py
+# 2026-08-16: /usr/local/bin/ktp-server-monitor.py DELETED. It hardcoded the
+# pre-2026-05-31 leaked rcon password, was disabled here on 2026-07-09 for that
+# reason, and existed on no other host. The runtime-secret version lives in
+# KTPInfrastructure (monitoring/ktp-server-monitor.py, commit aa54cd8).
