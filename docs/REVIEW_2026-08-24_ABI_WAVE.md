@@ -273,6 +273,69 @@ artifacts off the soak host **before** staging — there is no rollback copy on 
 `SWAP_FAILED > 0` as an abort condition rather than a log line, and re-run the header-drift gate first so
 its stale red cannot mask a real one.
 
+---
+
+## Addendum, 2026-08-26 — W1, made explicit
+
+**The single-instance soak this section approved never ran.** The wave activated **fleet-wide**
+(24/24) at the 2026-08-26 03:00 restart — engine `da27ce9e…` (3.22.0.969-dev), core `1af52525…`,
+dodx `2afd9348…` (2.7.32), reapi `f1b9f972…`, `KTPGrenadeLoadout` 1.0.12, `KTPPracticeMode` 1.4.9 —
+verified by md5 on all 24 instances, 0 mismatches. The tracker's live-client-pass item is still open
+as of this writing: no session has recorded a PASS against W1's criteria. So the gate below is owed
+**retroactively, against the live fleet**, not as a pre-stage condition — there is no soak host to
+isolate it on anymore.
+
+**What must be observed.** For every DoD class, on both teams, spawned by a real client (not a bot —
+the HUD read and the throw attempt are both client-side): the spawn grenade count, the HUD number, and
+whether the grenade actually throws. The class roster (`KTPGrenadeLoadout.sma:139-166`):
+
+| team | classes |
+|---|---|
+| Allies | 1–8 (`garand` … `bazooka`) |
+| Axis | 10–19 (`kar` … `panzerjager`) |
+| British Allies | 21–25 (`enfield`, `sten`, `marksman`, `bren`, `piat`) |
+
+The British-Allies row is not optional. `DODX_GiveGrenade` maps grenade type **13** (`DODW_HANDGRENADE`,
+the Allies/Axis hand grenade) and type **36** (`DODW_MILLS_BOMB`, British) to the **same** DLL entity
+class, `weapon_handgrenade` (`NBase.cpp:1576-1586`) — they are two DODX-level ids sharing one C++-level
+slot. A class-21–25 spawn is the only place a mixup between the two would surface, and nothing else in
+the wave's own checks (native resolution, forward arity, bounds clamps) can see it — those confirm the
+natives are reachable and in-range, not that the right id reaches the right player.
+
+**Signal.**
+- Primary: direct client observation — spawn count at round start, HUD grenade count, a live throw —
+  once per class/team cell, on at least one standard Allies/Axis map **and** one British-Allies map
+  (e.g. `dod_avalanche`, `dod_harrington`) so the 21–25 row is actually exercised.
+- Secondary, passive, worth watching across the same window: `MF_LogError` aborts referencing the
+  grenade natives (`dodx_area_get_bounds`-class failures per W7 apply to the same call pattern), the
+  `Client_WeaponList` slot-disagreement log (fires when the runtime-resolved ammo slot disagrees with
+  DODX's fixed-order default — the exact signature a C1-class regression would leave), and
+  `find /tmp -maxdepth 1 -name 'core.*' -mtime -1` for a new crash tied to the window (game-tree
+  searches for `core.*` are a known false negative — see fleet-cores-live-in-tmp).
+
+**Duration.** Not a calendar window — a completion matrix. The gate stays open until every applicable
+class/team cell above has been exercised at least once by a real client on a real map, across enough
+sessions to cover both a standard map and a British-Allies map. A single idle-instance spawn does not
+close it; an empty server cannot exercise the defect (this review's own review of the 2026-08-20
+`stats_logging` soak made the same point about idle-instance testing).
+
+**PASS.** Every class/team cell in the matrix shows: correct spawn count for that class's configured
+loadout (or the game default where `grenade_loadout.ini` has no entry), a HUD number matching that
+count, and a grenade that throws. The British-Allies cells specifically show no cross-contamination
+between id 13 and id 36. Zero grenade-native `MF_LogError` aborts and zero new crash cores attributable
+to the window.
+
+**FAIL** (any one of): a class/team cell with a wrong spawn count, a HUD number that does not match the
+actual count, a grenade that does not throw; a British-Allies class (21–25) showing the wrong grenade
+type's count or behavior; a `Client_WeaponList` slot-disagreement log firing during the window; a
+grenade-native `MF_LogError` abort; a new crash core coinciding with a grenade spawn/give/throw.
+
+**What this does and does not gate.** This blocks closing the tracker's live-client-pass item and
+signing off that the dodx 2.7.32 / `KTPGrenadeLoadout` 1.0.12 pairing is production-proven — nothing
+should assume that silently. It does **not** gate an unrelated engine-only cut (no dodx, no grenade
+plugin) riding a later nightly; the coupling here is specific to the grenade-ammo read path, not to the
+engine artifact in general.
+
 ## What this review did not cover
 
 - **No server was touched, queried or measured by the review itself.** Every fleet-side claim in it was
