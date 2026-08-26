@@ -189,12 +189,17 @@ def test_statsme_is_reconciled_but_not_used_as_canonical_death_source():
 def test_capture_health_requires_manifest_all_types_and_exact_receipts():
     rows = {
         "manifests": [{
-            "half": 1, "producer": "stats_logging", "producer_version": "1.17.0",
-            "schema_version": 21,
+            "half": 1, "producer": "stats_logging", "producer_version": "1.18.0",
+            "schema_version": 22, "position_interval": 2.0,
+            "capabilities": (
+                "life,damage,position,frag,assist,break,flag_state,flag_position,"
+                "objective_attempt,grenade_entity"
+            ),
         }],
         "health": [
             {
                 "half": 1, "event_type": event_type, "dropped": 0,
+                "attempted": 3, "enqueued": 3,
                 "emitted": 3, "daemon_received": 3, "daemon_accepted": 3,
                 "daemon_rejected": 0, "correlation_failure_count": 0,
                 "sequence_gap_count": 0,
@@ -205,13 +210,15 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
     }
     result = canary_evidence.capture_health_evidence(rows, {1})
     assert result["trusted"] is True
-    assert result["manifest_versions"] == ["stats_logging@1.17.0/schema-21"]
+    assert result["manifest_authorized"] is True
+    assert result["manifest_versions"] == ["stats_logging@1.18.0/schema-22"]
 
 
 def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
     health = [
         {
             "half": 1, "event_type": event_type, "dropped": 0,
+            "attempted": 2, "enqueued": 2,
             "emitted": 2, "daemon_received": 2, "daemon_accepted": 2,
             "daemon_rejected": 0, "correlation_failure_count": 0,
             "sequence_gap_count": 0,
@@ -223,6 +230,9 @@ def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
     health[1]["sequence_gap_count"] = 2
     health[2]["daemon_received"] = 1
     health[2]["daemon_accepted"] = 1
+    health[3]["attempted"] = 3
+    health[4]["enqueued"] = 1
+    health[4]["attempted"] = 1
     result = canary_evidence.capture_health_evidence(
         {"manifests": [{"half": 1}], "health": health}, {1}
     )
@@ -230,24 +240,27 @@ def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
     assert result["producer_drops"] == 1
     assert result["sequence_gaps"] == 2
     assert result["emitted_received_mismatches"] == 1
+    assert result["attempted_enqueue_drop_mismatches"] == 2
+    assert result["enqueued_emitted_mismatches"] == 1
 
 
-def test_position_cadence_accepts_five_second_samples_with_tolerance():
+def test_position_cadence_accepts_two_second_samples_with_tolerance():
     result = canary_evidence.position_cadence_evidence([
         {"half": 1, "sample_time": value, "player_samples": 10}
-        for value in (5.0, 10.0, 15.0, 20.0)
+        for value in (2.0, 4.0, 6.0, 8.0)
     ] + [
         {"half": 2, "sample_time": value, "player_samples": 8}
-        for value in (5.1, 10.2, 15.2)
+        for value in (2.1, 4.2, 6.2)
     ])
     assert result["within_slo"] is True
-    assert result["halves"][0]["median_interval_seconds"] == 5.0
+    assert result["target_interval_seconds"] == 2.0
+    assert result["halves"][0]["median_interval_seconds"] == 2.0
 
 
 def test_position_cadence_rejects_sparse_or_missing_samples():
     sparse = canary_evidence.position_cadence_evidence([
         {"half": 1, "sample_time": value, "player_samples": 5}
-        for value in (5.0, 20.0, 35.0)
+        for value in (2.0, 17.0, 32.0)
     ])
     assert sparse["within_slo"] is False
     assert canary_evidence.position_cadence_evidence([])["available"] is False

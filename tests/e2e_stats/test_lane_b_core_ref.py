@@ -6,10 +6,67 @@ import pytest
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                 persist_preflight_failure,
                                 replay_boot_flag_positions, run_match,
-                                stage_tree)
+                                stage_objective_wire_witness, stage_tree)
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_objective_wire_witness_stages_exact_lifecycles_and_health():
+    class FakeDb:
+        def __init__(self):
+            self.statements = []
+
+        def scalar(self, query):
+            assert "hlstats_Servers" in query
+            return 1
+
+        def sql(self, query):
+            self.statements.append(query)
+
+    class FakeDaemon:
+        def __init__(self):
+            self.lines = []
+
+        def feed_line(self, line):
+            self.lines.append(line)
+
+    db, daemon = FakeDb(), FakeDaemon()
+    evidence = stage_objective_wire_witness(db, daemon, map_name="dod_anzio")
+
+    assert evidence["scenarios"] == [
+        "start_complete", "start_stop_capture_stopped",
+        "start_stop_context_reset", "left_censored_complete",
+    ]
+    assert evidence["evidence_scope"] == (
+        "synthetic_wire_to_real_daemon_to_ephemeral_mysql"
+    )
+    assert evidence["production_polling_scope"] == (
+        "separate_live_bot_capture_health_only"
+    )
+    assert len(db.statements) == 1
+    assert "objective-witness-TEST" in db.statements[0]
+    assert len(daemon.lines) == 18
+    assert sum("KTP_CAPTURE_MANIFEST " in line for line in daemon.lines) == 1
+    objectives = [line for line in daemon.lines if "KTP_OBJECTIVE_ATTEMPT " in line]
+    assert len(objectives) == 7
+    assert sum('(kind "start")' in line for line in objectives) == 3
+    assert sum('(kind "complete")' in line for line in objectives) == 2
+    assert sum('(kind "stop")' in line for line in objectives) == 2
+    assert sum('(stop_reason "capture_stopped")' in line for line in objectives) == 1
+    assert sum('(stop_reason "context_reset")' in line for line in objectives) == 1
+    assert any(
+        '(kind "complete")' in line and '(attempt_id "1")' in line
+        and '(sequence "8")' in line for line in objectives
+    )
+    health = [line for line in daemon.lines if "KTP_CAPTURE_HEALTH " in line]
+    assert len(health) == 10
+    objective_health = next(
+        line for line in health if '(event_type "objective_attempt")' in line
+    )
+    assert '(attempted "7")' in objective_health
+    assert '(enqueued "7")' in objective_health
+    assert '(emitted "7")' in objective_health
 
 
 def test_full_lane_builds_test_core_from_the_exact_amxx_checkout():
@@ -62,13 +119,29 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     correction = "/work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql"
     certification = "/work/build/artifacts/sql/migrate_020_frag_context_certified.sql"
     observability = "/work/build/artifacts/sql/migrate_021_capture_observability.sql"
+    telemetry = "/work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql"
 
-    for migration in (life, clocks, breaks, correction, certification, observability):
+    migrations = (
+        life, clocks, breaks, correction, certification, observability, telemetry,
+    )
+    for migration in migrations[:-1]:
         assert workflow.count(migration) == 2
-    first = [workflow.index(migration) for migration in
-             (life, clocks, breaks, correction, certification, observability)]
-    second = [workflow.index(migration, offset + 1) for migration, offset in
-              zip((life, clocks, breaks, correction, certification, observability), first)]
+    # Migration 022 also appears once in the dedicated production-parity
+    # migration self-test step; its final two uses are the full/corpus lists.
+    assert workflow.count(telemetry) == 3
+
+    def occurrences(value):
+        indexes, offset = [], 0
+        while (found := workflow.find(value, offset)) >= 0:
+            indexes.append(found)
+            offset = found + 1
+        return indexes
+
+    migration_indexes = {
+        migration: occurrences(migration)[-2:] for migration in migrations
+    }
+    first = [migration_indexes[migration][0] for migration in migrations]
+    second = [migration_indexes[migration][1] for migration in migrations]
     assert first == sorted(first)
     assert second == sorted(second)
     assert first[-1] < second[0]
@@ -76,6 +149,10 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
 
 def test_full_lane_carries_target_producer_clock_release_gates():
     runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    workflow = (ROOT / ".github/workflows/lane-b-stats-e2e.yml").read_text()
+
+    assert "/work/config/analytics/accumulation_v6_schema22_2s.toml" in workflow
+    assert "--report-profile /work/config/analytics/accumulation_v5_momentum.toml" not in workflow
 
     for emitted_key in (
         '"frag_context_match"', '"damage_match"', '"life_boundary_match"'

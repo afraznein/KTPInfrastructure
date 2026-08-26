@@ -61,6 +61,21 @@ def _facts() -> dict:
                       {"half": 1, "time": 360, "momentum": 0}],
             "episodes": [],
         },
+        "telemetry_lifecycles": {
+            "privacy": "aggregate_only_no_entity_or_position_detail",
+            "objective_attempts": {
+                "status": "available", "events": 0, "attempts": 0,
+                "starts": 0, "completes": 0, "stops": 0,
+                "orphan_terminals": 0, "open_attempts": 0,
+                "stop_reasons": {"capture_stopped": 0, "context_reset": 0},
+            },
+            "grenade_entities": {
+                "status": "available", "semantics": "entity_tracked_removed_only",
+                "events": 0, "entities": 0, "tracked": 0, "removed": 0,
+                "complete_lifecycles": 0, "incomplete_tracked": 0,
+                "left_censored_removed": 0, "allowed_weapon_ids_only": True,
+            },
+        },
         "reliability": {
             "life_boundaries": True, "damage_events": False,
             "capture_events": False, "ownership": False,
@@ -86,10 +101,46 @@ class ExtractorDb:
         if marker == "match":
             return _tsv(
                 ["match_id", "server_id", "map_name", "halves_played",
-                 "open_halves", "duration_seconds"],
+                 "observed_halves", "open_halves", "match_type",
+                 "distinct_match_types", "unclassified_halves",
+                 "duration_seconds"],
                 [{"match_id": "extractor-TEST", "server_id": 1,
                   "map_name": "dod_anzio", "halves_played": 1,
-                  "open_halves": 0, "duration_seconds": 360}],
+                  "observed_halves": "1", "open_halves": 0,
+                  "match_type": 3, "distinct_match_types": 1,
+                  "unclassified_halves": 0, "duration_seconds": 360}],
+            )
+        if marker == "capture_manifests":
+            return _tsv(
+                ["half", "schema_version", "capabilities", "position_interval"],
+                [{"half": 1, "schema_version": 22,
+                  "capabilities": "objective_attempt,grenade_entity",
+                  "position_interval": 2.0}],
+            )
+        if marker == "capture_health":
+            event_types = (
+                "life", "damage", "position", "frag", "assist", "break",
+                "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+            )
+            rows = []
+            for event_type in event_types:
+                count = 4 if event_type == "objective_attempt" else (
+                    3 if event_type == "grenade_entity" else 0
+                )
+                rows.append({
+                    "half": 1, "event_type": event_type,
+                    "attempted": count, "enqueued": count, "dropped": 0,
+                    "emitted": count, "daemon_received": count,
+                    "daemon_accepted": count, "daemon_rejected": 0,
+                    "correlation_failure_count": 0, "sequence_gap_count": 0,
+                    "duplicate_or_reordered_count": 0,
+                })
+            return _tsv(
+                ["half", "event_type", "attempted", "enqueued", "dropped",
+                 "emitted", "daemon_received", "daemon_accepted",
+                 "daemon_rejected", "correlation_failure_count",
+                 "sequence_gap_count", "duplicate_or_reordered_count"],
+                rows,
             )
         if marker == "roster":
             return _tsv(
@@ -99,7 +150,7 @@ class ExtractorDb:
             )
         if marker == "positions":
             rows = []
-            for when in range(0, 361, 5):
+            for when in range(0, 361, 2):
                 for pid in range(1, 13):
                     team = 1 if pid <= 6 else 2
                     rows.append({"player_id": pid, "team": team, "half": 1,
@@ -170,6 +221,36 @@ class ExtractorDb:
                 ["id", "half", "flag_index", "flag_name", "owner_team",
                  "is_initial", "game_time"], rows,
             )
+        if marker == "objective_attempts":
+            return _tsv(
+                ["server_id", "half", "attempt_id", "event_kind", "stop_reason"],
+                [
+                    {"server_id": 1, "half": 1, "attempt_id": 10,
+                     "event_kind": "start", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 10,
+                     "event_kind": "complete", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 11,
+                     "event_kind": "start", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 11,
+                     "event_kind": "stop", "stop_reason": "context_reset"},
+                ],
+            )
+        if marker == "grenade_entities":
+            return _tsv(
+                ["server_id", "half", "entindex", "serial", "entity_kind",
+                 "weapon_id", "weapon_type"],
+                [
+                    {"server_id": 1, "half": 1, "entindex": 101, "serial": 10001,
+                     "entity_kind": "tracked", "weapon_id": 13,
+                     "weapon_type": "handgrenade"},
+                    {"server_id": 1, "half": 1, "entindex": 101, "serial": 10001,
+                     "entity_kind": "removed", "weapon_id": 13,
+                     "weapon_type": "handgrenade"},
+                    {"server_id": 1, "half": 1, "entindex": 102, "serial": 10002,
+                     "entity_kind": "tracked", "weapon_id": 36,
+                     "weapon_type": "mills_bomb"},
+                ],
+            )
         raise AssertionError(marker)
 
 
@@ -189,7 +270,36 @@ def test_live_database_extractor_builds_private_derived_public_facts():
     position_timing = facts["team_position_contributions"]
     assert position_timing
     assert not any("player" in key for row in position_timing for key in row)
-    assert private["position_samples"] == 876
+    assert private["position_samples"] == 2172
+    assert private["grenade_entity_position_rows"] == 3
+    assert facts["telemetry_lifecycles"]["objective_attempts"] == {
+        "status": "available", "events": 4, "attempts": 2, "starts": 2,
+        "completes": 1, "stops": 1, "orphan_terminals": 0,
+        "open_attempts": 0,
+        "stop_reasons": {"capture_stopped": 0, "context_reset": 1},
+    }
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["entities"] == 2
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["incomplete_tracked"] == 1
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["allowed_weapon_ids_only"] is True
+
+
+def test_live_report_rejects_crossed_allowed_grenade_id_type_pair():
+    class CrossedPairDb(ExtractorDb):
+        def sql(self, query):
+            if "lane_b_v5_grenade_entities" in query:
+                return _tsv(
+                    ["server_id", "half", "entindex", "serial", "entity_kind",
+                     "weapon_id", "weapon_type"],
+                    [{"server_id": 1, "half": 1, "entindex": 101,
+                      "serial": 10001, "entity_kind": "tracked",
+                      "weapon_id": 13, "weapon_type": "stickgrenade"}],
+                )
+            return super().sql(query)
+
+    facts, _ = build_facts(CrossedPairDb(), "extractor-TEST")
+    assert facts["telemetry_lifecycles"]["grenade_entities"][
+        "allowed_weapon_ids_only"
+    ] is False
 
 
 def test_damage_rows_are_bounded_to_the_victims_next_death():

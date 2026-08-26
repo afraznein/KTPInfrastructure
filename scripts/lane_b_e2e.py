@@ -205,6 +205,7 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
                amxx_gamedata: Path, plugin: Path, config_dir: Path,
                server_cfg_fixture: Path, break_drive: Path | None = None,
                assist_drive: Path | None = None,
+               telemetry_drive: Path | None = None,
                matchhandler: Path | None = None
                ) -> tuple[EphemeralTree, list[str], dict]:
     """Lay the branch's artifacts over the image's server tree.
@@ -268,6 +269,11 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
                           "dod/addons/ktpamx/plugins/KTPAssistDrive.amxx")
         plugins_txt = plugins_txt.rstrip() + "\nKTPAssistDrive.amxx\n"
 
+    if telemetry_drive is not None:
+        tree.overlay_file(
+            telemetry_drive, "dod/addons/ktpamx/plugins/KTPWitness.amxx")
+        plugins_txt = plugins_txt.rstrip() + "\nKTPWitness.amxx\n"
+
     tree.write_text(plugins_rel, plugins_txt)
 
     tree.write_text(
@@ -319,6 +325,133 @@ def configure_bots(handle, *, flag_priority: int = 100,
         handle.rcon(cmd)
     if settle:
         time.sleep(settle)
+
+
+def stage_grenade_entity_scenario(handle) -> dict[str, object]:
+    """Drive three allowed lifecycles, one incomplete entity, and exclusions."""
+    for entindex, serial, weapon in (
+        (101, 10001, 13), (102, 10002, 14), (103, 10003, 36)
+    ):
+        args = f"1 {entindex} {serial} 100.0 200.0 300.0 {weapon} 100.0"
+        handle.rcon(f"amx_witness_dispatch_grenade_tracked {args}")
+        handle.rcon(f"amx_witness_dispatch_grenade_removed {args}")
+    handle.rcon(
+        "amx_witness_dispatch_grenade_tracked "
+        "1 104 10004 110.0 210.0 310.0 13 101.0"
+    )
+    # The DODX test-native gate rejects rockets and mortar before any forward
+    # reaches stats_logging. They are never legal KTP match weapons.
+    for entindex, weapon in zip((105, 106, 107, 108), (29, 30, 31, 40)):
+        handle.rcon(
+            "amx_witness_dispatch_grenade_tracked "
+            f"1 {entindex} {10000 + entindex} 120.0 220.0 320.0 "
+            f"{weapon} 102.0"
+        )
+    return {
+        "code": "grenade_entity_scenario",
+        "status": "staged",
+        "expected_witnesses": [
+            {"entindex": 101, "serial": 10001, "weapon_id": 13,
+             "weapon_type": "handgrenade",
+             "entity_kinds": ["tracked", "removed"]},
+            {"entindex": 102, "serial": 10002, "weapon_id": 14,
+             "weapon_type": "stickgrenade",
+             "entity_kinds": ["tracked", "removed"]},
+            {"entindex": 103, "serial": 10003, "weapon_id": 36,
+             "weapon_type": "mills_bomb",
+             "entity_kinds": ["tracked", "removed"]},
+            {"entindex": 104, "serial": 10004, "weapon_id": 13,
+             "weapon_type": "handgrenade", "entity_kinds": ["tracked"]},
+        ],
+        "excluded_weapon_ids": [29, 30, 31, 40],
+    }
+
+
+def stage_objective_wire_witness(db, daemon, *, map_name: str) -> dict[str, object]:
+    """Drive exact schema-22 objective wire rows through the real daemon.
+
+    This deliberately proves the strict wire parser, authorization, context
+    resolution, health accounting, and MySQL ledger. It does not pretend to
+    drive DODX capture-area polling; the live bot match and its producer health
+    are the separate evidence for that production-only source path.
+    """
+    match_id = "objective-witness-TEST"
+    server_id = int(db.scalar(
+        "SELECT serverId FROM hlstats_Servers "
+        "WHERE address='127.0.0.1' ORDER BY serverId LIMIT 1"
+    ))
+    event_epoch = int(time.time()) - 30
+    escaped_map = map_name.replace("'", "''")
+    db.sql(
+        "INSERT INTO ktp_matches "
+        "(match_id,server_id,map_name,half,start_time,end_time) VALUES "
+        f"('{match_id}',{server_id},'{escaped_map}',1,"
+        f"FROM_UNIXTIME({event_epoch - 1}),FROM_UNIXTIME({event_epoch + 20}))"
+    )
+
+    capabilities = (
+        "frag_context,damage,position,assist,life,break,flag_state,"
+        "flag_position,objective_attempt,grenade_entity,sequence,health"
+    )
+    payloads = [
+        "KTP_CAPTURE_MANIFEST "
+        f'(matchid "{match_id}") (half "1") (map "{map_name}") '
+        '(producer "stats_logging") (producer_version "1.18.0-witness") '
+        f'(schema "22") (capabilities "{capabilities}") '
+        '(position_interval "2.0") (buffer_entries "32") '
+        f'(life_buffer_entries "64") (sequence "1") (event_epoch "{event_epoch}")'
+    ]
+    scenarios = (
+        ("start", 2, 2, 0, "Bridge", 1, 2, 1, 0, ""),
+        ("complete", 2, 3, 0, "Bridge", 1, 2, 1, 0, ""),
+        ("start", 4, 4, 1, "Church", 2, 1, 0, 1, ""),
+        ("stop", 4, 5, 1, "Church", 2, 1, 0, 0, "capture_stopped"),
+        ("start", 6, 6, 2, "Middle", 1, 0, 1, 0, ""),
+        ("stop", 6, 7, 2, "Middle", 1, 0, 0, 0, "context_reset"),
+        # attempt_id=1 intentionally has no start row: this is the exact
+        # left-censored/orphan terminal analytics witness.
+        ("complete", 1, 8, 3, "Courtyard", 2, 1, 0, 1, ""),
+    )
+    for offset, (
+        kind, attempt_id, sequence, flag_index, flag_name, capturing_team,
+        owner_before, allies, axis, stop_reason,
+    ) in enumerate(scenarios, 1):
+        payloads.append(
+            "KTP_OBJECTIVE_ATTEMPT "
+            f'(kind "{kind}") (matchid "{match_id}") (half "1") '
+            f'(map "{map_name}") (attempt_id "{attempt_id}") '
+            f'(flag_index "{flag_index}") (flag_name "{flag_name}") '
+            f'(capturing_team "{capturing_team}") (owner_before "{owner_before}") '
+            f'(allies_in_zone "{allies}") (axis_in_zone "{axis}") '
+            f'(stop_reason "{stop_reason}") (game_time "{offset:.2f}") '
+            f'(event_epoch "{event_epoch + offset}") (sequence "{sequence}")'
+        )
+    health_types = (
+        "life", "damage", "position", "frag", "assist", "break",
+        "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+    )
+    for sequence, event_type in enumerate(health_types, 9):
+        count = 7 if event_type == "objective_attempt" else 0
+        payloads.append(
+            "KTP_CAPTURE_HEALTH "
+            f'(matchid "{match_id}") (half "1") (event_type "{event_type}") '
+            f'(attempted "{count}") (enqueued "{count}") (dropped "0") '
+            f'(emitted "{count}") (sequence_first "1") (sequence_last "8") '
+            f'(sequence "{sequence}") (event_epoch "{event_epoch + 10}")'
+        )
+    for payload in payloads:
+        stamp = time.strftime("%m/%d/%Y - %H:%M:%S", time.localtime(event_epoch))
+        daemon.feed_line(f"L {stamp}: {payload}")
+    return {
+        "code": "objective_attempt_wire_witness", "status": "staged",
+        "match_id": match_id, "half": 1, "expected_events": 7,
+        "evidence_scope": "synthetic_wire_to_real_daemon_to_ephemeral_mysql",
+        "production_polling_scope": "separate_live_bot_capture_health_only",
+        "scenarios": [
+            "start_complete", "start_stop_capture_stopped",
+            "start_stop_context_reset", "left_censored_complete",
+        ],
+    }
 
 
 def play(*, play_seconds: int, log_path: Path, progress_every: int = 30) -> None:
@@ -590,7 +723,7 @@ def main() -> int:
     ap.add_argument("--per-team", type=int, choices=(6,), default=6,
                     help="Lane B is fixed at tournament-sized 6v6")
     ap.add_argument("--play-seconds", type=int, default=360,
-                    help="full-match play window; v5 ratings require at least "
+                    help="full-match play window; v6 schema22/2s ratings require at least "
                          "the profile minimum (currently 300 seconds)")
     ap.add_argument("--wait-for-cap", type=int, default=100,
                     help="new_bot wait_for_cap_percent. Lowering it should mean "
@@ -603,6 +736,9 @@ def main() -> int:
     ap.add_argument("--assist-drive-sma", type=Path,
                     default=Path("/work/tests/e2e_stats/diagnostics/KTPAssistDrive.sma"),
                     help="diagnostic that stages the degraded projectile-killer assist scenario")
+    ap.add_argument("--telemetry-drive-sma", type=Path,
+                    default=Path("/work/tests/integration/witness/KTPWitness.sma"),
+                    help="test-only DODX grenade-entity forward dispatcher")
     ap.add_argument("--matchhandler-src", type=Path,
                     default=Path("/src/KTPMatchHandler"),
                     help="KTPMatchHandler checkout; compiled with "
@@ -632,7 +768,7 @@ def main() -> int:
                     help="shareable deterministic v5 bundle, generated before "
                          "the ephemeral database is destroyed")
     ap.add_argument("--report-profile", type=Path,
-                    default=Path("/work/config/analytics/accumulation_v5_momentum.toml"))
+                    default=Path("/work/config/analytics/accumulation_v6_schema22_2s.toml"))
     ap.add_argument("--map-objectives", type=Path,
                     default=Path("/work/config/analytics/map_objectives.toml"))
     ap.add_argument("--artifact-manifest", type=Path, default=None,
@@ -735,12 +871,24 @@ def main() -> int:
                 include_dir=args.matchhandler_includes)
             print(f"compiled {assist_drive_amxx.name}", flush=True)
 
+        telemetry_drive_amxx = None
+        if args.telemetry_drive_sma.is_file():
+            telemetry_drive_amxx = compile_sma(
+                args.telemetry_drive_sma, Path("/tmp/KTPWitness.amxx"),
+                scripting=args.serverfiles / "dod/addons/ktpamx/scripting",
+                include_dir=args.matchhandler_includes)
+            print(f"compiled {telemetry_drive_amxx.name}", flush=True)
+        else:
+            raise SystemExit(
+                f"--telemetry-drive-sma {args.telemetry_drive_sma} is missing")
+
         tree, dropped, gamedata_provenance = stage_tree(
             args.serverfiles, ktpamx_so=args.ktpamx_so,
             dodx_so=args.dodx_so, amxx_gamedata=args.amxx_gamedata,
             plugin=args.plugin, config_dir=args.config_dir,
             server_cfg_fixture=args.server_cfg, break_drive=drive_amxx,
-            assist_drive=assist_drive_amxx, matchhandler=mh_amxx)
+            assist_drive=assist_drive_amxx,
+            telemetry_drive=telemetry_drive_amxx, matchhandler=mh_amxx)
         if expected_gamedata_provenance is not None:
             identity_fields = (
                 "tree_sha256", "file_count", "directory_count", "bytes",
@@ -808,6 +956,10 @@ def main() -> int:
                     configure_bots(handle, flag_priority=args.flag_priority,
                                    wait_for_cap=args.wait_for_cap)
                     def _stage_scenarios():
+                        report["grenade_entity_scenario"] = (
+                            stage_grenade_entity_scenario(handle)
+                        )
+                        print("staged grenade-entity lifecycle scenario", flush=True)
                         if assist_drive_amxx is not None:
                             print("staging degraded-killer assist scenario", flush=True)
                             report["assist_scenario"] = assist_scenario.run(
@@ -878,6 +1030,16 @@ def main() -> int:
             daemon.stop()
             raise SystemExit(f"server never booted in {BOOT_ATTEMPTS} attempts")
 
+        if report.get("match"):
+            report["objective_attempt_wire_witness"] = stage_objective_wire_witness(
+                db, daemon, map_name=args.map
+            )
+            print(
+                "staged deterministic objective wire->daemon->MySQL witness; "
+                "live objective polling remains separate evidence",
+                flush=True,
+            )
+
         # The server is down; let the tail catch up before closing stdin. The
         # plugin flushes its own ring buffer on a 5s task, so a drain shorter
         # than that can miss the tail of the match and look like lost capture.
@@ -909,6 +1071,14 @@ def main() -> int:
         )
         life_match_emitted = (
             log_invariants.count_in_match(log_text, 'triggered "life_boundary"')
+            if report.get("match") else 0
+        )
+        objective_attempt_emitted = (
+            log_invariants.count_in_match(log_text, "KTP_OBJECTIVE_ATTEMPT ")
+            if report.get("match") else 0
+        )
+        grenade_entity_emitted = (
+            log_invariants.count_in_match(log_text, "KTP_GRENADE_ENTITY ")
             if report.get("match") else 0
         )
         frag_diagnostic_evidence = (
@@ -970,6 +1140,8 @@ def main() -> int:
             # this separate from the generic PPA count above, which also
             # includes diagnostic/warmup assist actions.
             "assist_context": assist_context_emitted,
+            "objective_attempt": objective_attempt_emitted,
+            "grenade_entity": grenade_entity_emitted,
         }
         expected_frag_diagnostics = frag_diagnostic_evidence[
             "expected_synthetic_unmatched"
@@ -1069,6 +1241,33 @@ def main() -> int:
                 db, emitted=report["emitted"]["position_sample"],
                 match_id=(report["match"]["match_id"]
                           if report.get("match") else None)),
+            assertions.check_position_cadence(
+                db,
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
+            assertions.check_objective_attempts(
+                db, emitted=report["emitted"]["objective_attempt"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
+            assertions.check_grenade_entities(
+                db, emitted=report["emitted"]["grenade_entity"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+                expected_witnesses=(
+                    (report.get("grenade_entity_scenario") or {})
+                    .get("expected_witnesses", [])
+                ),
+            ),
+            assertions.check_objective_attempt_witness(
+                db,
+                match_id=(
+                    (report.get("objective_attempt_wire_witness") or {})
+                    .get("match_id")
+                ),
+                half=1,
+            ),
             assertions.check_flag_states(
                 db, emitted=report["emitted"]["flag_state"]),
             assertions.check_life_events(

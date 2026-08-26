@@ -94,6 +94,7 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
     bounded_name = {
         "accumulation_v4_life_impact": "bounded_v4_life_impact",
         "accumulation_v5_momentum": "bounded_v5_momentum",
+        "accumulation_v6_schema22_2s": "bounded_v6_schema22_2s",
     }.get(profile_name, "bounded_v3")
     bounded = {
         "name": bounded_name,
@@ -146,6 +147,7 @@ def compare_models(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, 
             "bounded_v3": "Fixed death/objective pools plus contextual positive bonuses.",
             "bounded_v4_life_impact": "Bounded v3 events plus private-derived per-life territorial impact.",
             "bounded_v5_momentum": "Bounded life impact plus team-momentum swings and a normalized Impact Index.",
+            "bounded_v6_schema22_2s": "The v5 formulas applied only to authorized schema-22 evidence sampled at two seconds.",
         },
     }
 
@@ -156,6 +158,7 @@ def render_markdown(comparison: dict[str, Any]) -> str:
     bounded_label = {
         "bounded_v4_life_impact": "Bounded v4 life-impact",
         "bounded_v5_momentum": "Bounded v5 momentum",
+        "bounded_v6_schema22_2s": "Bounded v6 schema22/2s",
     }.get(bounded_name, "Bounded v3")
     lines = [
         f"# Accumulation model comparison — {comparison['match_id']}", "",

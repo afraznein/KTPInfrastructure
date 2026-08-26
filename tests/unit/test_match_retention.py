@@ -42,6 +42,10 @@ def test_apply_deletes_children_before_match_metadata():
     assert "DELETE t FROM `ktp_capture_manifests`" in sql
     assert "ktp_flag_state_events" in retention.MATCH_TABLES
     assert "DELETE t FROM `ktp_flag_state_events`" in sql
+    assert "ktp_objective_attempt_events" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_objective_attempt_events`" in sql
+    assert "ktp_grenade_entity_events" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_grenade_entity_events`" in sql
     last_child = max(sql.index(f"DELETE t FROM `{table}`") for table in retention.MATCH_TABLES)
     parent = sql.index("DELETE t FROM `ktp_matches`")
     assert last_child < parent

@@ -83,7 +83,7 @@ API, website, downloadable reports, Discord, or another player's output.
 
 | Metric ID | Definition |
 |---|---|
-| `occupancy_seconds` | Count of valid position samples in a 256-unit cell multiplied by the configured 5-second interval. |
+| `occupancy_seconds` | Count of valid position samples in a 256-unit cell multiplied by the configured sample interval (2 seconds for schema 22). |
 | `kills_per_occupancy_minute` | Cell kill origins divided by cell occupancy seconds, multiplied by 60. Target cells require at least 15 seconds. |
 | `deaths_per_occupancy_minute` | Cell victim locations divided by cell occupancy seconds, multiplied by 60. Target cells require at least 15 seconds. |
 | `team_control_differential` | `(Allies occupancy - Axis occupancy) / total occupancy` within a cell. |
