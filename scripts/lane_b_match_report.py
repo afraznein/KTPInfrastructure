@@ -321,10 +321,14 @@ FROM ktp_matches WHERE match_id={match} GROUP BY match_id
         topology = tomllib.load(source).get("maps", {}).get(map_name, {})
     profile = load_profile(profile_path)
     manifest_rows = _rows(db, "capture_manifests", f"""
-SELECT half, schema_version, capabilities, position_interval
-FROM ktp_capture_manifests
-WHERE BINARY match_id=BINARY {match}
-ORDER BY half, id
+SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
+       cm.event_epoch AS activation_epoch,
+       UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
+FROM ktp_capture_manifests cm
+LEFT JOIN ktp_matches m
+  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE BINARY cm.match_id=BINARY {match}
+ORDER BY cm.half, cm.id
 """)
     health_rows = _rows(db, "capture_health", f"""
 SELECT half, event_type, attempted, enqueued, dropped, emitted,
@@ -340,7 +344,8 @@ ORDER BY half, event_type
         if _i(value) > 0
     }
     capture_authorization = evaluate_capture_authorization(
-        observed_halves, manifest_rows, health_rows
+        observed_halves, manifest_rows, health_rows,
+        require_activation=True,
     )
     profile_contract = profile.get("profile") or {}
     requires_schema22 = (

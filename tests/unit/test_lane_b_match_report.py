@@ -117,10 +117,13 @@ class ExtractorDb:
             )
         if marker == "capture_manifests":
             return _tsv(
-                ["half", "schema_version", "capabilities", "position_interval"],
+                ["half", "schema_version", "capabilities", "position_interval",
+                 "activation_epoch", "match_start_epoch"],
                 [{"half": 1, "schema_version": 22,
                   "capabilities": "objective_attempt,grenade_entity",
-                  "position_interval": 2.0}],
+                  "position_interval": 2.0,
+                  "activation_epoch": 1787097601,
+                  "match_start_epoch": 1787097600}],
             )
         if marker == "capture_health":
             event_types = (
@@ -501,6 +504,54 @@ def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
         "authorized"
     ] is True
     assert generated["verification"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("latency", (0, 1, 2, 3))
+def test_schema22_manifest_activation_latency_0_through_3_is_authorized(
+        latency: int):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "activation_epoch": 100 + latency,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is True
+
+
+@pytest.mark.parametrize("activation", (99, 104, None))
+def test_schema22_manifest_activation_outside_policy_is_unauthorized(
+        activation: int | None):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "activation_epoch": activation,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("manifest activation" in error
+               for error in authorization["errors"])
+
+
+def test_schema22_never_confirmed_without_manifest_is_not_authorized():
+    authorization = evaluate_capture_authorization(
+        {1}, [], _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("manifest half set/count" in error
+               for error in authorization["errors"])
 
 
 def test_match_log_segments_keep_breakdrive_markers_out_of_clean_context():

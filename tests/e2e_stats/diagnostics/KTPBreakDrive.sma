@@ -75,6 +75,7 @@
 #define BD_TASK_UNPROTECT_BASE 77140
 #define BD_WALKOFF_MAX_POLLS 2400
 #define BD_KILL_MAX_POLLS 600
+#define BD_FAR_KILL_MAX_POLLS BD_WALKOFF_MAX_POLLS
 #define BD_RESTART_MAX_POLLS 60
 #define BD_RESTART_TIMER_SECS 1.0
 #define BD_BREAK_CANDIDATE_SECS 2.5
@@ -125,6 +126,7 @@ public plugin_init() {
 	register_srvcmd("ktp_bd_scan", "cmd_scan")
 	register_srvcmd("ktp_bd_kill", "cmd_kill")
 	register_srvcmd("ktp_bd_arm_kill", "cmd_arm_kill")
+	register_srvcmd("ktp_bd_disarm_kill", "cmd_disarm_kill")
 	register_srvcmd("ktp_bd_arm_restart", "cmd_arm_restart")
 	register_srvcmd("ktp_bd_clock_preflight", "cmd_clock_preflight")
 	register_srvcmd("ktp_bd_walkoff", "cmd_walkoff")
@@ -551,11 +553,21 @@ public cmd_arm_kill() {
 		return PLUGIN_HANDLED
 	}
 
+	// Rearming is an explicit reset boundary.  A prior bounded attempt must
+	// never leave its poll count or task alive to shorten the next attempt.
 	remove_task(BD_TASK_KILL_POLL)
 	g_bdKillNear = bool:equal(arg_mode, "near")
 	g_bdKillPolls = 0
 	log_amx("[BD] kill ARMED mode=%s", arg_mode)
 	set_task(0.1, "bd_kill_poll", BD_TASK_KILL_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public cmd_disarm_kill() {
+	remove_task(BD_TASK_KILL_POLL)
+	g_bdKillPolls = 0
+	server_print("KTP_BD_KILL_DISARMED")
+	log_amx("[BD] kill DISARMED")
 	return PLUGIN_HANDLED
 }
 
@@ -567,7 +579,8 @@ public bd_kill_poll() {
 		return PLUGIN_HANDLED
 	}
 
-	if (g_bdKillPolls >= BD_KILL_MAX_POLLS) {
+	new max_polls = g_bdKillNear ? BD_KILL_MAX_POLLS : BD_FAR_KILL_MAX_POLLS
+	if (g_bdKillPolls >= max_polls) {
 		remove_task(BD_TASK_KILL_POLL)
 		log_amx("[BD] kill ABORT flag=-1 mode=%s no stageable capture while armed",
 			g_bdKillNear ? "near" : "far")

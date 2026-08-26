@@ -550,21 +550,29 @@ WHERE BINARY match_id=BINARY {sql_literal(match_id)}
 
 
 def match_epoch_interval(db, *, match_id: str, half: int) -> dict[str, int]:
-    """Read the exact persisted producer-time interval for one match half."""
+    """Read one persisted match interval and its confirmed activation epoch."""
     rows = tsv_rows(db.sql(f"""
-SELECT UNIX_TIMESTAMP(start_time) AS start_epoch,
-       UNIX_TIMESTAMP(end_time) AS end_epoch
-FROM ktp_matches
-WHERE BINARY match_id=BINARY {sql_literal(match_id)}
-  AND half={int(half)}
+SELECT UNIX_TIMESTAMP(m.start_time) AS start_epoch,
+       UNIX_TIMESTAMP(m.end_time) AS end_epoch,
+       cm.event_epoch AS activation_epoch
+FROM ktp_matches m
+JOIN ktp_capture_manifests cm
+  ON BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
+WHERE BINARY m.match_id=BINARY {sql_literal(match_id)}
+  AND m.half={int(half)}
 """))
     if len(rows) != 1:
         return {}
     start_epoch = rows[0].get("start_epoch")
     end_epoch = rows[0].get("end_epoch")
-    if start_epoch is None or end_epoch is None:
+    activation_epoch = rows[0].get("activation_epoch")
+    if start_epoch is None or end_epoch is None or activation_epoch is None:
         return {}
-    return {"start_epoch": int(start_epoch), "end_epoch": int(end_epoch)}
+    return {
+        "start_epoch": int(start_epoch),
+        "end_epoch": int(end_epoch),
+        "activation_epoch": int(activation_epoch),
+    }
 
 
 def judge_capture_context_isolation(
@@ -1239,10 +1247,10 @@ def main() -> int:
             segment for segment in (report_match_log, diagnostic_match_log)
             if segment
         ]
-        frag_marker_scopes: dict[str, dict] = {}
-        for scope_name, match_key, segment in (
-            ("report", "match", report_match_log),
-            ("diagnostic", "diagnostic_match", diagnostic_match_log),
+        marker_contexts: dict[str, dict] = {}
+        for scope_name, match_key in (
+            ("report", "match"),
+            ("diagnostic", "diagnostic_match"),
         ):
             match = report.get(match_key)
             if not match:
@@ -1256,20 +1264,31 @@ def main() -> int:
                     f"interval for {match['match_id']} half={match['half']}"
                 )
                 continue
-            scope = log_invariants.producer_markers_for_match(
-                segment, 'triggered "frag_context"',
-                match_id=match["match_id"], half=match["half"],
-                start_epoch=interval["start_epoch"],
-                end_epoch=interval["end_epoch"],
+            marker_contexts[scope_name] = {
+                "match_id": match["match_id"], "half": match["half"],
+                **interval,
+            }
+
+        frag_scope_evidence = log_invariants.producer_marker_scopes(
+            log_text, 'triggered "frag_context"', contexts=marker_contexts,
+        )
+        frag_marker_scopes = frag_scope_evidence["scopes"]
+        for scope in frag_marker_scopes.values():
+            scope["interval"] = {
+                "start_epoch": scope["start_epoch"],
+                "end_epoch": scope["end_epoch"],
+                "activation_epoch": scope["activation_epoch"],
+            }
+        structured_frag_mismatches = (
+            frag_scope_evidence["context_mismatches"]
+            + frag_scope_evidence["foreign_context"]
+        )
+        if structured_frag_mismatches:
+            failures.append(
+                "frag marker scope: "
+                f"{len(structured_frag_mismatches)} structured marker(s) "
+                "had unknown/wrong producer context or clocks"
             )
-            scope["interval"] = interval
-            frag_marker_scopes[scope_name] = scope
-            if scope["context_mismatches"]:
-                failures.append(
-                    f"{scope_name} frag marker scope: "
-                    f"{len(scope['context_mismatches'])} structured marker(s) "
-                    "had wrong producer context or clocks"
-                )
         report["frag_context_marker_scopes"] = frag_marker_scopes
 
         buffered_frag_markers = [
@@ -1277,9 +1296,6 @@ def main() -> int:
             for scope in frag_marker_scopes.values()
             for marker in scope["buffered_pre_interval"]
         ]
-        buffered_frag_evidence = log_invariants.frag_context_classification(
-            "\n".join(buffered_frag_markers)
-        )
         position_sample_total = log_text.count('triggered "position_sample"')
         position_sample_match = (
             log_invariants.count_in_match(
@@ -1317,12 +1333,34 @@ def main() -> int:
             )
             if report.get("match") else 0
         )
-        objective_attempt_emitted = (
-            log_invariants.count_in_match(
-                report_match_log, "KTP_OBJECTIVE_ATTEMPT "
+        objective_scope_evidence = (
+            log_invariants.objective_attempt_marker_scopes(
+                log_text, contexts=marker_contexts,
             )
-            if report.get("match") else 0
         )
+        objective_scope = (
+            objective_scope_evidence["scopes"].get("report") or {}
+        )
+        objective_attempt_emitted = len(objective_scope.get("markers", []))
+        report["objective_attempt_marker_scope"] = {
+            **objective_scope,
+            "known_diagnostic_markers": (
+                (objective_scope_evidence["scopes"].get("diagnostic") or {})
+                .get("markers", [])
+            ),
+            "foreign_context": objective_scope_evidence["foreign_context"],
+            "malformed": objective_scope_evidence["malformed"],
+        }
+        objective_scope_failures = (
+            objective_scope_evidence["context_mismatches"]
+            + objective_scope_evidence["foreign_context"]
+        )
+        if objective_scope_failures:
+            failures.append(
+                "objective attempt marker scope: "
+                f"{len(objective_scope_failures)} structured marker(s) had "
+                "unknown/wrong producer context, clocks, or shape"
+            )
         grenade_entity_emitted = (
             log_invariants.count_in_match(
                 report_match_log, "KTP_GRENADE_ENTITY "
@@ -1333,6 +1371,7 @@ def main() -> int:
             log_invariants.frag_context_diagnostic_evidence(
                 diagnostic_match_log, daemon_text,
                 ignored_producer_markers=buffered_frag_markers,
+                all_producer_text=log_text,
             )
             if report.get("diagnostic_match") else {
                 "expected_synthetic_unmatched": 0,
@@ -1344,6 +1383,22 @@ def main() -> int:
                 "synthetic_kill_markers": [],
                 "unmatched_warnings": [],
             }
+        )
+        if frag_diagnostic_evidence.get("unresolved_ignored_pre_interval"):
+            failures.append(
+                "frag transition correlation: "
+                f"{len(frag_diagnostic_evidence['unresolved_ignored_pre_interval'])} "
+                "sentinel marker(s) were ambiguous or lacked bounded ordered "
+                "warning evidence"
+            )
+        # A no-context transition marker may still correlate with its ordinary
+        # stock frag row. Subtract only markers whose exact daemon warning was
+        # accounted as buffered evidence; subtracting every sentinel would
+        # understate the claimed-row denominator for valid post-match frags.
+        buffered_frag_evidence = log_invariants.frag_context_classification(
+            "\n".join(frag_diagnostic_evidence.get(
+                "ignored_pre_interval_markers", []
+            ))
         )
         kill_evidence = log_invariants.kill_classification(log_text)
         frag_context_evidence = log_invariants.frag_context_classification(

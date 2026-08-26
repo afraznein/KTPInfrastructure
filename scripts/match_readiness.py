@@ -130,6 +130,13 @@ def timestamp(value: Any) -> datetime | None:
     return datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
 
 
+def timestamp_epoch(value: Any) -> int | None:
+    parsed = timestamp(value)
+    if parsed is None:
+        return None
+    return int(parsed.replace(tzinfo=timezone.utc).timestamp())
+
+
 def rows_for(tables: dict[str, list[dict[str, Any]]], table: str, match_id: str) -> list[dict[str, Any]]:
     return [row for row in tables.get(table, []) if row.get("match_id") == match_id]
 
@@ -542,8 +549,18 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     ))
 
     telemetry_present = bool(objective_attempts or grenade_entities or manifests or health)
+    match_start_by_half = {
+        integer(row.get("half")): timestamp_epoch(row.get("start_time"))
+        for row in matches
+    }
+    authorization_manifests = [{
+        **row,
+        "activation_epoch": row.get("event_epoch"),
+        "match_start_epoch": match_start_by_half.get(integer(row.get("half"))),
+    } for row in manifests]
     capture_authorization = evaluate_capture_authorization(
-        observed_halves, manifests, health
+        observed_halves, authorization_manifests, health,
+        require_activation=True,
     )
     objective_shape_ok, objective_errors = objective_rows_valid(
         objective_attempts, observed_halves
