@@ -1,0 +1,26 @@
+## KTP: write attribution for the live fleet deploy path.
+##
+## ktp-file-distributor.service watches /home/dod/distribute and pushes any
+## created or changed file to all 24 game instances within ~15s. A write here is
+## a production deploy, not a template edit. Before these rules the only record
+## was the file's own mtime, so the *next* write was unattributable after the
+## fact -- which is the property that matters, since attribution cannot be
+## reconstructed retroactively.
+##
+## Install: provision/install-distribute-audit.sh (data server only).
+## Read:    ausearch -k ktp-distribute-cfg -i
+##
+## Order matters. In the exit filter the FIRST matching rule supplies the key,
+## so the narrow dodserver.cfg rule must precede the directory rule or its
+## events land under the noisy key instead.
+
+## Highest blast radius in the tree: every instance's server config.
+-a always,exit -F path=/home/dod/distribute/dodserver.cfg -F perm=wa -k ktp-distribute-cfg
+
+## Everything else in the tree. `-F dir=` is recursive; `-w` on a directory is
+## not -- it watches that one inode and misses every file inside it.
+-a always,exit -F dir=/home/dod/distribute -F perm=wa -k ktp-distribute
+
+## No auid filter on purpose. Filtering `auid>=1000` would drop writes made by
+## daemons and by root cron (auid unset), and those are exactly the writers that
+## nobody remembers making.
