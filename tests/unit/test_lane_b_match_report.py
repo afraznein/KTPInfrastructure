@@ -3,6 +3,10 @@ from pathlib import Path
 
 import pytest
 
+from scripts.lane_b_e2e import (check_kill_switch,
+                                clean_assists_after_reenable,
+                                judge_capture_context_isolation,
+                                match_log_segment)
 from scripts.lane_b_match_report import (
     _aggregate_team_life_timing,
     _ownership_is_reliable,
@@ -12,6 +16,7 @@ from scripts.lane_b_match_report import (
     generate_lane_b_report,
     summary_for_lane,
 )
+from scripts.match_analytics import evaluate_capture_authorization
 
 
 def _facts() -> dict:
@@ -422,6 +427,152 @@ def test_live_extractor_bundle_is_generated_verified_and_summarized(tmp_path: Pa
     summary = summary_for_lane(result)
     assert summary["status"] == "PASS"
     assert len(summary["players"]) == 12
+
+
+def _schema22_health(*, frag_rejections: int = 0) -> list[dict]:
+    rows = []
+    for event_type in (
+        "life", "damage", "position", "frag", "assist", "break",
+        "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+    ):
+        attempted = 6 if event_type == "frag" else 0
+        rejected = frag_rejections if event_type == "frag" else 0
+        rows.append({
+            "half": 1, "event_type": event_type,
+            "attempted": attempted, "enqueued": attempted, "dropped": 0,
+            "emitted": attempted, "daemon_received": attempted,
+            "daemon_accepted": attempted - rejected,
+            "daemon_rejected": rejected,
+            "correlation_failure_count": rejected,
+            "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+        })
+    return rows
+
+
+def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
+        tmp_path: Path):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+    }]
+    report_health_rows = _schema22_health()
+    diagnostic_health_rows = _schema22_health(frag_rejections=3)
+    report_authorization = evaluate_capture_authorization(
+        {1}, manifest, report_health_rows
+    )
+    diagnostic_authorization = evaluate_capture_authorization(
+        {1}, manifest, diagnostic_health_rows
+    )
+    report_frag = next(
+        row for row in report_health_rows if row["event_type"] == "frag"
+    )
+    diagnostic_frag = next(
+        row for row in diagnostic_health_rows if row["event_type"] == "frag"
+    )
+
+    verdict = judge_capture_context_isolation(
+        report_match_id="clean-TEST",
+        diagnostic_match_id="breakdrive-diagnostic-TEST",
+        expected_frag_diagnostics=3,
+        report_frag=report_frag,
+        diagnostic_frag=diagnostic_frag,
+        report_health={"status": "ok"},
+        diagnostic_health={"status": "ok"},
+        report_authorization=report_authorization,
+        diagnostic_authorization=diagnostic_authorization,
+    )
+
+    assert verdict["status"] == "ok"
+    assert report_frag["daemon_rejected"] == 0
+    assert report_frag["correlation_failure_count"] == 0
+    assert report_authorization["authorized"] is True
+    assert diagnostic_frag["daemon_rejected"] == 3
+    assert diagnostic_frag["correlation_failure_count"] == 3
+    assert diagnostic_authorization["authorized"] is False
+    assert any(
+        "frag counters do not reconcile" in error
+        for error in diagnostic_authorization["errors"]
+    )
+
+    generated = generate_lane_b_report(ExtractorDb(), "extractor-TEST", tmp_path)
+    assert generated["facts"]["match"]["scoring_iteration"] == "v6_schema22_2s"
+    assert generated["facts"]["match"]["capture_authorization"][
+        "authorized"
+    ] is True
+    assert generated["verification"]["status"] == "PASS"
+
+
+def test_match_log_segments_keep_breakdrive_markers_out_of_clean_context():
+    clean_start = (
+        'L 08/25/2026 - 10:00:00: KTP_MATCH_START '
+        '(matchid "clean-TEST") (half "1st")'
+    )
+    clean_end = (
+        'L 08/25/2026 - 10:06:00: KTP_MATCH_END '
+        '(matchid "clean-TEST") (status "test")'
+    )
+    diagnostic_start = (
+        'L 08/25/2026 - 10:06:05: KTP_MATCH_START '
+        '(matchid "diagnostic-TEST") (half "1st")'
+    )
+    diagnostic_end = (
+        'L 08/25/2026 - 10:07:00: KTP_MATCH_END '
+        '(matchid "diagnostic-TEST") (status "test")'
+    )
+    synthetic = (
+        '[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far '
+        'victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 '
+        'count_before=2 owner_before=1'
+    )
+    log = "\n".join([
+        clean_start, '"A" triggered "frag_context"', clean_end,
+        '"A" triggered "weaponstats"', diagnostic_start, synthetic,
+        diagnostic_end,
+    ])
+
+    clean = match_log_segment(log, "clean-TEST")
+    diagnostic = match_log_segment(log, "diagnostic-TEST")
+
+    assert synthetic not in clean
+    assert 'triggered "weaponstats"' in clean
+    assert synthetic in diagnostic
+
+
+def test_diagnostic_assist_cannot_fake_clean_kill_switch_recovery():
+    report = {
+        "assists_before_match": 4,
+        "assists_at_clean_match_end": 4,
+        # The diagnostic match later raises the global total to five, but that
+        # value is intentionally absent from the clean recovery calculation.
+        "emitted": {"assist": 5},
+    }
+
+    clean_assists = clean_assists_after_reenable(report)
+    verdict = check_kill_switch(
+        {"kills_while_off": 2, "assists_while_off": 0},
+        assists_after_on=clean_assists,
+    )
+
+    assert clean_assists == 0
+    assert verdict["status"] == "not_exercised"
+
+
+def test_clean_post_enable_assist_still_proves_kill_switch_recovery():
+    report = {
+        "assists_before_match": 4,
+        "assists_at_clean_match_end": 5,
+        "emitted": {"assist": 6},
+    }
+
+    clean_assists = clean_assists_after_reenable(report)
+    verdict = check_kill_switch(
+        {"kills_while_off": 2, "assists_while_off": 0},
+        assists_after_on=clean_assists,
+    )
+
+    assert clean_assists == 1
+    assert verdict["status"] == "ok"
 
 
 def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: Path):

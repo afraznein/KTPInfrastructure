@@ -41,6 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
                                          summary_for_lane)
+from scripts.match_analytics import (match_capture_authorization,  # noqa: E402
+                                     sql_literal, tsv_rows)
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
 from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
@@ -481,6 +483,125 @@ def replay_boot_flag_positions(daemon, log_path: Path) -> int:
     return len(lines)
 
 
+def match_log_segment(log_text: str, match_id: str) -> str:
+    """Return one match's ordered log segment, through the next match start.
+
+    Lane B deliberately drives a second, contaminated match for BreakDrive
+    diagnostics.  The existing invariant helpers correctly scope to the first
+    start/end pair in the text they receive, so give them a segment whose first
+    pair belongs to the requested match.  Keeping the post-end tail is
+    intentional: StatsMe flushes while ending a match, and its weaponstats can
+    follow ``KTP_MATCH_END`` but must precede the next real match start.
+    """
+    lines = log_text.splitlines()
+    identity = f'(matchid "{match_id}")'
+    start = None
+    for index, line in enumerate(lines):
+        if "KTP_MATCH_START" in line and identity in line:
+            start = index
+            break
+    if start is None:
+        return ""
+
+    stop = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if ("KTP_MATCH_START" in line and identity not in line
+                and "[test-mode mirror]" not in line):
+            stop = index
+            break
+    return "\n".join(lines[start:stop])
+
+
+def check_match_players_for_match(db, *, match_id: str, expected: int) -> dict:
+    """Require the report match's roster without counting the diagnostic one."""
+    rows = db.count(
+        "SELECT COUNT(*) FROM ktp_match_players "
+        f"WHERE BINARY match_id=BINARY {sql_literal(match_id)}"
+    )
+    ok = rows == expected
+    return {
+        "code": "match_players", "status": "ok" if ok else "pipeline",
+        "rows": rows, "expected": expected,
+        "detail": (
+            f"all {expected} report-match bots tracked"
+            if ok else
+            f"{rows} report-match roster row(s), expected {expected}; the "
+            "separate BreakDrive diagnostic roster is intentionally excluded"
+        ),
+    }
+
+
+def capture_health_event_counters(db, *, match_id: str, half: int,
+                                  event_type: str) -> dict[str, int]:
+    """Read one exact health row for isolation evidence."""
+    rows = tsv_rows(db.sql(f"""
+SELECT attempted, enqueued, dropped, emitted, daemon_received,
+       daemon_accepted, daemon_rejected, correlation_failure_count,
+       sequence_gap_count, duplicate_or_reordered_count
+FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+  AND half={int(half)} AND event_type={sql_literal(event_type)}
+"""))
+    if len(rows) != 1:
+        return {}
+    return {key: int(value or 0) for key, value in rows[0].items()}
+
+
+def judge_capture_context_isolation(
+        *, report_match_id: str, diagnostic_match_id: str,
+        expected_frag_diagnostics: int, report_frag: dict[str, int],
+        diagnostic_frag: dict[str, int], report_health: dict,
+        diagnostic_health: dict, report_authorization: dict,
+        diagnostic_authorization: dict) -> dict:
+    """Prove diagnostics reconcile only where production rejects them."""
+    expected = int(expected_frag_diagnostics)
+    diagnostic_errors = diagnostic_authorization.get("errors") or []
+    checks = {
+        "exactly_three_diagnostics": expected == 3,
+        "report_health_reconciled": report_health.get("status") == "ok",
+        "diagnostic_health_reconciled": diagnostic_health.get("status") == "ok",
+        "report_authorized": bool(report_authorization.get("authorized")),
+        "diagnostic_unauthorized": not bool(
+            diagnostic_authorization.get("authorized")
+        ),
+        "diagnostic_rejected_for_frag_counters": any(
+            "frag counters do not reconcile" in str(error)
+            for error in diagnostic_errors
+        ),
+        "report_frag_clean": (
+            report_frag.get("daemon_rejected") == 0
+            and report_frag.get("correlation_failure_count") == 0
+        ),
+        "diagnostic_frag_exact": (
+            diagnostic_frag.get("daemon_rejected") == expected
+            and diagnostic_frag.get("correlation_failure_count") == expected
+        ),
+    }
+    ok = all(checks.values())
+    return {
+        "code": "capture_context_isolation",
+        "status": "ok" if ok else "pipeline",
+        "detail": (
+            f"clean report match {report_match_id} is authorized with "
+            "frag rejected=0/correlation_failure=0; diagnostic match "
+            f"{diagnostic_match_id} reconciles {expected} intentional "
+            "BreakDrive rejection(s) and remains unauthorized"
+            if ok else
+            "clean/report and contaminated/diagnostic capture contexts were "
+            "not isolated exactly"
+        ),
+        "report_match_id": report_match_id,
+        "diagnostic_match_id": diagnostic_match_id,
+        "expected_frag_diagnostics": expected,
+        "checks": checks,
+        "report_frag": report_frag,
+        "diagnostic_frag": diagnostic_frag,
+        "report_authorization": report_authorization,
+        "diagnostic_authorization": diagnostic_authorization,
+    }
+
+
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
               per_team: int = 8, before_play=None, during_play=None,
               after_match=None, after_live=None) -> dict:
@@ -698,6 +819,16 @@ def check_kill_switch(result: dict, *, assists_after_on: int) -> dict:
     return {"code": "kill_switch", "status": "ok",
             "detail": f"{result['kills_while_off']} kills produced 0 assists "
                       f"while off; {assists_after_on} once re-enabled"}
+
+
+def clean_assists_after_reenable(report: dict) -> int:
+    """Count recovery evidence before the diagnostic match can add assists."""
+    baseline = int(report.get("assists_before_match", 0))
+    clean_end = int(report.get("assists_at_clean_match_end", baseline))
+    # A truncated/replaced log cannot prove recovery either.  Clamp it to the
+    # same no-evidence verdict as zero instead of letting a negative value pass
+    # the `assists_after_on == 0` guard.
+    return max(0, clean_end - baseline)
 
 
 def main() -> int:
@@ -955,7 +1086,7 @@ def main() -> int:
                           "flag position marker(s)", flush=True)
                     configure_bots(handle, flag_priority=args.flag_priority,
                                    wait_for_cap=args.wait_for_cap)
-                    def _stage_scenarios():
+                    def _stage_clean_scenarios():
                         report["grenade_entity_scenario"] = (
                             stage_grenade_entity_scenario(handle)
                         )
@@ -964,9 +1095,15 @@ def main() -> int:
                             print("staging degraded-killer assist scenario", flush=True)
                             report["assist_scenario"] = assist_scenario.run(
                                 handle, args.log)
+
+                    def _stage_break_diagnostics():
                         if drive_amxx is None or args.no_break_scenarios:
                             return
-                        print("staging cap-break scenarios", flush=True)
+                        print(
+                            "staging cap-break scenarios in an isolated "
+                            "diagnostic match",
+                            flush=True,
+                        )
                         report["break_scenarios"] = break_scenarios.run_all(
                             handle, args.log)
 
@@ -1007,12 +1144,33 @@ def main() -> int:
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
                             per_team=args.per_team, before_play=_stage_kill_switch,
-                            during_play=_stage_scenarios,
+                            during_play=_stage_clean_scenarios,
                             after_match=_stage_post_match_frag,
                             after_live=_strict_live_preflight)
+                        # Freeze kill-switch recovery evidence before the
+                        # intentionally separate diagnostic match.  A later
+                        # diagnostic assist must not make a clean match with no
+                        # post-enable assists look recovered.
+                        report["assists_at_clean_match_end"] = _count(
+                            args.log, 'triggered "assist"'
+                        )
+                        if drive_amxx is not None and not args.no_break_scenarios:
+                            # BreakDrive deliberately emits unmatched synthetic
+                            # frag contexts.  They belong in a real live match
+                            # so receipt/correlation health is meaningful, but
+                            # never in the clean match used to authorize and
+                            # publish the schema-22/2s report.  Its scenario
+                            # drivers perform their own bounded waits, so this
+                            # match needs no additional pre-scenario play delay.
+                            report["diagnostic_match"] = run_match(
+                                MatchDriver(handle), half=1, play_seconds=0,
+                                log_path=args.log, per_team=args.per_team,
+                                during_play=_stage_break_diagnostics,
+                            )
                     else:
                         play(play_seconds=args.play_seconds, log_path=args.log)
-                        _stage_scenarios()
+                        _stage_clean_scenarios()
+                        _stage_break_diagnostics()
                 completed = True
                 break
             except Exception as e:  # noqa: BLE001
@@ -1050,42 +1208,68 @@ def main() -> int:
 
         log_text = args.log.read_text(errors="replace")
         daemon_text = daemon.stdout_path.read_text(errors="replace")
+        report_match_log = (
+            match_log_segment(log_text, report["match"]["match_id"])
+            if report.get("match") else ""
+        )
+        diagnostic_match_log = (
+            match_log_segment(log_text, report["diagnostic_match"]["match_id"])
+            if report.get("diagnostic_match") else ""
+        )
+        captured_match_logs = [
+            segment for segment in (report_match_log, diagnostic_match_log)
+            if segment
+        ]
         position_sample_total = log_text.count('triggered "position_sample"')
         position_sample_match = (
-            log_invariants.count_in_match(log_text, 'triggered "position_sample"')
+            log_invariants.count_in_match(
+                report_match_log, 'triggered "position_sample"'
+            )
             if report.get("match") else position_sample_total
         )
         assist_context_emitted = (
-            log_invariants.count_in_match(log_text, 'triggered "assist"')
+            log_invariants.count_in_match(report_match_log, 'triggered "assist"')
             if report.get("match") else 0
         )
         frag_context_match_emitted = (
             log_invariants.frag_context_classification(
-                log_text, match_only=True
+                report_match_log, match_only=True
             )["frags"]
             if report.get("match") else 0
         )
+        diagnostic_frag_context_emitted = (
+            log_invariants.frag_context_classification(
+                diagnostic_match_log, match_only=True
+            )["frags"]
+            if report.get("diagnostic_match") else 0
+        )
         damage_match_emitted = (
-            log_invariants.count_in_match(log_text, 'triggered "damage"')
+            log_invariants.count_in_match(report_match_log, 'triggered "damage"')
             if report.get("match") else 0
         )
         life_match_emitted = (
-            log_invariants.count_in_match(log_text, 'triggered "life_boundary"')
+            log_invariants.count_in_match(
+                report_match_log, 'triggered "life_boundary"'
+            )
             if report.get("match") else 0
         )
         objective_attempt_emitted = (
-            log_invariants.count_in_match(log_text, "KTP_OBJECTIVE_ATTEMPT ")
+            log_invariants.count_in_match(
+                report_match_log, "KTP_OBJECTIVE_ATTEMPT "
+            )
             if report.get("match") else 0
         )
         grenade_entity_emitted = (
-            log_invariants.count_in_match(log_text, "KTP_GRENADE_ENTITY ")
+            log_invariants.count_in_match(
+                report_match_log, "KTP_GRENADE_ENTITY "
+            )
             if report.get("match") else 0
         )
         frag_diagnostic_evidence = (
             log_invariants.frag_context_diagnostic_evidence(
-                log_text, daemon_text
+                diagnostic_match_log, daemon_text
             )
-            if report.get("match") else {
+            if report.get("diagnostic_match") else {
                 "expected_synthetic_unmatched": 0,
                 "observed_unmatched": 0,
                 "expected_identities": [],
@@ -1117,6 +1301,7 @@ def main() -> int:
             "frag_context_teamkills": frag_context_evidence["teamkills"],
             "frag_context_unclassified": frag_context_evidence["unclassified"],
             "frag_context_match": frag_context_match_emitted,
+            "frag_context_diagnostic_match": diagnostic_frag_context_emitted,
             "damage": log_text.count('triggered "damage"'),
             "damage_match": damage_match_emitted,
             "flag_capture": sum(
@@ -1129,7 +1314,8 @@ def main() -> int:
             # because match context is already closed, so compare persisted
             # rows only with markers inside the same ordered match window.
             "flag_state": (
-                log_invariants.count_in_match(log_text, "KTP_FLAG_STATE ")
+                sum(log_invariants.count_in_match(segment, "KTP_FLAG_STATE ")
+                    for segment in captured_match_logs)
                 if report.get("match") else log_text.count("KTP_FLAG_STATE ")
             ),
             "position_sample": position_sample_match,
@@ -1156,6 +1342,14 @@ def main() -> int:
             ),
             "producer_clock_expected_rows": (
                 report["emitted"]["frag_context_match"]
+                + report["emitted"]["frag_context_diagnostic_match"]
+                - expected_frag_diagnostics
+            ),
+            "report_producer_clock_expected_rows": (
+                report["emitted"]["frag_context_match"]
+            ),
+            "diagnostic_producer_clock_expected_rows": (
+                report["emitted"]["frag_context_diagnostic_match"]
                 - expected_frag_diagnostics
             ),
         }
@@ -1182,6 +1376,12 @@ def main() -> int:
         # Two separate verdicts. `failures` are defects; `gaps` are scenarios
         # the bots never produced, which say nothing either way and must not be
         # dressed up as either a pass or a defect.
+        report_capture_health = assertions.check_capture_health(
+            db,
+            match_id=((report.get("match") or {}).get("match_id")),
+            half=((report.get("match") or {}).get("half")),
+            expected_frag_correlation_failures=0,
+        )
         carried = [
             assertions.check_capture_clock_schema(db),
             assertions.check_carried(db, "assist", emitted=report["emitted"]["assist"],
@@ -1224,7 +1424,7 @@ def main() -> int:
                 emitted=report["emitted"]["frag_context_match"],
                 match_id=((report.get("match") or {}).get("match_id")),
                 half=((report.get("match") or {}).get("half")),
-                expected_unmatched=expected_frag_diagnostics,
+                expected_unmatched=0,
             ),
             assertions.check_damage_ledger(db, emitted=report["emitted"]["damage"]),
             assertions.check_damage_producer_clocks(
@@ -1279,15 +1479,7 @@ def main() -> int:
                 half=((report.get("match") or {}).get("half")),
             ),
             assertions.check_capture_buffer(log_text),
-            assertions.check_capture_health(
-                db,
-                match_id=((report.get("match") or {}).get("match_id")),
-                half=((report.get("match") or {}).get("half")),
-                # BreakDrive deliberately emits unmatched synthetic frag
-                # markers to prove correlation failures are observable. They
-                # are expected test evidence, not organic capture loss.
-                expected_frag_correlation_failures=expected_frag_diagnostics,
-            ),
+            report_capture_health,
         ]
         if report.get("assist_scenario"):
             carried.append(report["assist_scenario"])
@@ -1299,12 +1491,14 @@ def main() -> int:
 
         if report.get("match"):
             m = report["match"]
-            carried.append(assertions.check_match_players(
-                db, expected=args.per_team * 2))
+            carried.append(check_match_players_for_match(
+                db, match_id=m["match_id"], expected=args.per_team * 2))
             carried += assertions.check_match_tagging(
                 db, match_id=m["match_id"], half=m["half"])
             carried.append(assertions.check_statsme_flushed(
-                db, weaponstats_lines=log_text.count(chr(34) + "weaponstats" + chr(34)),
+                db, weaponstats_lines=report_match_log.count(
+                    chr(34) + "weaponstats" + chr(34)
+                ),
                 match_id=m["match_id"], half=m["half"]))
             carried.append(assertions.check_match_stats_reconciled(
                 db, match_id=m["match_id"]))
@@ -1318,11 +1512,58 @@ def main() -> int:
             carried.append(assertions.check_untagged_after_match(
                 db, match_id=m["match_id"], kill_window=win))
 
+        if report.get("diagnostic_match"):
+            d = report["diagnostic_match"]
+            diagnostic_capture_health = assertions.check_capture_health(
+                db, match_id=d["match_id"], half=d["half"],
+                expected_frag_correlation_failures=expected_frag_diagnostics,
+            )
+            diagnostic_capture_health = {
+                **diagnostic_capture_health,
+                "code": "diagnostic_capture_health",
+            }
+            carried.append(diagnostic_capture_health)
+            carried.append(assertions.check_frag_producer_clocks(
+                db,
+                emitted=report["emitted"]["frag_context_diagnostic_match"],
+                match_id=d["match_id"], half=d["half"],
+                expected_unmatched=expected_frag_diagnostics,
+            ) | {"code": "diagnostic_frag_producer_clocks"})
+            carried.append(assertions.check_match_stats_reconciled(
+                db, match_id=d["match_id"]
+            ) | {"code": "diagnostic_match_stats_reconciled"})
+
+            report_authorization = match_capture_authorization(
+                db, m["match_id"], capture_tables_available=True
+            )
+            diagnostic_authorization = match_capture_authorization(
+                db, d["match_id"], capture_tables_available=True
+            )
+            report_frag = capture_health_event_counters(
+                db, match_id=m["match_id"], half=m["half"], event_type="frag"
+            )
+            diagnostic_frag = capture_health_event_counters(
+                db, match_id=d["match_id"], half=d["half"], event_type="frag"
+            )
+            report["capture_context_isolation"] = (
+                judge_capture_context_isolation(
+                    report_match_id=m["match_id"],
+                    diagnostic_match_id=d["match_id"],
+                    expected_frag_diagnostics=expected_frag_diagnostics,
+                    report_frag=report_frag,
+                    diagnostic_frag=diagnostic_frag,
+                    report_health=report_capture_health,
+                    diagnostic_health=diagnostic_capture_health,
+                    report_authorization=report_authorization,
+                    diagnostic_authorization=diagnostic_authorization,
+                )
+            )
+            carried.append(report["capture_context_isolation"])
+
         if report.get("kill_switch"):
             carried.append(check_kill_switch(
                 report["kill_switch"],
-                assists_after_on=report["emitted"]["assist"]
-                - report.get("assists_before_match", 0)))
+                assists_after_on=clean_assists_after_reenable(report)))
         report["carried"] = carried
         failures += [f"{c['code']}: {c['detail']}" for c in carried
                      if c["status"] == "pipeline"]
