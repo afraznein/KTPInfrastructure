@@ -1,0 +1,3 @@
+# KTP backup watchdog - alerts if the weekly backup did not run, or ran partially.
+# Daily, because the point is to notice a MISSED weekly run promptly.
+30 8 * * *   root  /usr/local/bin/ktp-backup-watchdog.sh >> /var/log/ktp-backup.log 2>&1
