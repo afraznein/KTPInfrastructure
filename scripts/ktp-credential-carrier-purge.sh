@@ -1,31 +1,32 @@
 #!/bin/bash
 # KTP retired-credential carrier purge (data server, root)
 #
-# Rotated secrets keep living in backup copies -- *.bak-*, *.cfg.bak*, and
-# compressed archives -- long after the value itself is dead. Every value found
-# so far was already rotated, so this is hygiene rather than exposure. The point
-# is that dead values age out unattended instead of needing another census: that
-# census was re-derived four times and produced a different number each time,
-# which is the argument for a dated rule instead of a sweep.
+# Rotated secrets keep living in *.bak-* / *.cfg.bak* / archive copies long
+# after the value itself is dead. Every value found so far was already rotated,
+# so this is hygiene rather than exposure. The point is that dead values age out
+# unattended instead of needing another census: that census was re-derived four
+# times and produced a different number each time, which is the argument for a
+# dated rule instead of a sweep.
 #
 # Matches on NAME and AGE only. It never greps for a secret, so no credential
 # appears in this script, its arguments, or its log -- which is what makes it
 # safe to keep in a public repository.
 #
-# EXCLUSIONS, each load-bearing:
-#   - $PROTECTED_DIR (default /opt/backups) holds the real database dumps on
-#     their own 28-day prune and they are the ONLY database copies that exist.
-#     Guarded twice: it is never descended into, and every candidate is
-#     re-checked against it by resolved path before deletion.
-#   - Shell and client histories (.bash_history, .mysql_history, anywhere) are
-#     NEVER touched. They need a deliberate decision, not a name-and-age rule.
-#   - *fallback* files are referenced by nginx and are not backups.
-#   - Live configuration is not backup-shaped and is not matched. Only the
-#     suffixes in CARRIER_PATTERNS are considered.
+# ⚠️ NECESSARY, NOT SUFFICIENT -- measured on the data server 2026-08-25:
+#   - Of the carriers that exist, roughly one in ten is NOT backup-shaped and
+#     this script cannot see it by design: shell/SQL histories and a handful of
+#     ordinary .log and .sql files. Those need a deliberate decision each.
+#   - Roughly one in ten is NEWER than the horizon on any given day, including
+#     the largest ones. A 90-day rule reaches them eventually, never promptly.
+# Do not read a clean run as "no carriers remain".
+#
+# EXCLUSIONS. Every entry below was measured to contain live data, curated
+# archives, or git-tracked CI fixtures that match the name patterns anyway.
+# Removing an entry without re-measuring will delete production data.
 #
 # DRY_RUN defaults to 1. This script reports and does nothing until it is
 # explicitly told otherwise, because the first real run deletes everything back
-# to the retention horizon at once.
+# to the retention horizon in one pass.
 #
 # Cron: /etc/cron.d/ktp-credential-carrier-purge (staged disabled on install).
 # Canonical copy: KTPInfrastructure/scripts/.
@@ -35,10 +36,12 @@ set -euo pipefail
 RETENTION_DAYS="${RETENTION_DAYS:-90}"
 DRY_RUN="${DRY_RUN:-1}"
 PROTECTED_DIR="${PROTECTED_DIR:-/opt/backups}"
-SCAN_DIRS="${SCAN_DIRS:-/home /opt /root /etc /usr/local/bin /srv /var/backups}"
+SCAN_DIRS="${SCAN_DIRS:-/home /opt /root /etc /usr/local/bin /srv}"
 
-# Backup-shaped suffixes only. Deliberately excludes *.tmp: FastDL serves live
-# .ztmp assets and a loose tmp glob is one edit away from matching them.
+# Backup-shaped suffixes only. Deliberately excludes *.tmp (FastDL serves live
+# .ztmp assets) and bare *.gz / *.zip / *.tar.gz (those are overwhelmingly real
+# data here -- demo uploads, evidence bundles, dpkg state -- and the two archives
+# that ARE carriers already match via *.bak-* and *-backup-*).
 CARRIER_PATTERNS=(
     '*.bak' '*.bak-*' '*.bak.*' '*.bak_*'
     '*.cfg.bak*' '*.conf.bak*'
@@ -46,9 +49,24 @@ CARRIER_PATTERNS=(
     '*.pre-*' '*-backup-*' '*.backup'
 )
 
+# Measured 2026-08-25. Each is live data, a curated archive, or a CI fixture
+# that matches the patterns above. Order does not matter; all are pruned.
+EXCLUDE_PATHS=(
+    "$PROTECTED_DIR"                                  # only DB copies that exist; own 28d prune
+    /home/dod/distribute                              # LIVE deploy path; deletions sync fleet-wide in ~15s
+    /home/hltvserver/hlds/dod/demos                   # demo archive; ktp-demo-retention.sh owns it
+    /home/hltvserver/hlds/configs                     # the 24 live proxy configs
+    /opt/ktp-ac-api/uploads                           # evidence bundles; retention deliberately HELD
+    /opt/ktp-lan-archive                              # curated LAN event archive
+    /opt/ktp-infra                                    # git-tracked; tier-2 CI fixtures live here
+    /opt/ktp-tier2-runner/actions-runner/_work        # runner checkouts + Python toolcache
+    /var/backups                                      # owned by dpkg-db-backup.timer
+    /etc/console-setup                                # cached fonts/keymaps
+)
+
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
-echo "[$(ts)] carrier purge starting: retention=${RETENTION_DAYS}d dry_run=${DRY_RUN} protected=${PROTECTED_DIR}"
+echo "[$(ts)] carrier purge starting: retention=${RETENTION_DAYS}d dry_run=${DRY_RUN}"
 
 # A missing protected dir means the assumption behind this script no longer
 # holds. Refuse rather than run with one guard silently absent.
@@ -56,15 +74,21 @@ if [ ! -d "$PROTECTED_DIR" ]; then
     echo "[$(ts)] FATAL: protected dir $PROTECTED_DIR does not exist -- refusing to run"
     exit 1
 fi
-protected_resolved=$(readlink -f "$PROTECTED_DIR")
 
-# Deleting a file the purge itself protects would be silent, so verify by
-# resolved path rather than by string prefix.
+resolved_excludes=()
+for p in "${EXCLUDE_PATHS[@]}"; do
+    [ -e "$p" ] || continue
+    resolved_excludes+=( "$(readlink -f "$p")" )
+done
+
+# Verify by RESOLVED path, not string prefix: /home/hltvserver/hlds/dod/demos is
+# a symlink on this box, and a prefix test would sail straight past it.
 is_protected() {
     local p; p=$(readlink -f "$1" 2>/dev/null) || return 0   # unresolvable -> treat as protected
-    case "$p" in
-        "$protected_resolved"|"$protected_resolved"/*) return 0 ;;
-    esac
+    local e
+    for e in "${resolved_excludes[@]}"; do
+        case "$p" in "$e"|"$e"/*) return 0 ;; esac
+    done
     case "$(basename "$p")" in
         .bash_history|.mysql_history|.psql_history|*fallback*) return 0 ;;
     esac
@@ -77,14 +101,14 @@ bytes=0
 for dir in $SCAN_DIRS; do
     [ -d "$dir" ] || { echo "[$(ts)] skip $dir (absent)"; continue; }
 
-    # Per-directory, never one whole-box sweep: a whole-box find can be killed
-    # partway and its partial output is indistinguishable from a clean zero.
     find_args=()
     for pat in "${CARRIER_PATTERNS[@]}"; do
         find_args+=( -o -name "$pat" )
     done
     unset 'find_args[0]'   # drop the leading -o
 
+    # Per-directory, never one whole-box sweep: a whole-box find can be killed
+    # partway and its partial output is indistinguishable from a clean zero.
     while IFS= read -r -d '' f; do
         is_protected "$f" && continue
         sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
@@ -95,8 +119,7 @@ for dir in $SCAN_DIRS; do
         fi
         total=$((total + 1))
         bytes=$((bytes + sz))
-    done < <(find "$dir" -xdev -path "$protected_resolved" -prune -o \
-                   -type f -mtime "+${RETENTION_DAYS}" \( "${find_args[@]}" \) -print0 2>/dev/null)
+    done < <(find "$dir" -xdev -type f -mtime "+${RETENTION_DAYS}" \( "${find_args[@]}" \) -print0 2>/dev/null)
 
     echo "[$(ts)] SWEEP_COMPLETE ${dir}"
 done
