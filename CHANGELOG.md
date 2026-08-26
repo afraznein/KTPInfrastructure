@@ -4,6 +4,28 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: loud swap failures, and a two-marker Tier 2 heartbeat (2026-08-26)
+
+- `ktp-scheduled-restart.sh`: a `.new` -> live swap failure used to be logged and
+  otherwise ignored — the server start proceeded and Discord could still report
+  a full green "restart complete" while a wave sat half-applied. Deliberately
+  NOT escalated to aborting the start (a down server is worse than a
+  partially-applied one); instead the run now forces the Discord status off
+  green, names every unswapped file, and exits non-zero. New
+  `ktp-verify-post-swap.sh` re-derives the same swap globs to check the morning
+  after — a failed `mv -f` leaves its `.new` file in place, which is itself the
+  durable record.
+- `ktp-tier2-heartbeat.sh`: now watches `tier2-last-run.json` (main) and
+  `tier2-last-run-preprod.json` (preprod) independently and names both in every
+  alert, instead of only the former. Watching one marker produced a false
+  alarm claiming the runner was offline/broken off a 65h-stale `main` marker
+  while the runner was healthy and had completed a `preprod` job 35 minutes
+  earlier — that run simply never touched the marker being watched. Either
+  marker going stale or failing is reported by name; `KTP_TIER2_WATCH_PREPROD=0`
+  is the one-line way to stop watching the preprod leg if it is ever retired,
+  without repointing it at the main marker (which would just recreate the same
+  blind spot under a different name).
+
 ### `local`: bot-backed game server on ktp-game-2 for go-live testing (2026-08-25)
 
 - `ktp-game-2` is now a **bot server** and no longer a plain second game server
