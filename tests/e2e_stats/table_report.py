@@ -145,6 +145,10 @@ def render_markdown(report: dict) -> str:
         f"| Flag ownership states | {emitted.get('flag_state', 0)} | {rows.get('flag_states', 0)} |",
         f"| Position samples | {emitted.get('position_sample', 0)} | {rows.get('position_samples', 0)} |",
         f"| Life boundaries | {emitted.get('life_boundary', 0)} | {rows.get('life_events', 0)} |",
+        f"| Objective-attempt facts | {emitted.get('objective_attempt', 0)} | "
+        f"{rows.get('objective_attempt_events', 0)} |",
+        f"| Grenade-entity facts | {emitted.get('grenade_entity', 0)} | "
+        f"{rows.get('grenade_entity_events', 0)} |",
         f"| Match roster | — | {rows.get('match_players', 0)} |",
     ]
     if gamedata:

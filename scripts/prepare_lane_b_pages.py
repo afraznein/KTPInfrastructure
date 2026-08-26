@@ -136,6 +136,29 @@ SERIES_EVENT_FIELDS = {
     "enemy_frags",
     "position_samples",
 }
+OBJECTIVE_LIFECYCLE_FIELDS = {
+    "status",
+    "events",
+    "attempts",
+    "starts",
+    "completes",
+    "stops",
+    "orphan_terminals",
+    "open_attempts",
+    "stop_reasons",
+}
+GRENADE_LIFECYCLE_FIELDS = {
+    "status",
+    "semantics",
+    "events",
+    "entities",
+    "tracked",
+    "removed",
+    "complete_lifecycles",
+    "incomplete_tracked",
+    "left_censored_removed",
+    "allowed_weapon_ids_only",
+}
 
 MAX_FILE_BYTES = 10 * 1024 * 1024
 MAX_SOURCE_BYTES = 50 * 1024 * 1024
@@ -857,6 +880,97 @@ def _validate_public_players(players: Any) -> list[dict[str, Any]]:
     return public
 
 
+def _validate_telemetry_lifecycles(value: Any) -> dict[str, Any]:
+    """Allow only non-identifying schema-22 lifecycle aggregates onto Pages."""
+    _require(
+        isinstance(value, dict)
+        and set(value) == {"privacy", "objective_attempts", "grenade_entities"},
+        "telemetry lifecycle contract changed",
+    )
+    _require(
+        value.get("privacy") == "aggregate_only_no_entity_or_position_detail",
+        "telemetry lifecycle privacy contract changed",
+    )
+    objective = value.get("objective_attempts")
+    _require(
+        isinstance(objective, dict) and set(objective) == OBJECTIVE_LIFECYCLE_FIELDS,
+        "objective lifecycle aggregate contract changed",
+    )
+    _require(objective.get("status") == "available", "objective lifecycle is unavailable")
+    reasons = objective.get("stop_reasons")
+    _require(
+        isinstance(reasons, dict) and set(reasons) == {"capture_stopped", "context_reset"},
+        "objective stop-reason contract changed",
+    )
+    public_objective = {
+        key: _number(objective[key], label=f"objective lifecycle.{key}", integer=True)
+        for key in (
+            "events", "attempts", "starts", "completes", "stops",
+            "orphan_terminals", "open_attempts",
+        )
+    }
+    public_objective["stop_reasons"] = {
+        key: _number(reasons[key], label=f"objective stop reason.{key}", integer=True)
+        for key in ("capture_stopped", "context_reset")
+    }
+    _require(
+        public_objective["events"] == public_objective["starts"]
+        + public_objective["completes"] + public_objective["stops"]
+        and public_objective["attempts"] == public_objective["completes"]
+        + public_objective["stops"] + public_objective["open_attempts"]
+        and public_objective["starts"] + public_objective["orphan_terminals"]
+        == public_objective["attempts"]
+        and public_objective["orphan_terminals"]
+        <= public_objective["completes"] + public_objective["stops"]
+        and sum(public_objective["stop_reasons"].values()) == public_objective["stops"],
+        "objective lifecycle aggregates are inconsistent",
+    )
+
+    grenade = value.get("grenade_entities")
+    _require(
+        isinstance(grenade, dict) and set(grenade) == GRENADE_LIFECYCLE_FIELDS,
+        "grenade lifecycle aggregate contract changed",
+    )
+    _require(grenade.get("status") == "available", "grenade lifecycle is unavailable")
+    _require(
+        grenade.get("semantics") == "entity_tracked_removed_only",
+        "grenade lifecycle semantics changed",
+    )
+    _require(
+        grenade.get("allowed_weapon_ids_only") is True,
+        "grenade lifecycle includes a rocket, mortar, or unknown weapon",
+    )
+    public_grenade = {
+        key: _number(grenade[key], label=f"grenade lifecycle.{key}", integer=True)
+        for key in (
+            "events", "entities", "tracked", "removed", "complete_lifecycles",
+            "incomplete_tracked", "left_censored_removed",
+        )
+    }
+    _require(
+        public_grenade["events"]
+        == public_grenade["tracked"] + public_grenade["removed"]
+        and public_grenade["tracked"]
+        == public_grenade["complete_lifecycles"]
+        + public_grenade["incomplete_tracked"]
+        and public_grenade["removed"]
+        == public_grenade["complete_lifecycles"]
+        + public_grenade["left_censored_removed"]
+        and public_grenade["complete_lifecycles"]
+        + public_grenade["incomplete_tracked"]
+        + public_grenade["left_censored_removed"] == public_grenade["entities"],
+        "grenade lifecycle aggregates are inconsistent",
+    )
+    return {
+        "privacy": "aggregate_only_no_entity_or_position_detail",
+        "objective_attempts": public_objective,
+        "grenade_entities": {
+            "semantics": "entity_tracked_removed_only",
+            **public_grenade,
+        },
+    }
+
+
 def _validate_timeline(
     timeline: dict[str, Any], *, expected_match_id: str, duration_seconds: float
 ) -> dict[str, Any]:
@@ -943,14 +1057,14 @@ def _verify_report(
     _require(report.get("schema_version") == 1, "unsupported report schema")
     _require(report.get("status") == "experimental_shadow", "report is not experimental shadow output")
     _require(report.get("publication_state") == "DRAFT", "report is not a draft")
-    _require(report.get("profile") == "accumulation_v5_momentum", "unexpected scoring profile")
+    _require(report.get("profile") == "accumulation_v6_schema22_2s", "unexpected scoring profile")
     _require(report.get("profile_status") == "experimental_shadow", "profile status is not experimental")
     match = report.get("match")
     _require(isinstance(match, dict), "report match metadata is missing")
     _require(match.get("match_id") == expected_match_id, "report match id disagrees with the series")
     _require(match.get("is_test_match") is True, "production/real-player report is forbidden")
     _require(match.get("source_mode") == "lane_b_ephemeral_mysql", "report was not produced by Lane B")
-    _require(match.get("scoring_iteration") == "v5_team_momentum", "report scoring iteration changed")
+    _require(match.get("scoring_iteration") == "v6_schema22_2s", "report scoring iteration changed")
     _require(match.get("map_name") == series_run["map_name"], "report map disagrees with the series")
     duration = _number(match.get("duration_seconds"), label="report duration", maximum=86_400)
     _require(abs(float(duration) - float(series_run["duration_seconds"])) <= 0.01, "report duration disagrees")
@@ -967,6 +1081,9 @@ def _verify_report(
     _require(abs(float(total_points) - float(series_run["match_total_points"])) <= 0.1, "report points disagree")
     report_gates = _quality_gate_statuses(report.get("quality_gates"), label="report quality gates")
     _require(report_gates == series_run["quality_gates"], "report quality gates disagree with the series")
+    telemetry_lifecycles = _validate_telemetry_lifecycles(
+        report.get("telemetry_lifecycles")
+    )
     public_report = {
         "schema_version": 1,
         "scope": "PUBLIC_SYNTHETIC_BOT_TEST_ONLY_ALIASED",
@@ -976,10 +1093,11 @@ def _verify_report(
             "duration_seconds": duration,
             "players": PLAYER_COUNT,
             "bots": PLAYER_COUNT,
-            "profile": "accumulation_v5_momentum",
+            "profile": "accumulation_v6_schema22_2s",
         },
         "players": players,
         "events": series_run["events"],
+        "telemetry_lifecycles": telemetry_lifecycles,
         "component_totals": public_components,
         "match_total_points": total_points,
         "quality_gates": report_gates,
@@ -1216,6 +1334,8 @@ def _render_run_report(run_number: int, report: dict[str, Any], timeline: dict[s
         f"<td>{row['momentum']:.2f}</td></tr>"
         for row in sample_bins
     )
+    objective = report["telemetry_lifecycles"]["objective_attempts"]
+    grenade = report["telemetry_lifecycles"]["grenade_entities"]
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1239,6 +1359,13 @@ replaced with Bot 01 through Bot 12. No source HTML, SVG, names, identifiers, or
 <tbody>{player_rows}</tbody></table>
 <h2>Component totals</h2><table><thead><tr><th>Component</th><th>Points</th></tr></thead><tbody>{component_rows}</tbody></table>
 <h2>Quality gates</h2><table><thead><tr><th>Gate</th><th>Status</th></tr></thead><tbody>{gate_rows}</tbody></table>
+<h2>Telemetry lifecycle aggregates</h2>
+<p>These are synthetic bot-test counts only. Objective boundaries remain factual; missing boundaries are not invented.</p>
+<table><thead><tr><th>Objective attempts</th><th>Starts</th><th>Completes</th><th>Stops</th><th>Orphan terminals</th><th>Open attempts</th></tr></thead>
+<tbody><tr><td>{objective['attempts']}</td><td>{objective['starts']}</td><td>{objective['completes']}</td><td>{objective['stops']}</td><td>{objective['orphan_terminals']}</td><td>{objective['open_attempts']}</td></tr></tbody></table>
+<p>Grenade removal is only an entity-lifecycle observation; no detonation, explosion, or damage outcome is claimed.</p>
+<table><thead><tr><th>Grenade entities</th><th>Tracked</th><th>Removed</th><th>Complete</th><th>Incomplete tracked</th><th>Left-censored removed</th></tr></thead>
+<tbody><tr><td>{grenade['entities']}</td><td>{grenade['tracked']}</td><td>{grenade['removed']}</td><td>{grenade['complete_lifecycles']}</td><td>{grenade['incomplete_tracked']}</td><td>{grenade['left_censored_removed']}</td></tr></tbody></table>
 <h2>Team-only timeline sample</h2><p>Every fifth validated 15-second bin plus the final bin is shown.</p>
 <table><thead><tr><th>Seconds</th><th>Team 1 cumulative</th><th>Team 2 cumulative</th><th>Momentum</th></tr></thead>
 <tbody>{timeline_rows}</tbody></table>

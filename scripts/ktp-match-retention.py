@@ -46,7 +46,9 @@ MATCH_TABLES = (
     "ktp_life_events",
     "ktp_match_players",
     "ktp_match_stats",
+    "ktp_objective_attempt_events",
     "ktp_position_samples",
+    "ktp_grenade_entity_events",
 )
 
 # These ledgers retain the historical receipt-time match_id for compatibility,

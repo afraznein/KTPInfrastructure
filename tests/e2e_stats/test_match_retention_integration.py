@@ -227,6 +227,24 @@ def test_retention_classification_precedence_and_idempotency_against_mysql(tmp_p
             assert _canonical_match_ids(db, table) == RETAINED_MATCHES
             _assert_no_canonical_orphans(db, table)
 
+        # Schema-22 lifecycle ledgers are named explicitly so a future
+        # allowlist refactor cannot silently drop their 14-day policy coverage.
+        for table in (
+            "ktp_objective_attempt_events",
+            "ktp_grenade_entity_events",
+        ):
+            assert _audit_count(applied, table) == len(PURGED_MATCHES)
+            assert db.count(f"SELECT COUNT(*) FROM `{table}`") == len(RETAINED_MATCHES)
+            assert _canonical_match_ids(db, table) == RETAINED_MATCHES
+            markers = set(
+                db.sql(f"SELECT marker FROM `{table}` ORDER BY marker")
+                .strip().splitlines()[1:]
+            )
+            assert "baseline:draft-old" in markers
+            assert "baseline:scrim-old" not in markers
+            assert "baseline:twelve-old" not in markers
+            assert "baseline:official-test-TEST" not in markers
+
         for table in retention.PRODUCER_CONTEXT_TABLES:
             markers = set(
                 db.sql(f"SELECT marker FROM `{table}` ORDER BY marker")

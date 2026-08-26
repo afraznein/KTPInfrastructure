@@ -54,8 +54,13 @@ from scripts.match_timelines import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+CAPTURE_EVENT_TYPES = (
+    "life", "damage", "position", "frag", "assist", "break",
+    "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+)
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
+GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
 
 INTEGER_COLUMNS = {
     "server_id", "player_id", "team", "duration_seconds", "halves_played",
@@ -80,6 +85,8 @@ INTEGER_COLUMNS = {
     "frag_context_recorded",
     "player_slot", "engine_userid", "player_class", "round_live",
     "event_epoch", "stored_half", "producer_half",
+    "attempt_id", "producer_sequence", "entindex", "serial", "weapon_id",
+    "owner_player_id", "owner_engine_userid", "allies_in_zone", "axis_in_zone",
 }
 FLOAT_COLUMNS = {
     "kd_ratio", "kda_ratio", "damage_per_minute", "damage_per_life",
@@ -215,6 +222,14 @@ SELECT
     WHERE table_schema = DATABASE() AND table_name = 'ktp_capture_health'))
     AS capture_health,
   EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE()
+      AND table_name = 'ktp_objective_attempt_events')
+    AS objective_attempts,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE()
+      AND table_name = 'ktp_grenade_entity_events')
+    AS grenade_entities,
+  EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme')
     AS statsme,
   EXISTS(SELECT 1 FROM information_schema.tables
@@ -230,6 +245,116 @@ SELECT
     if not rows:
         raise RuntimeError("could not inventory analytics source capabilities")
     return {name: bool(int(value)) for name, value in rows[0].items()}
+
+
+def evaluate_capture_authorization(
+    observed_halves: set[int],
+    manifests: list[dict[str, Any]],
+    health: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Validate per-match schema-22 authorization without vacuous passes."""
+    expected_types = set(CAPTURE_EVENT_TYPES)
+    observed = {int(half) for half in observed_halves if int(half) > 0}
+    if not manifests and not health:
+        return {
+            "status": "not_captured", "authorized": False,
+            "observed_halves": sorted(observed), "manifest_halves": [],
+            "health_halves": [], "streams": {}, "errors": [],
+        }
+    errors: list[str] = []
+    manifest_halves = [int(row.get("half") or 0) for row in manifests]
+    health_halves = {int(row.get("half") or 0) for row in health}
+    if set(manifest_halves) != observed or len(manifest_halves) != len(observed):
+        errors.append("manifest half set/count does not equal observed match halves")
+    if health_halves != observed:
+        errors.append("health half set does not equal observed match halves")
+    for row in manifests:
+        capabilities = {
+            item.strip() for item in str(row.get("capabilities") or "").split(",")
+            if item.strip()
+        }
+        if (
+            int(row.get("schema_version") or 0) != 22
+            or abs(float(row.get("position_interval") or 0) - 2.0) > 0.01
+            or not {"objective_attempt", "grenade_entity"}.issubset(capabilities)
+        ):
+            errors.append(f"half {row.get('half')} manifest is not schema22/2.00 authorized")
+    streams: dict[str, dict[str, int]] = {}
+    for half in sorted(observed):
+        rows = [row for row in health if int(row.get("half") or 0) == half]
+        types = [str(row.get("event_type") or "") for row in rows]
+        if set(types) != expected_types or len(types) != len(expected_types):
+            errors.append(f"half {half} does not contain each exact health type once")
+        for row in rows:
+            event_type = str(row.get("event_type") or "")
+            counters = {
+                key: int(row.get(key) or 0) for key in (
+                    "attempted", "enqueued", "dropped", "emitted",
+                    "daemon_received", "daemon_accepted", "daemon_rejected",
+                    "correlation_failure_count", "sequence_gap_count",
+                    "duplicate_or_reordered_count",
+                )
+            }
+            if (
+                min(counters.values()) < 0
+                or counters["attempted"] != counters["enqueued"] + counters["dropped"]
+                or counters["enqueued"] != counters["emitted"]
+                or counters["emitted"] != counters["daemon_received"]
+                or counters["daemon_accepted"] + counters["daemon_rejected"]
+                    != counters["daemon_received"]
+                or any(counters[key] for key in (
+                    "dropped", "daemon_rejected", "correlation_failure_count",
+                    "sequence_gap_count", "duplicate_or_reordered_count",
+                ))
+            ):
+                errors.append(f"half {half} {event_type or '<empty>'} counters do not reconcile")
+            stream = streams.setdefault(event_type, {
+                "attempted": 0, "enqueued": 0, "emitted": 0,
+                "received": 0, "accepted": 0,
+            })
+            for target, source in (
+                ("attempted", "attempted"), ("enqueued", "enqueued"),
+                ("emitted", "emitted"), ("received", "daemon_received"),
+                ("accepted", "daemon_accepted"),
+            ):
+                stream[target] += counters[source]
+    return {
+        "status": "authorized" if not errors and bool(observed) else "invalid",
+        "authorized": not errors and bool(observed),
+        "observed_halves": sorted(observed),
+        "manifest_halves": sorted(set(manifest_halves)),
+        "health_halves": sorted(health_halves),
+        "streams": streams,
+        "errors": errors,
+    }
+
+
+def match_capture_authorization(
+    db: EphemeralMysql, match_id: str, *, capture_tables_available: bool,
+) -> dict[str, Any]:
+    literal = sql_literal(match_id)
+    observed = {
+        int(row["half"]) for row in tsv_rows(db.sql(
+            f"SELECT DISTINCT half FROM ktp_matches WHERE match_id={literal} "
+            "AND half>0 ORDER BY half"
+        ))
+    }
+    if not capture_tables_available:
+        return evaluate_capture_authorization(observed, [], [])
+    manifests = tsv_rows(db.sql(f"""
+SELECT half, schema_version, capabilities, position_interval
+FROM ktp_capture_manifests WHERE BINARY match_id=BINARY {literal}
+ORDER BY half, id
+"""))
+    health = tsv_rows(db.sql(f"""
+SELECT half, event_type, attempted, enqueued, dropped, emitted,
+       daemon_received, daemon_accepted, daemon_rejected,
+       correlation_failure_count, sequence_gap_count,
+       duplicate_or_reordered_count
+FROM ktp_capture_health WHERE BINARY match_id=BINARY {literal}
+ORDER BY half, event_type
+"""))
+    return evaluate_capture_authorization(observed, manifests, health)
 
 
 def install_legacy_compatibility(db: EphemeralMysql) -> None:
@@ -435,6 +560,65 @@ def with_team_names(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return named
 
 
+def objective_attempt_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise factual attempt rows without inventing a missing boundary."""
+    attempts: dict[tuple[int, int, int], set[str]] = {}
+    for row in rows:
+        key = (int(row["server_id"]), int(row["half"]), int(row["attempt_id"]))
+        attempts.setdefault(key, set()).add(str(row["event_kind"]))
+    values = list(attempts.values())
+    return {
+        "status": "available",
+        "events": len(rows),
+        "attempts": len(values),
+        "starts": sum("start" in kinds for kinds in values),
+        "completes": sum("complete" in kinds for kinds in values),
+        "stops": sum("stop" in kinds for kinds in values),
+        "orphan_terminals": sum(
+            "start" not in kinds and bool(kinds & {"complete", "stop"})
+            for kinds in values
+        ),
+        "open_attempts": sum(
+            "start" in kinds and not bool(kinds & {"complete", "stop"})
+            for kinds in values
+        ),
+        "stop_reasons": {
+            reason: sum(
+                row.get("event_kind") == "stop" and row.get("stop_reason") == reason
+                for row in rows
+            )
+            for reason in ("capture_stopped", "context_reset")
+        },
+    }
+
+
+def grenade_entity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarise entity observations; removal is not a detonation claim."""
+    entities: dict[tuple[int, int, int, int], set[str]] = {}
+    for row in rows:
+        key = (
+            int(row["server_id"]), int(row["half"]),
+            int(row["entindex"]), int(row["serial"]),
+        )
+        entities.setdefault(key, set()).add(str(row["entity_kind"]))
+    values = list(entities.values())
+    return {
+        "status": "available",
+        "semantics": "entity_tracked_removed_only",
+        "events": len(rows),
+        "entities": len(values),
+        "tracked": sum("tracked" in kinds for kinds in values),
+        "removed": sum("removed" in kinds for kinds in values),
+        "complete_lifecycles": sum(kinds == {"tracked", "removed"} for kinds in values),
+        "incomplete_tracked": sum(kinds == {"tracked"} for kinds in values),
+        "left_censored_removed": sum(kinds == {"removed"} for kinds in values),
+        "allowed_weapon_ids_only": all(
+            GRENADE_WEAPON_TYPES.get(int(row.get("weapon_id") or 0))
+            == row.get("weapon_type") for row in rows
+        ),
+    }
+
+
 def team_summary(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     additive = (
         "kills", "deaths", "assists", "damage_dealt", "damage_taken",
@@ -494,6 +678,9 @@ def render_markdown(report: dict[str, Any]) -> str:
     objective_shadow = explorations.get("objective_pressure", {})
     engagement_shadow = explorations.get("weapon_engagement", {})
     life_shadow = explorations.get("life_kat", {})
+    lifecycles = report.get("telemetry_lifecycles", {})
+    objective_attempts = lifecycles.get("objective_attempts", {})
+    grenade_entities = lifecycles.get("grenade_entities", {})
     trade_analysis = timelines.get("trade_analysis", {})
     revenge_analysis = timelines.get("revenge_analysis", {})
     out = [
@@ -638,6 +825,24 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("event_time", "Time"), ("half", "Half"), ("team_name", "Team"),
             ("flag_name", "Flag"), ("credited_players", "Credited players"),
         ]),
+        "", "## Objective-attempt lifecycle", "",
+        f"Status: `{objective_attempts.get('status', 'not_captured')}`  ",
+        f"Attempts: {md(objective_attempts.get('attempts'))}; "
+        f"starts: {md(objective_attempts.get('starts'))}; "
+        f"completes: {md(objective_attempts.get('completes'))}; "
+        f"stops: {md(objective_attempts.get('stops'))}; "
+        f"orphan terminals: {md(objective_attempts.get('orphan_terminals'))}; "
+        f"open attempts: {md(objective_attempts.get('open_attempts'))}.",
+        "Missing starts and terminals remain explicitly censored; the report does not invent them.",
+        "", "## Grenade-entity lifecycle", "",
+        f"Status: `{grenade_entities.get('status', 'not_captured')}`  ",
+        f"Entities: {md(grenade_entities.get('entities'))}; "
+        f"tracked: {md(grenade_entities.get('tracked'))}; "
+        f"removed: {md(grenade_entities.get('removed'))}; "
+        f"complete: {md(grenade_entities.get('complete_lifecycles'))}; "
+        f"incomplete tracked: {md(grenade_entities.get('incomplete_tracked'))}; "
+        f"left-censored removed: {md(grenade_entities.get('left_censored_removed'))}.",
+        "Removal is only an entity-lifecycle observation. No damage outcome is inferred.",
         "", "## Data quality", "",
         "| Result | Check | Detail |", "|---|---|---|",
     ]
@@ -666,6 +871,17 @@ def build_report(
     life_config: LifeExplorationConfig | None = None,
 ) -> dict[str, Any]:
     sources = sources or source_capabilities(db)
+    capture_authorization = match_capture_authorization(
+        db, match_id,
+        capture_tables_available=bool(sources.get("capture_health", False)),
+    )
+    sources = dict(sources)
+    sources["objective_attempts"] = bool(
+        sources.get("objective_attempts") and capture_authorization["authorized"]
+    )
+    sources["grenade_entities"] = bool(
+        sources.get("grenade_entities") and capture_authorization["authorized"]
+    )
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
@@ -703,6 +919,14 @@ def build_report(
                    if sources.get("flag_ownership", False) else [])
     life_boundaries = (query_rows(db, "life_boundary_fact.sql", match_id)
                        if sources.get("life_boundaries", False) else None)
+    objective_attempts = (
+        query_rows(db, "objective_attempt_timeline_fact.sql", match_id)
+        if sources.get("objective_attempts", False) else []
+    )
+    grenade_entities = (
+        query_rows(db, "grenade_entity_timeline_fact.sql", match_id)
+        if sources.get("grenade_entities", False) else []
+    )
     enriched_frag_available = bool(
         sources.get("frag_context", False)
         and sources.get("frag_event_clock", False)
@@ -808,6 +1032,7 @@ def build_report(
         "source_mode": source_mode,
         "temporal_metrics_valid": source_mode != "replay",
         "source_coverage": sources,
+        "capture_authorization": capture_authorization,
         "match_id": match_id,
         "match": match,
         "quality": quality,
@@ -818,6 +1043,23 @@ def build_report(
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
         "capture_events": events,
+        "telemetry_lifecycles": {
+            "privacy": "aggregate_public_private_timeline",
+            "objective_attempts": (
+                objective_attempt_summary(objective_attempts)
+                if capture_authorization["authorized"]
+                else {"status": capture_authorization["status"]}
+            ),
+            "grenade_entities": (
+                grenade_entity_summary(grenade_entities)
+                if capture_authorization["authorized"]
+                else {"status": capture_authorization["status"]}
+            ),
+            "private_facts": {
+                "objective_attempt_timeline": objective_attempts,
+                "grenade_entity_timeline": grenade_entities,
+            },
+        },
         "shadow_timelines": shadow_timelines,
         "shadow_explorations": {
             "definition_version": 2,
@@ -867,7 +1109,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--objective-conversion-seconds", type=float, default=30.0)
     parser.add_argument("--damage-conversion-seconds", type=float, default=15.0)
     parser.add_argument("--assist-grace-seconds", type=float, default=2.0)
-    parser.add_argument("--position-sample-seconds", type=float, default=5.0)
+    parser.add_argument("--position-sample-seconds", type=float, default=2.0)
     parser.add_argument("--objective-radius-units", type=float, default=512.0)
     parser.add_argument("--contest-radius-units", type=float, default=768.0)
     parser.add_argument("--simultaneous-tolerance-seconds", type=float, default=1.0)

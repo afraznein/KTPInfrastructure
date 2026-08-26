@@ -89,6 +89,7 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_019_clear_uncertified_frag_context.sql",
     "sql/migrate_020_frag_context_certified.sql",
     "sql/migrate_021_capture_observability.sql",
+    "sql/migrate_022_objective_attempts_grenade_entities.sql",
 )
 
 

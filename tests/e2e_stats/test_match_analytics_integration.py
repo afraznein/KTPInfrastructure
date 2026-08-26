@@ -95,6 +95,17 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "life_boundaries": True,
         "assist_context": True,
         "capture_health": False,
+        "objective_attempts": False,
+        "grenade_entities": False,
+    }
+    assert report["telemetry_lifecycles"] == {
+        "privacy": "aggregate_public_private_timeline",
+        "objective_attempts": {"status": "not_captured"},
+        "grenade_entities": {"status": "not_captured"},
+        "private_facts": {
+            "objective_attempt_timeline": [],
+            "grenade_entity_timeline": [],
+        },
     }
     for player in report["players"]:
         if player["deaths"]:
@@ -103,7 +114,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             )
         else:
             assert player["damage_per_life"] is None
-    assert report["schema_version"] == 6
+    assert report["schema_version"] == 7
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []

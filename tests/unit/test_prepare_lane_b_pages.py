@@ -187,7 +187,7 @@ def _build_report(report_dir: Path, match_id: str) -> None:
         "schema_version": 1,
         "status": "experimental_shadow",
         "publication_state": "DRAFT",
-        "profile": "accumulation_v5_momentum",
+        "profile": "accumulation_v6_schema22_2s",
         "profile_status": "experimental_shadow",
         "match": {
             "match_id": match_id,
@@ -195,9 +195,24 @@ def _build_report(report_dir: Path, match_id: str) -> None:
             "duration_seconds": 15.0,
             "is_test_match": True,
             "source_mode": "lane_b_ephemeral_mysql",
-            "scoring_iteration": "v5_team_momentum",
+            "scoring_iteration": "v6_schema22_2s",
         },
         "privacy": {"individual_positions": "private_not_embedded"},
+        "telemetry_lifecycles": {
+            "privacy": "aggregate_only_no_entity_or_position_detail",
+            "objective_attempts": {
+                "status": "available", "events": 4, "attempts": 2,
+                "starts": 2, "completes": 1, "stops": 1,
+                "orphan_terminals": 0, "open_attempts": 0,
+                "stop_reasons": {"capture_stopped": 0, "context_reset": 1},
+            },
+            "grenade_entities": {
+                "status": "available", "semantics": "entity_tracked_removed_only",
+                "events": 7, "entities": 4, "tracked": 4, "removed": 3,
+                "complete_lifecycles": 3, "incomplete_tracked": 1,
+                "left_censored_removed": 0, "allowed_weapon_ids_only": True,
+            },
+        },
         "players": [_player(number) for number in range(1, 13)],
         "component_totals": {field: 1.0 for field in COMPONENT_FIELDS},
         "match_total_points": 12.0,
@@ -364,6 +379,73 @@ def test_valid_series_regenerates_only_minimal_aliased_public_files(tmp_path: Pa
         assert [row["alias"] for row in sorted(report["players"], key=lambda row: row["alias"])] == [
             f"Bot {index:02d}" for index in range(1, 13)
         ]
+        assert report["telemetry_lifecycles"] == {
+            "privacy": "aggregate_only_no_entity_or_position_detail",
+            "objective_attempts": {
+                "events": 4, "attempts": 2, "starts": 2, "completes": 1,
+                "stops": 1, "orphan_terminals": 0, "open_attempts": 0,
+                "stop_reasons": {"capture_stopped": 0, "context_reset": 1},
+            },
+            "grenade_entities": {
+                "semantics": "entity_tracked_removed_only", "events": 7,
+                "entities": 4, "tracked": 4, "removed": 3,
+                "complete_lifecycles": 3, "incomplete_tracked": 1,
+                "left_censored_removed": 0,
+            },
+        }
+        assert "entity-lifecycle observation" in (
+            output / f"run-{number}/index.html"
+        ).read_text()
+
+
+def test_telemetry_lifecycle_detail_and_forbidden_weapons_are_rejected(tmp_path: Path) -> None:
+    source = _build_series(tmp_path / "source")
+    report_dir = source / "run-1/match-report"
+    report_path = report_dir / "report.json"
+    report = json.loads(report_path.read_text())
+    report["telemetry_lifecycles"]["grenade_entities"]["pos_x"] = 123
+    _write_json(report_path, report)
+    _refresh_manifest_file(report_dir, "report.json")
+    with pytest.raises(PublicationError, match="grenade lifecycle aggregate contract"):
+        _prepare(tmp_path / "detail", source)
+
+    source = _build_series(tmp_path / "weapon-source")
+    report_dir = source / "run-1/match-report"
+    report_path = report_dir / "report.json"
+    report = json.loads(report_path.read_text())
+    report["telemetry_lifecycles"]["grenade_entities"]["allowed_weapon_ids_only"] = False
+    _write_json(report_path, report)
+    _refresh_manifest_file(report_dir, "report.json")
+    with pytest.raises(PublicationError, match="rocket, mortar, or unknown"):
+        _prepare(tmp_path / "weapon", source)
+
+
+@pytest.mark.parametrize(
+    ("ledger", "field", "value"),
+    (
+        ("objective_attempts", "events", 5),
+        ("objective_attempts", "attempts", 3),
+        ("objective_attempts", "starts", 1),
+        ("objective_attempts", "open_attempts", 1),
+        ("grenade_entities", "events", 8),
+        ("grenade_entities", "entities", 5),
+        ("grenade_entities", "tracked", 3),
+        ("grenade_entities", "removed", 2),
+        ("grenade_entities", "complete_lifecycles", 2),
+    ),
+)
+def test_mutated_lifecycle_aggregates_are_rejected(
+    tmp_path: Path, ledger: str, field: str, value: int,
+) -> None:
+    source = _build_series(tmp_path / f"source-{ledger}-{field}")
+    report_dir = source / "run-1/match-report"
+    report_path = report_dir / "report.json"
+    report = json.loads(report_path.read_text())
+    report["telemetry_lifecycles"][ledger][field] = value
+    _write_json(report_path, report)
+    _refresh_manifest_file(report_dir, "report.json")
+    with pytest.raises(PublicationError, match="lifecycle aggregates are inconsistent"):
+        _prepare(tmp_path / f"published-{ledger}-{field}", source)
 
 
 def test_timeline_allows_only_one_aligned_deferred_reconciliation_bin(tmp_path: Path) -> None:

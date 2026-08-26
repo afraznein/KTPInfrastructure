@@ -32,7 +32,7 @@ MATCH_TYPES = {
     4: "official_ot", 5: "draft_ot",
 }
 FRAG_CONTEXT_SLO_PCT = 99.5
-POSITION_INTERVAL_SECONDS = 5.0
+POSITION_INTERVAL_SECONDS = 2.0
 POSITION_INTERVAL_TOLERANCE_SECONDS = 0.75
 ERROR_PATTERNS = {
     "unresolved_actions": re.compile(
@@ -251,7 +251,7 @@ ORDER BY fp.flag_index
 
 CAPTURE_EVENT_TYPES = {
     "life", "damage", "position", "frag", "assist", "break",
-    "flag_state", "flag_position",
+    "flag_state", "flag_position", "objective_attempt", "grenade_entity",
 }
 
 
@@ -300,6 +300,15 @@ def capture_health_evidence(
     )
     mismatches = [row for row in health if int(row.get("emitted") or 0)
                   != int(row.get("daemon_received") or 0)]
+    attempted_mismatches = [
+        row for row in health
+        if int(row.get("attempted") or 0)
+        != int(row.get("enqueued") or 0) + int(row.get("dropped") or 0)
+    ]
+    enqueue_mismatches = [
+        row for row in health
+        if int(row.get("enqueued") or 0) != int(row.get("emitted") or 0)
+    ]
     acceptance_mismatches = [
         row for row in health
         if int(row.get("emitted") or 0) != int(row.get("daemon_accepted") or 0)
@@ -309,21 +318,34 @@ def capture_health_evidence(
         int(row.get("correlation_failure_count") or 0) for row in health
     )
     manifest_complete = bool(expected_halves) and manifest_halves == expected_halves
+    manifest_authorized = manifest_complete and all(
+        int(row.get("schema_version") or 0) == 22
+        and abs(float(row.get("position_interval") or 0) - 2.0) <= 0.01
+        and {"objective_attempt", "grenade_entity"}.issubset({
+            item.strip() for item in str(row.get("capabilities") or "").split(",")
+            if item.strip()
+        })
+        for row in manifests
+    )
     available = bool(manifests or health)
     trusted = bool(
-        available and manifest_complete and complete_types and drops == 0
+        available and manifest_authorized and complete_types and drops == 0
         and gaps == 0 and duplicates == 0 and not mismatches
+        and not attempted_mismatches and not enqueue_mismatches
         and not acceptance_mismatches and rejected == 0 and correlation_failures == 0
     )
     return {
         "available": available,
         "trusted": trusted,
         "manifest_complete": manifest_complete,
+        "manifest_authorized": manifest_authorized,
         "health_types_complete": complete_types,
         "producer_drops": drops,
         "sequence_gaps": gaps,
         "duplicates_or_reordered": duplicates,
         "emitted_received_mismatches": len(mismatches),
+        "attempted_enqueue_drop_mismatches": len(attempted_mismatches),
+        "enqueued_emitted_mismatches": len(enqueue_mismatches),
         "emitted_accepted_mismatches": len(acceptance_mismatches),
         "daemon_rejected": rejected,
         "correlation_failures": correlation_failures,

@@ -45,7 +45,7 @@
 #include <dodx>
 
 #define PLUGIN_NAME    "KTP Witness (test-only)"
-#define PLUGIN_VERSION "1.7.0"
+#define PLUGIN_VERSION "1.8.0"
 #define PLUGIN_AUTHOR  "Nein_"
 
 // JSONL output path. The integration test harness tails this file.
@@ -97,6 +97,10 @@ public plugin_init() {
         -1, "<attacker> <victim> <damage> <wpnindex> <hitplace> <TA> — test-only");
     register_concmd("amx_witness_dispatch_grenade",  "cmd_witness_dispatch_grenade",
         -1, "<slot> <x> <y> <z> <wpnid> — test-only: dispatch dod_grenade_explosion");
+    register_concmd("amx_witness_dispatch_grenade_tracked", "cmd_witness_dispatch_grenade_tracked",
+        -1, "<owner> <entindex> <serial> <x> <y> <z> <wpnid> <gametime> - test-only");
+    register_concmd("amx_witness_dispatch_grenade_removed", "cmd_witness_dispatch_grenade_removed",
+        -1, "<owner> <entindex> <serial> <x> <y> <z> <wpnid> <gametime> - test-only");
     register_concmd("amx_witness_dispatch_score",    "cmd_witness_dispatch_score",
         -1, "<id> <score_delta> <total> <cp_index> — test-only: dispatch client_score + dod_score_event");
     register_concmd("amx_witness_dispatch_cp_captured", "cmd_witness_dispatch_cp_captured",
@@ -179,6 +183,37 @@ public cmd_witness_dispatch_grenade() {
     pos[2] = z;
 
     dodx_test_dispatch_grenade_explosion(slot, pos, wpnid);
+    return PLUGIN_HANDLED;
+}
+
+stock witness_read_grenade_entity_args(&owner, &entindex, &serial,
+        Float:pos[3], &wpnid, &Float:gametime) {
+    new buf[16];
+    read_argv(1, buf, charsmax(buf)); owner = str_to_num(buf);
+    read_argv(2, buf, charsmax(buf)); entindex = str_to_num(buf);
+    read_argv(3, buf, charsmax(buf)); serial = str_to_num(buf);
+    read_argv(4, buf, charsmax(buf)); pos[0] = str_to_float(buf);
+    read_argv(5, buf, charsmax(buf)); pos[1] = str_to_float(buf);
+    read_argv(6, buf, charsmax(buf)); pos[2] = str_to_float(buf);
+    read_argv(7, buf, charsmax(buf)); wpnid = str_to_num(buf);
+    read_argv(8, buf, charsmax(buf)); gametime = str_to_float(buf);
+}
+
+public cmd_witness_dispatch_grenade_tracked() {
+    new owner, entindex, serial, wpnid;
+    new Float:pos[3], Float:gametime;
+    witness_read_grenade_entity_args(owner, entindex, serial, pos, wpnid, gametime);
+    dodx_test_dispatch_grenade_entity_tracked(
+        owner, entindex, serial, pos, wpnid, gametime);
+    return PLUGIN_HANDLED;
+}
+
+public cmd_witness_dispatch_grenade_removed() {
+    new owner, entindex, serial, wpnid;
+    new Float:pos[3], Float:gametime;
+    witness_read_grenade_entity_args(owner, entindex, serial, pos, wpnid, gametime);
+    dodx_test_dispatch_grenade_entity_removed(
+        owner, entindex, serial, pos, wpnid, gametime);
     return PLUGIN_HANDLED;
 }
 

@@ -11,6 +11,8 @@ tested, because an assertion that never fires is the same as no assertion.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from . import assertions
@@ -80,6 +82,103 @@ class QueryCaptureDb(FakeDb):
     def count(self, query):
         self.queries.append(query)
         return self.rows
+
+
+class CadenceDb(FakeDb):
+    def __init__(self, ticks):
+        super().__init__()
+        self.ticks = ticks
+        self.query = ""
+
+    def sql(self, query):
+        self.query = query
+        return "game_time\n" + "\n".join(str(value) for value in self.ticks) + "\n"
+
+
+class TelemetryDb(FakeDb):
+    def __init__(self, *, objective=None, grenade=None, witness_rows=None,
+                 objective_witness_rows=None):
+        super().__init__()
+        self.objective = objective or {}
+        self.grenade = grenade or {}
+        self.witness_rows = witness_rows or []
+        self.objective_witness_rows = objective_witness_rows or []
+        self.queries = []
+
+    def count(self, query):
+        self.queries.append(query)
+        if "ktp_capture_health" in query:
+            if "event_type='objective_attempt'" in query:
+                return self.objective.get("health_accepted", self.objective.get("rows", 0))
+            if "event_type='grenade_entity'" in query:
+                return self.grenade.get("health_accepted", self.grenade.get("rows", 0))
+        if "ktp_objective_attempt_events" in query:
+            if ") duplicates" in query:
+                return self.objective.get("duplicate_terminals", 0)
+            if "JOIN ktp_objective_attempt_events terminals" in query:
+                return self.objective.get("invalid_sequence_order", 0)
+            if "event_kind NOT IN" in query:
+                return self.objective.get("invalid", 0)
+            attempt = re.search(r"attempt_id=(\d+)", query)
+            if attempt:
+                rows = [
+                    row for row in self.objective_witness_rows
+                    if row["attempt_id"] == int(attempt.group(1))
+                ]
+                kind = re.search(r"event_kind='([^']+)'", query)
+                sequence = re.search(r"producer_sequence=(\d+)", query)
+                reason = re.search(r"stop_reason='([^']+)'", query)
+                if kind:
+                    rows = [row for row in rows if row["event_kind"] == kind.group(1)]
+                if sequence:
+                    rows = [
+                        row for row in rows
+                        if row["producer_sequence"] == int(sequence.group(1))
+                    ]
+                if "stop_reason IS NULL" in query:
+                    rows = [row for row in rows if row["stop_reason"] is None]
+                elif reason:
+                    rows = [row for row in rows if row["stop_reason"] == reason.group(1)]
+                return len(rows)
+            if "event_kind='start'" in query:
+                return self.objective.get("starts", 0)
+            if "event_kind='complete'" in query:
+                return self.objective.get("completes", 0)
+            if "event_kind='stop'" in query:
+                return self.objective.get("stops", 0)
+            return self.objective.get("rows", 0)
+        if "ktp_grenade_entity_events" in query:
+            if ") grenade_entities" in query:
+                return self.grenade.get("entities", 0)
+            if ") incomplete_entities" in query:
+                return self.grenade.get("incomplete", 0)
+            if "entity_kind NOT IN" in query:
+                return self.grenade.get("invalid", 0)
+            if "weapon_id IN (29,30,31,40)" in query:
+                return self.grenade.get("forbidden", 0)
+            key = re.search(r"entindex=(\d+) AND serial=(\d+)", query)
+            if key:
+                rows = [
+                    row for row in self.witness_rows
+                    if row["entindex"] == int(key.group(1))
+                    and row["serial"] == int(key.group(2))
+                ]
+                weapon_id = re.search(r"weapon_id=(\d+)", query)
+                weapon_type = re.search(r"weapon_type='([^']+)'", query)
+                exact_kind = re.search(r"entity_kind='([^']+)'", query)
+                allowed_kinds = re.search(r"entity_kind IN \(([^)]+)\)", query)
+                if weapon_id:
+                    rows = [row for row in rows if row["weapon_id"] == int(weapon_id.group(1))]
+                if weapon_type:
+                    rows = [row for row in rows if row["weapon_type"] == weapon_type.group(1)]
+                if exact_kind:
+                    rows = [row for row in rows if row["entity_kind"] == exact_kind.group(1)]
+                elif allowed_kinds:
+                    kinds = {value.strip(" '") for value in allowed_kinds.group(1).split(",")}
+                    rows = [row for row in rows if row["entity_kind"] in kinds]
+                return len(rows)
+            return self.grenade.get("rows", 0)
+        return super().count(query)
 
 
 class LifeEventDb(FakeDb):
@@ -211,6 +310,148 @@ def test_position_samples_compare_only_the_driven_match():
         "SELECT COUNT(*) FROM ktp_position_samples "
         "WHERE match_id = '1787019402-TEST'"
     ]
+
+
+def test_position_cadence_uses_snapshot_ticks_not_player_lifecycle_gaps():
+    db = CadenceDb([0, 2, 4, 6, 8])
+    verdict = assertions.check_position_cadence(
+        db, match_id="1787019402-TEST", half=1
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["median_seconds"] == 2.0
+    assert verdict["p95_jitter_seconds"] == 0.0
+    assert "SELECT DISTINCT game_time" in db.query
+    assert "player_id" not in db.query
+
+
+def test_position_cadence_rejects_a_dropped_snapshot_tick():
+    verdict = assertions.check_position_cadence(
+        CadenceDb([0, 2, 7, 9]), match_id="1787019402-TEST", half=1
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict["p95_jitter_seconds"] == 3.0
+
+
+def test_objective_lifecycle_accepts_start_complete_and_start_stop():
+    verdict = assertions.check_objective_attempts(
+        TelemetryDb(objective={
+            "rows": 4, "starts": 2, "completes": 1, "stops": 1,
+        }),
+        emitted=4, match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "ok"
+    assert (verdict["starts"], verdict["completes"], verdict["stops"]) == (2, 1, 1)
+    db = TelemetryDb(objective={"rows": 0})
+    assertions.check_objective_attempts(
+        db, emitted=0, match_id="1787019402-TEST", half=1,
+    )
+    invalid_query = next(query for query in db.queries if "flag_name IS NULL" in query)
+    for clause in (
+        "attempt_id IS NULL", "TRIM(flag_name) = ''", "TRIM(map_name) = ''",
+        "allies_in_zone IS NULL", "axis_in_zone IS NULL",
+        "NOT (UNIX_TIMESTAMP(event_time) <=> event_epoch)",
+        "attempt_id <> producer_sequence", "allies_in_zone <= 0",
+        "event_kind IN ('complete','stop') AND attempt_id >= producer_sequence",
+        "stop_reason IS NULL", "event_kind<>'stop'",
+    ):
+        assert clause in invalid_query
+
+
+def test_objective_lifecycle_rejects_terminal_before_start():
+    verdict = assertions.check_objective_attempts(
+        TelemetryDb(objective={
+            "rows": 2, "starts": 1, "completes": 1,
+            "invalid_sequence_order": 1,
+        }),
+        emitted=2, match_id="1787019402-TEST", half=1,
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict["invalid_sequence_order"] == 1
+
+
+def test_objective_wire_witness_requires_all_four_exact_lifecycles():
+    rows = [
+        {"attempt_id": attempt, "event_kind": kind, "stop_reason": reason,
+         "producer_sequence": sequence}
+        for attempt, kind, reason, sequence in (
+            (2, "start", None, 2), (2, "complete", None, 3),
+            (4, "start", None, 4), (4, "stop", "capture_stopped", 5),
+            (6, "start", None, 6), (6, "stop", "context_reset", 7),
+            (1, "complete", None, 8),
+        )
+    ]
+    db = TelemetryDb(
+        objective={"rows": 7, "starts": 3, "completes": 2, "stops": 2},
+        objective_witness_rows=rows,
+    )
+    verdict = assertions.check_objective_attempt_witness(
+        db, match_id="objective-witness-TEST", half=1,
+    )
+    assert verdict["status"] == "ok"
+    assert verdict["scenario_mismatches"] == 0
+    assert verdict["orphan_start_rows"] == 0
+
+    rows[-1]["producer_sequence"] = 7
+    broken = assertions.check_objective_attempt_witness(
+        TelemetryDb(
+            objective={"rows": 7, "starts": 3, "completes": 2, "stops": 2},
+            objective_witness_rows=rows,
+        ),
+        match_id="objective-witness-TEST", half=1,
+    )
+    assert broken["status"] == "pipeline"
+    assert broken["scenario_mismatches"] == 1
+
+
+def test_grenade_lifecycle_accepts_allowed_entities_and_rejects_rockets():
+    witness_rows = [
+        {"entindex": 101, "serial": 10001, "weapon_id": 13,
+         "weapon_type": "handgrenade", "entity_kind": kind}
+        for kind in ("tracked", "removed")
+    ]
+    healthy = TelemetryDb(grenade={
+        "rows": 7, "entities": 4, "incomplete": 1,
+    }, witness_rows=witness_rows)
+    assert assertions.check_grenade_entities(
+        healthy, emitted=7, match_id="1787019402-TEST", half=1,
+        expected_witnesses=[{
+            "entindex": 101, "serial": 10001, "weapon_id": 13,
+            "weapon_type": "handgrenade",
+            "entity_kinds": ["tracked", "removed"],
+        }],
+    )["status"] == "ok"
+    forbidden = TelemetryDb(grenade={
+        "rows": 7, "entities": 4, "incomplete": 1, "invalid": 1,
+        "forbidden": 1,
+    })
+    verdict = assertions.check_grenade_entities(
+        forbidden, emitted=7, match_id="1787019402-TEST", half=1
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict["forbidden_weapons"] == 1
+
+
+def test_grenade_witness_keys_do_not_accept_crossed_entindex_serial_pairs():
+    crossed = TelemetryDb(
+        grenade={"rows": 2, "entities": 2, "incomplete": 0},
+        witness_rows=[
+            {"entindex": 101, "serial": 10002, "weapon_id": 13,
+             "weapon_type": "handgrenade", "entity_kind": "tracked"},
+            {"entindex": 102, "serial": 10001, "weapon_id": 13,
+             "weapon_type": "handgrenade", "entity_kind": "removed"},
+        ],
+    )
+    verdict = assertions.check_grenade_entities(
+        crossed, emitted=2, match_id="1787019402-TEST", half=1,
+        expected_witnesses=[{
+            "entindex": 101, "serial": 10001, "weapon_id": 13,
+            "weapon_type": "handgrenade",
+            "entity_kinds": ["tracked", "removed"],
+        }],
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict["witness_mismatches"] > 0
+    assert any("entindex=101 AND serial=10001" in query for query in crossed.queries)
 
 
 def test_life_events_require_exact_valid_start_and_death_coverage():

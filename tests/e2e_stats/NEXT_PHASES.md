@@ -5,6 +5,27 @@
 These are real gaps with an owner-less status. They are parked rather than
 forgotten, and each says what would make it worth picking up.
 
+### Shot-fire telemetry
+
+Per-shot fire events remain deliberately deferred. Schema 22 adds objective
+attempts and factual grenade-entity `tracked`/`removed` observations only; it
+does not add a shot ledger, burst classification, recoil/aim scoring, or
+line-of-fire inference. Existing StatsMe shot/hit totals remain the supported
+aggregate source.
+
+**Why it is parked:** a shot stream is high-volume and needs an observed EPS,
+storage, retention, and privacy budget before choosing a transport or schema.
+Adding it beside the position-cadence change would make that capacity decision
+without production evidence.
+
+**When to pick it up:** after schema-22 canary data establishes stable ingest
+headroom at the two-second position cadence and the product question is stated
+precisely enough to justify event-level shots over existing aggregates.
+
+**How, in one line:** measure `dod_client_weapon_fire` volume in an isolated bot
+lane first, then design an append-only, match-scoped ledger and its privacy and
+retention contract before implementing a producer marker.
+
 ### Ninja-cap detection
 
 Deliberately excluded from Phase 7 (break context / flag positions /

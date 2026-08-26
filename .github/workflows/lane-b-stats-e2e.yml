@@ -67,7 +67,7 @@ on:
         type: string
         default: dod_anzio
       play_seconds:
-        description: Full-match play window (v5 ratings require at least 300 seconds)
+        description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
         required: false
         type: string
         default: '360'
@@ -340,6 +340,22 @@ jobs:
             --repository hlstatsx "${{ github.repository_owner }}/KTPHLStatsX" "$DAEMON_REF" "$DAEMON_SHA"
           cat build/lane-b-artifacts/bundle-provenance.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Validate schema-22 telemetry contract and migration
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -v "${PWD}/KTPHLStatsX:/repos/KTPHLStatsX:ro" \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build:ro" \
+            -w /work ktp-lane-b:ci \
+            bash -lc '
+              set -euo pipefail
+              perl /repos/KTPHLStatsX/scripts/selftest-telemetry22.pl
+              python3 /repos/KTPHLStatsX/scripts/selftest-migration22.py \
+                --infrastructure-root /work \
+                --migration /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql
+            '
+
       - name: Assemble full-match daemon and base schema
         if: ${{ env.LANE == 'full' }}
         run: |
@@ -411,6 +427,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
+                       /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -423,7 +440,7 @@ jobs:
               --out /work/build/lane-b-e2e.json \
               --summary-out /work/build/lane-b-summary.md \
               --match-report-dir /work/build/match-report \
-              --report-profile /work/config/analytics/accumulation_v5_momentum.toml \
+              --report-profile /work/config/analytics/accumulation_v6_schema22_2s.toml \
               --map-objectives /work/config/analytics/map_objectives.toml
 
       - name: Publish match summary
@@ -486,6 +503,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
+                       /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

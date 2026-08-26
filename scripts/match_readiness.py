@@ -24,6 +24,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.match_analytics import (  # noqa: E402
+    evaluate_capture_authorization,
+)
 
 SCHEMA_VERSION = 1
 MATCH_ID_RE = re.compile(r"(?:\d+-KTP\d+|[A-Za-z0-9._-]+-TEST)$")
@@ -44,8 +48,12 @@ WANTED_TABLES = {
     "ktp_damage_events",
     "ktp_flag_captures",
     "ktp_flag_state_events",
+    "ktp_capture_health",
+    "ktp_capture_manifests",
+    "ktp_grenade_entity_events",
     "ktp_match_players",
     "ktp_matches",
+    "ktp_objective_attempt_events",
     "ktp_position_samples",
 }
 FORBIDDEN_PUBLIC_KEYS = {
@@ -152,25 +160,70 @@ def coordinate_coverage(frags: list[dict[str, Any]]) -> tuple[int, float]:
     return coordinate_rows, (100.0 * coordinate_rows / len(frags) if frags else 0.0)
 
 
-def position_interval_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def position_interval_summary(
+    rows: list[dict[str, Any]], roster_players: int = 0,
+) -> dict[str, Any]:
     by_player: dict[int, list[datetime]] = defaultdict(list)
+    by_tick: dict[tuple[int, datetime], int] = defaultdict(int)
+    by_half_ticks: dict[int, set[datetime]] = defaultdict(set)
     for row in rows:
         when = timestamp(row.get("event_time"))
         if when is not None:
             by_player[integer(row.get("player_id"))].append(when)
+            half = integer(row.get("half"))
+            by_tick[(half, when)] += 1
+            by_half_ticks[half].add(when)
     gaps: list[float] = []
     for times in by_player.values():
         times.sort()
         gaps.extend((right - left).total_seconds() for left, right in zip(times, times[1:]) if right > left)
+    populations = sorted(by_tick.values())
+    active_seconds = sum(
+        max((max(ticks) - min(ticks)).total_seconds(), 0.0)
+        for ticks in by_half_ticks.values() if ticks
+    )
+    rows_per_minute = (
+        len(rows) * 60.0 / active_seconds if active_seconds > 0 else None
+    )
+    population_coverage = (
+        100.0 * sum(populations) / (len(populations) * roster_players)
+        if populations and roster_players > 0 else None
+    )
+    evidence = {
+        "players_with_timing": len(by_player),
+        "sample_ticks": len(populations),
+        "players_per_tick_min": min(populations) if populations else None,
+        "players_per_tick_median": (
+            round(statistics.median(populations), 2) if populations else None
+        ),
+        "players_per_tick_max": max(populations) if populations else None,
+        "population_coverage_percent": (
+            round(population_coverage, 2) if population_coverage is not None else None
+        ),
+        "rows_per_minute": round(rows_per_minute, 2) if rows_per_minute else None,
+        "projected_60m_rows": round(rows_per_minute * 60) if rows_per_minute else None,
+        # This is deliberately a transparent cardinality proxy, not a measured
+        # table-size promise or a promotion threshold. Live calibration owns it.
+        "storage_proxy_bytes_per_row": 128,
+        "projected_60m_storage_bytes_proxy": (
+            round(rows_per_minute * 60 * 128) if rows_per_minute else None
+        ),
+    }
     if not gaps:
-        return {"players_with_timing": len(by_player), "gap_count": 0, "median_seconds": None, "p95_seconds": None}
+        return {**evidence, "gap_count": 0, "median_seconds": None,
+                "p95_seconds": None, "p95_jitter_seconds": None,
+                "in_band_percent": None}
     gaps.sort()
     p95_index = min(len(gaps) - 1, math.ceil(0.95 * len(gaps)) - 1)
+    jitter = sorted(abs(gap - 2.0) for gap in gaps)
+    in_band = sum(1.0 <= gap <= 3.5 for gap in gaps)
     return {
-        "players_with_timing": len(by_player),
+        **evidence,
         "gap_count": len(gaps),
         "median_seconds": round(statistics.median(gaps), 3),
         "p95_seconds": round(gaps[p95_index], 3),
+        "p95_jitter_seconds": round(jitter[p95_index], 3),
+        "in_band_percent": round(100.0 * in_band / len(gaps), 2),
     }
 
 
@@ -207,6 +260,81 @@ def public_payload_is_safe(value: Any, path="report") -> list[str]:
     return violations
 
 
+OBJECTIVE_STOP_REASONS = {"capture_stopped", "context_reset"}
+GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
+
+
+def objective_rows_valid(
+    rows: list[dict[str, Any]], observed_halves: set[int],
+) -> tuple[bool, list[str]]:
+    """Validate factual objective rows, including keyed sequence ordering."""
+    errors: list[str] = []
+    keyed: dict[tuple[int, int, int], list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        kind = str(row.get("event_kind") or "")
+        reason = row.get("stop_reason")
+        half = integer(row.get("half"))
+        attempt = integer(row.get("attempt_id"))
+        sequence = integer(row.get("producer_sequence"))
+        capturing_team = integer(row.get("capturing_team"), -1)
+        owner_before = integer(row.get("owner_before"), -1)
+        allies = integer(row.get("allies_in_zone"), -1)
+        axis = integer(row.get("axis_in_zone"), -1)
+        if half not in observed_halves:
+            errors.append("objective row half is outside the observed match half set")
+        if kind not in {"start", "complete", "stop"}:
+            errors.append("objective event kind is invalid")
+        if attempt <= 0 or sequence <= 0:
+            errors.append("objective attempt/producer sequence is not positive")
+        if not str(row.get("flag_name") or "").strip():
+            errors.append("objective flag name is empty")
+        if not str(row.get("map_name") or "").strip():
+            errors.append("objective map name is empty")
+        if capturing_team not in {1, 2} or owner_before not in {0, 1, 2}:
+            errors.append("objective team/owner value is invalid")
+        if allies < 0 or axis < 0:
+            errors.append("objective occupancy count is negative")
+        if kind == "start":
+            active = allies if capturing_team == 1 else axis
+            if active <= 0:
+                errors.append("objective start has no capture-team occupancy")
+            if attempt != sequence:
+                errors.append("objective start attempt_id differs from producer_sequence")
+        elif kind in {"complete", "stop"} and attempt >= sequence:
+            errors.append("objective terminal attempt_id is not earlier than producer_sequence")
+        if (kind == "stop") != (str(reason or "") in OBJECTIVE_STOP_REASONS):
+            errors.append("objective stop reason is invalid for event kind")
+        keyed[(integer(row.get("server_id")), half, attempt)].append(row)
+    for attempt_rows in keyed.values():
+        starts = [row for row in attempt_rows if row.get("event_kind") == "start"]
+        terminals = [
+            row for row in attempt_rows
+            if row.get("event_kind") in {"complete", "stop"}
+        ]
+        if len(starts) > 1 or len(terminals) > 1:
+            errors.append("objective attempt has duplicate start or terminal rows")
+        if starts and terminals and integer(terminals[0].get("producer_sequence")) <= integer(
+            starts[0].get("producer_sequence")
+        ):
+            errors.append("objective terminal sequence is not later than start")
+    return not errors, errors
+
+
+def grenade_rows_valid(
+    rows: list[dict[str, Any]], observed_halves: set[int],
+) -> tuple[bool, list[str]]:
+    errors: list[str] = []
+    for row in rows:
+        weapon_id = integer(row.get("weapon_id"))
+        if integer(row.get("half")) not in observed_halves:
+            errors.append("grenade row half is outside the observed match half set")
+        if row.get("entity_kind") not in {"tracked", "removed"}:
+            errors.append("grenade entity kind is invalid")
+        if GRENADE_WEAPON_TYPES.get(weapon_id) != row.get("weapon_type"):
+            errors.append("grenade weapon ID/type mapping is invalid")
+    return not errors, errors
+
+
 def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     path = path.resolve()
     if not path.is_file():
@@ -231,6 +359,13 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     player_player_actions = rows_for(tables, "hlstats_Events_PlayerPlayerActions", match_id)
     statsme = rows_for(tables, "hlstats_Events_Statsme", match_id)
     statsme2 = rows_for(tables, "hlstats_Events_Statsme2", match_id)
+    objective_attempts = rows_for(tables, "ktp_objective_attempt_events", match_id)
+    grenade_entities = rows_for(tables, "ktp_grenade_entity_events", match_id)
+    manifests = rows_for(tables, "ktp_capture_manifests", match_id)
+    health = rows_for(tables, "ktp_capture_health", match_id)
+    observed_halves = {
+        integer(row.get("half")) for row in matches if integer(row.get("half")) > 0
+    }
     action_codes = {integer(row.get("id")): row.get("code") for row in tables.get("hlstats_Actions", [])}
     assists = [row for row in player_player_actions if action_codes.get(integer(row.get("actionId"))) == "assist"]
     cap_breaks = [row for row in player_actions if action_codes.get(integer(row.get("actionId"))) == "cap_break"]
@@ -239,7 +374,9 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     unique_captures = len({
         (row.get("half"), row.get("flag_name"), row.get("event_time")) for row in captures
     })
-    position_timing = position_interval_summary(positions)
+    position_timing = position_interval_summary(
+        positions, len({integer(row.get("player_id")) for row in roster})
+    )
     damage_aligned, damage_total = damage_alignment(damage, positions)
     damage_alignment_percent = 100.0 * damage_aligned / damage_total if damage_total else 0.0
     team_counts = Counter(integer(row.get("team")) for row in roster)
@@ -257,6 +394,17 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     roster_players = {integer(row.get("player_id")) for row in roster}
     orphan_players = event_players - roster_players if roster else set()
     invalid_half_rows = sum(integer(row.get("half")) <= 0 for row in frags + damage + positions + captures)
+    attempts: dict[tuple[int, int], set[str]] = defaultdict(set)
+    for row in objective_attempts:
+        attempts[(integer(row.get("half")), integer(row.get("attempt_id")))].add(
+            str(row.get("event_kind") or "")
+        )
+    grenade_lifecycles: dict[tuple[int, int, int], set[str]] = defaultdict(set)
+    for row in grenade_entities:
+        grenade_lifecycles[(
+            integer(row.get("half")), integer(row.get("entindex")),
+            integer(row.get("serial")),
+        )].add(str(row.get("entity_kind") or ""))
 
     inventory = {
         "match_rows": len(matches),
@@ -278,6 +426,20 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         "cap_breaks": len(cap_breaks),
         "statsme_rows": len(statsme),
         "statsme2_rows": len(statsme2),
+        "objective_attempts": len(attempts),
+        "objective_starts": sum("start" in kinds for kinds in attempts.values()),
+        "objective_completes": sum("complete" in kinds for kinds in attempts.values()),
+        "objective_stops": sum("stop" in kinds for kinds in attempts.values()),
+        "objective_orphan_terminals": sum(
+            "start" not in kinds and bool(kinds & {"complete", "stop"})
+            for kinds in attempts.values()
+        ),
+        "grenade_entities": len(grenade_lifecycles),
+        "grenade_tracked": sum("tracked" in kinds for kinds in grenade_lifecycles.values()),
+        "grenade_removed": sum("removed" in kinds for kinds in grenade_lifecycles.values()),
+        "grenade_incomplete": sum(kinds == {"tracked"} for kinds in grenade_lifecycles.values()),
+        "capture_manifests": len(manifests),
+        "capture_health_rows": len(health),
     }
     checks: list[dict[str, Any]] = []
     checks.append(finding(
@@ -352,12 +514,96 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         aligned=damage_aligned, total=damage_total, percent=round(damage_alignment_percent, 2),
     ))
     median_gap = position_timing["median_seconds"]
-    timing_ok = median_gap is not None and 3.0 <= median_gap <= 8.0
+    timing_in_band = median_gap is not None and 1.0 <= median_gap <= 3.5
+    cadence_manifest_halves = [integer(row.get("half")) for row in manifests]
+    cadence_authorized = (
+        bool(observed_halves)
+        and set(cadence_manifest_halves) == observed_halves
+        and len(cadence_manifest_halves) == len(observed_halves)
+        and all(
+            integer(row.get("schema_version")) == 22
+            and abs(floating(row.get("position_interval")) - 2.0) <= 0.01
+            for row in manifests
+        )
+    )
+    timing_ok = timing_in_band and cadence_authorized
     checks.append(finding(
         "PASS" if timing_ok else "WARN", "position_sampling_interval",
-        "Median sampling interval is compatible with the configured 5-second cadence." if timing_ok
-        else "Sampling cadence is unavailable or outside the expected 3-8 second band.",
+        "Median sampling interval is in band and every observed half has an exact schema22/2.00 manifest."
+        if timing_ok else
+        "Observed cadence is in band but lacks exact schema22/2.00 manifest authorization."
+        if timing_in_band else
+        "Sampling cadence is unavailable or outside the expected 1-3.5 second band.",
+        timing_in_band=timing_in_band,
+        schema22_cadence_authorized=cadence_authorized,
+        observed_halves=sorted(observed_halves),
+        manifest_halves=sorted(cadence_manifest_halves),
         **position_timing,
+    ))
+
+    telemetry_present = bool(objective_attempts or grenade_entities or manifests or health)
+    capture_authorization = evaluate_capture_authorization(
+        observed_halves, manifests, health
+    )
+    objective_shape_ok, objective_errors = objective_rows_valid(
+        objective_attempts, observed_halves
+    )
+    objective_expected = integer(
+        capture_authorization.get("streams", {}).get("objective_attempt", {}).get("accepted")
+    )
+    objective_reconciled = len(objective_attempts) == objective_expected
+    objective_ok = (
+        capture_authorization["authorized"]
+        and objective_reconciled and objective_shape_ok
+    )
+    checks.append(finding(
+        "PASS" if objective_ok else "FAIL" if telemetry_present else "WARN",
+        "objective_attempt_lifecycle",
+        "Authorized objective facts reconcile, including a valid zero-row stream."
+        if objective_ok else "Objective attempt telemetry was not captured in this archive."
+        if not telemetry_present else "Objective attempt rows or health reconciliation are invalid.",
+        attempts=len(attempts), starts=inventory["objective_starts"],
+        completes=inventory["objective_completes"], stops=inventory["objective_stops"],
+        orphan_terminals=inventory["objective_orphan_terminals"],
+        rows=len(objective_attempts), health_accepted=objective_expected,
+        validation_errors=objective_errors,
+    ))
+    grenade_shape_ok, grenade_errors = grenade_rows_valid(
+        grenade_entities, observed_halves
+    )
+    grenade_expected = integer(
+        capture_authorization.get("streams", {}).get("grenade_entity", {}).get("accepted")
+    )
+    grenade_reconciled = len(grenade_entities) == grenade_expected
+    grenade_ok = (
+        capture_authorization["authorized"]
+        and grenade_reconciled and grenade_shape_ok
+    )
+    checks.append(finding(
+        "PASS" if grenade_ok else "FAIL" if telemetry_present else "WARN",
+        "grenade_entity_lifecycle",
+        "Authorized grenade entity facts reconcile, including a valid zero-row stream."
+        if grenade_ok else "Grenade entity telemetry was not captured in this archive."
+        if not telemetry_present else "Grenade entity rows or health reconciliation are invalid.",
+        entities=len(grenade_lifecycles), tracked=inventory["grenade_tracked"],
+        removed=inventory["grenade_removed"], incomplete=inventory["grenade_incomplete"],
+        rows=len(grenade_entities), health_accepted=grenade_expected,
+        validation_errors=grenade_errors,
+    ))
+    checks.append(finding(
+        "PASS" if capture_authorization["authorized"] else
+        "FAIL" if telemetry_present else "WARN",
+        "schema22_capture_authorization",
+        "Schema 22, the 2-second cadence, all ten health types, and zero drops reconcile."
+        if capture_authorization["authorized"] else
+        "Schema-22 capture authorization is unavailable in this archive."
+        if not telemetry_present else "Schema-22 manifest, half set, or health counters do not reconcile.",
+        manifests=len(manifests), health_rows=len(health),
+        observed_halves=capture_authorization["observed_halves"],
+        manifest_halves=capture_authorization["manifest_halves"],
+        health_halves=capture_authorization["health_halves"],
+        authorization_status=capture_authorization["status"],
+        authorization_errors=capture_authorization["errors"],
     ))
 
     duplicate_specs = (
@@ -439,6 +685,14 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"| Capture credits / unique events | {inventory['capture_credits']} / {inventory['unique_capture_events']} |",
         f"| Flag ownership events | {inventory['flag_state_events']} |",
         f"| StatsMe / StatsMe2 | {inventory['statsme_rows']} / {inventory['statsme2_rows']} |", "",
+        f"| Objective attempts (start / complete / stop / orphan) | {inventory['objective_attempts']} "
+        f"({inventory['objective_starts']} / {inventory['objective_completes']} / "
+        f"{inventory['objective_stops']} / {inventory['objective_orphan_terminals']}) |",
+        f"| Grenade entities (tracked / removed / incomplete) | {inventory['grenade_entities']} "
+        f"({inventory['grenade_tracked']} / {inventory['grenade_removed']} / "
+        f"{inventory['grenade_incomplete']}) |",
+        f"| Schema-22 manifest / health rows | {inventory['capture_manifests']} / "
+        f"{inventory['capture_health_rows']} |", "",
         "## Checks", "",
         "| Result | Code | Explanation | Evidence |", "|---|---|---|---|",
     ]
