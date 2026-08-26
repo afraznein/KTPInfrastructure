@@ -3,7 +3,7 @@
 # KTP HLTV Demo Organization Script
 # Organizes demos into: Hostname / MatchType (e.g., ATL1/ktp/)
 # Runs nightly at 4:00 AM EST via cron
-# Web accessible at: http://<DATA_SERVER_IP>/demos/
+# Web accessible at: https://fastdl.ktpdod.com/demos/
 # =============================================================================
 
 DEMO_DIR="/home/hltvserver/hlds/dod"
@@ -52,6 +52,8 @@ cd "$DEMO_DIR" || { log "ERROR: Cannot access $DEMO_DIR"; exit 1; }
 moved=0
 skipped=0
 errors=0
+auto_skipped=0
+odd_skipped=0
 
 # Process each .dem file in the root directory (not subdirs)
 for demo in *.dem; do
@@ -86,6 +88,25 @@ for demo in *.dem; do
     elif [[ "$demo" =~ ^([a-z0-9]+)_1\.3-([0-9a-zA-Z]+)-([A-Z]+[0-9]+)(_h[12])?-([0-9]+)-(.+)\.dem$ ]]; then
         matchtype="${BASH_REMATCH[1]}"
         hostname="${BASH_REMATCH[3]}"
+
+    # DOUBLE-HOST: <matchtype>_<id>-<HOST>-<FRIENDLY>(_h[12])?-<hltv_ts>-<map>.dem
+    # Example: 12man_1.3-6404-NY1-ATL1_h2-2608062130-dod_armory_b6.dem
+    #
+    # hltv-demo-renamer appends -<FRIENDLY> only when match_id does not already
+    # end in it. Since 2026-08-06 its friendly lookup returns ATL1 for every
+    # instance, so the guard never fires and every demo gains a second host
+    # segment. 112 demos went unfiled before anyone noticed, because the
+    # organizer reports "Skipped (unrecognized format)" and still exits 0.
+    #
+    # ⚠️ Take the host from the MATCH ID (group 5), never the trailing segment.
+    # The trailing one is the wrong value that caused this; filing on it would
+    # put every server's demos under ATL1.
+    elif [[ "$demo" =~ ^([a-z0-9]+)_((1\.3-[0-9a-zA-Z]+)|([0-9]+))-([A-Z]+[0-9]+)-([A-Z]+[0-9]+)(_h[12])?-([0-9]+)-(.+)\.dem$ ]]; then
+        matchtype="${BASH_REMATCH[1]}"
+        hostname="${BASH_REMATCH[5]}"
+        if [ "${BASH_REMATCH[5]}" != "${BASH_REMATCH[6]}" ]; then
+            log "Note: ${demo} carries mismatched hosts (match=${BASH_REMATCH[5]} friendly=${BASH_REMATCH[6]}); filing under ${BASH_REMATCH[5]}"
+        fi
 
     # OLD FORMAT KTP: <matchtype>_KTP-<timestamp>-<map>-<fullhostname>-<hltv_ts>-<map>.dem
     # Example: ktp_KTP-1768359925-dod_anjou_a4-KTP_Dallas_3-2601132205-dod_anjou_a4.dem
@@ -133,13 +154,24 @@ for demo in *.dem; do
             fi
         fi
     else
-        log "Skipped (unrecognized format): $demo"
         ((skipped++))
+        # auto*.dem are HLTV's continuous recordings, not match demos. They are
+        # SUPPOSED to be skipped, and logging each one as "unrecognized format"
+        # is what hid the real failure: 112 match demos went unfiled for five
+        # days inside ~450 lines of expected skips. Count them, name only the
+        # ones that are actually wrong.
+        case "$demo" in
+            auto*) ((auto_skipped++)) ;;
+            *) log "UNRECOGNIZED match demo (not filed): $demo"; ((odd_skipped++)) ;;
+        esac
     fi
 done
 
 log "========== Demo Organization Complete =========="
-log "Moved: $moved | Skipped: $skipped | Errors: $errors"
+log "Moved: $moved | Skipped: $skipped (auto: ${auto_skipped:-0}, UNRECOGNIZED: ${odd_skipped:-0}) | Errors: $errors"
+if [ "${odd_skipped:-0}" -gt 0 ]; then
+    log "WARNING: ${odd_skipped} match demo(s) were not filed. Their names do not match any known format -- they are NOT on the site."
+fi
 
 # Ensure parent directories have correct permissions for web access
 if [ "$DRY_RUN" != true ] && [ -d "demos" ]; then
@@ -154,11 +186,3 @@ fi
 if [ $moved -eq 0 ] && [ $skipped -eq 0 ] && [ $errors -eq 0 ]; then
     log "No demos to process"
 fi
-
-# =============================================================================
-# .example provenance: synced from the DEPLOYED /usr/local/bin/ktp-organize-
-# hltv-demos.sh on the data server, 2026-07-07 (IP sanitized). The prior
-# committed example predated the (_h[12])? half-marker group and the 1.3
-# text-id variants — provisioning from it stranded every renamed demo at root
-# as "unrecognized format". Keep this file synced with the deployed copy.
-# =============================================================================
