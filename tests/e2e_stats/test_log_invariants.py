@@ -273,6 +273,58 @@ def test_periodic_markers_are_counted_only_inside_the_match():
     assert li.count_in_match(log, 'triggered "position_sample"') == 2
 
 
+def test_statsme_replay_window_excludes_clean_and_next_match_flushes():
+    weaponstats = '"Bot<1><BOT><Axis>" triggered "weaponstats"'
+    next_start = MATCH_START.replace("1786376148-TEST", "1786377000-TEST")
+    log = "\n".join([
+        MATCH_START,
+        weaponstats,
+        MATCH_END,
+        weaponstats,
+        next_start,
+        weaponstats,
+    ])
+
+    assert li.count_in_match(log, 'triggered "weaponstats"') == 1
+    assert li.count_after_match(log, 'triggered "weaponstats"') == 1
+
+
+def test_buffered_pre_interval_marker_is_not_diagnostic_match_evidence():
+    buffered = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (event_epoch "100")'
+    )
+    valid = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 9, "Axis")
+        + ' (matchid "1786376148-TEST") (half "1") '
+          '(event_epoch "110")'
+    )
+    wrong_in_interval = (
+        _frag_context("A", 3, "Allies", "B", 4, "Axis")
+        + ' (matchid "other-TEST") (half "1") (event_epoch "111")'
+    )
+    foreign_pre_interval = (
+        _frag_context("C", 5, "Allies", "D", 6, "Axis")
+        + ' (matchid "previous-real-match") (half "1") '
+          '(event_epoch "99")'
+    )
+    scope = li.producer_markers_for_match(
+        "\n".join([
+            MATCH_START, buffered, valid, wrong_in_interval,
+            foreign_pre_interval, MATCH_END,
+        ]),
+        'triggered "frag_context"', match_id="1786376148-TEST", half=1,
+        start_epoch=105, end_epoch=120,
+    )
+
+    assert scope["markers"] == [valid]
+    assert scope["buffered_pre_interval"] == [buffered]
+    assert scope["context_mismatches"] == [
+        wrong_in_interval, foreign_pre_interval,
+    ]
+
+
 def test_post_match_flag_state_is_not_claimed_as_pipeline_loss():
     """The daemon intentionally drops ownership after match context closes."""
     marker = 'KTP_FLAG_STATE (map "dod_anzio") (flag_index "1")'
@@ -364,6 +416,66 @@ def test_frag_diagnostic_evidence_maps_identity_and_preserves_duplicates():
     assert evidence["observed_identities"] == ["321->329:amerknife"] * 2
     assert evidence["unresolved_expected"] == []
     assert evidence["unparsed_observed"] == []
+
+
+def test_pre_interval_warning_does_not_enter_diagnostic_identity_set():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    buffered = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (event_epoch "100")'
+    )
+    log = "\n".join([MATCH_START, buffered, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:9,W:BOT:b,T:Axis>',
+        '"Denton" <P:322,U:2,W:BOT:c,T:Allies>',
+        '"Gruntilda" <P:330,U:10,W:BOT:d,T:Axis>',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=322 "
+        "victim=330 weapon=mortar",
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        log, daemon, ignored_producer_markers=[buffered]
+    )
+
+    assert evidence["observed_identities"] == ["321->329:amerknife"]
+    assert evidence["ignored_pre_interval_identities"] == ["322->330:mortar"]
+    assert len(evidence["ignored_pre_interval_warnings"]) == 1
+
+
+def test_pre_interval_identity_cannot_hide_expected_breakdrive_warning():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    buffered = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 9, "Axis")
+        .replace('with "garand"', 'with "amerknife"')
+        .replace('(headshot "0")', '(headshot "0") (matchid "-") '
+                 '(half "0") (event_epoch "100")')
+    )
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:9,W:BOT:b,T:Axis>',
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        "\n".join([MATCH_START, buffered, synthetic, MATCH_END]), daemon,
+        ignored_producer_markers=[buffered],
+    )
+
+    assert evidence["observed_identities"] == ["321->329:amerknife"]
+    assert evidence["ignored_pre_interval_warnings"] == []
 
 
 def test_frag_diagnostic_evidence_does_not_guess_ambiguous_names():

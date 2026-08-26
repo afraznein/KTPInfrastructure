@@ -434,42 +434,107 @@ def check_untagged_after_match(db, *, match_id: str, kill_window: dict) -> dict:
             **evidence}
 
 
-def check_statsme_flushed(db, *, weaponstats_lines: int,
-                          match_id: str | None = None,
-                          half: int | None = None) -> dict:
-    """Assert Lane B's test-only bot weaponstats reach StatsMe.
+def check_statsme_flushed(
+        db, *, source_rows_by_context: dict[tuple[str, int], int]) -> dict:
+    """Reconcile every Lane B weaponstats line to an exercised match/half.
 
     The full lane compiles ``stats_logging.sma`` with
     ``KTP_LANE_B_BOT_WEAPONSTATS``. Production builds omit that define and
     retain their bot exclusion. Zero source lines is therefore a pipeline
-    failure rather than an accepted all-bot limitation.
+    failure rather than an accepted all-bot limitation. Exact per-context
+    equality rejects duplicated clean or diagnostic rows; requiring the global
+    count to equal their sum rejects NULL/half-0 and foreign rows as well.
     """
     rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Statsme")
-    if weaponstats_lines == 0:
-        return {"code": "statsme", "status": "pipeline", "rows": rows,
-                "detail": "Lane B emitted no bot `weaponstats` lines; the "
-                          "test-only compile flag or DODX flush path failed."}
-    if rows == 0:
-        return {"code": "statsme", "status": "pipeline", "rows": rows,
-                "detail":
-                    f"{weaponstats_lines} `weaponstats` line(s) in the game log "
-                    f"but 0 rows in hlstats_Events_Statsme — the daemon is "
-                    f"dropping them."}
-    if match_id is not None and half is not None:
-        attributed = db.count(
+    contexts = []
+    for (match_id, half), source_rows in source_rows_by_context.items():
+        attributed_rows = db.count(
             "SELECT COUNT(*) FROM hlstats_Events_Statsme "
-            f"WHERE match_id = '{match_id}' AND half = {int(half)}"
+            f"WHERE BINARY match_id = BINARY {_sql_text(match_id)} "
+            f"AND half = {int(half)}"
         )
-        if attributed != rows:
-            return {"code": "statsme", "status": "pipeline", "rows": rows,
-                    "attributed": attributed, "detail":
-                    f"{rows} weaponstats row(s) landed, but only {attributed} "
-                    f"carry match_id={match_id} half={half}. StatsMe must flush "
-                    "before KTP_MATCH_END clears daemon match context."}
-    return {"code": "statsme", "status": "ok", "rows": rows,
-            "detail": f"{rows} weaponstats row(s) from {weaponstats_lines} line(s)"
-                      + (f", all tagged {match_id} half={half}"
-                         if match_id is not None and half is not None else "")}
+        contexts.append({
+            "match_id": match_id,
+            "half": int(half),
+            "source_rows": int(source_rows),
+            "database_rows": attributed_rows,
+        })
+
+    source_rows = sum(context["source_rows"] for context in contexts)
+    known_context_rows = sum(context["database_rows"] for context in contexts)
+    unexpected_rows = rows - known_context_rows
+    common = {
+        "code": "statsme",
+        "rows": rows,
+        "source_rows": source_rows,
+        "known_context_rows": known_context_rows,
+        "unexpected_rows": unexpected_rows,
+        "contexts": contexts,
+    }
+    empty_source_contexts = [
+        context for context in contexts if context["source_rows"] <= 0
+    ]
+    if not contexts or empty_source_contexts:
+        missing = ", ".join(
+            f"{context['match_id']} half={context['half']}"
+            for context in empty_source_contexts
+        ) or "no exercised contexts supplied"
+        return {
+            **common,
+            "status": "pipeline",
+            "detail": f"Lane B emitted no bot `weaponstats` lines for required "
+                      f"context(s): {missing}; the test-only compile flag or "
+                      "DODX flush path failed.",
+        }
+
+    mismatches = [
+        context for context in contexts
+        if context["source_rows"] != context["database_rows"]
+    ]
+    if mismatches or unexpected_rows != 0:
+        mismatch_detail = ", ".join(
+            f"{context['match_id']} half={context['half']}: source="
+            f"{context['source_rows']} db={context['database_rows']}"
+            for context in mismatches
+        ) or "none"
+        return {
+            **common,
+            "status": "pipeline",
+            "detail": f"StatsMe context mismatches: {mismatch_detail}; "
+                      f"unexpected rows outside exercised contexts="
+                      f"{unexpected_rows}. Every source row and database row "
+                      "must resolve exactly to an exercised match/half.",
+        }
+    return {
+        **common,
+        "status": "ok",
+        "detail": f"{source_rows} weaponstats source line(s) exactly match "
+                  f"{known_context_rows} row(s) across {len(contexts)} explicit "
+                  "match/half context(s); no unattributed or foreign rows",
+    }
+
+
+def check_statsme_unattributed_replay(*, post_match_lines: int) -> dict:
+    """Reject stale weaponstats replayed after one match and before the next.
+
+    Valid flushes for a later diagnostic match are outside this source window.
+    Any weaponstats line here is necessarily emitted after daemon context was
+    cleared and would land without the clean match/half attribution.
+    """
+    if post_match_lines:
+        return {
+            "code": "statsme_unattributed_replay",
+            "status": "pipeline",
+            "rows": post_match_lines,
+            "detail": f"{post_match_lines} stale `weaponstats` line(s) replayed "
+                      "after KTP_MATCH_END and before the next match start",
+        }
+    return {
+        "code": "statsme_unattributed_replay",
+        "status": "ok",
+        "rows": 0,
+        "detail": "no weaponstats replayed after clean-match context clearing",
+    }
 
 
 def check_match_stats_reconciled(db, *, match_id: str) -> dict:
@@ -1508,7 +1573,8 @@ SELECT COUNT(*) FROM (
             AND BINARY m.map_name = BINARY a.map_name) <> 1
 ) event_context_mismatches
 """)
-    wrong_context = rows - scoped
+    other_context_rows = rows - scoped
+    wrong_context = max(emitted - scoped, 0)
 
     common = {
         "code": "assist_context",
@@ -1520,17 +1586,20 @@ SELECT COUNT(*) FROM (
         "duplicate_keys": duplicate_keys,
         "interval_mismatches": interval_mismatches,
         "wrong_context": wrong_context,
+        "other_context_rows": other_context_rows,
     }
-    if (rows != emitted or scoped != emitted or invalid or duplicate_keys
-            or interval_mismatches or wrong_context):
+    if (scoped != emitted or invalid or duplicate_keys
+            or interval_mismatches):
         return {
             **common,
             "status": "pipeline",
-            "detail": f"{emitted} in-match assist marker(s), {rows} canonical "
-                      f"row(s) ({scoped} in the expected match/half); "
+            "detail": f"{emitted} clean-match assist marker(s), {scoped} "
+                      f"canonical row(s) in the expected match/half "
+                      f"({rows} across all exercised matches); "
                       f"invalid={invalid}, duplicate_keys={duplicate_keys}, "
                       f"interval_mismatches={interval_mismatches}, "
-                      f"wrong_context={wrong_context}; generic PPA rows={generic}",
+                      f"wrong_context={wrong_context}, other_context_rows="
+                      f"{other_context_rows}; generic PPA rows={generic}",
         }
     if emitted == 0:
         return {
@@ -1542,8 +1611,10 @@ SELECT COUNT(*) FROM (
     return {
         **common,
         "status": "ok",
-        "detail": f"{rows}/{emitted} canonical producer-time assist row(s) "
-                  f"carried in the expected match/half; generic PPA rows={generic}",
+        "detail": f"{scoped}/{emitted} canonical producer-time assist row(s) "
+                  f"carried in the expected match/half; {other_context_rows} "
+                  f"valid row(s) belong to other exercised matches; generic "
+                  f"PPA rows={generic}",
     }
 
 

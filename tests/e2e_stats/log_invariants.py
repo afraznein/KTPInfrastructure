@@ -24,6 +24,7 @@ nothing would report "no violations" forever.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 # "Name<userid><authid><Team>" — the authid is BOT or 0 for bots, STEAM_x:y:z
@@ -34,8 +35,9 @@ _KILL_RE = re.compile(rf'{_PLAYER} killed {_PLAYER} with "([^"]*)"')
 _ASSIST_RE = re.compile(rf'{_PLAYER} triggered "assist" against {_PLAYER}')
 _BREAK_RE = re.compile(rf'{_PLAYER} triggered "cap_break"')
 _FRAG_CONTEXT_RE = re.compile(
-    rf'{_PLAYER} triggered "frag_context" against {_PLAYER}'
+    rf'{_PLAYER} triggered "frag_context" against {_PLAYER} with "([^"]+)"'
 )
+_MARKER_PROPERTY_RE = re.compile(r'\((?P<key>[a-z_]+) "(?P<value>[^"]*)"\)')
 _TS_RE = re.compile(r"^L \d\d/\d\d/\d{4} - (\d\d):(\d\d):(\d\d):")
 _COMBAT_TEAMS = frozenset({"Allies", "Axis"})
 
@@ -172,6 +174,98 @@ def frag_context_classification(log_text: str, *, match_only: bool = False) -> d
         evidence["frags"] + evidence["teamkills"] + evidence["unclassified"]
     )
     return evidence
+
+
+def producer_markers_for_match(
+        log_text: str, needle: str, *, match_id: str, half: int,
+        start_epoch: int, end_epoch: int | None = None) -> dict:
+    """Classify text-window markers by their structured producer context.
+
+    A buffered capture line can be printed after ``KTP_MATCH_START`` even though
+    it was produced before that match.  Text order alone would then assign the
+    old fact to the new match.  Exact producer match/half and the persisted
+    match interval are authoritative.  Only the producer's exact no-context
+    sentinel (matchid ``-``, half ``0``) may be classified as a buffered
+    pre-interval fact; every real foreign context, malformed marker, or clock
+    mismatch fails closed for the caller.
+    """
+    included: list[str] = []
+    buffered_pre_interval: list[str] = []
+    context_mismatches: list[str] = []
+
+    lines = log_text.splitlines()
+    start = next(
+        (index for index, line in enumerate(lines)
+         if "KTP_MATCH_START" in line),
+        None,
+    )
+    if start is None:
+        return {
+            "markers": included,
+            "buffered_pre_interval": buffered_pre_interval,
+            "context_mismatches": context_mismatches,
+        }
+    end = next(
+        (index for index, line in enumerate(lines[start + 1:], start + 1)
+         if "KTP_MATCH_END" in line),
+        len(lines),
+    )
+
+    for line in lines[start:end]:
+        if needle not in line:
+            continue
+        properties = {
+            match.group("key"): match.group("value")
+            for match in _MARKER_PROPERTY_RE.finditer(line)
+        }
+        try:
+            marker_half = int(properties["half"])
+            event_epoch = int(properties["event_epoch"])
+            marker_match_id = properties["matchid"]
+        except (KeyError, TypeError, ValueError):
+            context_mismatches.append(line.strip())
+            continue
+
+        exact_context = marker_match_id == match_id and marker_half == int(half)
+        inside_interval = (
+            event_epoch >= int(start_epoch)
+            and (end_epoch is None or event_epoch <= int(end_epoch))
+        )
+        if exact_context and inside_interval:
+            included.append(line.strip())
+        elif (marker_match_id == "-" and marker_half == 0
+              and event_epoch < int(start_epoch)):
+            buffered_pre_interval.append(line.strip())
+        else:
+            context_mismatches.append(line.strip())
+
+    return {
+        "markers": included,
+        "buffered_pre_interval": buffered_pre_interval,
+        "context_mismatches": context_mismatches,
+    }
+
+
+def count_after_match(log_text: str, needle: str) -> int:
+    """Count source markers after match end and before the next match start.
+
+    ``match_log_segment`` already trims at the next real start.  Keeping this
+    helper independent makes the StatsMe invariant testable from a small log
+    fixture and ensures a second match's valid flush is never counted here.
+    """
+    lines = log_text.splitlines()
+    end = next(
+        (index for index, line in enumerate(lines) if "KTP_MATCH_END" in line),
+        None,
+    )
+    if end is None:
+        return 0
+    stop = next(
+        (index for index, line in enumerate(lines[end + 1:], end + 1)
+         if "KTP_MATCH_START" in line and "[test-mode mirror]" not in line),
+        len(lines),
+    )
+    return sum(1 for line in lines[end + 1:stop] if needle in line)
 
 
 def check_frag_context_teamkills(log_text: str) -> list[str]:
@@ -360,7 +454,9 @@ def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
     ]
 
 
-def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
+def frag_context_diagnostic_evidence(
+        log_text: str, daemon_text: str, *,
+        ignored_producer_markers: list[str] | tuple[str, ...] = ()) -> dict:
     """Build identity-level evidence for intentional unmatched frag contexts.
 
     BreakDrive reports client names while the daemon warning reports HLStatsX
@@ -375,7 +471,7 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
     or absent name-to-player mappings fail closed via ``unresolved_expected``.
     """
     markers = breakdrive_synthetic_frag_diagnostics(log_text)
-    warnings = [
+    all_warnings = [
         line.strip()
         for line in daemon_text.splitlines()
         if "KTP_NO_ROW_MATCHED: frag_context:" in line
@@ -388,6 +484,35 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
             player_ids_by_name.setdefault(actor.group("name"), set()).add(
                 int(actor.group("player_id"))
             )
+
+    def producer_identity(marker: str) -> tuple[str | None, str | None]:
+        parsed = _FRAG_CONTEXT_RE.search(marker)
+        if not parsed:
+            return None, "producer marker shape was not parseable"
+        killer_name, victim_name, weapon = (
+            parsed.group(1), parsed.group(4), parsed.group(7)
+        )
+        killer_ids = player_ids_by_name.get(killer_name, set())
+        victim_ids = player_ids_by_name.get(victim_name, set())
+        if len(killer_ids) != 1 or len(victim_ids) != 1:
+            return None, (
+                f"daemon identity mapping is not unique: killer "
+                f"{killer_name!r} -> {sorted(killer_ids)}, victim "
+                f"{victim_name!r} -> {sorted(victim_ids)}"
+            )
+        return (
+            f"{next(iter(killer_ids))}->{next(iter(victim_ids))}:{weapon}",
+            None,
+        )
+
+    ignored_identities: list[str] = []
+    unresolved_ignored: list[dict] = []
+    for marker in ignored_producer_markers:
+        identity, reason = producer_identity(marker)
+        if identity is None:
+            unresolved_ignored.append({"marker": marker, "reason": reason})
+        else:
+            ignored_identities.append(identity)
 
     expected_identities: list[str] = []
     unresolved_expected: list[dict] = []
@@ -419,6 +544,34 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
             f"{next(iter(killer_ids))}->{next(iter(victim_ids))}:amerknife"
         )
 
+    warning_identities: list[str | None] = []
+    for warning in all_warnings:
+        parsed = _FRAG_NO_ROW_RE.search(warning)
+        warning_identities.append(
+            f"{parsed.group('killer')}->{parsed.group('victim')}:"
+            f"{parsed.group('weapon')}"
+            if parsed else None
+        )
+    warning_counts = Counter(
+        identity for identity in warning_identities if identity is not None
+    )
+    expected_counts = Counter(expected_identities)
+    ignored_counts = Counter(ignored_identities)
+    ignored_remaining = Counter({
+        identity: min(count, max(
+            warning_counts[identity] - expected_counts[identity], 0
+        ))
+        for identity, count in ignored_counts.items()
+    })
+    warnings: list[str] = []
+    ignored_warnings: list[str] = []
+    for warning, identity in zip(all_warnings, warning_identities):
+        if identity is not None and ignored_remaining[identity] > 0:
+            ignored_remaining[identity] -= 1
+            ignored_warnings.append(warning)
+        else:
+            warnings.append(warning)
+
     observed_identities: list[str] = []
     unparsed_observed: list[str] = []
     for warning in warnings:
@@ -440,6 +593,9 @@ def frag_context_diagnostic_evidence(log_text: str, daemon_text: str) -> dict:
         "unparsed_observed": unparsed_observed,
         "synthetic_kill_markers": markers,
         "unmatched_warnings": warnings,
+        "ignored_pre_interval_identities": ignored_identities,
+        "ignored_pre_interval_warnings": ignored_warnings,
+        "unresolved_ignored_pre_interval": unresolved_ignored,
     }
 
 

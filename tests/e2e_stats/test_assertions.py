@@ -601,15 +601,18 @@ def test_migration_017_schema_rejects_a_missing_or_wrongly_nonnull_column():
 
 
 def test_assist_context_is_exact_and_distinct_from_generic_ppa_rows():
-    # One generic diagnostic/warmup assist may exist in addition to the two
-    # match-scoped canonical rows. The two ledgers intentionally have distinct
-    # counts and purposes.
+    # One valid diagnostic assist may exist in addition to the two clean-match
+    # canonical rows. Global shape/interval integrity still applies to all three
+    # while the clean verdict compares only its requested match and half.
     verdict = assertions.check_assist_context(
-        AssistContextDb(rows=2, ppa=3), emitted=2,
+        AssistContextDb(rows=3, scoped=2, ppa=3), emitted=2,
         match_id="1787019402-TEST", half=1,
     )
     assert verdict["status"] == "ok"
-    assert verdict["rows"] == 2
+    assert verdict["rows"] == 3
+    assert verdict["scoped_rows"] == 2
+    assert verdict["other_context_rows"] == 1
+    assert verdict["wrong_context"] == 0
     assert verdict["generic_ppa_rows"] == 3
 
 
@@ -656,19 +659,21 @@ def test_assist_context_requires_migration_017_table():
 
 
 def test_missing_lane_b_weaponstats_is_a_pipeline_failure():
-    v = assertions.check_statsme_flushed(FakeDb(), weaponstats_lines=0)
+    v = assertions.check_statsme_flushed(
+        FakeDb(), source_rows_by_context={("test-match", 1): 0}
+    )
     assert v["status"] == "pipeline"
     assert "compile flag" in v["detail"]
 
 
 class MatchStatsDb:
     def __init__(self, *, rows=12, mismatches=0, total_mismatches=0,
-                 statsme=0, attributed=0):
+                 statsme=0, statsme_contexts=None):
         self.rows = rows
         self.mismatches = mismatches
         self.total_mismatches = total_mismatches
         self.statsme = statsme
-        self.attributed = attributed
+        self.statsme_contexts = statsme_contexts or {}
         self.queries = []
 
     def count(self, query):
@@ -679,8 +684,12 @@ class MatchStatsDb:
             return self.total_mismatches
         if "ktp_match_stats" in query:
             return self.rows
-        if "WHERE match_id" in query and "Events_Statsme" in query:
-            return self.attributed
+        if "Events_Statsme" in query and "WHERE BINARY match_id" in query:
+            for (match_id, half), count in self.statsme_contexts.items():
+                if (f"BINARY '{match_id}'" in query
+                        and f"half = {half}" in query):
+                    return count
+            return 0
         if "Events_Statsme" in query:
             return self.statsme
         return 0
@@ -688,17 +697,119 @@ class MatchStatsDb:
 
 def test_statsme_requires_match_attribution_when_context_is_supplied():
     verdict = assertions.check_statsme_flushed(
-        MatchStatsDb(statsme=64, attributed=0), weaponstats_lines=64,
-        match_id="test-match", half=1)
+        MatchStatsDb(statsme=64),
+        source_rows_by_context={("clean-TEST", 1): 64},
+    )
     assert verdict["status"] == "pipeline"
-    assert "flush before KTP_MATCH_END" in verdict["detail"]
+    assert "source=64 db=0" in verdict["detail"]
 
 
-def test_statsme_attribution_passes_when_every_row_is_tagged():
+def test_statsme_attribution_ignores_valid_rows_from_diagnostic_match():
     verdict = assertions.check_statsme_flushed(
-        MatchStatsDb(statsme=64, attributed=64), weaponstats_lines=64,
-        match_id="test-match", half=1)
+        MatchStatsDb(
+            statsme=84,
+            statsme_contexts={
+                ("clean-TEST", 1): 64,
+                ("diagnostic-TEST", 1): 20,
+            },
+        ),
+        source_rows_by_context={
+            ("clean-TEST", 1): 64,
+            ("diagnostic-TEST", 1): 20,
+        },
+    )
     assert verdict["status"] == "ok"
+    assert verdict["rows"] == 84
+    assert verdict["known_context_rows"] == 84
+    assert verdict["unexpected_rows"] == 0
+
+
+def test_statsme_rejects_empty_clean_source_even_when_diagnostic_is_active():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(
+            statsme=20,
+            statsme_contexts={
+                ("clean-TEST", 1): 0,
+                ("diagnostic-TEST", 1): 20,
+            },
+        ),
+        source_rows_by_context={
+            ("clean-TEST", 1): 0,
+            ("diagnostic-TEST", 1): 20,
+        },
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert "clean-TEST half=1" in verdict["detail"]
+
+
+def test_statsme_rejects_empty_diagnostic_source_even_when_clean_is_active():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(
+            statsme=64,
+            statsme_contexts={
+                ("clean-TEST", 1): 64,
+                ("diagnostic-TEST", 1): 0,
+            },
+        ),
+        source_rows_by_context={
+            ("clean-TEST", 1): 64,
+            ("diagnostic-TEST", 1): 0,
+        },
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert "diagnostic-TEST half=1" in verdict["detail"]
+
+
+def test_statsme_rejects_unattributed_or_foreign_rows():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(
+            statsme=85,
+            statsme_contexts={
+                ("clean-TEST", 1): 64,
+                ("diagnostic-TEST", 1): 20,
+            },
+        ),
+        source_rows_by_context={
+            ("clean-TEST", 1): 64,
+            ("diagnostic-TEST", 1): 20,
+        },
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["unexpected_rows"] == 1
+    assert "outside exercised contexts=1" in verdict["detail"]
+
+
+def test_statsme_rejects_duplicated_diagnostic_rows():
+    verdict = assertions.check_statsme_flushed(
+        MatchStatsDb(
+            statsme=85,
+            statsme_contexts={
+                ("clean-TEST", 1): 64,
+                ("diagnostic-TEST", 1): 21,
+            },
+        ),
+        source_rows_by_context={
+            ("clean-TEST", 1): 64,
+            ("diagnostic-TEST", 1): 20,
+        },
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["unexpected_rows"] == 0
+    assert "diagnostic-TEST half=1: source=20 db=21" in verdict["detail"]
+
+
+def test_statsme_post_match_replay_is_a_separate_pipeline_failure():
+    clean = assertions.check_statsme_unattributed_replay(post_match_lines=0)
+    replay = assertions.check_statsme_unattributed_replay(post_match_lines=47)
+
+    assert clean["status"] == "ok"
+    assert replay["status"] == "pipeline"
+    assert replay["rows"] == 47
+    assert "before the next match start" in replay["detail"]
 
 
 def test_match_stats_cache_reconciles_with_canonical_events():
