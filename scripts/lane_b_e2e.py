@@ -490,8 +490,9 @@ def match_log_segment(log_text: str, match_id: str) -> str:
     diagnostics.  The existing invariant helpers correctly scope to the first
     start/end pair in the text they receive, so give them a segment whose first
     pair belongs to the requested match.  Keeping the post-end tail is
-    intentional: StatsMe flushes while ending a match, and its weaponstats can
-    follow ``KTP_MATCH_END`` but must precede the next real match start.
+    intentional: a StatsMe flush must precede ``KTP_MATCH_END`` while daemon
+    context still exists, and any weaponstats in this tail prove stale replay
+    before the next real match start.
     """
     lines = log_text.splitlines()
     identity = f'(matchid "{match_id}")'
@@ -546,6 +547,24 @@ WHERE BINARY match_id=BINARY {sql_literal(match_id)}
     if len(rows) != 1:
         return {}
     return {key: int(value or 0) for key, value in rows[0].items()}
+
+
+def match_epoch_interval(db, *, match_id: str, half: int) -> dict[str, int]:
+    """Read the exact persisted producer-time interval for one match half."""
+    rows = tsv_rows(db.sql(f"""
+SELECT UNIX_TIMESTAMP(start_time) AS start_epoch,
+       UNIX_TIMESTAMP(end_time) AS end_epoch
+FROM ktp_matches
+WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+  AND half={int(half)}
+"""))
+    if len(rows) != 1:
+        return {}
+    start_epoch = rows[0].get("start_epoch")
+    end_epoch = rows[0].get("end_epoch")
+    if start_epoch is None or end_epoch is None:
+        return {}
+    return {"start_epoch": int(start_epoch), "end_epoch": int(end_epoch)}
 
 
 def judge_capture_context_isolation(
@@ -1220,6 +1239,47 @@ def main() -> int:
             segment for segment in (report_match_log, diagnostic_match_log)
             if segment
         ]
+        frag_marker_scopes: dict[str, dict] = {}
+        for scope_name, match_key, segment in (
+            ("report", "match", report_match_log),
+            ("diagnostic", "diagnostic_match", diagnostic_match_log),
+        ):
+            match = report.get(match_key)
+            if not match:
+                continue
+            interval = match_epoch_interval(
+                db, match_id=match["match_id"], half=match["half"]
+            )
+            if not interval:
+                failures.append(
+                    f"{scope_name} frag marker scope: no unique closed match "
+                    f"interval for {match['match_id']} half={match['half']}"
+                )
+                continue
+            scope = log_invariants.producer_markers_for_match(
+                segment, 'triggered "frag_context"',
+                match_id=match["match_id"], half=match["half"],
+                start_epoch=interval["start_epoch"],
+                end_epoch=interval["end_epoch"],
+            )
+            scope["interval"] = interval
+            frag_marker_scopes[scope_name] = scope
+            if scope["context_mismatches"]:
+                failures.append(
+                    f"{scope_name} frag marker scope: "
+                    f"{len(scope['context_mismatches'])} structured marker(s) "
+                    "had wrong producer context or clocks"
+                )
+        report["frag_context_marker_scopes"] = frag_marker_scopes
+
+        buffered_frag_markers = [
+            marker
+            for scope in frag_marker_scopes.values()
+            for marker in scope["buffered_pre_interval"]
+        ]
+        buffered_frag_evidence = log_invariants.frag_context_classification(
+            "\n".join(buffered_frag_markers)
+        )
         position_sample_total = log_text.count('triggered "position_sample"')
         position_sample_match = (
             log_invariants.count_in_match(
@@ -1233,13 +1293,17 @@ def main() -> int:
         )
         frag_context_match_emitted = (
             log_invariants.frag_context_classification(
-                report_match_log, match_only=True
+                "\n".join((frag_marker_scopes.get("report") or {}).get(
+                    "markers", []
+                ))
             )["frags"]
             if report.get("match") else 0
         )
         diagnostic_frag_context_emitted = (
             log_invariants.frag_context_classification(
-                diagnostic_match_log, match_only=True
+                "\n".join((frag_marker_scopes.get("diagnostic") or {}).get(
+                    "markers", []
+                ))
             )["frags"]
             if report.get("diagnostic_match") else 0
         )
@@ -1267,7 +1331,8 @@ def main() -> int:
         )
         frag_diagnostic_evidence = (
             log_invariants.frag_context_diagnostic_evidence(
-                diagnostic_match_log, daemon_text
+                diagnostic_match_log, daemon_text,
+                ignored_producer_markers=buffered_frag_markers,
             )
             if report.get("diagnostic_match") else {
                 "expected_synthetic_unmatched": 0,
@@ -1295,9 +1360,18 @@ def main() -> int:
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
             # "frag_context" marker each non-teamkill player frag emits.
-            "headshot": frag_context_evidence["headshots"],
-            "frag_context": frag_context_evidence["frags"],
-            "frag_context_total": frag_context_evidence["total"],
+            "headshot": (
+                frag_context_evidence["headshots"]
+                - buffered_frag_evidence["headshots"]
+            ),
+            "frag_context": (
+                frag_context_evidence["frags"]
+                - buffered_frag_evidence["frags"]
+            ),
+            "frag_context_total": (
+                frag_context_evidence["total"]
+                - buffered_frag_evidence["total"]
+            ),
             "frag_context_teamkills": frag_context_evidence["teamkills"],
             "frag_context_unclassified": frag_context_evidence["unclassified"],
             "frag_context_match": frag_context_match_emitted,
@@ -1495,11 +1569,27 @@ def main() -> int:
                 db, match_id=m["match_id"], expected=args.per_team * 2))
             carried += assertions.check_match_tagging(
                 db, match_id=m["match_id"], half=m["half"])
+            statsme_source_rows = {
+                (m["match_id"], m["half"]): log_invariants.count_in_match(
+                    report_match_log, chr(34) + "weaponstats" + chr(34)
+                )
+            }
+            if report.get("diagnostic_match"):
+                d = report["diagnostic_match"]
+                statsme_source_rows[(d["match_id"], d["half"])] = (
+                    log_invariants.count_in_match(
+                        diagnostic_match_log,
+                        chr(34) + "weaponstats" + chr(34),
+                    )
+                )
             carried.append(assertions.check_statsme_flushed(
-                db, weaponstats_lines=report_match_log.count(
-                    chr(34) + "weaponstats" + chr(34)
-                ),
-                match_id=m["match_id"], half=m["half"]))
+                db, source_rows_by_context=statsme_source_rows,
+            ))
+            carried.append(assertions.check_statsme_unattributed_replay(
+                post_match_lines=log_invariants.count_after_match(
+                    report_match_log, chr(34) + "weaponstats" + chr(34)
+                )
+            ))
             carried.append(assertions.check_match_stats_reconciled(
                 db, match_id=m["match_id"]))
             # The window comes from the log's own KTP_MATCH_START/END markers,

@@ -4,7 +4,8 @@ from pathlib import Path
 import pytest
 
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
-                                persist_preflight_failure,
+                                 match_epoch_interval,
+                                 persist_preflight_failure,
                                 replay_boot_flag_positions, run_match,
                                 stage_objective_wire_witness, stage_tree)
 
@@ -180,6 +181,37 @@ def test_full_lane_strictly_accounts_for_breakdrive_frag_diagnostics():
     assert "lines[start:stop]" in invariants
     assert "expected_identities" in runner
     assert "observed_identities" in runner
+
+
+def test_match_epoch_interval_is_exactly_match_and_half_scoped():
+    class FakeDb:
+        def __init__(self):
+            self.query = ""
+
+        def sql(self, query):
+            self.query = query
+            return "start_epoch\tend_epoch\n105\t120\n"
+
+    db = FakeDb()
+    interval = match_epoch_interval(
+        db, match_id="diagnostic-TEST", half=1
+    )
+
+    assert interval == {"start_epoch": 105, "end_epoch": 120}
+    assert "BINARY 'diagnostic-TEST'" in db.query
+    assert "half=1" in db.query
+
+
+def test_full_lane_scopes_statsme_and_frag_markers_per_match():
+    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+
+    assert "log_invariants.producer_markers_for_match(" in runner
+    assert "ignored_producer_markers=buffered_frag_markers" in runner
+    assert "log_invariants.count_in_match(" in runner
+    assert "source_rows_by_context=statsme_source_rows" in runner
+    assert "diagnostic_match_log" in runner
+    assert "assertions.check_statsme_unattributed_replay(" in runner
+    assert "log_invariants.count_after_match(" in runner
 
 
 def test_build_refuses_partial_lane_b_core_support():
