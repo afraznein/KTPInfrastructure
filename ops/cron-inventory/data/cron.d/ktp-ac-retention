@@ -1,11 +1,12 @@
-# KTP AntiCheat data retention — uploads day-dirs (60d), weapon-timeline rows
-# (30d, batched), expired session tokens (7d past expiry).
-# Script: /usr/local/bin/ktp-ac-retention.sh (canonical: KTPInfrastructure/scripts/).
-# 04:40 ET daily — after ktp-backup so the nightly dump still contains the day
-# about to age out.
-#
-# STAGED DISABLED: uncomment the job line to activate (first activation deletes
-# bundles back to the retention horizon — verify DRY_RUN=1 output first).
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# UPLOAD SWEEP HELD 2026-08-16 (operator: retain all evidence bundles).
+# 36500 days ~= 100 years, so the cutoff date can never be reached.
+# DO NOT set this to 0 -- the sweep compares day-dirs against
+# `date -d "-N days"`, so 0 makes the cutoff TODAY and deletes the whole archive.
+# Weapon-row (30d), token (7d) and audit sweeps are deliberately still running.
+# Restore: reinstall /root/ktp-ac-retention.cron.bak-pre-uploadhold-20260816
+UPLOAD_RETENTION_DAYS=36500
+
 40 4 * * * root /usr/local/bin/ktp-ac-retention.sh >> /var/log/ktp-ac-retention.log 2>&1
