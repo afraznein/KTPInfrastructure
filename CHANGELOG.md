@@ -4,6 +4,26 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `local`: bot-backed game server on ktp-game-2 for go-live testing (2026-08-25)
+
+- `ktp-game-2` is now a **bot server** and no longer a plain second game server
+  on 27017: Metamod-R hosts new_bot while ktpamx keeps loading through
+  `extensions.ini`, so plugins still run in extension mode. `ktp-game-1` is
+  deliberately untouched as the control — under Metamod `fakemeta` is reachable
+  and it is not on the fleet.
+- New targets: `local-bots-amxx`, `local-bots-plugins`, `local-bots-build`,
+  `local-bots-up`, `local-bots-match`. `local-bots-match` fills 6v6 with bots and
+  drives the real `.ktp`/`.confirm`/`.ready` flow through go-live, so the local
+  stack can finally exercise the mass-respawn stat re-wipe, wave clock and
+  halftime swap.
+- The bot server requires a `KTP_LANE_B_FAKECLIENTS` ktpamx, which is NOT a
+  production binary; `runtime/entrypoint-bots.sh` refuses to boot without one
+  rather than warning, because a bot-blind core is silent and looks healthy.
+  `local-up` / `local-up-full` start game-1 (and `data`) alone when no core has
+  been built, instead of letting game-2 crash-loop.
+- The image carries third-party binaries (new_bot, Metamod-R), both SHA-256
+  pinned, and must never be pushed to a registry. Runbook and limits — including
+  that the custom map pool ships no bot waypoints — in `build/bots/README.md`.
 ### `analytics`: coordinated FPS-stat private-shadow bundle (2026-08-19)
 
 - Match analytics schema version 6 adds symmetric basic trades, all-death-reset
