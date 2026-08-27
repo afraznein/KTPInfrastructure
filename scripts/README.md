@@ -162,6 +162,21 @@ cp ktp-scheduled-restart.sh.example ktp-scheduled-restart.sh
 0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
 ```
 
+**Swap failures:** a `.new` -> live `mv -f` that fails is logged, but never aborts the server start
+that follows (leaving players on a DOWN server is a worse outcome than one running a partial wave).
+Instead a swap failure forces the Discord status off green, exits the script non-zero even when every
+server comes back up, and — because the failed `mv` leaves the `.new` file exactly where it was —
+`ktp-verify-post-swap.sh` (below) is the durable, run-anytime way to confirm a wave fully activated.
+
+### ktp-verify-post-swap.sh
+Read-only, run on a game host any time after a nightly restart. Re-derives the same swap-glob set
+`ktp-scheduled-restart.sh` uses and reports any `.new` file still sitting unswapped — the durable
+signature of an incomplete activation, independent of whether you caught the restart log live.
+
+```bash
+./ktp-verify-post-swap.sh   # exit 0 = fully activated, exit 1 = leftover .new file(s) found
+```
+
 ### stage-wave.py
 **The standard way to push a wave to the fleet — prefer this over calling `deploy-to-fleet.py` directly.**
 It wraps that script (single source of truth for the 24-instance topology and the password-from-env rule)

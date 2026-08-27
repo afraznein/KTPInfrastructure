@@ -40,13 +40,18 @@ an explicit operator decision.
 
 ## Implemented state (2026-08-13 ET)
 
-`preprod` exists in the five repositories where `andsmit9` has write access:
+`preprod` existed in the five repositories where `andsmit9` had write access
+as of this date:
 
 - `KTPInfrastructure`
 - `KTPAMXX`
 - `KTPAMXXCurl` (renamed from `KTPAmxxCurl`)
 - `KTPHLStatsX`
 - `KTPMatchHandler`
+
+**Stale as of 2026-08-26 ET** — see "Access blockers resolved" below.
+`andsmit9` now has write access to three more repositories, and all three now
+carry `preprod`, so the live count is eight, not five.
 
 KTPInfrastructure `preprod` contains:
 
@@ -93,16 +98,36 @@ An administrator must:
 The current token has push but not admin access, so it cannot create or change
 these rules.
 
-## Remaining access blockers
+## Access blockers resolved (2026-08-26 ET)
 
-`andsmit9` currently has no write access to:
+This section previously said `andsmit9` had no write access to `KTP-ReAPI`,
+`KTP-ReHLDS` and `KTPDiscordRelay`. That is no longer the case — access was
+granted, and `preprod` has since been created in all three (this is a
+documentation-only correction; the grant itself was an operator action, not
+made from this doc).
 
-- `KTP-ReAPI`
-- `KTP-ReHLDS`
-- `KTPDiscordRelay`
+Verified 2026-08-26 ET, per repository:
 
-After write access is granted, create `preprod` directly from each repository's
-current `main` tip. Do not infer the tip from a stale local clone.
+```
+gh api repos/afraznein/KTP-ReAPI/collaborators/andsmit9/permission        -> "permission":"write"
+gh api repos/afraznein/KTP-ReHLDS/collaborators/andsmit9/permission       -> "permission":"write"
+gh api repos/afraznein/KTPDiscordRelay/collaborators/andsmit9/permission  -> "permission":"write"
+
+gh api repos/afraznein/KTP-ReAPI/branches/preprod        -> 200, branch exists
+gh api repos/afraznein/KTP-ReHLDS/branches/preprod       -> 200, branch exists
+gh api repos/afraznein/KTPDiscordRelay/branches/preprod  -> 200, branch exists
+```
+
+Control for both checks: the same calls against a nonexistent user
+(`.../collaborators/nonexistentuser99999xyz/permission`) and a nonexistent
+branch name (`.../branches/this-branch-does-not-exist-xyz`) both correctly
+return 404, so the three 200/`write` results above are not a probe that
+returns success unconditionally.
+
+Note the repo names are hyphenated on GitHub — `KTP-ReAPI` and `KTP-ReHLDS`
+— even though the local directories are `KTPReAPI`/`KTPReHLDS`. A slug built
+from the directory name 404s and reads as "repo not found," not as "no
+access."
 
 KTPAMXX's GitHub default branch has been changed to `main` (re-verified
 2026-08-26). `master` has since been deleted from the remote outright, rather
@@ -130,7 +155,9 @@ it disables only the player-facing connect announcement.
   scheduled Tier 2 and Lane B runs each show a `preprod` leg and no `main` leg.
 - After branch protection is installed, verify a failing corpus replay blocks
   merges into both `preprod` and `main`.
-- After access is granted, verify `preprod` exists in all three blocked repos.
+- ~~After access is granted, verify `preprod` exists in all three blocked repos.~~
+  `preprod` existing in `KTP-ReAPI`, `KTP-ReHLDS` and `KTPDiscordRelay` was
+  confirmed 2026-08-26 ET — see "Access blockers resolved" above.
 - ~~Confirm KTPAMXX reports `main` as its GitHub default branch.~~ Confirmed
   2026-08-26 via `gh repo view --json defaultBranchRef` and `git ls-remote
   --symref origin HEAD` (both report `main`); `master` no longer exists as a
