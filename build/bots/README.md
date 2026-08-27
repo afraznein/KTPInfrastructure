@@ -135,7 +135,7 @@ answers "were these built from the same commit", nothing about the fleet.
 
 - **`fakemeta` is reachable here and is not on the fleet.** Several of this
   stack's constraints exist *because* extension mode lacks it. A fakemeta
-  dependency passes here and fails on all 25 servers.
+  dependency passes here and fails on every fleet instance.
 - **Bot stats are not human stats** — bot weapon counters needed explicit
   carve-outs upstream (KTPAMXX #21/#22).
 - **Cap-breaks are luck.** A few-minute run produces one about half the time.
