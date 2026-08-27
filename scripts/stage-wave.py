@@ -12,6 +12,11 @@ staging safe:
      change would activate alongside yours and you'd be bisecting a live fleet
      in the morning. This is the "one wave per nightly, never stacked" rule made
      mechanical. Override with --allow-existing-new only for a deliberate stack.
+     NOTE: this gate runs ONCE, before anything is staged -- a multi-artifact
+     wave staged one -f at a time will trip it on the second call, which is a
+     usage trap, not the gate misfiring. -f and --expect are both repeatable:
+     pass every artifact's pair in ONE invocation (see Usage below) and the
+     gate never sees a partial stage to object to.
 
   2. EXPECTED-MD5 ASSERTION. `--expect <basename>=<md5>` refuses to stage an
      artifact whose local md5 doesn't match what you reviewed. KTPAMXX and
@@ -335,7 +340,9 @@ def main():
                          "so the running build is the only copy that exists. Any download failure is "
                          "FATAL and nothing is staged.")
     ap.add_argument("--allow-existing-new", action="store_true",
-                    help="Skip the attribution gate (deliberate stacked activation only).")
+                    help="Skip the attribution gate (deliberate stacked activation only). For a "
+                         "multi-artifact wave staged one -f at a time, this is the WRONG fix -- pass "
+                         "every -f/--expect pair in ONE invocation instead; the gate never blocks that.")
     ap.add_argument("--expect-runner", action="append", default=[], metavar="BASENAME=MD5",
                     help="Assert the Tier-2 runner holds this md5 (the TEST-mode build, which is a "
                          "different binary from the one being staged). Repeatable.")
@@ -388,7 +395,12 @@ def main():
             for hk, files in dirty:
                 for f in files:
                     print(f"  [{hk}] {f}", file=sys.stderr)
-            sys.exit("Clear these (or pass --allow-existing-new for a deliberate stack) and re-run.")
+            print("If these are earlier artifacts of THIS SAME wave (staged one -f at a time), that is", file=sys.stderr)
+            print("the trap, not a second wave: -f and --expect are both repeatable, so re-run with every", file=sys.stderr)
+            print("artifact's -f/--expect pair TOGETHER in one invocation -- the gate runs once, before", file=sys.stderr)
+            print("anything is staged, so a single call for the whole wave never blocks itself. See the", file=sys.stderr)
+            print("multi-artifact example in this script's own --help.", file=sys.stderr)
+            sys.exit("Otherwise clear these by hand, or pass --allow-existing-new for a genuinely deliberate stack, and re-run.")
         print(f"  clean -- zero .new across {len(host_keys)} host(s). Attribution safe.\n")
     else:
         print("Preflight: SKIPPED (--allow-existing-new).\n")
