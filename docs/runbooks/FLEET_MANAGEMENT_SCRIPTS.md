@@ -13,6 +13,10 @@ the fleet invokes either of them on a schedule — the nightly restart is
 `restart-all-servers.sh` is a manual admin tool and is reached only by someone
 typing it.
 
+That scheduled script has three divergent copies of its own, and syncing them
+naively destroys something in either direction — see
+[`SCHEDULED_RESTART_LINEAGES.md`](SCHEDULED_RESTART_LINEAGES.md).
+
 ---
 
 ## Why a runbook exists for two shell scripts

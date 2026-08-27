@@ -4,6 +4,31 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: reconcile the restart scripts' three lineages, and make the next divergence visible (2026-08-27)
+
+- `~/restart-all-servers.sh` had drifted into **two mutually incompatible fleet variants** and neither
+  matches the generator. Atlanta/Dallas/Denver run one shape; New York/Chicago run another that carries
+  `set -e` alongside `((running++))`, so its verify loop exits 1 at the FIRST healthy server and never
+  prints its summary. On Chicago it dies earlier still, on `~/dod-27019` - an instance deleted
+  2026-07-13 that the hardcoded `1 2 3 4 5` loop still addresses. Every copy dates from Feb-Mar 2026.
+  The repair path already exists -- #169's `--regen-management-scripts` and
+  `docs/runbooks/FLEET_MANAGEMENT_SCRIPTS.md` -- and its pinned output is re-derived here rather than
+  taken on trust: a sandboxed `HOME` reproduces both md5s exactly. What was missing is anything that
+  NOTICES a host has fallen off it.
+- `ktp-scheduled-restart.sh` drifted the other way. This `.example` is the most complete of the three
+  lineages, the gitignored working copy stopped at 2026-08-04 (no #164, and a relay secret the fleet is
+  not using), and the fleet sits between them. Its header asserted a regeneration direction that
+  produced exactly that; corrected here to name `.example` as the source of truth.
+- **No script is deployed and no server is restarted by this change.** `docs/runbooks/SCHEDULED_RESTART_LINEAGES.md` records
+  what each lineage has, which differences are deliberate versus drift, and the per-host blast radius of
+  a later deploy - including the two ways a naive one destroys something: pushing the gitignored copy
+  reverts #164, pushing `.example` blanks the relay secret and both channel IDs.
+- **`scripts/ktp-restart-drift.py`** (new, read-only) checks both scripts on every host. The scheduled
+  script is compared against `.example` with secret VALUES masked, so a rotation is not drift and no
+  secret leaves the host. The manual script is checked by PROPERTY after comments are stripped, not by
+  string: the generator's own warning comment contains `((running++))` once, so a literal grep reports
+  the correct file as broken. Hosts reached is printed beside every count.
+
 ### `tier2`: a re-sync tool for the runner stack, and the section the checklist pointed at (2026-08-26)
 
 - **`scripts/sync-runner-stack.py`** mirrors the Tier-2 runner's stack from a live fleet instance. The
