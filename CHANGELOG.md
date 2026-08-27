@@ -4,6 +4,26 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `tier2`: a re-sync tool for the runner stack, and the section the checklist pointed at (2026-08-26)
+
+- **`scripts/sync-runner-stack.py`** mirrors the Tier-2 runner's stack from a live fleet instance. The
+  runner is a declared must-match-fleet environment and the only thing enforcing that was a checklist
+  line — `Re-sync the Tier-2 runner stack (above)` — that pointed at no section. The detector
+  (`ktp-tier2-stack-drift.py`, in the 6h heartbeat) worked correctly and alerted `ok -> drift` within
+  hours of the 2026-08-26 ABI wave; nothing existed to act on it, so the runner kept testing against
+  the pre-wave engine, core, dodx and reapi.
+- The synced file set is **imported from the drift checker** rather than restated, and the artifacts it
+  refuses to overwrite are asserted against that set rather than merely documented: KTPMatchHandler and
+  KTPPracticeMode are `KTP_TEST_MODE` builds where byte-equality with the fleet is wrong, and
+  KTPHudObserver is rebuilt from upstream by `tier2-integration.yml` on every run.
+- Dry run by default. `--apply` backs up each drifted file on the runner first — neither the fleet nor
+  the runner keeps rollback copies — and re-reads md5 after the pull and after the push. It refuses
+  while a Tier-2 run is live, and while the reference instance holds staged `.new` files, since a sync
+  into a pending wave is stale again at the next 03:00.
+- `docs/RELEASE_CHECKLISTS.md` gains the § *Tier-2 runner re-sync* section, including what the tool does
+  **not** cover and therefore still needs a per-wave look: test-mode plugins, KTPHudObserver, and configs.
+
+
 ### `ops`: loud swap failures, and a two-marker Tier 2 heartbeat (2026-08-26)
 
 - `ktp-scheduled-restart.sh`: a `.new` -> live swap failure used to be logged and

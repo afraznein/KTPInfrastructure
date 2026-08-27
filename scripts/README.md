@@ -232,6 +232,27 @@ python3 deploy-to-fleet.py \
 
 **First live use:** always pair `--hosts <one> --ports <one>` as a smoke test before `--all`. The dry-run validates routing + arg parsing locally; the SCP + remote-md5-verify path is paramiko-shaped boilerplate but should still be confirmed on one instance before broadcasting.
 
+### sync-runner-stack.py
+**Mirrors the Tier-2 runner's stack onto a live fleet instance — the deploy-flow step that had a checklist line but no tool.**
+The runner is must-match-fleet; a green suite certifying a stack production doesn't run is the worst
+failure mode a test tier has, and `ktp-tier2-stack-drift.py` could only ever report it.
+
+- **Syncs exactly what the tripwire alerts on**, imported from that module rather than restated — the
+  repo already carries several hand-kept copies of the test-mode plugin list, and this is not another.
+- **Never touches** KTPMatchHandler / KTPPracticeMode (`KTP_TEST_MODE` builds, where byte-equality with
+  the fleet is wrong) or KTPHudObserver (rebuilt from upstream per run). Asserted, not just documented.
+- **Dry run by default.** `--apply` backs each drifted file up on the runner first, then verifies md5
+  after the pull and again after the push. It refuses during a live Tier-2 run, and refuses when the
+  reference instance holds staged `.new` files.
+
+Holds no IPs — hosts come from `KTP_TIER2_SSH_HOST` / `KTP_DRIFT_REF_HOST`. Full procedure and ordering:
+`docs/RELEASE_CHECKLISTS.md` § Tier-2 runner re-sync.
+
+```bash
+python3 sync-runner-stack.py            # what drifted?
+python3 sync-runner-stack.py --apply    # sync it
+```
+
 ### ktp-organize-hltv-demos.sh
 Organizes HLTV demo files into hostname/matchtype directories.
 
