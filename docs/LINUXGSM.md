@@ -234,7 +234,7 @@ looking only at `*-script.log` finds nothing and reads as innocence:
 grep -h 'old type\|Killing' ~/dod-*/log/script/*.log | tail
 ```
 
-**Servers patched:** Atlanta Baremetal (`<ATL_BM_GAME_IP>`), Dallas (`<DAL_GAME_IP>`), Denver (`<DEN_GAME_IP>`), New York (`<NYC_GAME_IP>`), Chicago (`<CHI_GAME_IP>`) - All 5 instances each.
+**Servers patched:** Atlanta Baremetal (`<ATL_BM_GAME_IP>`), Dallas (`<DAL_GAME_IP>`), Denver (`<DEN_GAME_IP>`), New York (`<NYC_GAME_IP>`), Chicago (`<CHI_GAME_IP>`) - 5 instances each, except Chicago which runs 4 (27015-27018); its 5th was removed 2026-07-13.
 
 ### LinuxGSM Lockfile Fix (After Cloning/Migration)
 When cloning a server or migrating to new hardware, LinuxGSM may report "No lockfile found" errors if the `-monitoring.lock` files don't exist.
