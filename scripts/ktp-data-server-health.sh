@@ -70,6 +70,11 @@ CRITICAL_TIMERS=(
 # mtime is the cheapest true "work happened" signal available.
 RENAMER_STATE_FILE=/var/lib/hltv-demo-renamer/state.json
 RENAMER_STALE_SEC=900
+# Liveness is not reading. The poll loop can iterate while every SSH session
+# fails -- which rewrites state.json on schedule, so the mtime leg above, a
+# systemd watchdog and the cleanup interlock all read healthy while no match
+# window is ever seen. last_read_ok stamps the last clean pass per game host.
+RENAMER_READ_STALE_SEC=1800
 
 BANLIST_FILE="/home/dod/distribute/addons/ktpamx/configs/ktp_ac_bans.ini"
 BANLIST_UNIT="ktp-render-banlist.service"
@@ -141,6 +146,25 @@ if [ "$(systemctl is-active hltv-demo-renamer.service 2>/dev/null || true)" = "a
             # Fixed token, never the age: the report is a set-diff, so a ticking
             # value would read as a fresh failure on every hourly run.
             down+=("hltv-demo-renamer=wedged")
+        else
+            # Fresh file, but is it reading? One token per stale host, each a
+            # fixed string. Silent on a pre-upgrade state.json that has no
+            # stamps yet -- the cleanup interlock fails safe on that case, so a
+            # page here would be noise, not news.
+            for reg in $(python3 - "$RENAMER_STATE_FILE" "$RENAMER_READ_STALE_SEC" <<'PY' 2>/dev/null
+import json, sys, time
+try:
+    stamps = json.load(open(sys.argv[1])).get("last_read_ok", {})
+except Exception:
+    raise SystemExit
+now, limit = time.time(), int(sys.argv[2])
+for r in sorted(stamps):
+    if now - stamps[r] > limit:
+        print(r)
+PY
+            ); do
+                down+=("hltv-demo-renamer-read=$reg")
+            done
         fi
     fi
 fi
