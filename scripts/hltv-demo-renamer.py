@@ -186,6 +186,12 @@ class State:
     log_offsets: Dict[str, int] = field(default_factory=dict)
     # Open windows awaiting CLOSE
     open_windows: List[OpenWindow] = field(default_factory=list)
+    # Region -> unix time of the last SSH poll that got all the way through that
+    # host's ports. Liveness is NOT the same as reading: the loop can iterate
+    # happily while every SSH session fails, which rewrites state.json on
+    # schedule and so looks healthy to a watchdog, an mtime check, and the
+    # cleanup interlock alike -- while no match window is ever seen.
+    last_read_ok: Dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "State":
@@ -200,6 +206,7 @@ class State:
             known = {f.name for f in OpenWindow.__dataclass_fields__.values()}
             return cls(
                 log_offsets=data.get("log_offsets", {}),
+                last_read_ok=data.get("last_read_ok", {}),
                 open_windows=[
                     OpenWindow(**{k: v for k, v in w.items() if k in known})
                     for w in data.get("open_windows", [])
@@ -214,6 +221,7 @@ class State:
         tmp = STATE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps({
             "log_offsets": self.log_offsets,
+            "last_read_ok": self.last_read_ok,
             "open_windows": [asdict(w) for w in self.open_windows],
         }, indent=2))
         tmp.replace(STATE_FILE)
@@ -324,10 +332,25 @@ class HostTailer:
                                 self.region, port)
                 self._disconnect()
                 return all_lines
-            except (FileNotFoundError, IOError):
+            except FileNotFoundError:
                 # Log doesn't exist yet (server not started today, or no plugin
                 # output yet). Skip silently — next poll will pick it up.
+                # paramiko maps SFTP_NO_SUCH_FILE to IOError(ENOENT), which
+                # Python 3 constructs as FileNotFoundError, so this still covers
+                # the benign case that the old broad IOError clause was for.
                 continue
+            except Exception as e:
+                # Everything else means the session is suspect, and reusing it is
+                # how a transient fault becomes permanent: _connect() returns
+                # early while self._ssh is set, so a torn transport is never
+                # replaced. A torn transport raises EOFError or SSHException,
+                # NEITHER an OSError -- so these escaped the old clause entirely
+                # -- while ConnectionResetError IS an OSError and would have been
+                # filed as "log absent" and skipped silently.
+                logging.warning("[%s/%d] stat failed: %s — dropping session",
+                                self.region, port, e)
+                self._disconnect()
+                return all_lines
 
             offset = state.log_offsets.get(key, 0)
             if offset > stat.st_size:
@@ -374,6 +397,8 @@ class HostTailer:
                 if "MATCH_WINDOW_" in line:
                     all_lines.append(line)
 
+        # Reached only on a clean pass: every failure path above returns early.
+        state.last_read_ok[self.region] = int(time.time())
         return all_lines
 
 
