@@ -751,6 +751,159 @@ def test_positive_missing_or_weak_isolation_is_not_staged(monkeypatch):
 # -- deterministic round-restart evidence ---------------------------------
 
 
+class _RestartArmModel:
+    """Small executable model of the Pawn arm phases and pinned-roster gate."""
+
+    STABLE_POLLS = 5
+
+    def __init__(self, players):
+        self.players = players
+        self.pinned = {
+            player_id: (row["userid"], row["team"], row["generation"])
+            for player_id, row in players.items()
+            if row["team"] in (bs.TEAM_ALLIES, bs.TEAM_AXIS)
+        }
+        self.phase = "normalizing"
+        self.stable_generation = None
+        self.stable_polls = 0
+        self.prepared = 0
+        self.queues = 0
+        self.results = 0
+        self.aborted = False
+
+    def _complete(self, *, stable):
+        combat = {
+            player_id: row for player_id, row in self.players.items()
+            if row["team"] in (bs.TEAM_ALLIES, bs.TEAM_AXIS)
+        }
+        if set(combat) != set(self.pinned):
+            return False
+        for player_id, row in combat.items():
+            userid, team, baseline = self.pinned[player_id]
+            if (row["userid"], row["team"]) != (userid, team):
+                return False
+            if stable:
+                if row["generation"] != self.stable_generation[player_id]:
+                    return False
+            elif not baseline <= row["generation"] <= baseline + 1:
+                return False
+        return True
+
+    def lifecycle_abort(self):
+        self.aborted = True
+        self.phase = "aborted"
+
+    def tick(self, *, clock_complete=False, area_stable=True,
+             capture_active=False, finish=False):
+        if self.aborted or self.phase == "done":
+            return
+        expects_stable = (self.phase == "prepared" or
+                          self.stable_generation is not None)
+        if not self._complete(stable=expects_stable):
+            self.lifecycle_abort()
+            return
+        if self.phase == "normalizing":
+            if clock_complete:
+                self.phase = "stabilizing"
+            return
+        if self.phase == "stabilizing":
+            if self.stable_generation is None:
+                if (not area_stable or any(
+                        not row["alive"] or
+                        row["generation"] != self.pinned[player_id][2] + 1
+                        for player_id, row in self.players.items()
+                        if player_id in self.pinned)):
+                    return
+                self.stable_generation = {
+                    player_id: row["generation"]
+                    for player_id, row in self.players.items()
+                    if player_id in self.pinned
+                }
+                return
+            if not area_stable:
+                self.stable_generation = None
+                self.stable_polls = 0
+                return
+            self.stable_polls += 1
+            if self.stable_polls >= self.STABLE_POLLS:
+                self.prepared += 1
+                self.phase = "prepared"
+            return
+        if self.phase == "prepared" and capture_active:
+            self.queues += 1
+            self.phase = "issued"
+            return
+        if self.phase == "issued" and finish:
+            self.results += 1
+            self.phase = "done"
+
+
+def _restart_model_at_prepared(players):
+    model = _RestartArmModel(players)
+    model.tick(clock_complete=True)
+    for row in players.values():
+        if row["team"] in (bs.TEAM_ALLIES, bs.TEAM_AXIS):
+            row["generation"] += 1
+    model.tick()
+    for _ in range(model.STABLE_POLLS):
+        model.tick()
+    assert model.phase == "prepared"
+    return model
+
+
+def test_restart_arm_behavior_waits_for_respawn_and_aborts_membership_changes():
+    def roster(*, spectator=False):
+        players = {
+            1: {"userid": 101, "team": bs.TEAM_ALLIES,
+                "generation": 7, "alive": True},
+            2: {"userid": 202, "team": bs.TEAM_AXIS,
+                "generation": 4, "alive": True},
+        }
+        if spectator:
+            players[3] = {"userid": 303, "team": 0,
+                          "generation": 2, "alive": True}
+        return players
+
+    # r5 ordering: the clock normalizes first. No capture is prepared until a
+    # later spawn generation and all five stable post-respawn samples exist.
+    players = roster()
+    model = _RestartArmModel(players)
+    model.tick(clock_complete=True)
+    assert model.phase == "stabilizing"
+    model.tick()
+    assert model.prepared == model.queues == model.results == 0
+    for row in players.values():
+        row["generation"] += 1
+    model.tick()
+    assert model.stable_generation is not None
+    for _ in range(model.STABLE_POLLS - 1):
+        model.tick()
+    assert model.prepared == model.queues == 0
+    model.tick()
+    assert model.prepared == 1 and model.queues == 0
+    model.tick(capture_active=True)
+    model.tick(finish=True)
+    model.tick(capture_active=True, finish=True)
+    assert (model.queues, model.results) == (1, 1)
+
+    # An already-connected spectator joining combat never changed the userid
+    # epoch in r5. Pinned-roster completeness must still abort immediately.
+    entrants = roster(spectator=True)
+    entrant_model = _RestartArmModel(entrants)
+    entrants[3]["team"] = bs.TEAM_ALLIES
+    entrant_model.tick()
+    assert entrant_model.aborted is True
+    assert entrant_model.queues == entrant_model.results == 0
+
+    # Lifecycle cleanup disarms the prepared callback; a later active capture
+    # observation cannot resurrect a queue or result.
+    lifecycle_model = _restart_model_at_prepared(roster())
+    lifecycle_model.lifecycle_abort()
+    lifecycle_model.tick(capture_active=True)
+    lifecycle_model.tick(finish=True)
+    assert lifecycle_model.queues == lifecycle_model.results == 0
+
+
 RESTART_QUEUE = (
     "L 08/20/2026 - 12:22:22: [KTPBreakDrive.amxx] [BD] restart_queue "
     "seq=4 flag=1 fname=POINT_BRIDGE capteam=1 victim=2 vname=Lara "
@@ -835,6 +988,123 @@ def test_probe_allows_only_frozen_monotonic_rebased_collapse_before_completion()
     assert expected in source
     assert source.index(expected) < source.index(
         'kind=state_before_completion count=%d owner=%d')
+
+
+def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
+    """Regression for r5 runs 1-4: PREPARED preceded bot respawns by ~1s."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    polls = int(next(
+        line.rsplit(" ", 1)[1]
+        for line in source.splitlines()
+        if line.startswith("#define BD_RESTART_POSTRESPAWN_STABLE_POLLS ")
+    ))
+    assert polls >= 5
+    assert "public dod_client_spawn(id)" in source
+    assert "g_bdSpawnGeneration[id]++" in source
+
+    arm = source[source.index("public cmd_arm_restart()"):
+                 source.index("public bd_restart_arm_poll()")]
+    assert arm.index("bd_snapshot_restart_roster()") < arm.index(
+        'server_cmd("mp_clan_restartround 1")'
+    )
+
+    poll = source[source.index("public bd_restart_arm_poll()"):
+                  source.index("public bd_restart_poll()")]
+    normalizing_start = poll.index(
+        "g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING"
+    )
+    stabilizing_start = poll.index(
+        "g_bdRestartArmPhase == BD_RESTART_ARM_STABILIZING",
+        normalizing_start,
+    )
+    normalizing = poll[normalizing_start:stabilizing_start]
+    assert "g_bdRestartNormalizeRebased" in normalizing
+    assert "g_bdRestartArmPhase = BD_RESTART_ARM_STABILIZING" in normalizing
+    # The clock transition ends this callback. It cannot fall through and
+    # prepare using the old generation in the same frame.
+    assert normalizing.rfind("return PLUGIN_HANDLED") > normalizing.index(
+        "g_bdRestartArmPhase = BD_RESTART_ARM_STABILIZING"
+    )
+
+    prepared_start = poll.index(
+        "g_bdRestartArmPhase == BD_RESTART_ARM_PREPARED", stabilizing_start
+    )
+    stabilizing = poll[stabilizing_start:prepared_start]
+    assert stabilizing.index("bd_restart_roster_respawned()") < (
+        stabilizing.index("bd_restart_begin_stability(")
+    ) < stabilizing.index("bd_restart_stability_current()")
+    threshold = stabilizing.index("BD_RESTART_POSTRESPAWN_STABLE_POLLS")
+    prepare = stabilizing.index('bd_prepare_capture("restart"')
+    assert threshold < prepare
+    assert "g_bdRestartArmPhase = BD_RESTART_ARM_PREPARED" in stabilizing
+    assert stabilizing.rfind("return PLUGIN_HANDLED") > stabilizing.index(
+        "g_bdRestartArmPhase = BD_RESTART_ARM_PREPARED"
+    )
+
+    prepared = poll[prepared_start:]
+    assert prepared.index("bd_restart_roster_generation_current()") < (
+        prepared.index("bd_find_prepared_capture()")
+    ) < prepared.index("bd_execute_restart(f)")
+    # One issued identity and one result identity remain the only successful
+    # restart markers in the plugin.
+    assert source.count('log_amx("[BD] restart_queue ') == 1
+    assert source.count('log_amx("[BD] restart_result ') == 1
+
+
+def test_restart_stability_refreshes_isolation_on_a_new_spawn_generation():
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    hold = source[source.index("stock bd_hold_test_players()"):
+                  source.index("stock bd_allow_isolated_death(id)")]
+    restore = source[source.index("stock bd_restore_isolated_players()"):
+                     source.index("stock bd_restore_prepared_capture()")]
+    assert ("g_bdIsolationSpawnGeneration[id] != "
+            "g_bdSpawnGeneration[id]") in hold
+    assert ("g_bdIsolationSpawnGeneration[id] = "
+            "g_bdSpawnGeneration[id]") in hold
+    assert ("g_bdSpawnGeneration[id] == "
+            "g_bdIsolationSpawnGeneration[id]") in restore
+
+
+def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    assert bs.BreakDriver.SERIES_TIMEOUT == 300.0
+    completeness = source[source.index(
+        "stock bool:bd_restart_roster_pinned_complete"
+    ):source.index("stock bool:bd_restart_roster_respawned")]
+    assert "get_players(players, num)" in completeness
+    assert "!g_bdRestartRosterSelected[id]" in completeness
+    assert "team != g_bdRestartRosterTeam[id]" in completeness
+    assert "g_bdRestartRosterSpawnBaseline[id] + 1" in completeness
+    assert "g_bdRestartRosterSpawnStable[id]" in completeness
+    abort = source[source.index("stock bd_restart_arm_abort"):
+                   source.index("/** Create a real, bounded capture")]
+    assert abort.index("remove_task(BD_TASK_RESTART_ARM_POLL)") < (
+        abort.index('log_amx("[BD] restart ABORT')
+    ) < abort.index("bd_end_test_isolation(false)")
+    assert "bd_restore_restart_timer()" in abort
+    assert "bd_reset_restart_arm_state()" in abort
+
+    poll = source[source.index("public bd_restart_arm_poll()"):
+                  source.index("public bd_restart_poll()")]
+    assert poll.index("g_bdRestartArmPolls >= BD_KILL_MAX_POLLS") < (
+        poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
+    )
+    assert poll.index("bd_restart_roster_pinned_complete(stable_generation)") < (
+        poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
+    )
+    assert 'bd_restart_arm_abort("combat roster changed while restart armed")' in poll
+    assert 'bd_restart_arm_abort("roster respawned after capture preparation")' in poll
+
+    lifecycle = source[source.index("public ktp_half_end("):
+                       source.index("stock bd_reset_restart_arm_state()")]
+    assert 'bd_abort_series("half_end", true)' in lifecycle
+    assert 'bd_abort_series("match_end", true)' in lifecycle
+    cleanup = source[source.index("stock bd_cleanup_tasks()"):
+                     source.index("stock bd_abort_series")]
+    assert "remove_task(BD_TASK_RESTART_ARM_POLL)" in cleanup
+    restart = source[source.index("stock bool:bd_execute_restart"):
+                     source.index("public cmd_arm_restart()")]
+    assert "\n\tdod_user_kill(" not in restart
 
 
 def test_restart_probe_freezes_world_and_userid_safely_restores_players():
