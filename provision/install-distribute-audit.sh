@@ -51,4 +51,9 @@ echo "NOT self-tested on purpose. Any write under $WATCH_DIR -- including a prob
 echo "file -- is distributed to all 24 instances within ~15s, so there is no"
 echo "harmless way to fire this rule. The next real deploy is the test."
 echo
-echo "Read attribution with:  ausearch -k ktp-distribute-cfg -i"
+echo "Read attribution with:"
+echo "  ausearch -if /var/log/audit/audit.log -k ktp-distribute-cfg -i"
+echo
+echo "The -if is NOT optional here. Without it ausearch hangs on this host"
+echo "(measured 2026-08-27: exit 124 at a 40s cap) and prints nothing, which"
+echo "is indistinguishable from no writes having happened."

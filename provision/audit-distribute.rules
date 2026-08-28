@@ -8,7 +8,12 @@
 ## reconstructed retroactively.
 ##
 ## Install: provision/install-distribute-audit.sh (data server only).
-## Read:    ausearch -k ktp-distribute-cfg -i
+## Read:    ausearch -if /var/log/audit/audit.log -k ktp-distribute-cfg -i
+##          The -if is NOT optional on the data server: without it ausearch
+##          HANGS (measured 2026-08-27: exit 124 at a 40s cap) and a killed
+##          probe prints nothing -- which reads exactly like 'nobody ever
+##          wrote there'. That silent false negative is the one failure this
+##          file exists to prevent.
 ##
 ## Order matters. In the exit filter the FIRST matching rule supplies the key,
 ## so the narrow dodserver.cfg rule must precede the directory rule or its
