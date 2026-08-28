@@ -98,6 +98,45 @@ _RESTART_RESULT_RE = re.compile(
 _RESTART_CONTAMINATION_RE = re.compile(
     r"\[BD\] restart_contamination seq=(?P<seq>\d+) "
     r"kind=(?P<kind>\w+)")
+_SERIES_BEGIN_RE = re.compile(
+    r"\[BD\] series BEGIN activation=(?P<activation>\d+) "
+    r"userid_epoch=(?P<userid_epoch>\d+)")
+_SERIES_ABORT_RE = re.compile(r"\[BD\] series ABORT reason=(?P<reason>\S+)")
+_PLUGIN_LOAD_RE = re.compile(r"\[BD\] loaded")
+_ENGINE_LOG_PREFIX = (
+    r"^L \d{2}/\d{2}/\d{4} - \d{2}:\d{2}:\d{2}: "
+)
+_MANIFEST_RE = re.compile(
+    _ENGINE_LOG_PREFIX
+    + r'KTP_CAPTURE_MANIFEST \(matchid "(?P<match_id>[^"\r\n]+)"\) '
+    + r'\(half "(?P<half>\d+)"\) '
+    + r'\(map "(?P<map>[^"\r\n]+)"\) '
+    + r'\(producer "stats_logging"\) '
+    + r'\(producer_version "(?P<producer_version>[^"\r\n]+)"\) '
+    + r'\(schema "(?P<schema>\d+)"\) '
+    + r'\(capabilities "(?P<capabilities>[^"\r\n]+)"\) '
+    + r'\(position_interval "(?P<position_interval>\d+(?:\.\d+)?)"\) '
+    + r'\(buffer_entries "(?P<buffer_entries>\d+)"\) '
+    + r'\(life_buffer_entries "(?P<life_buffer_entries>\d+)"\) '
+    + r'\(sequence "(?P<sequence>\d+)"\) '
+    + r'\(event_epoch "(?P<event_epoch>\d+)"\)\r?$',
+    re.MULTILINE,
+)
+_MATCH_START_RE = re.compile(
+    _ENGINE_LOG_PREFIX
+    + r'KTP_MATCH_START \(matchid "(?P<match_id>[^"\r\n]+)"\) '
+    + r'\(map "(?P<map>[^"\r\n]+)"\) '
+    + r'\(half "(?P<half>[^"\r\n]+)"\) '
+    + r'\(type "(?P<match_type>-?\d+)"\)\r?$',
+    re.MULTILINE,
+)
+_LIFECYCLE_BOUNDARIES = (
+    ("half_end", re.compile(r"\bKTP_HALF_END\b")),
+    ("match_end", re.compile(r"\bKTP_MATCH_END\b")),
+    ("pfn_changelevel", re.compile(r"event=PFN_CHANGELEVEL_FIRED\b")),
+    ("changelevel", re.compile(
+        r"event=(?:CHANGELEVEL_HOOK_FIRED|PLUGIN_END_START)\b")),
+)
 
 # Breaker NAME, so a break can be attributed to the kill that caused it.
 _BREAK_RE = re.compile(r'"([^"<]*)<\d+><[^<>]*><[^<>]*>" triggered "cap_break"')
@@ -112,6 +151,11 @@ _TS_RE = re.compile(r"^L \S+ - (\d\d):(\d\d):(\d\d):")
 
 TEAM_ALLIES, TEAM_AXIS = 1, 2
 _TEAM_NAME = {TEAM_ALLIES: "Allies", TEAM_AXIS: "Axis"}
+REQUIRED_SYNTHETIC_SCENARIOS = (
+    "negative_off_point_kill",
+    "positive_kill_on_point",
+    "negative_round_restart",
+)
 
 
 @dataclass
@@ -147,19 +191,26 @@ class BreakDriver:
     # second the harness declared it missing.  Seven seconds covers the full
     # production pipeline plus scheduler jitter without widening attribution.
     SETTLE = 7.0
-    # The r3-1 artifact had two complete 60s far-probe windows with no
-    # objective attempt at all; a valid capture did not return until more than
-    # two minutes later.  The far negative has the same natural-capture
-    # prerequisite as the established walkoff watcher, so give it the same
-    # bounded horizon. Each new arm command resets the in-plugin poller.
-    FAR_STAGE_TIMEOUT = 245.0
-    KILL_STAGE_TIMEOUT = 65.0
+    # BreakDrive now creates the real capture precondition itself by freezing
+    # the bot world and placing the required cappers inside one live capture
+    # area. These waits are only a fail-closed allowance for the engine's area
+    # poll; they are not a license to wait for random bot objective play.
+    FAR_STAGE_TIMEOUT = 15.0
+    KILL_STAGE_TIMEOUT = 15.0
     KILL_DISARM_TIMEOUT = 2.0
+    MANIFEST_WAIT_TIMEOUT = 10.0
+    SERIES_TIMEOUT = 300.0
 
     def __init__(self, handle, log_path):
         self.handle = handle
         self.log_path = log_path
         self.last_kill_disarm_ack: bool | None = None
+        self.series_started = False
+        self.series_mark = 0
+        self.series_deadline: float | None = None
+        self.series_manifest: tuple[str, int, int] | None = None
+        self.series_abort_reason: str | None = None
+        self.series_abort_ack: bool | None = None
 
     def _read(self) -> str:
         # Docker Desktop can expose a short ENODATA window while HLDS turns a
@@ -174,8 +225,212 @@ class BreakDriver:
                 time.sleep(0.1)
         raise AssertionError("unreachable")
 
+    @staticmethod
+    def _manifest_identity(log_text: str) -> tuple[str, int, int] | None:
+        manifests = list(_MANIFEST_RE.finditer(log_text))
+        if not manifests:
+            return None
+        latest = manifests[-1]
+        return (
+            latest.group("match_id"),
+            int(latest.group("half")),
+            int(latest.group("event_epoch")),
+        )
+
+    @staticmethod
+    def _match_start_half(label: str) -> int | None:
+        number = re.search(r"\d+", label)
+        if not number:
+            return None
+        half = int(number.group())
+        return 100 + half if "ot" in label.casefold() and half < 100 else half
+
+    @classmethod
+    def _current_diagnostic_manifest(
+            cls, log_text: str) -> tuple[tuple[str, int, int] | None, str]:
+        """Return the manifest bound to the latest diagnostic match start.
+
+        AMXX 1.18.0 emitted the manifest before KTP_MATCH_START, while 1.18.1
+        can emit start then manifest. Bind either order, but only inside the
+        same plugin/match lifecycle interval. Foreign or duplicate manifests
+        make the activation ambiguous and therefore cannot authorize any
+        destructive BreakDrive command.
+        """
+        starts = list(_MATCH_START_RE.finditer(log_text))
+        if not starts:
+            return None, "current_match_start_missing"
+        start = starts[-1]
+        match_id = start.group("match_id")
+        half = cls._match_start_half(start.group("half"))
+        if half is None:
+            return None, "current_match_half_unrecognized"
+        if not match_id.endswith("-TEST"):
+            return None, "current_match_not_diagnostic"
+
+        boundary_matches = [
+            match
+            for _reason, pattern in _LIFECYCLE_BOUNDARIES
+            for match in pattern.finditer(log_text)
+        ]
+        boundary_matches.extend(_PLUGIN_LOAD_RE.finditer(log_text))
+        if any(boundary.start() >= start.end()
+               for boundary in boundary_matches):
+            return None, "current_match_lifecycle_closed"
+
+        # The last lifecycle marker before this start is the earliest point at
+        # which a manifest-before-start candidate can belong to this activation.
+        # This excludes manifests left by a prior match or plugin activation.
+        interval_start = max(
+            (boundary.end() for boundary in boundary_matches
+             if boundary.end() <= start.start()),
+            default=0,
+        )
+        manifests = list(_MANIFEST_RE.finditer(log_text, interval_start))
+        matching = []
+        foreign = []
+        for manifest in manifests:
+            identity = (
+                manifest.group("match_id"),
+                int(manifest.group("half")),
+                int(manifest.group("event_epoch")),
+            )
+            if identity[:2] == (match_id, half):
+                matching.append(identity)
+            else:
+                foreign.append(identity)
+
+        if len(matching) > 1:
+            return None, "current_manifest_ambiguous"
+        if foreign:
+            return None, "current_manifest_foreign"
+        if not matching:
+            return None, "current_manifest_missing"
+        return matching[0], ""
+
+    def begin_series(self) -> bool:
+        """Bind every diagnostic command to one live match/plugin/user epoch."""
+        manifest_deadline = time.monotonic() + self.MANIFEST_WAIT_TIMEOUT
+        manifest_reason = "current_manifest_missing"
+        while True:
+            full = self._read()
+            self.series_manifest, manifest_reason = (
+                self._current_diagnostic_manifest(full)
+            )
+            if self.series_manifest is not None:
+                break
+            if time.monotonic() >= manifest_deadline:
+                self.series_abort_reason = manifest_reason
+                return False
+            time.sleep(0.05)
+
+        self.series_mark = len(full)
+        self.series_deadline = time.monotonic() + self.SERIES_TIMEOUT
+        output = self.handle.rcon("ktp_bd_begin_series")
+        if "KTP_BD_SERIES_BEGUN" in str(output or ""):
+            self.series_started = True
+            return True
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if _SERIES_BEGIN_RE.search(_tail(self._read(), self.series_mark)):
+                self.series_started = True
+                return True
+            time.sleep(0.05)
+        self.series_abort_reason = "begin_not_acknowledged"
+        return False
+
+    def _boundary_reason(self) -> str | None:
+        if not self.series_started:
+            return self.series_abort_reason
+        if (self.series_deadline is not None and
+                time.monotonic() >= self.series_deadline):
+            return "series_deadline"
+
+        tail = _tail(self._read(), self.series_mark)
+        boundaries: list[tuple[int, str]] = []
+        for plugin_abort in _SERIES_ABORT_RE.finditer(tail):
+            boundaries.append((
+                plugin_abort.start(), plugin_abort.group("reason")
+            ))
+        # A second load marker after BEGIN proves that commands would be sent
+        # to a different plugin activation, even if the map name is unchanged.
+        plugin_load = tail.find("[BD] loaded")
+        if plugin_load >= 0:
+            boundaries.append((plugin_load, "plugin_reload"))
+        for reason, pattern in _LIFECYCLE_BOUNDARIES:
+            for boundary in pattern.finditer(tail):
+                boundaries.append((boundary.start(), reason))
+
+        for manifest in _MANIFEST_RE.finditer(tail):
+            identity = (
+                manifest.group("match_id"),
+                int(manifest.group("half")),
+                int(manifest.group("event_epoch")),
+            )
+            if identity != self.series_manifest:
+                boundaries.append((
+                    manifest.start(), "manifest_activation_epoch_change"
+                ))
+        return min(boundaries)[1] if boundaries else None
+
+    def _request_series_abort(self, reason: str) -> bool:
+        """Stop every in-plugin task and require the explicit cleanup ack."""
+        if self.series_abort_reason is None:
+            self.series_abort_reason = reason
+        mark = len(self._read())
+        output = self.handle.rcon(f"ktp_bd_abort_series {reason}")
+        if "KTP_BD_SERIES_ABORTED" in str(output or ""):
+            self.series_abort_ack = True
+            return True
+        deadline = time.monotonic() + self.KILL_DISARM_TIMEOUT
+        while time.monotonic() < deadline:
+            if "[BD] series ABORT" in _tail(self._read(), mark):
+                self.series_abort_ack = True
+                return True
+            time.sleep(0.05)
+        self.series_abort_ack = False
+        return False
+
+    def _series_live(self) -> bool:
+        reason = self._boundary_reason()
+        if reason is None:
+            return True
+        self._request_series_abort(reason)
+        return False
+
+    def _series_deadline_for(self, timeout: float) -> float:
+        local = time.monotonic() + timeout
+        return min(local, self.series_deadline) if self.series_deadline else local
+
+    def _series_sleep(self, seconds: float, *, poll: float = 0.1) -> bool:
+        deadline = self._series_deadline_for(seconds)
+        while time.monotonic() < deadline:
+            if not self._series_live():
+                return False
+            time.sleep(min(poll, max(0.0, deadline - time.monotonic())))
+        return self._series_live()
+
+    def _scenario_abort(self, scenario: Scenario) -> Scenario:
+        scenario.detail = (
+            f"diagnostic series aborted: {self.series_abort_reason or 'unknown'}"
+        )
+        scenario.extra.update({
+            "series_abort": self.series_abort_reason or "unknown",
+            "series_abort_ack": self.series_abort_ack,
+        })
+        return scenario
+
+    def end_series(self) -> bool:
+        if not self.series_started or self.series_abort_reason is not None:
+            return self.series_abort_ack is not False
+        output = self.handle.rcon("ktp_bd_end_series")
+        self.series_started = False
+        return "KTP_BD_SERIES_ENDED" in str(output or "")
+
     def scan(self) -> list[dict]:
         """Current flag state, as the plugin sees it."""
+        if self.series_started and not self._series_live():
+            return []
         mark = len(self._read())
         self.handle.rcon("ktp_bd_scan")
         # Do not burn a fixed second here. A DoD capture can begin and finish
@@ -229,10 +484,16 @@ class BreakDriver:
                 else self.KILL_STAGE_TIMEOUT
             )
         self.last_kill_disarm_ack = None
+        if self.series_started and not self._series_live():
+            self.last_kill_disarm_ack = self._disarm_kill()
+            return False
         mark = len(self._read())
         self.handle.rcon(f"ktp_bd_arm_kill {mode}")
-        deadline = time.monotonic() + timeout
+        deadline = self._series_deadline_for(timeout)
         while time.monotonic() < deadline:
+            if self.series_started and not self._series_live():
+                self.last_kill_disarm_ack = self._disarm_kill()
+                return False
             tail = _tail(self._read(), mark)
             if _KILL_RE.search(tail):
                 return True
@@ -267,6 +528,8 @@ class BreakDriver:
         deadline = time.monotonic() + timeout
         tail = _tail(self._read(), since)
         while not _ISOLATION_END_RE.search(tail) and time.monotonic() < deadline:
+            if self.series_started and not self._series_live():
+                return False, tail
             time.sleep(poll)
             tail = _tail(self._read(), since)
         closed = _ISOLATION_END_RE.search(tail)
@@ -283,6 +546,14 @@ class BreakDriver:
         s = Scenario("positive_kill_on_point")
         mark = len(self._read())
         if not self._arm_kill("near"):
+            if self.series_abort_reason is not None:
+                self.last_kill_disarm_ack = (
+                    self.last_kill_disarm_ack
+                    if self.last_kill_disarm_ack is not None
+                    else self._disarm_kill()
+                )
+                s.extra["kill_disarm_ack"] = self.last_kill_disarm_ack
+                return self._scenario_abort(s)
             tail = _tail(self._read(), mark)
             s.detail = (self._abort_reason(tail)
                         or "armed near kill did not stage within the wait")
@@ -290,8 +561,13 @@ class BreakDriver:
             if self.last_kill_disarm_ack is not True:
                 s.detail += "; kill poller disarm was not acknowledged"
             return s
-        time.sleep(self.SETTLE)
+        if self.series_started and not self._series_sleep(self.SETTLE):
+            return self._scenario_abort(s)
+        if not self.series_started:
+            time.sleep(self.SETTLE)
         isolation_closed, tail = self._wait_for_isolation_end(mark)
+        if self.series_abort_reason is not None:
+            return self._scenario_abort(s)
 
         staged = _KILL_RE.search(tail)
         if not staged:
@@ -365,6 +641,14 @@ class BreakDriver:
         s = Scenario("negative_off_point_kill")
         mark = len(self._read())
         if not self._arm_kill("far"):
+            if self.series_abort_reason is not None:
+                self.last_kill_disarm_ack = (
+                    self.last_kill_disarm_ack
+                    if self.last_kill_disarm_ack is not None
+                    else self._disarm_kill()
+                )
+                s.extra["kill_disarm_ack"] = self.last_kill_disarm_ack
+                return self._scenario_abort(s)
             tail = _tail(self._read(), mark)
             s.detail = (self._abort_reason(tail)
                         or "armed far kill did not stage within the wait")
@@ -372,8 +656,13 @@ class BreakDriver:
             if self.last_kill_disarm_ack is not True:
                 s.detail += "; kill poller disarm was not acknowledged"
             return s
-        time.sleep(self.SETTLE)
+        if self.series_started and not self._series_sleep(self.SETTLE):
+            return self._scenario_abort(s)
+        if not self.series_started:
+            time.sleep(self.SETTLE)
         isolation_closed, tail = self._wait_for_isolation_end(mark)
+        if self.series_abort_reason is not None:
+            return self._scenario_abort(s)
 
         staged = _KILL_RE.search(tail)
         if not staged:
@@ -430,6 +719,8 @@ class BreakDriver:
         window has to be proven clean instead. See the module docstring.
         """
         s = Scenario("negative_voluntary_walkoff")
+        if self.series_started and not self._series_live():
+            return self._scenario_abort(s)
         mark = len(self._read())
         # Arm one in-process poller rather than scan then issue a second RCON.
         # Captures can finish inside that round trip. The plugin now observes
@@ -437,6 +728,8 @@ class BreakDriver:
         self.handle.rcon("ktp_bd_arm_walkoff")
         ack_deadline = time.monotonic() + 3.0
         while time.monotonic() < ack_deadline:
+            if self.series_started and not self._series_live():
+                return self._scenario_abort(s)
             if "[BD] walkoff ARMED" in _tail(self._read(), mark):
                 break
             time.sleep(0.1)
@@ -444,18 +737,25 @@ class BreakDriver:
             s.detail = ("walkoff arm produced no acknowledgment; diagnostic "
                         "plugin is not running")
             return s
-        deadline = time.monotonic() + 245.0
+        deadline = self._series_deadline_for(15.0)
         while time.monotonic() < deadline:
+            if self.series_started and not self._series_live():
+                return self._scenario_abort(s)
             tail = _tail(self._read(), mark)
             if _WALKOFF_RE.search(tail) or "[BD] walkoff ABORT" in tail:
                 break
             time.sleep(0.25)
         else:
-            s.detail = "armed walkoff produced no result within 245s"
+            s.detail = "deterministic walkoff produced no result within 15s"
             return s
-        time.sleep(self.SETTLE)
+        if self.series_started and not self._series_sleep(self.SETTLE):
+            return self._scenario_abort(s)
+        if not self.series_started:
+            time.sleep(self.SETTLE)
+        isolation_closed, tail = self._wait_for_isolation_end(mark)
+        if self.series_abort_reason is not None:
+            return self._scenario_abort(s)
         full = self._read()
-        tail = _tail(full, mark)
 
         staged = _WALKOFF_RE.search(tail)
         if not staged:
@@ -468,7 +768,13 @@ class BreakDriver:
         breakers = _BREAK_RE.findall(tail)
         s.breaks_seen = len(breakers)
         s.extra = {"count_before": before, "count_after": after,
-                   "mover": staged.group(3), "breakers": breakers}
+                   "mover": staged.group(3), "breakers": breakers,
+                   "isolation_closed": isolation_closed}
+
+        if not isolation_closed:
+            s.detail = ("walkoff evidence window did not emit its isolation "
+                        "close marker; bots may still be held")
+            return s
 
         if after is None or after >= before:
             s.detail = (f"the mover did not leave the zone ({before} -> "
@@ -502,7 +808,7 @@ class BreakDriver:
                         f"that team and no break, as required")
         return s
 
-    def negative_clean_capture(self, *, timeout: float = 240.0) -> Scenario:
+    def negative_clean_capture(self, *, timeout: float = 45.0) -> Scenario:
         """A cap completes with nobody killed; the cappers then walk off.
 
         Deployment plan Unit 3 step 2, and it exercises the `CA_owning_team`
@@ -520,10 +826,13 @@ class BreakDriver:
         """
         s = Scenario("negative_clean_capture")
         before = {f["flag"]: f["owner"] for f in self.scan()}
-        deadline = time.monotonic() + timeout
+        deadline = self._series_deadline_for(timeout)
 
         while time.monotonic() < deadline:
-            time.sleep(6.0)
+            if self.series_started and not self._series_sleep(6.0):
+                return self._scenario_abort(s)
+            if not self.series_started:
+                time.sleep(6.0)
             mark = len(self._read())
             now = self.scan()
             flipped = [f for f in now
@@ -537,7 +846,10 @@ class BreakDriver:
             # The team that just took the point is the team whose players might
             # now be leaving it, so theirs are the deaths that matter.
             capper_team = flag["owner"]
-            time.sleep(self.SETTLE)
+            if self.series_started and not self._series_sleep(self.SETTLE):
+                return self._scenario_abort(s)
+            if not self.series_started:
+                time.sleep(self.SETTLE)
             full = self._read()
             tail = _tail(full, mark)
 
@@ -579,11 +891,15 @@ class BreakDriver:
         result marker, making those markers a closed evidence window.
         """
         s = Scenario("negative_round_restart")
+        if self.series_started and not self._series_live():
+            return self._scenario_abort(s)
         mark = len(self._read())
         self.handle.rcon("ktp_bd_arm_restart")
 
         ack_deadline = time.monotonic() + 3.0
         while time.monotonic() < ack_deadline:
+            if self.series_started and not self._series_live():
+                return self._scenario_abort(s)
             if "[BD] restart ARMED" in _tail(self._read(), mark):
                 break
             time.sleep(0.1)
@@ -592,9 +908,11 @@ class BreakDriver:
                         "plugin is not running")
             return s
 
-        deadline = time.monotonic() + 68.0
+        deadline = self._series_deadline_for(22.0)
         tail = ""
         while time.monotonic() < deadline:
+            if self.series_started and not self._series_live():
+                return self._scenario_abort(s)
             tail = _tail(self._read(), mark)
             queued = _RESTART_QUEUE_RE.search(tail)
             if queued:
@@ -831,31 +1149,40 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     running the positive first would leave its break sitting in the window the
     negatives read.
 
-    Retries because `not_staged` is common and cheap to fix by trying again.
+    Retries because a fail-closed engine precondition can still be transient.
     A verdict of ok or violation is final and stops the loop immediately —
-    retrying past a violation would be shopping for a green run. The walkoff
-    runs first and has a longer in-process watcher because it needs a naturally
-    active capture; once found, the diagnostic isolates its evidence window
-    from unrelated bot deaths.
-
-    `attempts` dropped from 8 to 3 when the kill scenarios started arming an
-    in-process poll for up to 60s rather than firing blind. The far probe is
-    deliberately one-shot: its single 245s in-process horizon already spans
-    the accepted capture drought, and repeating that horizon three times
-    would exceed the job's bounded evidence budget. The strict downstream
-    contract still requires all three diagnostic scenarios to stage.
+    retrying past a violation would be shopping for a green run. The three
+    unmatched-frag diagnostics run first and use a real capture that the
+    diagnostic creates deterministically from the map's capture-area bounds.
+    Every command is also bound to one five-minute series epoch; a half end,
+    changelevel, plugin/manifest activation, userid change, or deadline aborts
+    all remaining commands. The strict downstream contract still requires the
+    exact three synthetic diagnostics to stage and reconcile.
     """
     d = BreakDriver(handle, log_path)
+    if not d.begin_series():
+        return [{
+            "name": "diagnostic_series",
+            "status": "not_staged",
+            "detail": "diagnostic series begin was not acknowledged",
+            "breaks_seen": 0,
+            "series_abort": d.series_abort_reason,
+            "series_abort_ack": d.series_abort_ack,
+            "attempts": 1,
+        }]
     out = []
-    # negative_round_restart is LAST on purpose: it restarts the round out
-    # from under everything else, so anything after it would be measuring a
-    # server it did not set up.
+    # The three scenarios that intentionally dispatch unmatched synthetic
+    # deaths run first. This guarantees that the exact-three reconciliation is
+    # never held hostage by stochastic optional capture observations. Each is
+    # now staged from a frozen, plugin-created live capture. The two remaining
+    # no-dispatch behavior checks still run, but cannot consume the shared
+    # series budget before the required diagnostic trio.
     scenarios = (
-        (d.negative_voluntary_walkoff, attempts),
         (d.negative_off_point_kill, 1),
-        (d.negative_clean_capture, attempts),
         (d.positive_kill_on_point, attempts),
         (d.negative_round_restart, attempts),
+        (d.negative_voluntary_walkoff, attempts),
+        (d.negative_clean_capture, attempts),
     )
     for fn, scenario_attempts in scenarios:
         s = None
@@ -871,6 +1198,8 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
                 # may still be live. No later diagnostic may issue commands
                 # into an environment that can be mutated by that stale task.
                 break
+            if s.extra.get("series_abort"):
+                break
             print(f"  scenario {s.name:<28} attempt "
                   f"{attempt}/{scenario_attempts} "
                   f"did not stage: {s.detail}", flush=True)
@@ -883,4 +1212,20 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
             print("  diagnostics HARD STOP: kill poller disarm was not "
                   "acknowledged", flush=True)
             break
+        if s.extra.get("series_abort"):
+            print("  diagnostics HARD STOP: lifecycle/deadline boundary "
+                  f"{s.extra['series_abort']}", flush=True)
+            break
+    if not d.end_series():
+        print("  diagnostics HARD STOP: series cleanup was not acknowledged",
+              flush=True)
+        out.append({
+            "name": "diagnostic_series_cleanup",
+            "status": "not_staged",
+            "detail": "diagnostic series cleanup was not acknowledged",
+            "breaks_seen": 0,
+            "series_abort": d.series_abort_reason,
+            "series_abort_ack": d.series_abort_ack,
+            "attempts": 1,
+        })
     return out
