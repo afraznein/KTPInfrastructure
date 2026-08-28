@@ -1,4 +1,7 @@
-# KTP Lane B — stats-capture end-to-end (bots + ephemeral MySQL, containerised)
+# KTP Lane B — stats-capture end-to-end (containerised, ephemeral MySQL)
+#
+# Two lanes: `full` = 12 bots in a synthetic 6v6; `corpus` = deterministic replay
+# of committed fixture logs. They have different gating rules — see below.
 #
 # Runs on a GITHUB-HOSTED runner, deliberately, not the Tier 2 self-hosted one:
 #
@@ -12,11 +15,35 @@
 #     smoke-callable.yml already boots the runtime container here, so the shape
 #     is proven.
 #
-# NOT a required status check, and no `pull_request` trigger. Bot AI is
-# non-deterministic; a lane that can flake must never gate a merge, or the
-# result is the "disable the integration test to merge the urgent fix"
-# antipattern TEST_INFRASTRUCTURE_PLAN already warns about. Lane A
-# (tier2-integration.yml) is the gate.
+# ## What may gate a merge, and what may not — READ THE LANE, not the workflow
+#
+# This file has TWO lanes and they differ on exactly the property that decides
+# this. Six steps are gated `LANE == 'full'` (the 12-bot 6v6 match and its
+# machinery); one is gated `LANE == 'corpus'` (a replay of committed fixture
+# logs through the daemon). The corpus lane never starts a bot.
+#
+#   `full`   — NOT a required status check, and no `pull_request` trigger. Bot
+#              AI is non-deterministic; a lane that can flake must never gate a
+#              merge, or the result is the "disable the integration test to
+#              merge the urgent fix" antipattern TEST_INFRASTRUCTURE_PLAN
+#              already warns about. Lane A (tier2-integration.yml) is the gate.
+#
+#   `corpus` — MAY gate. Deterministic by construction: committed fixtures, no
+#              bot, no AI. It is required on KTPAMXX `main` and `preprod` as
+#              `corpus-regression / Lane B (corpus, preprod, run 1)`, and it has
+#              caught a real regression (a migrate_022 failure that reproduced
+#              on two PRs and cleared on the fix).
+#
+# ⚠️ This paragraph used to forbid BOTH lanes from gating. It was written when
+# this workflow was bots-only — the title above still says so — and the corpus
+# lane was added later without updating it. The prohibition was never violated
+# in substance: `full` has never been a required check.
+#
+# ⚠️ Green on `corpus` means "no regression against the committed fixtures", NOT
+# "the stats are correct". It replays what is committed, so a bug the fixtures
+# do not exercise passes cleanly — that has happened (KTP_FLAG_POSITION). Widen
+# the fixtures to widen the claim; do not read the badge as more than it is.
+#
 #
 # ## What this proves, and what it does not
 #
