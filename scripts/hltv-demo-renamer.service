@@ -18,12 +18,20 @@ StartLimitBurst=5
 OnFailure=ktp-systemd-alert@%n.service
 
 [Service]
-Type=simple
+Type=notify
 User=root
 Group=root
 ExecStart=/usr/bin/python3 /usr/local/bin/hltv-demo-renamer.py
-Restart=on-failure
+Restart=always
 RestartSec=15
+
+# The failure this unit actually suffers is a WEDGE, not a crash: on 2026-08-25
+# a half-open SSH session stalled the poll loop for 53h while systemd reported
+# active, so Restart=on-failure and OnFailure= both sat idle and every match
+# demo in the window was lost. The heartbeat is the only thing that sees it.
+# Budget: worst-case healthy cycle is 5 hosts x 60s SFTP timeout + 30s poll
+# sleep = 330s, so 600 leaves ~1.8x headroom before a false kill.
+WatchdogSec=600
 
 # State + log directories
 StateDirectory=hltv-demo-renamer
