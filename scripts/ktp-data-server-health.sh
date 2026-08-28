@@ -53,12 +53,24 @@ CRITICAL_TIMERS=(
     # Renders the central ban list into the distribute tree. A stopped timer is
     # silent: the last-published file stays in place and reads as healthy.
     ktp-render-banlist.timer
+    # Files renamed demos into the published tree and rebuilds the archive
+    # pages. Stopped, it is silent: the site keeps serving yesterday's index.
+    ktp-demo-publish.timer
 )
 
 # Central ban-list renderer. Checked on three independent legs because each one
 # hides the others: the file can be absent, the timer can have stopped, or it can
 # be running every minute and failing — the 2026-08-12 case, whose exit timestamp
 # stays fresh, so staleness alone misses it.
+# Renamer LIVENESS, which is-active cannot answer. The unit is already in
+# CRITICAL_SERVICES precisely to stop demo loss, yet on 2026-08-25 it wedged on
+# a half-open SSH session and sat "active" for 53h while every match demo in the
+# window went unrenamed and was purged by the auto-cleanup. A hung process is
+# active. The poll loop rewrites state.json once per 30s cycle, so that file's
+# mtime is the cheapest true "work happened" signal available.
+RENAMER_STATE_FILE=/var/lib/hltv-demo-renamer/state.json
+RENAMER_STALE_SEC=900
+
 BANLIST_FILE="/home/dod/distribute/addons/ktpamx/configs/ktp_ac_bans.ini"
 BANLIST_UNIT="ktp-render-banlist.service"
 BANLIST_STALE_SEC=900
@@ -115,6 +127,22 @@ fi
 # the previous run, so a ticking value would look like a new failure every hour.
 if [ ! -f "$BANLIST_FILE" ]; then
     down+=("ktp_ac_bans.ini=absent")
+fi
+
+# Renamer liveness. Only meaningful while the unit is up — a stopped unit is
+# already reported by CRITICAL_SERVICES, and both legs firing would double-count
+# one fault as two set members.
+if [ "$(systemctl is-active hltv-demo-renamer.service 2>/dev/null || true)" = "active" ]; then
+    if [ ! -f "$RENAMER_STATE_FILE" ]; then
+        down+=("hltv-demo-renamer-state=absent")
+    else
+        renamer_epoch=$(stat -c %Y "$RENAMER_STATE_FILE" 2>/dev/null || echo 0)
+        if [ "$renamer_epoch" -eq 0 ] ||            [ $(( $(date +%s) - renamer_epoch )) -gt "$RENAMER_STALE_SEC" ]; then
+            # Fixed token, never the age: the report is a set-diff, so a ticking
+            # value would read as a fresh failure on every hourly run.
+            down+=("hltv-demo-renamer=wedged")
+        fi
+    fi
 fi
 
 # HLTV instance coverage — check each port in the expected set,
