@@ -299,7 +299,9 @@ def main() -> int:
             print("net_detail: is also silent -- expected; it is conditional, and "
                   "its format string IS present in the engine binary.")
         # Independent of net: -- the client-side half can be informative even
-        # when the server-side half has no populated samples.
+        # when the server-side half has no populated samples. Reported on the
+        # populated path too; keep BOTH calls or the section vanishes on exactly
+        # one of the two exits.
         report_lagcomp({n: v[3] for n, v in results.items()})
         return 1
 
@@ -338,6 +340,12 @@ def main() -> int:
     if unlag:
         print(f"\nsv_unlagsamples observed: {sorted(unlag)}"
               + ("   (1 = one packet's RTT, no averaging)" if unlag == {1} else ""))
+
+    # The client-side half does not depend on net:, so it belongs on BOTH exits.
+    # It used to live only in the no-populated-samples branch, which meant it
+    # disappeared on exactly the nights that HAD data -- the ones worth reading.
+    # A section that is absent and one that is empty look identical downstream.
+    report_lagcomp({n: v[3] for n, v in results.items()})
     return 0
 
 
