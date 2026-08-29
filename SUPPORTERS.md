@@ -32,8 +32,15 @@ Even a few bucks a month covers a real slice of the hosting bill.
 
 - **stevenwlol**
 
+## One-time
+
+Not every contribution is a subscription. These arrived as single payments and paid for
+real months of hosting just the same.
+
+- **jamiemonnn**
+
 ---
 
-Sponsors at the $5 tier and up are listed here. Ping **@Nein** in the KTP Discord
+Monthly sponsors at the $5 tier and up are listed here, along with one-time contributors. Ping **@Nein** in the KTP Discord
 to claim your Supporter role and your spot on this list. Prefer to stay off the
 list? Just say so and your support stays anonymous.
