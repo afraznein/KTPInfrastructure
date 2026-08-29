@@ -118,11 +118,13 @@ class ExtractorDb:
         if marker == "capture_manifests":
             return _tsv(
                 ["half", "schema_version", "capabilities", "position_interval",
-                 "activation_epoch", "match_start_epoch"],
+                 "producer_activation_epoch", "activation_receipt_epoch",
+                 "match_start_epoch"],
                 [{"half": 1, "schema_version": 22,
                   "capabilities": "objective_attempt,grenade_entity",
                   "position_interval": 2.0,
-                  "activation_epoch": 1787097601,
+                  "producer_activation_epoch": 1787097599,
+                  "activation_receipt_epoch": 1787097601,
                   "match_start_epoch": 1787097600}],
             )
         if marker == "capture_health":
@@ -507,14 +509,15 @@ def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
 
 
 @pytest.mark.parametrize("latency", (0, 1, 2, 3))
-def test_schema22_manifest_activation_latency_0_through_3_is_authorized(
+def test_schema22_manifest_activation_receipt_latency_is_authorized(
         latency: int):
     manifest = [{
         "half": 1, "schema_version": 22,
         "capabilities": "objective_attempt,grenade_entity",
         "position_interval": 2.0,
         "match_start_epoch": 100,
-        "activation_epoch": 100 + latency,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": 100 + latency,
     }]
 
     authorization = evaluate_capture_authorization(
@@ -524,15 +527,16 @@ def test_schema22_manifest_activation_latency_0_through_3_is_authorized(
     assert authorization["authorized"] is True
 
 
-@pytest.mark.parametrize("activation", (99, 104, None))
-def test_schema22_manifest_activation_outside_policy_is_unauthorized(
-        activation: int | None):
+@pytest.mark.parametrize("receipt", (99, 104, None))
+def test_schema22_manifest_activation_receipt_outside_policy_is_unauthorized(
+        receipt: int | None):
     manifest = [{
         "half": 1, "schema_version": 22,
         "capabilities": "objective_attempt,grenade_entity",
         "position_interval": 2.0,
         "match_start_epoch": 100,
-        "activation_epoch": activation,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": receipt,
     }]
 
     authorization = evaluate_capture_authorization(
@@ -541,6 +545,25 @@ def test_schema22_manifest_activation_outside_policy_is_unauthorized(
 
     assert authorization["authorized"] is False
     assert any("manifest activation" in error
+               for error in authorization["errors"])
+
+
+def test_schema22_missing_producer_activation_epoch_is_unauthorized():
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "producer_activation_epoch": None,
+        "activation_receipt_epoch": 100,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("producer activation" in error
                for error in authorization["errors"])
 
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from . import break_scenarios as bs
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -614,13 +616,57 @@ def test_pawn_series_abort_removes_mutators_and_guards_every_arm_command():
     for task in (
         "BD_TASK_KILL_POLL", "BD_TASK_WALKOFF_POLL",
         "BD_TASK_RESTART_ARM_POLL", "BD_TASK_RESTART_POLL",
-        "BD_TASK_RESTART_FINISH",
+        "BD_TASK_RESTART_FINISH", "BD_TASK_CLEAN_CAPTURE_POLL",
+        "BD_TASK_CLEAN_CAPTURE_FINISH",
     ):
         assert f"remove_task({task})" in cleanup
-    for command in ("cmd_arm_kill", "cmd_arm_restart", "cmd_arm_walkoff"):
+    for command in (
+        "cmd_arm_kill", "cmd_arm_restart", "cmd_arm_walkoff",
+        "cmd_arm_clean_capture",
+    ):
         body = source[source.index(f"public {command}()"):
                       source.index("}", source.index(f"public {command}()"))]
         assert "bd_series_guard" in body
+
+
+def test_pawn_clean_capture_is_real_closed_world_and_fail_closed():
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    arm = source[source.index("public cmd_arm_clean_capture()"):
+                 source.index("public bd_clean_capture_poll()")]
+    poll = source[source.index("public bd_clean_capture_poll()"):
+                  source.index("public bd_clean_capture_finish()")]
+    finish = source[source.index("public bd_clean_capture_finish()"):
+                    source.index("/**\n * ktp_bd_walkoff")]
+    assert 'register_srvcmd("ktp_bd_arm_clean_capture"' in source
+    assert arm.index("bd_flush_stats_capture()") < arm.index(
+        'bd_prepare_capture("clean_capture"'
+    )
+    assert 'bd_prepare_capture("clean_capture", false, false, -1, 0, true)' in arm
+    assert "BD_CLEAN_QUIET_SECS" in poll
+    assert "CA_is_capturing" in poll
+    assert "bd_zone_count(g_bdCleanFlag, BD_TEAM_ALLIES)" in poll
+    assert "bd_zone_count(g_bdCleanFlag, BD_TEAM_AXIS)" in poll
+    assert poll.index("bd_flush_stats_capture()") < poll.index(
+        "bd_clean_place_pinned_cappers()"
+    ) < poll.index('log_amx("[BD] clean_capture BEGIN')
+    assert "dodx_area_set_data(g_bdCleanFlag, CA_timetocap" in poll
+    assert "bd_clean_snapshot_roster()" in arm
+    assert "bd_clean_pin_cappers()" in arm
+    assert "g_bdCleanCapperUseridList" in poll
+    assert "bd_anchor_outside_capture_areas(origin)" in source
+    assert "BD_ANCHOR_AREA_MARGIN" in source
+    assert "bd_clean_roster_current()" in poll
+    assert "bd_clean_move_roster_off_point()" in poll
+    assert "owner == g_bdCleanTeam" in poll
+    assert "bd_zone_count(g_bdCleanFlag, g_bdCleanTeam)" in finish
+    assert finish.index("bd_flush_stats_capture()") < finish.index(
+        'log_amx("[BD] clean_capture RESULT'
+    )
+    assert "g_bdCleanTeamDeaths" in poll and "g_bdCleanTeamDeaths" in finish
+    # Diagnostic markers describe evidence only; product facts must come from
+    # the real engine/collector path.
+    assert 'triggered "dod_capture_area"' not in source
+    assert 'triggered "cap_break"' not in source
 
 
 def test_pawn_abort_and_end_cancel_and_guard_delayed_after_reports():
@@ -926,34 +972,124 @@ RESTART_BREAK = (
 )
 
 
-def test_clean_capture_boundary_during_settle_aborts_instead_of_scoring_ok(
+CLEAN_BEGIN = (
+    "L 08/28/2026 - 12:22:20: [KTPBreakDrive.amxx] [BD] clean_capture "
+    "BEGIN flag=1 fname=POINT_BRIDGE capteam=1 owner_before=0 required=2 "
+    "isolated=12 roster=12 cappers=1,2 quiet_ms=3100 flushed=1 "
+    "userid_epoch=12"
+)
+CLEAN_CAPTURE_1 = (
+    'L 08/28/2026 - 12:22:22: "Mario<1><0><Allies>" triggered a '
+    '"dod_capture_area" - "POINT_BRIDGE"'
+)
+CLEAN_CAPTURE_2 = CLEAN_CAPTURE_1.replace("Mario<1>", "Sonic<2>")
+CLEAN_RESULT = (
+    "L 08/28/2026 - 12:22:30: [KTPBreakDrive.amxx] [BD] clean_capture "
+    "RESULT flag=1 fname=POINT_BRIDGE capteam=1 owner_before=0 owner_after=1 "
+    "required=2 isolated=12 roster=12 cappers=1,2 count_after=0 deaths=0 "
+    "flushed=1 contaminated=0"
+)
+CLEAN_END = (
+    "L 08/28/2026 - 12:22:30: [KTPBreakDrive.amxx] [BD] isolation END"
+)
+
+
+def _judge_clean_capture(monkeypatch, *middle, result=CLEAN_RESULT,
+                         captures=(CLEAN_CAPTURE_1, CLEAN_CAPTURE_2),
+                         before=()):
+    prefix = "old\n" + ("\n".join(before) + "\n" if before else "")
+    full = prefix + "\n".join([
+        CLEAN_BEGIN, *captures, *middle,
+        result, CLEAN_END,
+    ]) + "\n"
+    driver = bs.BreakDriver(
+        _FakeHandle([]), _FakeLog([prefix, full, full])
+    )
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
+    return driver.negative_clean_capture()
+
+
+def test_clean_capture_is_engine_staged_without_organic_bot_capture(
         monkeypatch):
-    driver = bs.BreakDriver(_FakeHandle([]), _FakeLog(["old\n"] * 3))
+    result = _judge_clean_capture(monkeypatch)
+
+    assert result.status == "ok"
+    assert result.extra["capture_facts"] == 2
+    assert result.extra["deaths_in_window"] == 0
+    assert result.breaks_seen == 0
+
+
+def test_clean_capture_capping_team_death_fails_closed(monkeypatch):
+    death = ('L 08/28/2026 - 12:22:25: "Axis<7><0><Axis>" killed '
+             '"Mario<1><0><Allies>" with "mp40"')
+    contaminated = CLEAN_RESULT.replace(
+        "deaths=0 flushed=1 contaminated=0",
+        "deaths=1 flushed=1 contaminated=1",
+    )
+    result = _judge_clean_capture(monkeypatch, death, result=contaminated)
+
+    assert result.status == "not_staged"
+    assert "death" in result.detail
+
+
+def test_clean_capture_cap_break_is_a_false_positive(monkeypatch):
+    cap_break = (
+        'L 08/28/2026 - 12:22:27: "Axis<7><0><Axis>" triggered '
+        '"cap_break" (flag "POINT_BRIDGE")'
+    )
+    result = _judge_clean_capture(monkeypatch, cap_break)
+
+    assert result.status == "violation"
+    assert result.breaks_seen == 1
+
+
+@pytest.mark.parametrize("captures", (
+    (CLEAN_CAPTURE_1,),
+    (CLEAN_CAPTURE_1, CLEAN_CAPTURE_1),
+    (CLEAN_CAPTURE_1, CLEAN_CAPTURE_2.replace("Sonic<2>", "Tails<3>")),
+))
+def test_clean_capture_rejects_missing_duplicate_or_foreign_capture_userids(
+        monkeypatch, captures):
+    result = _judge_clean_capture(monkeypatch, captures=captures)
+
+    assert result.status == "not_staged"
+    assert "pinned capper userids" in result.detail
+
+
+def test_clean_capture_preisolation_death_and_candidate_are_outside_judgment(
+        monkeypatch):
+    old_death = ('L 08/28/2026 - 12:22:10: "Axis<7><0><Axis>" killed '
+                 '"Mario<1><0><Allies>" with "mp40"')
+    old_candidate = (
+        'L 08/28/2026 - 12:22:11: "Axis<7><0><Axis>" triggered '
+        '"cap_break" (flag "POINT_BRIDGE")'
+    )
+
+    result = _judge_clean_capture(
+        monkeypatch, before=(old_death, old_candidate)
+    )
+
+    assert result.status == "ok"
+    assert result.extra["deaths_in_window"] == 0
+    assert result.breaks_seen == 0
+
+
+def test_clean_capture_boundary_during_wait_aborts_instead_of_scoring_ok(
+        monkeypatch):
+    prefix = "old\n"
+    driver = bs.BreakDriver(
+        _FakeHandle([]), _FakeLog([prefix, prefix + "KTP_HALF_END match\n"] * 4)
+    )
     driver.series_started = True
+    driver.series_mark = len(prefix)
     driver.series_deadline = bs.time.monotonic() + 60.0
-    scans = iter([
-        [{"flag": 0, "owner": 0}],
-        [{"flag": 0, "owner": bs.TEAM_ALLIES}],
-    ])
-    monkeypatch.setattr(driver, "scan", lambda: next(scans))
-    sleeps = {"count": 0}
-
-    def guarded_sleep(_seconds):
-        sleeps["count"] += 1
-        if sleeps["count"] == 1:
-            return True
-        driver.series_abort_reason = "half_end"
-        driver.series_abort_ack = True
-        return False
-
-    monkeypatch.setattr(driver, "_series_sleep", guarded_sleep)
+    monkeypatch.setattr(bs.time, "sleep", lambda _seconds: None)
 
     result = driver.negative_clean_capture()
 
     assert result.status == "not_staged"
     assert result.extra["series_abort"] == "half_end"
     assert result.extra["series_abort_ack"] is True
-    assert sleeps["count"] == 2
 
 
 def _judge_restart(*middle, queue=RESTART_QUEUE, result=RESTART_RESULT,

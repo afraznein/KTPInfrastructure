@@ -2,7 +2,37 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+
 from scripts import canary_evidence
+
+
+def test_canary_manifest_evidence_keeps_producer_and_receipt_clocks_separate():
+    class Db:
+        queries = []
+
+        def sql(self, query):
+            self.queries.append(query)
+            if "ktp_capture_manifests" in query:
+                return (
+                    "half\tproducer_activation_epoch\tactivation_receipt_epoch\t"
+                    "match_start_epoch\n1\t99\t100\t100\n"
+                )
+            return "half\tevent_type\n"
+
+    db = Db()
+    rows = canary_evidence.collect_capture_health(db, "clock-TEST", True)
+
+    assert rows["manifests"] == [{
+        "half": 1,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": 100,
+        "match_start_epoch": 100,
+    }]
+    assert "event_epoch AS producer_activation_epoch" in db.queries[0]
+    assert "UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch" in db.queries[0]
+    assert "UNIX_TIMESTAMP(m.start_time) AS match_start_epoch" in db.queries[0]
+    assert "BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half" in db.queries[0]
 
 
 def test_log_inspection_distinguishes_missing_clean_and_errors(tmp_path):
@@ -186,11 +216,14 @@ def test_statsme_is_reconciled_but_not_used_as_canonical_death_source():
     assert "frag/teamkill/suicide ledgers" in result["canonical_rule"]
 
 
-def test_capture_health_requires_manifest_all_types_and_exact_receipts():
-    rows = {
+def _healthy_capture_health_rows():
+    return {
         "manifests": [{
             "half": 1, "producer": "stats_logging", "producer_version": "1.18.0",
             "schema_version": 22, "position_interval": 2.0,
+            "producer_activation_epoch": 99,
+            "activation_receipt_epoch": 100,
+            "match_start_epoch": 100,
             "capabilities": (
                 "life,damage,position,frag,assist,break,flag_state,flag_position,"
                 "objective_attempt,grenade_entity"
@@ -208,10 +241,49 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
             for event_type in canary_evidence.CAPTURE_EVENT_TYPES
         ],
     }
+
+
+def test_capture_health_requires_manifest_all_types_and_exact_receipts():
+    rows = _healthy_capture_health_rows()
     result = canary_evidence.capture_health_evidence(rows, {1})
     assert result["trusted"] is True
     assert result["manifest_authorized"] is True
+    assert result["capture_authorized"] is True
+    assert result["authorization_errors"] == []
+    assert result["activation_details"] == [{
+        "half": 1,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": 100,
+        "match_start_epoch": 100,
+        "receipt_latency_seconds": 0,
+    }]
     assert result["manifest_versions"] == ["stats_logging@1.18.0/schema-22"]
+
+
+@pytest.mark.parametrize("missing", (
+    "producer_activation_epoch", "activation_receipt_epoch", "match_start_epoch",
+))
+def test_capture_health_rejects_missing_activation_clock_fields(missing):
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0][missing] = None
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["trusted"] is False
+    assert result["capture_authorized"] is False
+    assert result["authorization_errors"]
+
+
+def test_capture_health_rejects_late_daemon_receipt():
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["activation_receipt_epoch"] = 104
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["trusted"] is False
+    assert result["activation_details"][0]["receipt_latency_seconds"] == 4
+    assert any("receipt latency 4s" in error
+               for error in result["authorization_errors"])
 
 
 def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():

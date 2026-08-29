@@ -322,7 +322,8 @@ FROM ktp_matches WHERE match_id={match} GROUP BY match_id
     profile = load_profile(profile_path)
     manifest_rows = _rows(db, "capture_manifests", f"""
 SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
-       cm.event_epoch AS activation_epoch,
+       cm.event_epoch AS producer_activation_epoch,
+       UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m

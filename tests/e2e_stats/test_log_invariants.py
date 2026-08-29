@@ -365,12 +365,12 @@ def test_structured_transition_scope_ignores_textual_next_start_order():
             "report": {
                 "match_id": "1786376148-TEST", "half": 1,
                 "start_epoch": 105, "end_epoch": 120,
-                "activation_epoch": 108,
+                "producer_activation_epoch": 108,
             },
             "diagnostic": {
                 "match_id": "diagnostic-TEST", "half": 1,
                 "start_epoch": 130, "end_epoch": 150,
-                "activation_epoch": 135,
+                "producer_activation_epoch": 135,
             },
         },
     )
@@ -413,7 +413,7 @@ def test_transition_sentinel_scope_is_exact_and_activation_bounded():
             "report": {
                 "match_id": "report-TEST", "half": 1,
                 "start_epoch": 100, "end_epoch": 120,
-                "activation_epoch": 103,
+                "producer_activation_epoch": 103,
             },
         },
     )
@@ -443,7 +443,7 @@ def test_same_second_sentinel_requires_one_unique_exact_manifest_line():
         "report": {
             "match_id": "report-TEST", "half": 1,
             "start_epoch": 100, "end_epoch": 120,
-            "activation_epoch": 103,
+            "producer_activation_epoch": 103,
         },
     }
 
@@ -502,7 +502,7 @@ def test_transition_sentinels_cannot_hide_missing_diagnostic_warning():
             "diagnostic": {
                 "match_id": "diagnostic-TEST", "half": 1,
                 "start_epoch": 130, "end_epoch": 150,
-                "activation_epoch": 135,
+                "producer_activation_epoch": 135,
             },
         },
     )
@@ -587,12 +587,12 @@ def _objective_contexts() -> dict[str, dict]:
         "report": {
             "match_id": "1786376148-TEST", "half": 1,
             "start_epoch": 105, "end_epoch": 120,
-            "activation_epoch": 106,
+            "producer_activation_epoch": 106,
         },
         "diagnostic": {
             "match_id": "diagnostic-TEST", "half": 1,
             "start_epoch": 130, "end_epoch": 150,
-            "activation_epoch": 131,
+            "producer_activation_epoch": 131,
         },
     }
 
