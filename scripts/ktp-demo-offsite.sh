@@ -42,7 +42,7 @@ RSYNC_DEMO_DIR="${KTP_OFFSITE_RSYNC_DIR:-${KTP_OFFSITE_DIR:-}}"
 
 DEST="${KTP_OFFSITE_DIR:-}"
 DB="${KTP_DEMO_DB:-hlstatsx}"
-# Selection is the risky half, not the copy. DRYRUN=1 prints what WOULD go and
+# Selection is the risky half, not the copy. KTP_DEMO_DRYRUN=1 prints what WOULD go and
 # touches nothing, so the file set can be reviewed before 34 GB moves.
 DRYRUN="${KTP_DEMO_DRYRUN:-0}"
 
@@ -103,6 +103,8 @@ if [ "$DRYRUN" = "1" ]; then
     echo "[demo-offsite] first 5:"
     head -5 "$WORK/rel.txt" | sed 's/^/    /'
     echo "[demo-offsite] targets that WOULD be written: $HOSTS -> $DEST"
+    [ -n "$RSYNC_HOSTS" ] && echo "[demo-offsite] rsync-only targets: $RSYNC_HOSTS -> ${RSYNC_DEMO_DIR}"
+    [ -z "$RSYNC_HOSTS" ] && echo "[demo-offsite] rsync-only targets: (none configured)"
     exit 0
 fi
 

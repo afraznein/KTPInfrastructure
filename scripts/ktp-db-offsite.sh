@@ -75,6 +75,8 @@ if [ "$DRYRUN" = "1" ]; then
     echo "[db-offsite] DRY RUN -- nothing will be copied"
     sed 's/^/    /' "$WORK/files.txt"
     echo "[db-offsite] targets that WOULD be written: $HOSTS -> $DEST"
+    [ -n "$RSYNC_HOSTS" ] && echo "[db-offsite] rsync-only targets: $RSYNC_HOSTS -> ${RSYNC_DB_DIR}"
+    [ -z "$RSYNC_HOSTS" ] && echo "[db-offsite] rsync-only targets: (none configured)"
     exit 0
 fi
 
