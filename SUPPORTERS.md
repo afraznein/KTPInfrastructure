@@ -16,23 +16,31 @@ Even a few bucks a month covers a real slice of the hosting bill.
 
 ## Server Month ($55/mo)
 
+- **nomis** — sponsors a full server month.
 - **Toxinator** — covers the **Chicago** dedicated VPS in full, in-kind through his workplace. It runs more than $55/mo, but Server Month is the highest tier on the list. Thank you.
 - **Las1K64** — sponsors at **$100/mo**, the largest cash contribution on the list. A longtime KTP regular. Thank you.
 
 ## Half a Server ($25/mo)
 
-_Be the first._
+- **seanality** — also the single most frequent one-off donor on the list. Thank you.
 
 ## MVP ($10/mo)
 
-_Be the first._
+- **krod**
 
 ## Supporter ($5/mo)
 
-_Be the first._
+- **stevenwlol**
+
+## One-time
+
+Not every contribution is a subscription. These arrived as single payments and paid for
+real months of hosting just the same.
+
+- **jamiemonnn**
 
 ---
 
-Sponsors at the $5 tier and up are listed here. Ping **@Nein** in the KTP Discord
+Monthly sponsors at the $5 tier and up are listed here, along with one-time contributors. Ping **@Nein** in the KTP Discord
 to claim your Supporter role and your spot on this list. Prefer to stay off the
 list? Just say so and your support stays anonymous.
