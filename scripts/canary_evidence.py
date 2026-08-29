@@ -249,10 +249,7 @@ ORDER BY fp.flag_index
 """))
 
 
-CAPTURE_EVENT_TYPES = {
-    "life", "damage", "position", "frag", "assist", "break",
-    "flag_state", "flag_position", "objective_attempt", "grenade_entity",
-}
+CAPTURE_EVENT_TYPES = set(analytics.CAPTURE_EVENT_TYPES)
 
 
 def collect_capture_health(
@@ -262,11 +259,17 @@ def collect_capture_health(
         return {"manifests": [], "health": []}
     literal = analytics.sql_literal(match_id)
     manifests = analytics.tsv_rows(db.sql(f"""
-SELECT half, map_name, producer, producer_version, schema_version,
-       capabilities, position_interval, buffer_entries, life_buffer_entries,
-       producer_sequence, event_epoch
-FROM ktp_capture_manifests WHERE BINARY match_id=BINARY {literal}
-ORDER BY half, producer
+SELECT cm.half, cm.map_name, cm.producer, cm.producer_version,
+       cm.schema_version, cm.capabilities, cm.position_interval,
+       cm.buffer_entries, cm.life_buffer_entries, cm.producer_sequence,
+       cm.event_epoch AS producer_activation_epoch,
+       UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch,
+       UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
+FROM ktp_capture_manifests cm
+LEFT JOIN ktp_matches m
+  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE BINARY cm.match_id=BINARY {literal}
+ORDER BY cm.half, cm.producer
 """))
     health = analytics.tsv_rows(db.sql(f"""
 SELECT half, event_type, attempted, enqueued, dropped, emitted,
@@ -284,6 +287,9 @@ def capture_health_evidence(
     rows: dict[str, list[dict[str, Any]]], expected_halves: set[int],
 ) -> dict[str, Any]:
     manifests, health = rows.get("manifests", []), rows.get("health", [])
+    authorization = analytics.evaluate_capture_authorization(
+        expected_halves, manifests, health, require_activation=True,
+    )
     manifest_halves = {int(row["half"]) for row in manifests}
     health_by_half: dict[int, set[str]] = {}
     for row in health:
@@ -328,17 +334,32 @@ def capture_health_evidence(
         for row in manifests
     )
     available = bool(manifests or health)
-    trusted = bool(
-        available and manifest_authorized and complete_types and drops == 0
-        and gaps == 0 and duplicates == 0 and not mismatches
-        and not attempted_mismatches and not enqueue_mismatches
-        and not acceptance_mismatches and rejected == 0 and correlation_failures == 0
-    )
+    activation_details = []
+    for row in manifests:
+        producer_epoch = row.get("producer_activation_epoch")
+        receipt_epoch = row.get("activation_receipt_epoch")
+        start_epoch = row.get("match_start_epoch")
+        try:
+            receipt_latency = int(receipt_epoch) - int(start_epoch)
+        except (TypeError, ValueError):
+            receipt_latency = None
+        activation_details.append({
+            "half": int(row.get("half") or 0),
+            "producer_activation_epoch": producer_epoch,
+            "activation_receipt_epoch": receipt_epoch,
+            "match_start_epoch": start_epoch,
+            "receipt_latency_seconds": receipt_latency,
+        })
+    trusted = bool(available and authorization["authorized"])
     return {
         "available": available,
         "trusted": trusted,
         "manifest_complete": manifest_complete,
         "manifest_authorized": manifest_authorized,
+        "capture_authorized": authorization["authorized"],
+        "authorization_status": authorization["status"],
+        "authorization_errors": authorization["errors"],
+        "activation_details": activation_details,
         "health_types_complete": complete_types,
         "producer_drops": drops,
         "sequence_gaps": gaps,
@@ -688,7 +709,8 @@ def build_evidence(
         f"drops={capture_health['producer_drops']} gaps={capture_health['sequence_gaps']} "
         f"receipt_mismatches={capture_health['emitted_received_mismatches']} "
         f"rejected={capture_health['daemon_rejected']} "
-        f"correlation_failures={capture_health['correlation_failures']}.",
+        f"correlation_failures={capture_health['correlation_failures']} "
+        f"authorization_errors={capture_health['authorization_errors']}.",
     )
     add("PASS" if objective_trust["trusted_for_capout_and_last_flag"] else "WARN",
         "objective_classification_trust", objective_trust["reason"])
@@ -775,6 +797,9 @@ def render_markdown(evidence: dict[str, Any]) -> str:
         f"Capture-health trusted: `{evidence['capture_health']['trusted']}`; "
         f"drops: `{evidence['capture_health']['producer_drops']}`; "
         f"sequence gaps: `{evidence['capture_health']['sequence_gaps']}`.",
+        f"Capture authorization clocks: "
+        f"`{evidence['capture_health']['activation_details']}`; errors: "
+        f"`{evidence['capture_health']['authorization_errors']}`.",
         f"Position cadence within SLO: `{evidence['position_cadence']['within_slo']}`; "
         f"halves: `{evidence['position_cadence']['halves']}`.",
         "", "## Objective classification", "",

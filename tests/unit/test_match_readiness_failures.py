@@ -105,6 +105,7 @@ def healthy_tables() -> dict[str, list[dict[str, object]]]:
         "ktp_capture_manifests": [{
             "id": "1", "match_id": MATCH_ID, "half": "1", "schema_version": "22",
             "event_epoch": "1787097601",
+            "created_at": "2026-08-19 00:00:00",
             "position_interval": "2.00",
             "capabilities": (
                 "life,damage,position,frag,assist,break,flag_state,flag_position,"
@@ -236,6 +237,30 @@ def test_schema22_requires_exact_health_types_and_two_second_manifest(monkeypatc
     assert report["status"] == "FAIL"
     assert finding(report, "position_sampling_interval")["level"] == "WARN"
     assert finding(report, "schema22_capture_authorization")["level"] == "FAIL"
+
+
+def test_schema22_readiness_uses_manifest_receipt_not_producer_epoch(
+        monkeypatch, tmp_path):
+    tables = healthy_tables()
+    tables["ktp_capture_manifests"][0]["event_epoch"] = "1787097599"
+
+    report = validate(monkeypatch, tmp_path, tables)
+
+    assert finding(report, "schema22_capture_authorization")["level"] == "PASS"
+
+
+@pytest.mark.parametrize("created_at", ("2026-08-19 00:00:04", None))
+def test_schema22_readiness_rejects_late_or_missing_manifest_receipt(
+        monkeypatch, tmp_path, created_at):
+    tables = healthy_tables()
+    tables["ktp_capture_manifests"][0]["created_at"] = created_at
+
+    report = validate(monkeypatch, tmp_path, tables)
+
+    result = finding(report, "schema22_capture_authorization")
+    assert result["level"] == "FAIL"
+    assert any("activation receipt" in error
+               for error in result["evidence"]["authorization_errors"])
 
 
 def test_schema22_authorizes_reconciled_zero_objective_and_grenade_streams(monkeypatch, tmp_path):

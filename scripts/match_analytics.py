@@ -84,7 +84,9 @@ INTEGER_COLUMNS = {
     "killer_clip", "killer_ammo", "is_last_flag_defense",
     "frag_context_recorded",
     "player_slot", "engine_userid", "player_class", "round_live",
-    "event_epoch", "stored_half", "producer_half",
+    "event_epoch", "producer_activation_epoch", "activation_receipt_epoch",
+    "match_start_epoch", "start_epoch", "end_epoch",
+    "stored_half", "producer_half",
     "attempt_id", "producer_sequence", "entindex", "serial", "weapon_id",
     "owner_player_id", "owner_engine_userid", "allies_in_zone", "axis_in_zone",
 }
@@ -282,20 +284,38 @@ def evaluate_capture_authorization(
         ):
             errors.append(f"half {row.get('half')} manifest is not schema22/2.00 authorized")
         if require_activation:
-            activation = row.get("activation_epoch")
+            producer_activation = row.get("producer_activation_epoch")
+            activation_receipt = row.get("activation_receipt_epoch")
             match_start = row.get("match_start_epoch")
             try:
-                latency = int(activation) - int(match_start)
+                int(producer_activation)
             except (TypeError, ValueError):
                 errors.append(
-                    f"half {row.get('half')} manifest activation epoch is missing"
+                    f"half {row.get('half')} manifest producer activation "
+                    "epoch is missing"
+                )
+            try:
+                receipt_epoch = int(activation_receipt)
+            except (TypeError, ValueError):
+                errors.append(
+                    f"half {row.get('half')} manifest activation receipt "
+                    "epoch is missing"
                 )
             else:
-                if not 0 <= latency <= 3:
+                try:
+                    start_epoch = int(match_start)
+                except (TypeError, ValueError):
                     errors.append(
-                        f"half {row.get('half')} manifest activation latency "
-                        f"{latency}s is outside inclusive 0..3s policy"
+                        f"half {row.get('half')} match start epoch is missing"
                     )
+                else:
+                    latency = receipt_epoch - start_epoch
+                    if not 0 <= latency <= 3:
+                        errors.append(
+                            f"half {row.get('half')} manifest activation "
+                            "receipt latency "
+                            f"{latency}s is outside inclusive 0..3s policy"
+                        )
     streams: dict[str, dict[str, int]] = {}
     for half in sorted(observed):
         rows = [row for row in health if int(row.get("half") or 0) == half]
@@ -360,7 +380,8 @@ def match_capture_authorization(
         return evaluate_capture_authorization(observed, [], [])
     manifests = tsv_rows(db.sql(f"""
 SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
-       cm.event_epoch AS activation_epoch,
+       cm.event_epoch AS producer_activation_epoch,
+       UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m

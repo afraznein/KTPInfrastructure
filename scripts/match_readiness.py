@@ -555,7 +555,8 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     }
     authorization_manifests = [{
         **row,
-        "activation_epoch": row.get("event_epoch"),
+        "producer_activation_epoch": row.get("event_epoch"),
+        "activation_receipt_epoch": timestamp_epoch(row.get("created_at")),
         "match_start_epoch": match_start_by_half.get(integer(row.get("half"))),
     } for row in manifests]
     capture_authorization = evaluate_capture_authorization(

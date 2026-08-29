@@ -61,6 +61,25 @@ _AFTER_RE = re.compile(
     r"owner=(-?\d+)")
 _ABORT_RE = re.compile(r"\[BD\] (\w+) ABORT flag=(-?\d+) (.*)")
 _ISOLATION_END_RE = re.compile(r"\[BD\] isolation END\b")
+_CLEAN_CAPTURE_BEGIN_RE = re.compile(
+    r"\[BD\] clean_capture BEGIN flag=(?P<flag>\d+) "
+    r"fname=(?P<flag_name>\S+) capteam=(?P<capteam>[12]) "
+    r"owner_before=(?P<owner_before>-?\d+) "
+    r"required=(?P<required>\d+) isolated=(?P<isolated>\d+) "
+    r"roster=(?P<roster>\d+) "
+    r"cappers=(?P<cappers>\d+(?:,\d+)*) "
+    r"quiet_ms=(?P<quiet_ms>\d+) flushed=(?P<flushed>[01]) "
+    r"userid_epoch=(?P<userid_epoch>\d+)")
+_CLEAN_CAPTURE_RESULT_RE = re.compile(
+    r"\[BD\] clean_capture RESULT flag=(?P<flag>\d+) "
+    r"fname=(?P<flag_name>\S+) capteam=(?P<capteam>[12]) "
+    r"owner_before=(?P<owner_before>-?\d+) "
+    r"owner_after=(?P<owner_after>-?\d+) "
+    r"required=(?P<required>\d+) isolated=(?P<isolated>\d+) "
+    r"roster=(?P<roster>\d+) cappers=(?P<cappers>\d+(?:,\d+)*) "
+    r"count_after=(?P<count_after>-?\d+) "
+    r"deaths=(?P<deaths>\d+) flushed=(?P<flushed>[01]) "
+    r"contaminated=(?P<contaminated>[01])")
 _SCAN_RE = re.compile(
     r"\[BD\] flag (\d+) name=(\S+) owner=(-?\d+) capping=(-?\d+) "
     r"capteam=(-?\d+) allies=(-?\d+) axis=(-?\d+)")
@@ -105,6 +124,13 @@ _SERIES_ABORT_RE = re.compile(r"\[BD\] series ABORT reason=(?P<reason>\S+)")
 _PLUGIN_LOAD_RE = re.compile(r"\[BD\] loaded")
 _ENGINE_LOG_PREFIX = (
     r"^L \d{2}/\d{2}/\d{4} - \d{2}:\d{2}:\d{2}: "
+)
+_PLAYER_CAPTURE_RE = re.compile(
+    _ENGINE_LOG_PREFIX
+    + r'"(?P<name>[^"<]*)<(?P<userid>\d+)><[^<>]*>'
+    + r'<(?P<team>[^<>]*)>" triggered a "dod_capture_area" - '
+    + r'"(?P<flag_name>[^"]+)"\r?$',
+    re.MULTILINE,
 )
 _MANIFEST_RE = re.compile(
     _ENGINE_LOG_PREFIX
@@ -809,78 +835,126 @@ class BreakDriver:
         return s
 
     def negative_clean_capture(self, *, timeout: float = 45.0) -> Scenario:
-        """A cap completes with nobody killed; the cappers then walk off.
-
-        Deployment plan Unit 3 step 2, and it exercises the `CA_owning_team`
-        clear: when ownership flips the detector drops its queued candidates,
-        so cappers leaving a point they just took are not credited to whoever
-        last got a kill there. If that clear is not firing, **every successful
-        capture produces a phantom break** — which is the highest-volume way
-        this feature could be wrong.
-
-        Observed rather than staged. Caps complete constantly under bots, and
-        forcing one adds machinery without adding truth. The scenario is only
-        scored when a completed capture is found whose window is clean of
-        capping-team deaths — otherwise a break in that window could be
-        perfectly legitimate and would be blamed on the clear.
-        """
+        """Stage a real engine ownership transition in a frozen bot world."""
         s = Scenario("negative_clean_capture")
-        before = {f["flag"]: f["owner"] for f in self.scan()}
+        if self.series_started and not self._series_live():
+            return self._scenario_abort(s)
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_arm_clean_capture")
         deadline = self._series_deadline_for(timeout)
-
         while time.monotonic() < deadline:
-            if self.series_started and not self._series_sleep(6.0):
+            if self.series_started and not self._series_live():
                 return self._scenario_abort(s)
-            if not self.series_started:
-                time.sleep(6.0)
-            mark = len(self._read())
-            now = self.scan()
-            flipped = [f for f in now
-                       if f["flag"] in before and f["owner"] != before[f["flag"]]
-                       and f["owner"] in (TEAM_ALLIES, TEAM_AXIS)]
-            if not flipped:
-                before = {f["flag"]: f["owner"] for f in now}
-                continue
-
-            flag = flipped[0]
-            # The team that just took the point is the team whose players might
-            # now be leaving it, so theirs are the deaths that matter.
-            capper_team = flag["owner"]
-            if self.series_started and not self._series_sleep(self.SETTLE):
-                return self._scenario_abort(s)
-            if not self.series_started:
-                time.sleep(self.SETTLE)
-            full = self._read()
-            tail = _tail(full, mark)
-
-            deaths = self._capping_deaths_near(full, capper_team,
-                                               marker="ktp_bd_scan")
-            breakers = _BREAK_RE.findall(tail)
-            s.breaks_seen = len(breakers)
-            s.extra = {"flag": flag["flag"], "new_owner": capper_team,
-                       "breakers": breakers, "deaths_in_window": len(deaths)}
-
-            if deaths:
-                before = {f["flag"]: f["owner"] for f in now}
-                s.detail = (f"flag {flag['flag']} changed hands but "
-                            f"{len(deaths)} capping-team death(s) were nearby, "
-                            f"so a break here could be legitimate — retrying")
-                continue
-
-            if breakers:
-                s.status = "violation"
-                s.detail = (f"flag {flag['flag']} was captured cleanly with no "
-                            f"death on the capturing team, and {breakers} were "
-                            f"credited with a cap_break. FALSE POSITIVE — the "
-                            f"CA_owning_team clear is not firing, so every "
-                            f"successful capture produces a phantom break.")
-            else:
-                s.status = "ok"
-                s.detail = (f"flag {flag['flag']} captured cleanly (owner -> "
-                            f"{capper_team}), no deaths on that team, no break")
+            tail = _tail(self._read(), mark)
+            if (_CLEAN_CAPTURE_RESULT_RE.search(tail)
+                    or "[BD] clean_capture ABORT" in tail):
+                break
+            time.sleep(0.1)
+        else:
+            s.detail = "deterministic clean capture produced no result"
             return s
 
-        s.detail = "no capture completed cleanly within the wait"
+        isolation_closed, tail = self._wait_for_isolation_end(mark)
+        if self.series_abort_reason is not None:
+            return self._scenario_abort(s)
+        if not isolation_closed:
+            s.detail = ("clean-capture evidence window did not emit its "
+                        "isolation close marker; bots may still be held")
+            return s
+
+        begins = list(_CLEAN_CAPTURE_BEGIN_RE.finditer(tail))
+        results = list(_CLEAN_CAPTURE_RESULT_RE.finditer(tail))
+        if len(begins) != 1 or len(results) != 1:
+            s.detail = (self._abort_reason(tail)
+                        or "clean capture did not emit one exact begin/result")
+            return s
+        begin, result = begins[0], results[0]
+        evidence = tail[begin.start():result.end()]
+        identity_keys = (
+            "flag", "flag_name", "capteam", "owner_before", "required",
+            "isolated", "roster", "cappers",
+        )
+        if any(begin.group(key) != result.group(key)
+               for key in identity_keys):
+            s.detail = "clean-capture begin/result identity did not reconcile"
+            return s
+
+        flag = int(result.group("flag"))
+        flag_name = result.group("flag_name")
+        capper_team = int(result.group("capteam"))
+        team_name = _TEAM_NAME[capper_team]
+        required = int(result.group("required"))
+        pinned_userids = [int(value) for value in
+                          result.group("cappers").split(",")]
+        all_capture_facts = [
+            match.groupdict() for match in _PLAYER_CAPTURE_RE.finditer(evidence)
+        ]
+        capture_facts = [fact for fact in all_capture_facts
+                         if fact["team"] == team_name
+                         and fact["flag_name"] == flag_name]
+        capture_userids = [int(fact["userid"]) for fact in capture_facts]
+        deaths = [
+            match.group(4) for line in evidence.splitlines()
+            if (match := _KILLED_RE.match(line))
+            and match.group(5) == team_name
+        ]
+        breakers = _BREAK_RE.findall(evidence)
+        s.breaks_seen = len(breakers)
+        s.extra = {
+            "flag": flag, "flag_name": flag_name,
+            "new_owner": int(result.group("owner_after")),
+            "required_cappers": required,
+            "capture_facts": len(capture_facts), "breakers": breakers,
+            "pinned_capper_userids": pinned_userids,
+            "capture_marker_userids": capture_userids,
+            "deaths_in_window": len(deaths),
+            "isolated_players": int(result.group("isolated")),
+            "roster_players": int(result.group("roster")),
+        }
+
+        if (int(begin.group("quiet_ms")) < 3000
+                or int(begin.group("flushed")) != 1
+                or int(result.group("flushed")) != 1):
+            s.detail = "clean-capture quiet/flush boundary was not exact"
+            return s
+        if (int(result.group("owner_after")) != capper_team
+                or int(result.group("owner_before")) == capper_team
+                or int(result.group("count_after")) != 0):
+            s.detail = "clean-capture engine ownership/count transition was not exact"
+            return s
+        if int(result.group("isolated")) != int(result.group("roster")):
+            s.detail = "clean-capture evidence did not isolate the exact combat roster"
+            return s
+        if (int(result.group("deaths")) != 0
+                or int(result.group("contaminated")) != 0 or deaths):
+            s.detail = ("clean-capture evidence contains a capping-team death "
+                        "or plugin contamination")
+            return s
+        if (len(pinned_userids) != required
+                or len(set(pinned_userids)) != required):
+            s.detail = "clean-capture pinned capper userids were not exact/distinct"
+            return s
+        if (len(all_capture_facts) != required
+                or len(capture_userids) != required
+                or len(set(capture_userids)) != required
+                or set(capture_userids) != set(pinned_userids)):
+            s.detail = ("real ownership changed but factual dod_capture_area "
+                        "markers did not exactly match the distinct pinned "
+                        f"capper userids {pinned_userids}")
+            return s
+        if breakers:
+            s.status = "violation"
+            s.detail = (f"real clean capture of {flag_name} emitted factual "
+                        f"capture markers with zero capping-team deaths, but "
+                        f"{breakers} were credited with cap_break. FALSE "
+                        "POSITIVE: the ownership clear did not suppress the "
+                        "post-capture count drop.")
+        else:
+            s.status = "ok"
+            s.detail = (f"real clean capture of {flag_name} completed "
+                        f"{result.group('owner_before')} -> {capper_team}; "
+                        f"{len(capture_facts)} factual capture markers, zero "
+                        "capping-team deaths, zero cap_break")
         return s
 
     def negative_round_restart(self) -> Scenario:

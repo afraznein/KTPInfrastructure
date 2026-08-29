@@ -297,9 +297,9 @@ def producer_marker_scopes(
 
     Exact pending sentinels (``matchid '-'``, half ``0``, sequence ``0``) are
     transition evidence only through the following context's confirmed
-    manifest activation epoch. At the activation second, the sentinel must
-    precede the exact unique sequence-one manifest line in log order. They are
-    assigned to that following context so a corresponding daemon no-row
+    manifest producer activation epoch. At the activation second, the sentinel
+    must precede the exact unique sequence-one manifest line in log order. They
+    are assigned to that following context so a corresponding daemon no-row
     warning can be accounted without exempting a real marker from it.
     Sentinels after activation, same-second sentinels after the manifest,
     nonzero sequences, and exact-context markers outside their own interval
@@ -315,9 +315,11 @@ def producer_marker_scopes(
             "half": int(raw["half"]),
             "start_epoch": int(raw["start_epoch"]),
             "end_epoch": int(raw["end_epoch"]),
-            "activation_epoch": int(raw.get(
-                "activation_epoch", raw["start_epoch"]
-            )),
+            "producer_activation_epoch": int(raw["producer_activation_epoch"]),
+            "activation_receipt_epoch": (
+                int(raw["activation_receipt_epoch"])
+                if raw.get("activation_receipt_epoch") is not None else None
+            ),
             "manifest_line_index": None,
             "manifest_line_count": 0,
             "markers": [],
@@ -348,7 +350,7 @@ def producer_marker_scopes(
         for scope in normalized.values():
             if (properties.get("matchid") == scope["match_id"]
                     and manifest_half == scope["half"]
-                    and manifest_epoch == scope["activation_epoch"]
+                    and manifest_epoch == scope["producer_activation_epoch"]
                     and manifest_sequence == 1):
                 scope["manifest_line_count"] += 1
                 scope["manifest_line_index"] = line_index
@@ -404,9 +406,11 @@ def producer_marker_scopes(
                 after_previous = (
                     previous_end is None or event_epoch >= previous_end
                 )
-                before_activation = event_epoch < scope["activation_epoch"]
+                before_activation = (
+                    event_epoch < scope["producer_activation_epoch"]
+                )
                 at_activation_before_manifest = (
-                    event_epoch == scope["activation_epoch"]
+                    event_epoch == scope["producer_activation_epoch"]
                     and scope["manifest_line_count"] == 1
                     and line_index < scope["manifest_line_index"]
                 )

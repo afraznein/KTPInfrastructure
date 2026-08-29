@@ -190,7 +190,8 @@ def test_match_epoch_interval_is_exactly_match_and_half_scoped():
 
         def sql(self, query):
             self.query = query
-            return "start_epoch\tend_epoch\tactivation_epoch\n105\t120\t107\n"
+            return ("start_epoch\tend_epoch\tproducer_activation_epoch\t"
+                    "activation_receipt_epoch\n105\t120\t104\t107\n")
 
     db = FakeDb()
     interval = match_epoch_interval(
@@ -198,11 +199,15 @@ def test_match_epoch_interval_is_exactly_match_and_half_scoped():
     )
 
     assert interval == {
-        "start_epoch": 105, "end_epoch": 120, "activation_epoch": 107,
+        "start_epoch": 105, "end_epoch": 120,
+        "producer_activation_epoch": 104,
+        "activation_receipt_epoch": 107,
     }
     assert "BINARY 'diagnostic-TEST'" in db.query
     assert "half=1" in db.query
     assert "ktp_capture_manifests" in db.query
+    assert "cm.event_epoch AS producer_activation_epoch" in db.query
+    assert "UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch" in db.query
 
 
 def test_full_lane_scopes_statsme_and_frag_markers_per_match():
