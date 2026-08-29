@@ -32,11 +32,23 @@ was absent. Both greps hit, both units alerted nobody, and one of them had been 
 Carry a control when checking: `hltv-demo-renamer.service` has always been correctly wired, so a
 sweep that reports it as empty is a broken sweep, not a finding.
 
-## Known inconsistency
+## The repo was the stale side — corrected 2026-08-29
 
-`hud-observer` and `hud-observer-web` use `onfailure.conf`; everything else uses
-`00-ktp-onfailure-alert.conf`. Both work — systemd reads every `.conf` in a `.d/` directory — but a
-sweep keyed on the common filename misses those two. Match on the directory, not the filename.
+`hud-observer` and `hud-observer-web` carried `onfailure.conf` **here**, while production has used
+`00-ktp-onfailure-alert.conf` for both all along. And the repo's copies targeted
+`OnFailure=discord-alert@%n.service` — a unit that **does not exist on the box**
+(`systemctl cat discord-alert@.service` → *"No files found"*). Deploying them would have wired those
+two units to nothing.
+
+This section previously called that a "known inconsistency" in which "both work". **Neither half was
+true:** the divergence was repo-only, and the repo's version could not have worked. Both files now
+match the live drop-ins byte-for-byte.
+
+🔑 **The sweep advice stands, for a stronger reason than the one given before.** Match on the `.d/`
+directory, not a filename — systemd reads every `.conf` in it. But a filename-keyed sweep would have
+found these two under any name and still called them wired, because the defect was in the
+*contents*. ➡️ `systemctl show <unit> -p OnFailure --value` is the only check that resolves both,
+and it is what the § Verify section above already tells you to use.
 
 ## Not covered here
 
