@@ -32,6 +32,14 @@ set -uo pipefail
 
 SRC="${KTP_DEMO_SRC:-/home/hltvserver/hlds/dod/demos}"
 HOSTS="${KTP_OFFSITE_HOSTS:-}"
+# Targets that speak rsync/SFTP but have NO shell (Hetzner Storage Box).
+# Kept as a SEPARATE list, not folded into KTP_OFFSITE_HOSTS: the transport
+# differs, and a shell-capable host silently taking the shell-less path would
+# lose the md5 verification without anything saying so.
+RSYNC_HOSTS="${KTP_OFFSITE_RSYNC_HOSTS:-}"
+RSYNC_RSH="${KTP_OFFSITE_RSYNC_RSH:-}"
+RSYNC_DEMO_DIR="${KTP_OFFSITE_RSYNC_DIR:-${KTP_OFFSITE_DIR:-}}"
+
 DEST="${KTP_OFFSITE_DIR:-}"
 DB="${KTP_DEMO_DB:-hlstatsx}"
 # Selection is the risky half, not the copy. DRYRUN=1 prints what WOULD go and
@@ -42,6 +50,10 @@ fail() { echo "[demo-offsite] FAILED: $*" >&2; exit 1; }
 
 [ -n "$HOSTS" ] || fail "KTP_OFFSITE_HOSTS is unset. Refusing to guess a target."
 [ -n "$DEST" ]  || fail "KTP_OFFSITE_DIR is unset. Refusing to guess a path."
+if [ -n "$RSYNC_HOSTS" ]; then
+    [ -n "$RSYNC_RSH" ] || fail "KTP_OFFSITE_RSYNC_HOSTS is set but KTP_OFFSITE_RSYNC_RSH is not."
+    [ -n "$RSYNC_DEMO_DIR" ] || fail "KTP_OFFSITE_RSYNC_HOSTS is set but no destination dir is."
+fi
 [ -d "$SRC" ]   || fail "source $SRC does not exist"
 
 WORK="$(mktemp -d)"
@@ -119,6 +131,30 @@ for H in $HOSTS; do
         RC=1
     else
         echo "[demo-offsite] $H: $REMOTE_COUNT/$COUNT present"
+    fi
+done
+
+
+# ---------------------------------------------------------------- shell-less
+# Storage Box: rsync/SFTP, no shell, so the per-file `[ -f ]` loop above cannot
+# run. The dry-run itemize is a STRONGER check than that loop anyway -- it
+# compares size and mtime, where the loop only asks whether a name exists, so a
+# truncated demo passes the shell check and fails this one.
+for H in $RSYNC_HOSTS; do
+    echo "[demo-offsite] --- $H (rsync-only target)"
+    rsync -a --checksum --mkpath --partial --human-readable -e "$RSYNC_RSH"           --files-from="$WORK/rel.txt" "$SRC/" "$H:$RSYNC_DEMO_DIR/"         || { echo "[demo-offsite] $H: rsync reported failure" >&2; RC=1; continue; }
+
+    # No --checksum here: the transfer above already checksummed every file, so
+    # this pass is confirming arrival, not re-reading 33 GB on both sides.
+    DIFFS=$(rsync -ani -e "$RSYNC_RSH"                   --files-from="$WORK/rel.txt" "$SRC/" "$H:$RSYNC_DEMO_DIR/" 2>/dev/null             | grep -E '^[<>ch.*][fL]' || true)
+    if [ -z "$DIFFS" ]; then
+        echo "[demo-offsite] $H: $COUNT/$COUNT verified by rsync itemize"
+    else
+        echo "[demo-offsite] $H: $(printf '%s
+' "$DIFFS" | grep -c .) of $COUNT file(s) missing or wrong size on arrival" >&2
+        printf '%s
+' "$DIFFS" | head -5 | sed 's/^/    /' >&2
+        RC=1
     fi
 done
 
