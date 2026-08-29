@@ -550,11 +550,17 @@ WHERE BINARY match_id=BINARY {sql_literal(match_id)}
 
 
 def match_epoch_interval(db, *, match_id: str, half: int) -> dict[str, int]:
-    """Read one persisted match interval and its confirmed activation epoch."""
+    """Read one match interval and both manifest clock domains.
+
+    Producer marker classification deliberately uses ``event_epoch``.  The
+    daemon receipt clock is carried separately so no authorization caller can
+    accidentally compare a producer timestamp with a database timestamp.
+    """
     rows = tsv_rows(db.sql(f"""
 SELECT UNIX_TIMESTAMP(m.start_time) AS start_epoch,
        UNIX_TIMESTAMP(m.end_time) AS end_epoch,
-       cm.event_epoch AS activation_epoch
+       cm.event_epoch AS producer_activation_epoch,
+       UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch
 FROM ktp_matches m
 JOIN ktp_capture_manifests cm
   ON BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
@@ -565,13 +571,17 @@ WHERE BINARY m.match_id=BINARY {sql_literal(match_id)}
         return {}
     start_epoch = rows[0].get("start_epoch")
     end_epoch = rows[0].get("end_epoch")
-    activation_epoch = rows[0].get("activation_epoch")
-    if start_epoch is None or end_epoch is None or activation_epoch is None:
+    producer_activation_epoch = rows[0].get("producer_activation_epoch")
+    activation_receipt_epoch = rows[0].get("activation_receipt_epoch")
+    if (start_epoch is None or end_epoch is None
+            or producer_activation_epoch is None
+            or activation_receipt_epoch is None):
         return {}
     return {
         "start_epoch": int(start_epoch),
         "end_epoch": int(end_epoch),
-        "activation_epoch": int(activation_epoch),
+        "producer_activation_epoch": int(producer_activation_epoch),
+        "activation_receipt_epoch": int(activation_receipt_epoch),
     }
 
 
@@ -1277,7 +1287,12 @@ def main() -> int:
             scope["interval"] = {
                 "start_epoch": scope["start_epoch"],
                 "end_epoch": scope["end_epoch"],
-                "activation_epoch": scope["activation_epoch"],
+                "producer_activation_epoch": scope[
+                    "producer_activation_epoch"
+                ],
+                "activation_receipt_epoch": scope.get(
+                    "activation_receipt_epoch"
+                ),
             }
         structured_frag_mismatches = (
             frag_scope_evidence["context_mismatches"]
