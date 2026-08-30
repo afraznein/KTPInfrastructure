@@ -7,6 +7,13 @@
 #        The July 2026 LAN uses 5 KTP-stack competitive servers (the stock
 #        warmup server is a separate manual install, not created here).
 #
+#        ./install-linuxgsm.sh --regen-management-scripts
+#        Rewrites ~/restart-all-servers.sh and ~/status.sh from this file and
+#        does nothing else. This is how an ALREADY-PROVISIONED host receives a
+#        fix to those two scripts: the full installer only ever runs once per
+#        host, so without this mode the repo can never reach a live host and
+#        the deployed copies drift until someone notices by hand.
+#
 # Run as: dodserver user
 #
 # This script:
@@ -20,13 +27,20 @@ set -e
 # ============================================
 # Configuration
 # ============================================
-if [ -z "$1" ]; then
+MODE="install"
+if [ "${1:-}" = "--regen-management-scripts" ]; then
+    MODE="regen"
+    shift
+fi
+
+if [ "$MODE" = "install" ] && [ -z "${1:-}" ]; then
     echo "Usage: $0 <SERVER_IP> [NUM_INSTANCES]"
+    echo "       $0 --regen-management-scripts"
     echo "Example: $0 192.168.1.100 6"
     exit 1
 fi
 
-SERVER_IP="$1"
+SERVER_IP="${1:-}"
 BASE_PORT=27015
 # Instance count: env var wins, then positional arg 2, then default 5.
 NUM_INSTANCES="${NUM_INSTANCES:-${2:-5}}"
@@ -51,6 +65,142 @@ log_error() {
 }
 
 # ============================================
+# Management script generation
+# ============================================
+# Defined up here, not inline in step 4, so --regen-management-scripts can
+# call it without running the install. Both scripts are rewritten from
+# scratch every time; the operation is idempotent.
+# The body is deliberately not indented — every line inside a quoted heredoc
+# is emitted verbatim, so indenting it would indent the generated scripts.
+create_management_scripts() {
+# Instance discovery, emitted verbatim into both management scripts. Written
+# once here so the two cannot disagree about what an instance is.
+emit_instance_discovery() {
+cat << 'EOF'
+# Instances are discovered from ~/dod-<port>/ on every run. An install-time
+# count outlives the install: Chicago's 27019 was deleted and a baked-in
+# `1 2 3 4 5` kept addressing it.
+discover_instances() {
+    local dir port ctl cand
+    KTP_PORTS=()
+    KTP_CTLS=()
+    shopt -s nullglob
+    for dir in "$HOME"/dod-*/; do
+        port=${dir%/}
+        port=${port##*/dod-}
+        case $port in
+            ''|*[!0-9]*) continue ;;
+        esac
+        ctl=""
+        for cand in "$dir"dodserver*; do
+            if [ -f "$cand" ] && [ -x "$cand" ]; then
+                ctl=$cand
+                break
+            fi
+        done
+        [ -n "$ctl" ] || continue
+        KTP_PORTS+=("$port")
+        KTP_CTLS+=("$ctl")
+    done
+    shopt -u nullglob
+    if [ ${#KTP_PORTS[@]} -eq 0 ]; then
+        echo "No LinuxGSM instances found under $HOME/dod-*/ — refusing to continue." >&2
+        return 1
+    fi
+}
+
+discover_instances || exit 1
+EOF
+}
+
+# restart-all-servers.sh
+cat > "$HOME/restart-all-servers.sh" << 'EOF'
+#!/bin/bash
+# Restart all KTP game server instances
+# WARNING: This will disconnect all players!
+#
+# No `set -e`: one instance failing to start must not skip the rest or the
+# verify. Failures are counted and returned in the exit status instead.
+set -uo pipefail
+
+EOF
+emit_instance_discovery >> "$HOME/restart-all-servers.sh"
+cat >> "$HOME/restart-all-servers.sh" << 'EOF'
+
+echo "========================================"
+echo "KTP Server Restart — ${#KTP_PORTS[@]} instance(s): ${KTP_PORTS[*]}"
+echo "========================================"
+echo ""
+
+echo "Stopping servers..."
+for idx in "${!KTP_PORTS[@]}"; do
+    echo "  Stopping port ${KTP_PORTS[$idx]}..."
+    "${KTP_CTLS[$idx]}" stop >/dev/null 2>&1 || true
+done
+
+echo "Waiting for shutdown..."
+sleep 5
+
+echo "Starting servers..."
+for idx in "${!KTP_PORTS[@]}"; do
+    echo "  Starting port ${KTP_PORTS[$idx]}..."
+    "${KTP_CTLS[$idx]}" start || echo "  WARNING: start returned non-zero for port ${KTP_PORTS[$idx]}"
+    sleep 2
+done
+
+echo ""
+echo "Verifying servers..."
+sleep 5
+
+running=0
+for port in "${KTP_PORTS[@]}"; do
+    if pgrep -f "hlds_linux.*-port $port" > /dev/null; then
+        echo "  Port $port: RUNNING"
+        # NOT ((running++)) — the post-increment from 0 evaluates to 0 and
+        # returns exit status 1, which killed this script at the FIRST
+        # healthy server back when it ran under `set -e`.
+        running=$((running + 1))
+    else
+        echo "  Port $port: NOT RUNNING"
+    fi
+done
+
+echo ""
+echo "$running of ${#KTP_PORTS[@]} servers running"
+echo "========================================"
+[ "$running" -eq "${#KTP_PORTS[@]}" ]
+EOF
+chmod +x "$HOME/restart-all-servers.sh"
+
+# status.sh — same discovery, read-only
+cat > "$HOME/status.sh" << 'EOF'
+#!/bin/bash
+# Check status of all KTP game servers
+set -uo pipefail
+
+EOF
+emit_instance_discovery >> "$HOME/status.sh"
+cat >> "$HOME/status.sh" << 'EOF'
+
+echo "KTP Server Status"
+echo "================="
+echo ""
+
+for port in "${KTP_PORTS[@]}"; do
+    pid=$(pgrep -f "hlds_linux.*-port $port" 2>/dev/null || true)
+
+    if [ -n "$pid" ]; then
+        uptime=$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')
+        echo "Port $port: RUNNING (PID: $pid, Uptime: $uptime)"
+    else
+        echo "Port $port: STOPPED"
+    fi
+done
+EOF
+chmod +x "$HOME/status.sh"
+}
+
+# ============================================
 # Pre-flight Checks
 # ============================================
 if [ "$EUID" -eq 0 ]; then
@@ -65,6 +215,32 @@ if [ "$(whoami)" != "dodserver" ]; then
         echo
         [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
     fi
+fi
+
+if [ "$MODE" = "regen" ]; then
+    if [ ! -d "$HOME" ]; then
+        log_error "\$HOME ($HOME) is not a directory — refusing to write."
+        exit 1
+    fi
+    STAMP=$(date +%Y%m%d-%H%M%S)
+    for f in "$HOME/restart-all-servers.sh" "$HOME/status.sh"; do
+        # An `if`, not `[ -f ] && cp`: under `set -e` that AND-list returns 1
+        # when the file is absent and kills the script before it writes anything.
+        # Timestamped, never a fixed .bak name — a second run must not overwrite
+        # the only copy of what was there before the first one.
+        if [ -f "$f" ]; then
+            cp -p "$f" "$f.bak-$STAMP"
+            log_info "Backed up $(basename "$f") -> $(basename "$f").bak-$STAMP"
+        fi
+    done
+    create_management_scripts
+    for f in "$HOME/restart-all-servers.sh" "$HOME/status.sh"; do
+        bash -n "$f"
+        grep -q 'discover_instances' "$f"
+    done
+    log_info "Regenerated ~/restart-all-servers.sh and ~/status.sh (bash -n clean)"
+    log_info "Nothing was started, stopped or restarted."
+    exit 0
 fi
 
 echo "========================================"
@@ -188,107 +364,7 @@ done
 # 4. Create Management Scripts
 # ============================================
 log_info "Creating management scripts..."
-
-# restart-all-servers.sh
-# Header sets BASE_PORT/NUM_INSTANCES from the install-time values; body stays
-# parameterized so re-running on a host with different port/instance counts is
-# a single-file edit rather than dozens of `27014`/`5` constants.
-cat > "$HOME/restart-all-servers.sh" << EOF
-#!/bin/bash
-# Restart all KTP game server instances
-# WARNING: This will disconnect all players!
-set -e
-BASE_PORT=$BASE_PORT
-NUM_INSTANCES=$NUM_INSTANCES
-EOF
-cat >> "$HOME/restart-all-servers.sh" << 'EOF'
-
-echo "========================================"
-echo "KTP Server Restart"
-echo "========================================"
-echo ""
-
-# Stop all servers
-echo "Stopping servers..."
-for i in $(seq 1 $NUM_INSTANCES); do
-    port=$((BASE_PORT + i - 1))
-    name="dodserver"
-    [ $i -gt 1 ] && name="dodserver$i"
-
-    echo "  Stopping $name (port $port)..."
-    ~/dod-$port/$name stop 2>/dev/null || true
-done
-
-# Wait for clean shutdown
-echo "Waiting for shutdown..."
-sleep 5
-
-# Start all servers
-echo "Starting servers..."
-for i in $(seq 1 $NUM_INSTANCES); do
-    port=$((BASE_PORT + i - 1))
-    name="dodserver"
-    [ $i -gt 1 ] && name="dodserver$i"
-
-    echo "  Starting $name (port $port)..."
-    ~/dod-$port/$name start
-    sleep 2
-done
-
-# Verify
-echo ""
-echo "Verifying servers..."
-sleep 5
-
-running=0
-for i in $(seq 1 $NUM_INSTANCES); do
-    port=$((BASE_PORT + i - 1))
-    if pgrep -f "hlds_linux.*-port $port" > /dev/null; then
-        echo "  Port $port: RUNNING"
-        # NOT ((running++)) — under set -e the post-increment from 0 returns
-        # 1 and killed this script at the FIRST healthy server.
-        running=$((running + 1))
-    else
-        echo "  Port $port: NOT RUNNING"
-    fi
-done
-
-echo ""
-echo "$running of $NUM_INSTANCES servers running"
-echo "========================================"
-EOF
-chmod +x "$HOME/restart-all-servers.sh"
-
-# status.sh — same parameterization pattern as restart-all-servers.sh
-cat > "$HOME/status.sh" << EOF
-#!/bin/bash
-# Check status of all KTP game servers
-BASE_PORT=$BASE_PORT
-NUM_INSTANCES=$NUM_INSTANCES
-EOF
-cat >> "$HOME/status.sh" << 'EOF'
-
-echo "KTP Server Status"
-echo "================="
-echo ""
-
-for i in $(seq 1 $NUM_INSTANCES); do
-    port=$((BASE_PORT + i - 1))
-    name="dodserver"
-    [ $i -gt 1 ] && name="dodserver$i"
-
-    pid=$(pgrep -f "hlds_linux.*-port $port" 2>/dev/null || true)
-
-    if [ -n "$pid" ]; then
-        uptime=$(ps -o etime= -p $pid 2>/dev/null | tr -d ' ')
-        echo "Port $port: RUNNING (PID: $pid, Uptime: $uptime)"
-    else
-        echo "Port $port: STOPPED"
-    fi
-done
-EOF
-chmod +x "$HOME/status.sh"
-
+create_management_scripts
 log_info "Management scripts created"
 
 # ============================================

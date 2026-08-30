@@ -14,8 +14,14 @@ Three sources combined:
      in p_/w_ primary variants + grenade viewmodels; _l/l pose variants
      pruned 2026-05-13)
 
-Excluded buckets (allowed modification): gfx/env/* (skybox), overviews/*,
-flag models (w_aflag/gflag/wflag).
+Excluded buckets (allowed modification): overviews/*, flag models
+(w_aflag/gflag/wflag).
+
+Skyboxes (gfx/env/*) were an excluded bucket until 2026-08-27. They are now IN
+scope at severity "review" -- an operator POLICY REVERSAL, not a bug fix. A
+skybox mismatch is reported and its bytes captured for an admin, but it does not
+count toward a verdict. Reverting = move "gfx/env/" back to
+EXCLUDED_PATH_PREFIXES.
 
 Usage:
   python3 build-game-files-manifest.py [--source-server <host>] [--out <path>]
@@ -46,7 +52,12 @@ import paramiko
 # Policy — edit here to change manifest scope
 # --------------------------------------------------------------------------
 
-EXCLUDED_PATH_PREFIXES = ("gfx/env/", "overviews/")
+EXCLUDED_PATH_PREFIXES = ("overviews/",)
+
+# Report-only scope. In the manifest, captured and shown to an admin, but the
+# client's IsReview branch keeps it out of modified_game_files -- so it never
+# flags a player. gfx/env/ added 2026-08-27 (skyboxes, previously excluded).
+REVIEW_PATH_PREFIXES = ("gfx/env/",)
 EXCLUDED_EXACT = {
     "models/w_aflag.mdl",
     "models/w_gflag.mdl",
@@ -107,8 +118,8 @@ ALTERNATE_HASHES = {
 # `.mdl` extension implicit. Primary variants only: the _l/l lowered/left-hand
 # pose variants were PRUNED 2026-05-13 (operator call — not stock DoD, likely
 # community-mod files; they put MissingFiles noise in every clean-install
-# session without contributing verdict weight). Do not re-add without checking
-# CHANGES_SUMMARY_2026-06-26.md § "AC manifest prune".
+# session without contributing verdict weight). Do not re-add without confirming
+# they are stock DoD files.
 WEAPON_FAMILIES = [
     ("amerk_grenade",  "p_amerk",   "w_amerk"),
     ("bar",            "p_bar",     "w_bar"),
@@ -185,6 +196,11 @@ def hash_remote_file(ssh, full_path):
     return lines[0].split()[0], int(lines[1])
 
 
+def severity_for(path):
+    """Severity for a manifest path: a violation unless its prefix is report-only."""
+    return "review" if any(path.startswith(p) for p in REVIEW_PATH_PREFIXES) else "violation"
+
+
 def categorize(path):
     """Map a relative path to its category bucket."""
     p = path.lower()
@@ -244,7 +260,7 @@ def build_manifest(ssh, dod_path, filelist_path):
             "size": size,
             "origin": ".res",
             "category": categorize(path),
-            "severity": "violation",
+            "severity": severity_for(path),
             "referenced_by": sorted(ref_maps),
         })
         res_added += 1
@@ -282,7 +298,7 @@ def build_manifest(ssh, dod_path, filelist_path):
             "size": size,
             "origin": "filelist.ini",
             "category": cat,
-            "severity": "violation",
+            "severity": severity_for(path),
         })
         seen.add(path)
         fl_added += 1
@@ -307,7 +323,7 @@ def build_manifest(ssh, dod_path, filelist_path):
             "path": path, "sha256": sha, "size": size,
             "origin": "explicit_2026-05-01",
             "category": categorize(path),
-            "severity": "violation",
+            "severity": severity_for(path),
         })
         seen.add(path)
 
@@ -325,7 +341,7 @@ def build_manifest(ssh, dod_path, filelist_path):
             "path": path, "sha256": sha, "size": size,
             "origin": "explicit_2026-07-07_grenade_viewmodels",
             "category": "grenade_model",
-            "severity": "violation",
+            "severity": severity_for(path),
         })
         seen.add(path)
 
@@ -352,7 +368,7 @@ def build_manifest(ssh, dod_path, filelist_path):
                 "path": rel, "sha256": sha, "size": size,
                 "origin": "explicit_2026-05-02_full_kit",
                 "category": "weapon_player_model" if base.startswith("p_") else "weapon_world_model",
-                "severity": "violation",
+                "severity": severity_for(rel),
                 "weapon_family": family,
                 "variant": "primary",
             })
@@ -417,15 +433,15 @@ def assemble_manifest(entries, source_server_label, dod_path):
             "sources": dict(src_counts),
             "severity_semantics": {
                 "violation": "Mismatch is a hard violation. Reported in dossier and counts toward verdict.",
-                "review": "Mismatch surfaces in dossier as 'admin review' item, NOT a violation. Player's local file copied into session bundle's review_files/ subdirectory for admin inspection. Use case: lowered-carry / left-handed variants where the model legitimately differs across map states or community packs.",
+                "review": "Mismatch surfaces in dossier as 'admin review' item, NOT a violation. Player's local file copied into session bundle's review_files/ subdirectory for admin inspection. Use cases: lowered-carry / left-handed variants where the model legitimately differs across map states or community packs; and skyboxes (gfx/env/*), where custom sky packs are commonplace and legitimate but a transparent or flattened sky is a real visual advantage worth an admin's eyes.",
             },
             "scope_notes": [
                 "Standard US-vs-Wehrmacht 6v6 weapon kit. British/commonwealth and paratrooper-class weapons NOT enforced.",
                 "v_*.mdl (first-person view models) NOT enforced, EXCEPT grenade viewmodels (v_grenade/v_mills/v_stick) — added 2026-07-07 to match ktp_file.ini.",
+                "gfx/env/* (skyboxes) IN scope at severity 'review' since 2026-08-27 (was an excluded bucket). Reported and captured for admin review; never counts toward a verdict. Only skyboxes a map .res references enter scope -- stock skies are unreferenced and stay out.",
                 "_l / l-suffix pose variants NOT enforced — pruned 2026-05-13 (non-stock community files; MissingFiles noise on clean installs).",
             ],
             "excluded_buckets": [
-                "gfx/env/* (skybox — cosmetic, allowed)",
                 "models/{w_aflag,w_gflag,w_wflag}.mdl (flag — cosmetic, allowed)",
                 "overviews/* (top-down map BMPs — cosmetic, allowed)",
                 # maps/*.bsp: NOT cosmetic, and this is a stated gap rather than a ruling.

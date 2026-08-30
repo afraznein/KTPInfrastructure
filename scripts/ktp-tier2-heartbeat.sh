@@ -4,10 +4,36 @@
 # Tier 2 runs nightly (schedule) + on integration-test PRs, on a self-hosted
 # runner. If the runner dies or the schedule breaks, the suite silently stops —
 # and "no signal" looks identical to "all green". This watches the last-run
-# marker the workflow writes (tier2-integration.yml "Record Tier 2 last-run
+# markers the workflow writes (tier2-integration.yml "Record Tier 2 last-run
 # marker" step) and alerts to Discord on a state transition. The watcher must
 # NOT share fate with the watched, so this runs as a plain data-server cron, not
 # on the GH runner.
+#
+# TWO markers, watched independently and reported BY NAME:
+#   - tier2-last-run.json          (the `main` leg — what the fleet runs)
+#   - tier2-last-run-preprod.json  (the `preprod` leg — what staging exercises)
+# The workflow's nightly schedule writes both (matrix.target_ref: preprod +
+# main), but PR-triggered runs only ever stamp the leg they targeted. Watching
+# only one of the two is the exact blind spot this script used to have: it
+# watched `tier2-last-run.json` alone, so a false alarm fired claiming the
+# runner was offline/broken (65h "since last run") while the runner was
+# active/running with 0 restarts and had completed a `preprod` job 35 minutes
+# earlier — that run simply never touched the marker this script was reading.
+# Fix is structural, not a wider threshold: check both, name both in every
+# alert, and let either one going stale be visible as *which one*. Do not
+# collapse this back to "either marker is fine" — that reintroduces the same
+# blind spot with different marker.
+#
+# Open question this does NOT resolve: whether `preprod` is a permanent lane
+# or folds back into `main` after the pending ABI wave activates. This design
+# does not need to know. If preprod stays permanent, both checks keep firing
+# forever and that's correct. If preprod is retired, its nightly leg stops
+# being scheduled, its marker goes stale, and — left alone — this script would
+# alert on that forever, which is now a false alarm about a lane nobody is
+# running. At that point set KTP_TIER2_WATCH_PREPROD=0 (one config line, no
+# code edit) to stop watching it; don't repoint KTP_TIER2_MARKER_PREPROD at
+# the main marker; that silently makes both checks watch the same file, which
+# has the same blind spot as watching one marker.
 #
 # Also watches for runner stack drift vs the fleet (ktp-tier2-stack-drift.py):
 # a stale module stack makes green runs certify an environment that exists
@@ -25,9 +51,12 @@ set -euo pipefail
 
 CONFIG="${KTP_RELAY_CONFIG:-/etc/ktp/discord-relay.conf}"
 MARKER="${KTP_TIER2_MARKER:-/opt/ktp-tier2-runner/tier2-last-run.json}"
+WATCH_PREPROD="${KTP_TIER2_WATCH_PREPROD:-1}"
+MARKER_PREPROD="${KTP_TIER2_MARKER_PREPROD:-$(dirname "$MARKER")/tier2-last-run-preprod.json}"
 STATE="${KTP_TIER2_HEARTBEAT_STATE:-/var/lib/ktp-tier2-heartbeat.state}"
 # 36h: nightly cadence (24h) + a full skipped day of margin before we cry wolf.
 MAX_AGE_SECONDS="${KTP_TIER2_MAX_AGE:-129600}"
+MAX_AGE_SECONDS_PREPROD="${KTP_TIER2_MAX_AGE_PREPROD:-$MAX_AGE_SECONDS}"
 # Default to the shared scheduled-report channel (perf-rollup / canary / tier2
 # embeds). Override with TIER2_REPORT_CHANNEL in the relay conf.
 CHANNEL_DEFAULT="1498813261263405097"
@@ -44,32 +73,61 @@ CHANNEL="${TIER2_REPORT_CHANNEL:-$CHANNEL_DEFAULT}"
 
 now="$(date +%s)"
 
-# ── Determine current health state ───────────────────────────────────────────
-state="ok"
-detail=""
-if [ ! -f "$MARKER" ]; then
-    state="stale"
-    detail="no Tier 2 run marker at \`$MARKER\` — has the suite ever run on this runner?"
-else
-    ts="$(jq -r '.ts // 0' "$MARKER" 2>/dev/null || echo 0)"
-    outcome="$(jq -r '.outcome // "unknown"' "$MARKER" 2>/dev/null || echo unknown)"
-    run_id="$(jq -r '.run_id // "?"' "$MARKER" 2>/dev/null || echo '?')"
-    age=$(( now - ts ))
-    if [ "$ts" -eq 0 ] || [ "$age" -gt "$MAX_AGE_SECONDS" ]; then
-        state="stale"
-        detail="last Tier 2 run was $((age / 3600))h ago (threshold $((MAX_AGE_SECONDS / 3600))h) — runner offline or schedule broken?"
-    elif [ "$outcome" != "success" ]; then
-        # Anything that is not an explicit success is unhealthy. This used to
-        # test `= "failure"`, which let every OTHER non-success outcome read as
-        # green: on 2026-08-09 and 08-10 the suite wedged in teardown, GitHub
-        # killed the job at its 30m ceiling, the workflow recorded
-        # outcome="cancelled" — and this heartbeat reported ok both mornings
-        # while the suite had not completed once. An allowlist is the only
-        # shape that cannot be widened by a new outcome string upstream.
-        state="failed"
-        detail="last Tier 2 run (\`$run_id\`) did not succeed (outcome: \`$outcome\`), $((age / 3600))h ago."
+# ── Determine one marker's health state — called once per leg ───────────────
+# Emits "<state>\x1f<detail>" on stdout; state is one of ok/stale/failed.
+check_marker() {
+    local path="$1" label="$2" max_age="$3"
+    local m_state="ok" m_detail m_ts m_outcome m_run_id m_age
+    if [ ! -f "$path" ]; then
+        m_state="stale"
+        m_detail="$label: no run marker at \`$path\` — has this leg ever run on this runner?"
+    else
+        m_ts="$(jq -r '.ts // 0' "$path" 2>/dev/null || echo 0)"
+        m_outcome="$(jq -r '.outcome // "unknown"' "$path" 2>/dev/null || echo unknown)"
+        m_run_id="$(jq -r '.run_id // "?"' "$path" 2>/dev/null || echo '?')"
+        m_age=$(( now - m_ts ))
+        if [ "$m_ts" -eq 0 ] || [ "$m_age" -gt "$max_age" ]; then
+            m_state="stale"
+            m_detail="$label: last run $((m_age / 3600))h ago (threshold $((max_age / 3600))h) — offline or schedule broken?"
+        elif [ "$m_outcome" != "success" ]; then
+            # Anything that is not an explicit success is unhealthy. This used to
+            # test `= "failure"`, which let every OTHER non-success outcome read
+            # as green: on 2026-08-09 and 08-10 the suite wedged in teardown,
+            # GitHub killed the job at its 30m ceiling, the workflow recorded
+            # outcome="cancelled" — and this heartbeat reported ok both mornings
+            # while the suite had not completed once. An allowlist is the only
+            # shape that cannot be widened by a new outcome string upstream.
+            m_state="failed"
+            m_detail="$label: last run (\`$m_run_id\`) did not succeed (outcome: \`$m_outcome\`), $((m_age / 3600))h ago."
+        else
+            m_detail="$label: healthy — last run $((m_age / 3600))h ago."
+        fi
     fi
+    printf '%s\x1f%s\n' "$m_state" "$m_detail"
+}
+
+main_result="$(check_marker "$MARKER" "main" "$MAX_AGE_SECONDS")"
+main_state="${main_result%%$'\x1f'*}"
+main_detail="${main_result#*$'\x1f'}"
+
+if [ "$WATCH_PREPROD" = "1" ]; then
+    preprod_result="$(check_marker "$MARKER_PREPROD" "preprod" "$MAX_AGE_SECONDS_PREPROD")"
+    preprod_state="${preprod_result%%$'\x1f'*}"
+    preprod_detail="${preprod_result#*$'\x1f'}"
+else
+    preprod_state="ok"
+    preprod_detail="preprod: not watched (KTP_TIER2_WATCH_PREPROD=0)"
 fi
+
+# Worst-of drives the headline bucket; both lines always ride in the body
+# regardless of which one is worse — that's the point of watching two.
+rank() { case "$1" in failed) echo 2 ;; stale) echo 1 ;; *) echo 0 ;; esac; }
+if [ "$(rank "$main_state")" -ge "$(rank "$preprod_state")" ]; then
+    state="$main_state"
+else
+    state="$preprod_state"
+fi
+detail="$main_detail"$'\n'"$preprod_detail"
 
 # ── Stack-drift check — runs whatever the last run did ───────────────────────
 # The runner's module stack must track the fleet (tier2-runner-architecture);
@@ -95,7 +153,7 @@ if [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
         drift_note="$drift_out — re-sync the runner stack from the fleet (or dismiss if the runner is deliberately leading a staged wave)."
         if [ "$state" = "ok" ]; then
             state="drift"
-            detail="$drift_note"
+            detail="$detail"$'\n\n'"$drift_note"
         else
             detail="$detail"$'\n\n'"⚠️ **Stack drift too:** $drift_note"
         fi
@@ -104,20 +162,19 @@ if [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
     fi
 fi
 
-# Drift arriving during an already-red run is new information, so it has to be
-# its own edge — otherwise it waits up to a full re-alert period to be spoken.
-# The state FILE therefore keys on both; the embed still leads with the worse
-# of the two.
-# `if`, not `[ x ] && y`: under `set -e` a false test at statement level takes
-# the whole script down with it.
-key="$state"
-if [ "$drifted" = "1" ] && [ "$state" != "drift" ]; then
-    key="$state+drift"
-fi
+# State-file key names EVERY input that can change independently: main marker
+# state, preprod marker state, drift flag. A single combined "state" bucket
+# would hide a change that doesn't move the bucket — e.g. main flips ok->stale
+# while preprod is already stale: the worst-of `state` stays "stale" and a
+# key built from that alone would never re-alert on the new information. Same
+# class of bug the drift check below already had to be pulled out of.
+key="main=$main_state,preprod=$preprod_state"
+[ "$drifted" = "1" ] && key="$key,drift=1"
 
-# State file is "<state>|<epoch of last alert>". Older files hold a bare state;
-# treat those as never-alerted so the first run after an upgrade re-alerts if
-# we are currently down.
+# State file is "<key>|<epoch of last alert>". Older files hold a bare
+# single-value state (pre-two-marker); those never match the new key format,
+# so the first run after this upgrade re-alerts if we are currently down —
+# same "treat unrecognized as never-alerted" precedent as before.
 raw="$(cat "$STATE" 2>/dev/null || echo "")"
 prev="${raw%%|*}"
 prev_alert="${raw#*|}"
@@ -132,7 +189,7 @@ now="$(date +%s)"
 REALERT_SECONDS="${KTP_TIER2_REALERT_SECONDS:-86400}"
 repeat=0
 if [ "$key" = "$prev" ]; then
-    if [ "$key" = "ok" ]; then
+    if [ "$state" = "ok" ]; then
         echo "tier2-heartbeat: state=ok (unchanged) — no alert"
         exit 0
     fi
@@ -145,15 +202,15 @@ fi
 
 # ── Build + post the transition embed ────────────────────────────────────────
 case "$state" in
-    ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite healthy (running + stack in sync)."; color=5763719 ;;
-    failed) title="❌ KTP Tier 2 — last run failed"; desc="$detail"; color=15548997 ;;
+    ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite healthy (running + stack in sync)."$'\n\n'"$detail"; color=5763719 ;;
+    failed) title="❌ KTP Tier 2 — a leg failed"; desc="$detail"; color=15548997 ;;
     # Say the suite passed. `drift` is only reachable from state=ok, so this is
     # always true here — and after a red spell the state goes failed → drift
     # without passing through ok, so nothing else ever announces the recovery.
     drift)  title="⚠️ KTP Tier 2 — runner stack drifted from fleet"
-            desc="**The suite ran and passed** — this is about the runner's binaries, not the tests."$'\n\n'"$detail"
+            desc="**Both legs ran and passed** — this is about the runner's binaries, not the tests."$'\n\n'"$detail"
             color=16763904 ;;
-    *)      title="⚠️ KTP Tier 2 — not running"; desc="$detail"; color=16763904 ;;
+    *)      title="⚠️ KTP Tier 2 — a leg is not running"; desc="$detail"; color=16763904 ;;
 esac
 if [ "$repeat" = "1" ]; then
     title="$title — STILL DOWN"

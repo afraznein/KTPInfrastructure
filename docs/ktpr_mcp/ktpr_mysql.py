@@ -427,6 +427,172 @@ def _match_maps(tournament_only: bool = True) -> dict[str, str]:
     ))}
 
 
+def _hud_event_stats(idl: str, by: str = "player") -> dict:
+    """Assists and cap-breaks from the HUD EVENT tables, not its is_final summaries.
+
+    The summaries under-report. Measured 2026-08-29 over the LAN set: 330
+    player-halves disagree with the events and EVERY one has more events than
+    summary; 97 more have events and no summary row at all. No positive summary
+    lacks events -- the events are a strict superset. It is not only the known
+    match_end truncation: one player's half-2 summary row EXISTS, reads 0 assists,
+    and sits on 11 assist events, while his half-1 row matches exactly. A summary
+    being present does not make it correct.
+
+    cap_break is counted DISTINCT -- the stream carries 37 duplicate rows out of
+    619 (same match/half/tick/player/flag) that a plain COUNT would publish.
+
+    `by` is "player" (career) or "match" (per match_id), matching _hlx_damage.
+    """
+    cols = {"player": "ka.steam_id",
+            "match":  "ka.steam_id, k.match_id",
+            "half":   "ka.steam_id, k.match_id, k.half"}[by]
+    assists_sql = f"""
+        SELECT {cols}, COUNT(*) AS a
+        FROM hud_kill_assists ka
+        JOIN hud_kills k ON k.id = ka.kill_id
+        WHERE k.match_id IN ({idl})
+        GROUP BY {cols};
+    """
+    bcols = {"player": "steam_id",
+             "match":  "steam_id, match_id",
+             "half":   "steam_id, match_id, half"}[by]
+    breaks_sql = f"""
+        SELECT {bcols}, COUNT(DISTINCT half, tick, flag_id) AS b
+        FROM hud_flag_events
+        WHERE event = 'cap_break' AND steam_id IS NOT NULL AND match_id IN ({idl})
+        GROUP BY {bcols};
+    """
+    out: dict = {}
+    for rows, slot in ((_parse_rows(run_sql(assists_sql)), 0),
+                       (_parse_rows(run_sql(breaks_sql)), 1)):
+        for row in rows:
+            if by == "player":   k = row[0]
+            elif by == "match":  k = (row[0], row[1])
+            else:                k = (row[0], row[1], int(row[2]))
+            cur = list(out.get(k, (0.0, 0.0)))
+            cur[slot] = float(row[-1])
+            out[k] = (cur[0], cur[1])
+    return out
+
+
+def _hud_half_count(idl: str, by: str = "player") -> dict:
+    """How many halves the HUD actually captured. Informational ONLY.
+
+    Kept because RawMatchStats exposes it to the prediction engine. It must never
+    be a denominator again: dividing a HUD total by HUD halves cancels a dropped
+    half out of numerator AND denominator, so a match the HUD half-missed reads as
+    a perfectly normal rate. Divided by the HLstatsX halves the same loss shows up
+    as a depressed rate, which is detectable.
+    """
+    cols = "steam_id" if by == "player" else "steam_id, match_id"
+    sql = f"""
+        SELECT {cols}, COUNT(DISTINCT match_id, half) AS hh
+        FROM hud_player_stats
+        WHERE is_final=1 AND match_id IN ({idl})
+        GROUP BY {cols};
+    """
+    out: dict = {}
+    for row in _parse_rows(run_sql(sql)):
+        k = row[0] if by == "player" else (row[0], row[1])
+        out[k] = int(row[-1])
+    return out
+
+
+def _hud_tables_present() -> bool:
+    """Does this database carry the HUD tables at all?
+
+    The module's DB is env-selectable (KTPR_DB), and the HUD tables exist ONLY in
+    hlstatsx_lan. Against the season DB a HUD query does not return zero rows -- it
+    fails with "table doesn't exist". So the fallback has to be gated on presence,
+    not on an empty result.
+    """
+    sql = """
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'hud_kill_assists';
+    """
+    rows = _parse_rows(run_sql(sql))
+    return bool(rows) and int(rows[0][0]) > 0
+
+
+def _spine_assist_break_stats(idl: str, by: str = "player") -> dict:
+    """Assists and cap-breaks from the HLStatsX SPINE. No HUD anywhere.
+
+    assists    -> hlstats_Events_PlayerPlayerActions, action code 'assist'
+    cap_breaks -> hlstats_Events_PlayerActions,       action code 'cap_break'
+
+    Emitted by KTPAMXX's stats capture and fleet-complete from the 2026-08-26
+    03:00 ET wave. Partial 08-21..25, absent before -- so a zero from an older
+    match means "not emitted", NOT "the player did nothing". Callers must gate on
+    match date and render unknown rather than 0.
+
+    ⛔ These rows carry match_id but NO half, so this supports per-half RATES
+    (match total / halves) and never per-half SPLITS. ktp_assist_events has the
+    half column and zero rows -- schema-ahead with no writer. Do not build on it.
+    """
+    if by not in ("player", "match"):
+        raise ValueError(f"spine assist/break stats are per-match at best; got by={by!r}")
+    pcol = "ppa.playerId" if by == "player" else "ppa.playerId, ppa.match_id"
+    acol = "pa.playerId"  if by == "player" else "pa.playerId, pa.match_id"
+    assists_sql = f"""
+        SELECT {pcol}, COUNT(*) AS a
+        FROM hlstats_Events_PlayerPlayerActions ppa
+        JOIN hlstats_Actions act ON act.id = ppa.actionId
+        WHERE act.code = 'assist' AND ppa.match_id IN ({idl})
+        GROUP BY {pcol};
+    """
+    breaks_sql = f"""
+        SELECT {acol}, COUNT(*) AS b
+        FROM hlstats_Events_PlayerActions pa
+        JOIN hlstats_Actions act ON act.id = pa.actionId
+        WHERE act.code = 'cap_break' AND pa.match_id IN ({idl})
+        GROUP BY {acol};
+    """
+    out: dict = {}
+    for rows, slot in ((_parse_rows(run_sql(assists_sql)), 0),
+                       (_parse_rows(run_sql(breaks_sql)), 1)):
+        for row in rows:
+            k = row[0] if by == "player" else (row[0], row[1])
+            cur = list(out.get(k, (0.0, 0.0)))
+            cur[slot] = float(row[-1])
+            out[k] = (cur[0], cur[1])
+    return out
+
+
+def _assist_break_stats(idl: str, by: str = "player", pid2uid: dict | None = None) -> dict:
+    """Assists/breaks, preferring the SPINE and falling back to the HUD.
+
+    Operator goal, 2026-08-29: "we don't want to depend on the hud, we want all the
+    stats coming from hlstatsx." Season play can honour that -- both stats are on
+    the spine. The LAN dataset cannot: those events were never emitted there
+    (hlstats_Events_PlayerPlayerActions has 0 rows in hlstatsx_lan, against a
+    control of 4,961 dod_control_point rows in the same table).
+
+    One code path serves both, and it degrades VISIBLY rather than silently: the
+    spine is asked first, and the HUD is used only when the spine has nothing AND
+    the HUD tables actually exist here.
+
+    Spine keys are hlstatsx playerIds; HUD keys are STEAM_0 ids. Pass pid2uid to
+    get spine results back on steam_id keys so callers need not care which source
+    answered.
+    """
+    spine = _spine_assist_break_stats(idl, by) if by in ("player", "match") else {}
+    if spine:
+        if pid2uid is None:
+            return spine
+        out: dict = {}
+        for k, v in spine.items():
+            pid = k if by == "player" else k[0]
+            uid = pid2uid.get(pid)
+            if not uid or ":" not in uid:
+                continue
+            steam_id = "STEAM_0:" + uid
+            out[steam_id if by == "player" else (steam_id, k[1])] = v
+        return out
+    if not _hud_tables_present():
+        return {}
+    return _hud_event_stats(idl, by)
+
+
 def _hlx_damage(idl: str, by: str = "player") -> dict:
     """HLstatsX damage per player, from `ktp_match_stats`.
 
@@ -509,16 +675,11 @@ def load_match_player_stats(tournament_only: bool = True):
     for pid, match_id, cnt in _parse_rows(run_sql(flags_sql)):
         flags[(pid, match_id)] = float(cnt)
 
-    hud_sql = f"""
-        SELECT steam_id, match_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
-               COUNT(DISTINCT half) AS hh
-        FROM hud_player_stats
-        WHERE is_final=1 AND match_id IN ({idl})
-        GROUP BY steam_id, match_id;
-    """
-    hud: dict[tuple[str, str], tuple[float, float, int]] = {}
-    for steam_id, match_id, a, b, hh in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id)] = (float(a), float(b), int(hh))
+    # Assists/breaks from the HUD EVENT tables -- its is_final summaries
+    # under-report (see _hud_event_stats). HUD's half count is not read: every
+    # rate below divides by the HLstatsX halves.
+    # Spine first, HUD only where the spine has nothing and the HUD tables exist.
+    hud: dict[tuple[str, str], tuple[float, float]] = _assist_break_stats(idl, "match", pid2uid)
     hlx_dmg = _hlx_damage(idl, "match")
 
     out = []
@@ -530,9 +691,8 @@ def load_match_player_stats(tournament_only: bool = True):
         if not uid or ":" not in uid:
             continue
         steam_id = "STEAM_0:" + uid
-        assists, breaks, hud_halves = hud.get((steam_id, match_id), (0.0, 0.0, 0))
+        assists, breaks = hud.get((steam_id, match_id), (0.0, 0.0))
         damage = hlx_dmg.get((pid, match_id), 0.0)   # HLstatsX stat, not HUD
-        hud_h = hud_halves or halves
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         team = teams.get(steam_id, "?")
         mr = results.get(match_id)
@@ -552,9 +712,9 @@ def load_match_player_stats(tournament_only: bool = True):
             kills_half=kills / halves,
             deaths_half=deaths / halves,
             flags_half=flags.get((pid, match_id), 0.0) / halves,
-            assists_half=assists / hud_h,
+            assists_half=assists / halves,
             damage_half=damage / halves,         # HLstatsX stat / HLstatsX halves
-            breaks_half=breaks / hud_h,
+            breaks_half=breaks / halves,
             role=roles.get(steam_id, "?"),
             team=team,
             match_id=match_id,
@@ -618,16 +778,14 @@ def load_raw_match_stats(tournament_only: bool = True):
     for pid, match_id, cnt in _parse_rows(run_sql(flags_sql)):
         flags[(pid, match_id)] = float(cnt)
 
-    hud_sql = f"""
-        SELECT steam_id, match_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
-               COUNT(DISTINCT half) AS hh
-        FROM hud_player_stats
-        WHERE is_final=1 AND match_id IN ({idl})
-        GROUP BY steam_id, match_id;
-    """
-    hud: dict[tuple[str, str], tuple[float, float, int]] = {}
-    for steam_id, match_id, a, b, hh in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id)] = (float(a), float(b), int(hh))
+    # Same event-table source as the rate loaders, so no two callers disagree on
+    # a player's assist total. hud_halves is still reported because RawMatchStats
+    # exposes it to the engine -- informational, never a denominator.
+    hud_ev: dict[tuple[str, str], tuple[float, float]] = _hud_event_stats(idl, "match")
+    hud_hh: dict[tuple[str, str], int] = _hud_half_count(idl, "match")
+    hud: dict[tuple[str, str], tuple[float, float, int]] = {
+        k: (v[0], v[1], hud_hh.get(k, 0)) for k, v in hud_ev.items()
+    }
     hlx_dmg = _hlx_damage(idl, "match")
 
     out = []
@@ -654,6 +812,49 @@ def load_raw_match_stats(tournament_only: bool = True):
             halves=halves, hud_halves=hud_halves,
         ))
     return out
+
+
+_OPP = {"allies": "axis", "axis": "allies"}
+
+
+def _side_from_match_team(team_int: int, half: int, orient: int = 1) -> str | None:
+    """
+    Side (axis|allies) for one half, from ktp_match_players.team (HLstatsX's
+    per-match roster, 1=Allies/2=Axis at its last tracking pass). For a match
+    that reached half 2 that pass records the half-2 side; a match that never
+    did stores the half-1 side instead — which is why callers pass a per-match
+    `orient` calibrated against the player-halves whose side is already known
+    (see _match_side_orientations). Returns None outside halves 1/2: sides swap
+    at the interval, so any other half has no defined parity here.
+    """
+    if team_int not in (1, 2) or half not in (1, 2):
+        return None
+    base = "allies" if team_int == 1 else "axis"
+    side = base if half == 2 else _OPP[base]
+    return side if orient == 1 else _OPP[side]
+
+
+def _match_side_orientations(hud: dict, kmp: dict) -> dict[str, int]:
+    """
+    match_id -> orientation (1 or -1) for _side_from_match_team, calibrated per
+    match against the summarised player-halves. A match qualifies only when
+    EVERY known (team, half, side) triple agrees under one orientation — a
+    match with a mid-match team switch or a mixed tracking frame fails both
+    orientations and is left out, so its unsummarised rows stay dropped rather
+    than risk attributing a player to the wrong side.
+    """
+    calib: dict[str, list] = {}
+    for (steam_id, match_id, half), (_a, _b, side) in hud.items():
+        team_int = kmp.get((steam_id, match_id))
+        if team_int is not None:
+            calib.setdefault(match_id, []).append((team_int, half, side))
+    orient: dict[str, int] = {}
+    for match_id, known in calib.items():
+        for o in (1, -1):
+            if all(_side_from_match_team(t, h, o) == s for t, h, s in known):
+                orient[match_id] = o
+                break
+    return orient
 
 
 def load_half_player_stats(tournament_only: bool = True):
@@ -711,10 +912,26 @@ def load_half_player_stats(tournament_only: bool = True):
         WHERE is_final=1 AND match_id IN ({idl})
         GROUP BY steam_id, match_id, half, team;
     """
+    # The summary is still read for `team` -- the events carry no side -- but the
+    # assist and break NUMBERS come from the event tables, which the summaries
+    # under-report (see _hud_event_stats).
+    hud_ev = _hud_event_stats(idl, "half")
     hud: dict[tuple[str, str, int], tuple[float, float, str]] = {}
     for steam_id, match_id, half, a, b, side in _parse_rows(run_sql(hud_sql)):
-        hud[(steam_id, match_id, int(half))] = (float(a), float(b), side)
+        key = (steam_id, match_id, int(half))
+        ev_a, ev_b = hud_ev.get(key, (0.0, 0.0))
+        hud[key] = (ev_a, ev_b, side)
     hlx_dmg = _hlx_damage(idl, "half")
+
+    # Fallback side source for player-halves the HUD never summarised, so they
+    # stop being dropped wholesale: HLstatsX's own per-match roster. Per-match
+    # calibration (not a fixed mapping) because its team frame varies by match.
+    kmp: dict[tuple[str, str], int] = {}
+    for uid, match_id, team in _parse_rows(run_sql(
+            f"SELECT steam_id, match_id, team FROM ktp_match_players "
+            f"WHERE match_id IN ({idl});")):
+        kmp[("STEAM_0:" + uid, match_id)] = int(team)
+    orient = _match_side_orientations(hud, kmp)
 
     out = []
     for pid, match_id, half, kills, deaths in spine:
@@ -727,7 +944,12 @@ def load_half_player_stats(tournament_only: bool = True):
         assists, breaks, side = hud.get(key, (0.0, 0.0, None))
         damage = hlx_dmg.get((pid, match_id, str(half)), 0.0)   # HLstatsX stat, not HUD
         if side is None:
-            continue    # no HUD row for this player/match/half -> can't tell which side
+            team_int = kmp.get((steam_id, match_id))
+            o = orient.get(match_id)
+            if team_int is not None and o is not None:
+                side = _side_from_match_team(team_int, half, o)
+        if side is None:
+            continue    # no side source that can be trusted -> dropped, not guessed
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         out.append(E.Player(
             name=name,
@@ -802,19 +1024,11 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
     """
     flags = {r[0]: float(r[1]) for r in _parse_rows(run_sql(flags_sql))}
 
-    # HUD new stats per steam_id. Keep HUD's OWN half count: HUD sometimes drops
-    # half-snapshots, so a HUD total must be divided by the halves HUD actually
-    # captured (not the HLstatsX halves) or the per-half rate is understated.
-    # Damage is no longer read here — see hlx_dmg below.
-    hud_sql = f"""
-        SELECT steam_id, SUM(assists) AS a, SUM(cap_breaks) AS b,
-               COUNT(DISTINCT match_id, half) AS hh
-        FROM hud_player_stats
-        WHERE is_final=1 AND match_id IN ({idl})
-        GROUP BY steam_id;
-    """
-    hud = {r[0]: (float(r[1]), float(r[2]), int(r[3]))
-           for r in _parse_rows(run_sql(hud_sql))}
+    # Assists/breaks from the HUD EVENT tables. The comment here used to say to keep
+    # HUD's OWN half count because HUD drops half-snapshots. That was backwards: it
+    # cancels the loss out of numerator and denominator, so a half-missed match reads
+    # as a NORMAL rate. Under the HLstatsX halves the loss is visible.
+    hud = _assist_break_stats(idl, "player", pid2uid)
     hlx_dmg = _hlx_damage(idl, "player")
 
     out = []
@@ -828,8 +1042,7 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
         if not uid or ":" not in uid:      # skip HLTV / bots / unmapped
             continue
         steam_id = "STEAM_0:" + uid
-        assists, breaks, hud_halves = hud.get(steam_id, (0.0, 0.0, 0))
-        hud_h = hud_halves or halves            # fall back to HLstatsX halves if HUD absent
+        assists, breaks = hud.get(steam_id, (0.0, 0.0))
         damage = hlx_dmg.get(pid, 0.0)          # HLstatsX stat -> HLstatsX halves
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         out.append(E.Player(
@@ -839,9 +1052,9 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
             kills_half=kills / halves,           # HLstatsX stats / HLstatsX halves
             deaths_half=deaths / halves,
             flags_half=flags.get(pid, 0.0) / halves,
-            assists_half=assists / hud_h,        # HUD stats / HUD halves
+            assists_half=assists / halves,        # HUD events / HLstatsX halves
             damage_half=damage / halves,         # HLstatsX stat / HLstatsX halves
-            breaks_half=breaks / hud_h,
+            breaks_half=breaks / halves,
             role=roles.get(steam_id, "?"),
             team=teams.get(steam_id, "?"),
         ))

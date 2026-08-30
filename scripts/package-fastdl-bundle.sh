@@ -1,7 +1,7 @@
 #!/bin/bash
 # package-fastdl-bundle.sh — produce a portable FastDL game-files bundle.
 #
-# Run this on the production data server (74.91.112.242) to capture the
+# Run this on the production data server (<DATA_SERVER_IP>) to capture the
 # /var/www/fastdl/dod/ tree (maps, sprites, sound, models, etc) that
 # clients pull when joining the game. Resulting tarball is suitable for
 # FASTDL_FILES_PATH in a LAN deployment.

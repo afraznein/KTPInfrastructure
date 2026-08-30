@@ -31,6 +31,12 @@ set -euo pipefail
 
 DEMOS_DIR="/home/hltvserver/hlds/dod"
 AGE_MINUTES="${AGE_MINUTES:-360}"
+# Renamer must have completed a poll AND actually read every host this recently.
+# Poll cadence is 30s, so 1800 is 60 missed cycles -- long enough that a blip
+# never blocks the sweep, short enough that demos are still inside the 360m
+# deletion threshold when it does.
+RENAMER_STATE_FILE="${RENAMER_STATE_FILE:-/var/lib/hltv-demo-renamer/state.json}"
+READ_STALE_SEC="${READ_STALE_SEC:-1800}"
 DRY_RUN="${DRY_RUN:-0}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -44,6 +50,37 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 renamer_state=$(systemctl is-active hltv-demo-renamer.service 2>/dev/null || true)
 if [ "$renamer_state" != "active" ]; then
     echo "[$(ts)] auto-cleanup: SKIPPED — hltv-demo-renamer is '$renamer_state' (deleting now could purge unrenamed match demos)" >&2
+    exit 0
+fi
+
+# is-active is NOT sufficient, and on 2026-08-25 that cost 23 match halves. The
+# renamer wedged on a half-open SSH session and stayed "active" for 53h; this
+# interlock passed, the sweep ran, and every unrenamed demo was purged -- the
+# exact outcome the interlock above exists to prevent.
+#
+# So also require that the renamer actually READ every host recently. Liveness
+# alone still is not enough: the poll loop can iterate while all five SSH
+# sessions fail, which rewrites state.json on schedule and so satisfies a
+# watchdog and an mtime check while seeing no match windows at all.
+#
+# Fails SAFE in every direction -- unreadable, unparseable, or missing stamps
+# all skip the sweep. Skipping costs disk; deleting costs league demos.
+read_check=$(python3 - "$RENAMER_STATE_FILE" "$READ_STALE_SEC" <<'PY' 2>/dev/null || echo "ERROR unreadable"
+import json, sys, time
+try:
+    stamps = json.load(open(sys.argv[1])).get("last_read_ok", {})
+except Exception as e:
+    print("ERROR %s" % type(e).__name__); raise SystemExit
+if not stamps:
+    # Pre-upgrade renamer, or one that has never completed a clean pass.
+    print("ERROR no-last_read_ok"); raise SystemExit
+now, limit = time.time(), int(sys.argv[2])
+stale = sorted(r for r, t in stamps.items() if now - t > limit)
+print("STALE %s" % ",".join(stale) if stale else "OK")
+PY
+)
+if [ "$read_check" != "OK" ]; then
+    echo "[$(ts)] auto-cleanup: SKIPPED — renamer is active but not reading cleanly ($read_check); unrenamed match demos may be present" >&2
     exit 0
 fi
 

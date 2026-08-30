@@ -25,7 +25,7 @@ However, we're missing several optimizations on our current deployment.
 
 ---
 
-## Current Atlanta Baremetal Status (74.91.121.9)
+## Current Atlanta Baremetal Status (`<ATL_BM_GAME_IP>`)
 
 | Setting | Current | Optimal | Status |
 |---------|---------|---------|--------|
