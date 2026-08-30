@@ -814,6 +814,49 @@ def load_raw_match_stats(tournament_only: bool = True):
     return out
 
 
+_OPP = {"allies": "axis", "axis": "allies"}
+
+
+def _side_from_match_team(team_int: int, half: int, orient: int = 1) -> str | None:
+    """
+    Side (axis|allies) for one half, from ktp_match_players.team (HLstatsX's
+    per-match roster, 1=Allies/2=Axis at its last tracking pass). For a match
+    that reached half 2 that pass records the half-2 side; a match that never
+    did stores the half-1 side instead — which is why callers pass a per-match
+    `orient` calibrated against the player-halves whose side is already known
+    (see _match_side_orientations). Returns None outside halves 1/2: sides swap
+    at the interval, so any other half has no defined parity here.
+    """
+    if team_int not in (1, 2) or half not in (1, 2):
+        return None
+    base = "allies" if team_int == 1 else "axis"
+    side = base if half == 2 else _OPP[base]
+    return side if orient == 1 else _OPP[side]
+
+
+def _match_side_orientations(hud: dict, kmp: dict) -> dict[str, int]:
+    """
+    match_id -> orientation (1 or -1) for _side_from_match_team, calibrated per
+    match against the summarised player-halves. A match qualifies only when
+    EVERY known (team, half, side) triple agrees under one orientation — a
+    match with a mid-match team switch or a mixed tracking frame fails both
+    orientations and is left out, so its unsummarised rows stay dropped rather
+    than risk attributing a player to the wrong side.
+    """
+    calib: dict[str, list] = {}
+    for (steam_id, match_id, half), (_a, _b, side) in hud.items():
+        team_int = kmp.get((steam_id, match_id))
+        if team_int is not None:
+            calib.setdefault(match_id, []).append((team_int, half, side))
+    orient: dict[str, int] = {}
+    for match_id, known in calib.items():
+        for o in (1, -1):
+            if all(_side_from_match_team(t, h, o) == s for t, h, s in known):
+                orient[match_id] = o
+                break
+    return orient
+
+
 def load_half_player_stats(tournament_only: bool = True):
     """
     Return list[ktpr_engine.Player], one row PER (player, match, half), with
@@ -872,9 +915,6 @@ def load_half_player_stats(tournament_only: bool = True):
     # The summary is still read for `team` -- the events carry no side -- but the
     # assist and break NUMBERS come from the event tables, which the summaries
     # under-report (see _hud_event_stats).
-    # NOTE: the `side is None -> continue` below still drops any player-half with
-    # no summary row, so the 97 player-halves that have events and no summary stay
-    # dropped here. Recovering them needs a side source that is not the summary.
     hud_ev = _hud_event_stats(idl, "half")
     hud: dict[tuple[str, str, int], tuple[float, float, str]] = {}
     for steam_id, match_id, half, a, b, side in _parse_rows(run_sql(hud_sql)):
@@ -882,6 +922,16 @@ def load_half_player_stats(tournament_only: bool = True):
         ev_a, ev_b = hud_ev.get(key, (0.0, 0.0))
         hud[key] = (ev_a, ev_b, side)
     hlx_dmg = _hlx_damage(idl, "half")
+
+    # Fallback side source for player-halves the HUD never summarised, so they
+    # stop being dropped wholesale: HLstatsX's own per-match roster. Per-match
+    # calibration (not a fixed mapping) because its team frame varies by match.
+    kmp: dict[tuple[str, str], int] = {}
+    for uid, match_id, team in _parse_rows(run_sql(
+            f"SELECT steam_id, match_id, team FROM ktp_match_players "
+            f"WHERE match_id IN ({idl});")):
+        kmp[("STEAM_0:" + uid, match_id)] = int(team)
+    orient = _match_side_orientations(hud, kmp)
 
     out = []
     for pid, match_id, half, kills, deaths in spine:
@@ -894,7 +944,12 @@ def load_half_player_stats(tournament_only: bool = True):
         assists, breaks, side = hud.get(key, (0.0, 0.0, None))
         damage = hlx_dmg.get((pid, match_id, str(half)), 0.0)   # HLstatsX stat, not HUD
         if side is None:
-            continue    # no HUD row for this player/match/half -> can't tell which side
+            team_int = kmp.get((steam_id, match_id))
+            o = orient.get(match_id)
+            if team_int is not None and o is not None:
+                side = _side_from_match_team(team_int, half, o)
+        if side is None:
+            continue    # no side source that can be trusted -> dropped, not guessed
         name = roster.get(steam_id) or roster.get(uid) or f"[{steam_id}]"
         out.append(E.Player(
             name=name,
