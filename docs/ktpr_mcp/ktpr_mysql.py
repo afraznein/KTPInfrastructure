@@ -498,6 +498,101 @@ def _hud_half_count(idl: str, by: str = "player") -> dict:
     return out
 
 
+def _hud_tables_present() -> bool:
+    """Does this database carry the HUD tables at all?
+
+    The module's DB is env-selectable (KTPR_DB), and the HUD tables exist ONLY in
+    hlstatsx_lan. Against the season DB a HUD query does not return zero rows -- it
+    fails with "table doesn't exist". So the fallback has to be gated on presence,
+    not on an empty result.
+    """
+    sql = """
+        SELECT COUNT(*) FROM information_schema.tables
+        WHERE table_schema = DATABASE() AND table_name = 'hud_kill_assists';
+    """
+    rows = _parse_rows(run_sql(sql))
+    return bool(rows) and int(rows[0][0]) > 0
+
+
+def _spine_assist_break_stats(idl: str, by: str = "player") -> dict:
+    """Assists and cap-breaks from the HLStatsX SPINE. No HUD anywhere.
+
+    assists    -> hlstats_Events_PlayerPlayerActions, action code 'assist'
+    cap_breaks -> hlstats_Events_PlayerActions,       action code 'cap_break'
+
+    Emitted by KTPAMXX's stats capture and fleet-complete from the 2026-08-26
+    03:00 ET wave. Partial 08-21..25, absent before -- so a zero from an older
+    match means "not emitted", NOT "the player did nothing". Callers must gate on
+    match date and render unknown rather than 0.
+
+    ⛔ These rows carry match_id but NO half, so this supports per-half RATES
+    (match total / halves) and never per-half SPLITS. ktp_assist_events has the
+    half column and zero rows -- schema-ahead with no writer. Do not build on it.
+    """
+    if by not in ("player", "match"):
+        raise ValueError(f"spine assist/break stats are per-match at best; got by={by!r}")
+    pcol = "ppa.playerId" if by == "player" else "ppa.playerId, ppa.match_id"
+    acol = "pa.playerId"  if by == "player" else "pa.playerId, pa.match_id"
+    assists_sql = f"""
+        SELECT {pcol}, COUNT(*) AS a
+        FROM hlstats_Events_PlayerPlayerActions ppa
+        JOIN hlstats_Actions act ON act.id = ppa.actionId
+        WHERE act.code = 'assist' AND ppa.match_id IN ({idl})
+        GROUP BY {pcol};
+    """
+    breaks_sql = f"""
+        SELECT {acol}, COUNT(*) AS b
+        FROM hlstats_Events_PlayerActions pa
+        JOIN hlstats_Actions act ON act.id = pa.actionId
+        WHERE act.code = 'cap_break' AND pa.match_id IN ({idl})
+        GROUP BY {acol};
+    """
+    out: dict = {}
+    for rows, slot in ((_parse_rows(run_sql(assists_sql)), 0),
+                       (_parse_rows(run_sql(breaks_sql)), 1)):
+        for row in rows:
+            k = row[0] if by == "player" else (row[0], row[1])
+            cur = list(out.get(k, (0.0, 0.0)))
+            cur[slot] = float(row[-1])
+            out[k] = (cur[0], cur[1])
+    return out
+
+
+def _assist_break_stats(idl: str, by: str = "player", pid2uid: dict | None = None) -> dict:
+    """Assists/breaks, preferring the SPINE and falling back to the HUD.
+
+    Operator goal, 2026-08-29: "we don't want to depend on the hud, we want all the
+    stats coming from hlstatsx." Season play can honour that -- both stats are on
+    the spine. The LAN dataset cannot: those events were never emitted there
+    (hlstats_Events_PlayerPlayerActions has 0 rows in hlstatsx_lan, against a
+    control of 4,961 dod_control_point rows in the same table).
+
+    One code path serves both, and it degrades VISIBLY rather than silently: the
+    spine is asked first, and the HUD is used only when the spine has nothing AND
+    the HUD tables actually exist here.
+
+    Spine keys are hlstatsx playerIds; HUD keys are STEAM_0 ids. Pass pid2uid to
+    get spine results back on steam_id keys so callers need not care which source
+    answered.
+    """
+    spine = _spine_assist_break_stats(idl, by) if by in ("player", "match") else {}
+    if spine:
+        if pid2uid is None:
+            return spine
+        out: dict = {}
+        for k, v in spine.items():
+            pid = k if by == "player" else k[0]
+            uid = pid2uid.get(pid)
+            if not uid or ":" not in uid:
+                continue
+            steam_id = "STEAM_0:" + uid
+            out[steam_id if by == "player" else (steam_id, k[1])] = v
+        return out
+    if not _hud_tables_present():
+        return {}
+    return _hud_event_stats(idl, by)
+
+
 def _hlx_damage(idl: str, by: str = "player") -> dict:
     """HLstatsX damage per player, from `ktp_match_stats`.
 
@@ -583,7 +678,8 @@ def load_match_player_stats(tournament_only: bool = True):
     # Assists/breaks from the HUD EVENT tables -- its is_final summaries
     # under-report (see _hud_event_stats). HUD's half count is not read: every
     # rate below divides by the HLstatsX halves.
-    hud: dict[tuple[str, str], tuple[float, float]] = _hud_event_stats(idl, "match")
+    # Spine first, HUD only where the spine has nothing and the HUD tables exist.
+    hud: dict[tuple[str, str], tuple[float, float]] = _assist_break_stats(idl, "match", pid2uid)
     hlx_dmg = _hlx_damage(idl, "match")
 
     out = []
@@ -877,7 +973,7 @@ def load_players_from_mysql(night: str | None = None, roster_csv: str | None = N
     # HUD's OWN half count because HUD drops half-snapshots. That was backwards: it
     # cancels the loss out of numerator and denominator, so a half-missed match reads
     # as a NORMAL rate. Under the HLstatsX halves the loss is visible.
-    hud = _hud_event_stats(idl, "player")
+    hud = _assist_break_stats(idl, "player", pid2uid)
     hlx_dmg = _hlx_damage(idl, "player")
 
     out = []
