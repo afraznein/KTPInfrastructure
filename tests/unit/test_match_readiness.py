@@ -53,6 +53,32 @@ def test_readiness_payload_excludes_player_identity_and_coordinates():
         assert forbidden not in serialized
 
 
+def test_metric_eligibility_distinguishes_complete_partial_and_unavailable():
+    checks = [
+        {"code": code, "level": "PASS"}
+        for requirements in match_readiness.METRIC_REQUIREMENTS.values()
+        for code in requirements
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["contract_version"] == 1
+    assert {item["status"] for item in eligibility["metrics"].values()} == {"available"}
+
+    checks = [
+        {**item, "level": "WARN" if item["code"] == "position_sampling_interval" else item["level"]}
+        for item in checks
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["metrics"]["positional_impact"]["status"] == "partial"
+
+    checks = [
+        {**item, "level": "FAIL" if item["code"] == "frags_present" else item["level"]}
+        for item in checks
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["metrics"]["combat_context"]["status"] == "unavailable"
+    assert eligibility["metrics"]["combat_context"]["blocking_checks"] == ["frags_present"]
+
+
 def test_privacy_guard_normalizes_camel_case_and_snake_case_keys():
     assert match_readiness.public_payload_is_safe({
         "killerId": 1,

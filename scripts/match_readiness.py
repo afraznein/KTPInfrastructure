@@ -29,7 +29,8 @@ from scripts.match_analytics import (  # noqa: E402
     evaluate_capture_authorization,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+METRIC_ELIGIBILITY_VERSION = 1
 MATCH_ID_RE = re.compile(r"(?:\d+-KTP\d+|[A-Za-z0-9._-]+-TEST)$")
 INSERT_RE = re.compile(r"^INSERT INTO `([^`]+)` \((.*?)\) VALUES \((.*)\);$")
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
@@ -63,6 +64,25 @@ FORBIDDEN_PUBLIC_KEYS = {
 }
 FORBIDDEN_PUBLIC_KEY_TOKENS = {
     re.sub(r"[^a-z0-9]", "", key.lower()) for key in FORBIDDEN_PUBLIC_KEYS
+}
+
+# These are source-quality prerequisites, not score thresholds. Consumers must
+# not turn an eligibility state into a numerical score without their own policy.
+METRIC_REQUIREMENTS = {
+    "positional_impact": (
+        "closed_match", "positions_present", "valid_half_tags",
+        "position_sampling_interval", "schema22_capture_authorization",
+        "frag_coordinate_coverage", "damage_position_alignment",
+    ),
+    "combat_context": (
+        "closed_match", "frags_present", "damage_present", "valid_half_tags",
+        "event_roster_consistency", "frag_coordinate_coverage",
+        "damage_position_alignment",
+    ),
+    "objective_control": (
+        "closed_match", "valid_half_tags", "schema22_capture_authorization",
+        "objective_attempt_lifecycle", "flag_ownership_coverage",
+    ),
 }
 
 
@@ -674,11 +694,38 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         "privacy": "aggregate_only",
         "inventory": inventory,
         "checks": checks,
+        "metric_eligibility": build_metric_eligibility(checks),
     }
     violations = public_payload_is_safe(report)
     if violations:
         raise AssertionError(f"public readiness payload contains private fields: {violations}")
     return report
+
+
+def build_metric_eligibility(checks: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    """Build the public, per-metric source-quality contract.
+
+    ``available`` means every prerequisite passed. ``partial`` means evidence
+    exists but a prerequisite warned. ``unavailable`` means a prerequisite
+    failed or was not emitted. Only check codes and levels are published.
+    """
+    levels = {str(item["code"]): str(item["level"]) for item in checks}
+    metrics: dict[str, dict[str, Any]] = {}
+    for metric, requirements in METRIC_REQUIREMENTS.items():
+        observed = {code: levels.get(code, "MISSING") for code in requirements}
+        blocking = [
+            code for code, level in observed.items()
+            if level in {"FAIL", "MISSING"}
+        ]
+        limited = [code for code, level in observed.items() if level == "WARN"]
+        metrics[metric] = {
+            "status": "unavailable" if blocking else "partial" if limited else "available",
+            "required_checks": list(requirements),
+            "blocking_checks": blocking,
+            "limited_checks": limited,
+            "observed_levels": observed,
+        }
+    return {"contract_version": METRIC_ELIGIBILITY_VERSION, "metrics": metrics}
 
 
 def render_markdown(report: dict[str, Any]) -> str:
@@ -711,9 +758,17 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"{inventory['grenade_incomplete']}) |",
         f"| Schema-22 manifest / health rows | {inventory['capture_manifests']} / "
         f"{inventory['capture_health_rows']} |", "",
-        "## Checks", "",
-        "| Result | Code | Explanation | Evidence |", "|---|---|---|---|",
     ]
+    out += [
+        "## Metric eligibility", "",
+        "`available` does not assign a score; it only records passing source-quality prerequisites.", "",
+        "| Metric | Eligibility | Blocking checks | Limited checks |", "|---|---|---|---|",
+    ]
+    for metric, eligibility in report["metric_eligibility"]["metrics"].items():
+        blocking = ", ".join(f"`{code}`" for code in eligibility["blocking_checks"]) or "-"
+        limited = ", ".join(f"`{code}`" for code in eligibility["limited_checks"]) or "-"
+        out.append(f"| `{metric}` | {eligibility['status']} | {blocking} | {limited} |")
+    out += ["", "## Checks", "", "| Result | Code | Explanation | Evidence |", "|---|---|---|---|"]
     for item in report["checks"]:
         evidence = ", ".join(f"{key}={value}" for key, value in item["evidence"].items()) or "-"
         out.append(f"| {item['level']} | `{item['code']}` | {item['message']} | {evidence} |")
