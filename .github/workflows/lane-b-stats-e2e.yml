@@ -457,6 +457,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
                        /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
+                       /work/build/artifacts/sql/migrate_023_headshot_observed_provenance.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -535,6 +536,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
                        /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
+                       /work/build/artifacts/sql/migrate_023_headshot_observed_provenance.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
