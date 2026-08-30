@@ -23,6 +23,7 @@ import json
 import os
 import tempfile
 import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -32,6 +33,13 @@ from .hostname import parse
 DOWN_AFTER = 3          # consecutive failed polls before a server reads "down"
 POLL_TIMEOUT = 2.5
 MAX_WORKERS = 12
+
+# hud-observer's HQ projection, on the same box. Localhost-only: :3001 is plain
+# HTTP with no auth, so this poller is the one thing allowed to consume it --
+# the public site gets the merged, allowlisted result over HTTPS instead.
+HUD_HQ_URL = "http://127.0.0.1:3001/api/hq"
+HUD_TIMEOUT = 3.0
+HUD_ROSTER_CAP = 16
 
 
 @dataclass(frozen=True)
@@ -111,12 +119,92 @@ def poll_fleet(instances: list[Instance] | None = None) -> list[dict]:
         return list(pool.map(_poll_one, instances))
 
 
-def public_document(results: list[dict], now: float | None = None) -> dict:
+def fetch_hud(url: str = HUD_HQ_URL, timeout: float = HUD_TIMEOUT) -> dict[str, dict]:
+    """hud-observer's /api/hq, keyed by BASE hostname ("KTP - Atlanta 1").
+
+    Keying goes through hostname.parse() because KTPMatchHandler renames a
+    server mid-match; whichever form the hud feed reports, the base is what
+    matches the fleet. Empty dict on ANY failure -- the hud backend being down
+    must cost the status page nothing but the match blocks.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            doc = json.load(resp)
+    except Exception:
+        return {}
+    servers = doc.get("servers") if isinstance(doc, dict) else None
+    if not isinstance(servers, list):
+        return {}
+    out: dict[str, dict] = {}
+    for entry in servers:
+        if not isinstance(entry, dict):
+            continue
+        hostname = entry.get("hostname")
+        if not isinstance(hostname, str) or not hostname.strip():
+            continue
+        out[parse(hostname).base or hostname.strip()] = entry
+    return out
+
+
+def _hud_int(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _hud_roster(players) -> list[dict]:
+    if not isinstance(players, list):
+        return []
+    roster = []
+    for p in players[:HUD_ROSTER_CAP]:
+        if not isinstance(p, dict):
+            continue
+        name = p.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        roster.append({
+            "name": name.strip()[:64],
+            "kills": _hud_int(p.get("kills")) or 0,
+            "deaths": _hud_int(p.get("deaths")) or 0,
+        })
+    return roster
+
+
+def _hud_match(h: dict) -> dict:
+    """Allowlist one hud entry down to what the public page renders.
+
+    Names and scores are published on purpose (operator decision 2026-08-22:
+    no spoiler gate -- the feed is already broadcast-delayed ~60s, which is the
+    anti-ghosting measure). Everything else stays out by construction: match
+    ids, event counters, user_id, flag topology, and whatever the hud backend
+    grows next.
+    """
+    status = h.get("status")
+    phase = h.get("phase")
+    timeleft = h.get("timeleft")
+    return {
+        "status": status if isinstance(status, str) else None,
+        "phase": phase if isinstance(phase, str) else None,
+        "half": _hud_int(h.get("half")),
+        "allies_score": _hud_int(h.get("alliesScore")),
+        "axis_score": _hud_int(h.get("axisScore")),
+        "timeleft": timeleft if isinstance(timeleft, (int, float))
+        and not isinstance(timeleft, bool) else None,
+        "timer_frozen": h.get("timerFrozen") is True,
+        "delay_seconds": _hud_int(h.get("delaySeconds")),
+        "allies": _hud_roster(h.get("allies")),
+        "axis": _hud_roster(h.get("axis")),
+    }
+
+
+def public_document(
+    results: list[dict], now: float | None = None,
+    hud: dict[str, dict] | None = None,
+) -> dict:
     """Build the logged-out view.
 
     Allowlisted by construction: this function names every field it emits, so a
     field added upstream cannot leak by default. IPs, ports, miss counts and
-    error strings are fleet topology and deliberately absent.
+    error strings are fleet topology and deliberately absent. The hud merge
+    goes through the same discipline in _hud_match.
     """
     servers = []
     for r in results:
@@ -153,6 +241,12 @@ def public_document(results: list[dict], now: float | None = None) -> dict:
             if name.match_type:
                 entry["match_type"] = name.match_type
                 entry["state"] = name.state
+        # Fleet hostnames follow "KTP - {label}", which is also how the hud
+        # feed identifies servers -- so coverage scales by itself: an instance
+        # that starts reporting simply appears in `hud` and attaches here.
+        h = (hud or {}).get(f"KTP - {inst.label}")
+        if isinstance(h, dict) and h.get("online") is True:
+            entry["match"] = _hud_match(h)
         servers.append(entry)
     up = sum(1 for s in servers if s["up"])
     return {

@@ -86,14 +86,24 @@ jobs:
 
     strategy:
       fail-fast: false
-      # Only the nightly schedule uses an explicit target matrix. It is
-      # preprod-only while staged testing is underway; PR and manual dispatch
-      # runs stay single-leg against whatever ref triggered them.
+      # Only the nightly schedule uses an explicit target matrix. It runs BOTH
+      # legs: preprod (staged testing) and main (what the fleet actually runs).
+      # PR and manual dispatch runs stay single-leg against whatever ref
+      # triggered them.
+      #
+      # main is here because the heartbeat watches tier2-last-run.json, which
+      # ONLY the main leg writes -- see the marker step below. With the nightly
+      # preprod-only, that marker went 69h stale (threshold 36h) and alerted
+      # daily while the runner was healthy and the schedule was working. The
+      # alert was correct that main was unexercised and wrong about why, and an
+      # alarm that always fires is one people learn to discount. Restoring this
+      # leg fixes the coverage gap and the false alert with one change, rather
+      # than silencing the watcher.
       # max-parallel: 1 — one hlds_linux port on the self-hosted runner, see
       # the concurrency block below for why that also needs matrix.target_ref.
       max-parallel: 1
       matrix:
-        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["preprod"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["preprod","main"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
 
     # Concurrency: only one Tier 2 run at a time per (triggering ref, matrix
     # target). Job-level (not workflow-level) because it needs `matrix`,

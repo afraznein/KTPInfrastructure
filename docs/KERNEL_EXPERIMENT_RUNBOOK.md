@@ -11,7 +11,7 @@ This runbook exists to make the Phase 2 kernel-cmdline experiments (and the Phas
 
 ---
 
-## 1. Audit findings (2026-04-24, ATL:74.91.121.9)
+## 1. Audit findings (2026-04-24, ATL:`<ATL_BM_GAME_IP>`)
 
 ### What's already active
 
@@ -41,7 +41,7 @@ nohz=off           — force periodic tick. Counter-intuitive. Skip unless we su
 
 ### Honest expected outcomes
 
-The 977→999 fps gap is dominated by one specific kernel behavior: **`nanosleep` / `clock_nanosleep` rounds sub-ms sleeps up to the next HZ tick**, which is what broke our Stage C abs-time experiments (raised 977 fps baseline to 643 fps under ATL:27019 `-absgrid`, see CHANGES_SUMMARY_2026-05-08 Stage C entry). No cmdline flag fixes that; it's compile-time CONFIG_HZ and the specific nanosleep implementation in `kernel/time/`.
+The 977→999 fps gap is dominated by one specific kernel behavior: **`nanosleep` / `clock_nanosleep` rounds sub-ms sleeps up to the next HZ tick**, which is what broke our Stage C abs-time experiments (raised 977 fps baseline to 643 fps under ATL:27019 `-absgrid`). No cmdline flag fixes that; it's compile-time CONFIG_HZ and the specific nanosleep implementation in `kernel/time/`.
 
 **So cmdline experiments will NOT close the fps gap to NFO's claimed window.** What they CAN do:
 - Reduce p99 interframe jitter (current p99=5.16ms) — `preempt=full` most likely to help
@@ -56,7 +56,7 @@ If we want 999 fps at low CPU cost, the realistic path is Phase 3 (custom kernel
 
 ### Test host selection
 
-**ATL:27019 (ATL5)** — already the `-absgrid` research slot per 2026-04-23 canary topology (see `CHANGES_SUMMARY_2026-05-08.md` canary topology update). But kernel cmdline is **host-level**, not per-instance, so the entire Atlanta baremetal takes the hit — 27015 through 27019 all reboot together.
+**ATL:27019 (ATL5)** — already the `-absgrid` research slot per the 2026-04-23 canary topology. But kernel cmdline is **host-level**, not per-instance, so the entire Atlanta baremetal takes the hit — 27015 through 27019 all reboot together.
 
 Alternative host: **Dallas**. Similar baremetal, identical setup, tightest σ in pre-JIT baseline (7.96). But pulling Dallas offline pulls 5 instances.
 
@@ -91,7 +91,12 @@ grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
 # Regenerate grub.cfg (Ubuntu way):
 sudo update-grub
 # Because GRUB_DEFAULT=saved, explicitly set the default menuentry to the lowlatency kernel:
-sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency"
+# POSITIONAL, never a menu title. A title pin outlives the experiment: Atlanta ran
+# the title form of this command and stayed on 6.8.0-110 through every later kernel
+# update -- silently, because the pinned kernel running clears reboot-required.
+# '1>0' = Advanced submenu, first entry = the newest lowlatency kernel, always.
+# See docs/runbooks/GRUB_DEFAULT_KERNEL.md.
+sudo grub-set-default '1>0'
 # Verify:
 sudo grub-editenv list
 # Reboot:
@@ -129,13 +134,13 @@ Same mechanical steps as Experiment A.
 **GRUB edit:** Add `idle=poll` to `GRUB_CMDLINE_LINUX_DEFAULT` in `/etc/default/grub`.
 
 ```bash
-# On ATL host (74.91.121.9):
+# On ATL host (<ATL_BM_GAME_IP>):
 TS=$(date +%Y%m%d-%H%M%S)
 sudo cp /etc/default/grub /etc/default/grub.idle-poll-experiment-bak-${TS}
 sudo sed -i 's|^\(GRUB_CMDLINE_LINUX_DEFAULT="\)|\1idle=poll |' /etc/default/grub
 grep GRUB_CMDLINE_LINUX_DEFAULT /etc/default/grub
 sudo update-grub
-sudo grub-set-default "Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency"
+sudo grub-set-default '1>0'   # positional -- see the warning at the first grub-set-default above
 sudo grub-editenv list
 sudo reboot
 ```
@@ -149,7 +154,7 @@ sudo reboot
 
 **Cost expectations:** isolated cores 2-7 will report ~100% CPU utilization in `top` / `htop` because the idle task is now busy-polling instead of HLTing. This is cosmetic — the SCHED_FIFO game-server tasks still preempt the idle task as needed. Real "useful CPU" stays at the same ~3-5% per game-server core. Power/thermal: baremetal, ATL room, no concern in off-season.
 
-**Rollback:** `sudo cp /etc/default/grub.idle-poll-experiment-bak-<TS> /etc/default/grub && sudo update-grub && sudo grub-set-default 'Advanced options for Ubuntu>Ubuntu, with Linux 6.8.0-110-lowlatency' && sudo reboot`. ~3 min window.
+**Rollback:** `sudo cp /etc/default/grub.idle-poll-experiment-bak-<TS> /etc/default/grub && sudo update-grub && sudo grub-set-default '1>0' && sudo reboot`. ~3 min window.
 
 **Stop conditions during soak:**
 - Any ATL instance shows >5% fps p50 regression vs control hosts in the same window
@@ -198,7 +203,7 @@ Before committing to the multi-week Phase 3 build, ran a direct measurement of `
 **Tool:** `nanosleep_bench.c` (~145 LoC, BCL only). Sweeps requested sleep intervals 100µs / 200µs / 500µs / 800µs / 900µs / 999µs / 1000µs / 1100µs / 1500µs / 2000µs / 5000µs; 10000 iterations each + 100-iter warm-up. Reports min / p50 / p90 / p99 / max / mean of actual elapsed time. Optional `--rt` (SCHED_FIFO 50) + `--cpu N` (pin) flags.
 
 **Run conditions:**
-- Host: ATL baremetal (74.91.121.9), kernel 6.8.0-110-lowlatency
+- Host: ATL baremetal (`<ATL_BM_GAME_IP>`), kernel 6.8.0-110-lowlatency
 - Cmdline: standard isolcpus=2-7 / nohz_full / rcu_nocbs / max_cstate=0 / mitigations=off (matches production fleet)
 - CPU 6: free isolated core (game servers on 2,3,4,5,7)
 - 2 runs back-to-back: default (SCHED_OTHER) + `--rt --cpu 6` (matches absgrid runtime conditions)

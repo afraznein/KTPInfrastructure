@@ -1,8 +1,8 @@
 0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
 # LinuxGSM Monitor - check every minute
-*/1 * * * * /home/dodserver/dod-27015/dodserver monitor >> /home/dodserver/log/monitor.log 2>&1
-*/1 * * * * /home/dodserver/dod-27016/dodserver2 monitor >> /home/dodserver/log/monitor.log 2>&1
-*/1 * * * * /home/dodserver/dod-27017/dodserver3 monitor >> /home/dodserver/log/monitor.log 2>&1
-*/1 * * * * /home/dodserver/dod-27018/dodserver4 monitor >> /home/dodserver/log/monitor.log 2>&1
-*/1 * * * * /home/dodserver/dod-27019/dodserver5 monitor >> /home/dodserver/log/monitor.log 2>&1
+*/1 * * * * /home/dodserver/dod-27015/dodserver monitor > /dev/null 2>&1
+*/1 * * * * /home/dodserver/dod-27016/dodserver2 monitor > /dev/null 2>&1
+*/1 * * * * /home/dodserver/dod-27017/dodserver3 monitor > /dev/null 2>&1
+*/1 * * * * /home/dodserver/dod-27018/dodserver4 monitor > /dev/null 2>&1
+*/1 * * * * /home/dodserver/dod-27019/dodserver5 monitor > /dev/null 2>&1
 * * * * * /home/dodserver/ktp-fleet-health.sh >/dev/null 2>&1

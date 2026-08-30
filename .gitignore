@@ -62,12 +62,6 @@ scripts/discord-alert.sh
 # @hostinfo
 scripts/ktp-scheduled-restart.sh
 
-# @local
-# why: locally edited copy; scripts/ktp-organize-hltv-demos.sh.example is tracked
-# and is the source of truth. Candidate to un-ignore -- it carries neither a
-# credential nor a host address.
-scripts/ktp-organize-hltv-demos.sh
-
 # @secret
 scripts/hltv-api.py
 
@@ -126,6 +120,13 @@ docs/ktpr_mcp/roster.csv
 
 # monitoring/ktp-server-monitor.py — un-ignored: it now resolves its rcon password
 # at run time and embeds no secret, which is the refactor the policy above asks for.
+
+# scripts/ktp-organize-hltv-demos.sh — un-ignored: measured, not assumed. A
+# value-based scan of the deployed file against every live and retired credential
+# returns nothing (positive control: the same needles hit scripts/hltv-api.py).
+# Its one sensitive-shaped string, https://fastdl.ktpdod.com/demos/, is a public
+# hostname already tracked elsewhere on main, including scripts/ktp-demo-retention.sh.
+# The .example it replaced had drifted 24 lines behind production.
 
 # Editor files
 *.swp

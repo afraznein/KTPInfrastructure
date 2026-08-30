@@ -23,7 +23,7 @@ Design notes:
   group is the high-signal comparison.
 
 Deployment (as weekly audit):
-- Target host: data server (74.91.112.242) — always up, already runs other
+- Target host: data server (<DATA_SERVER_IP>) — always up, already runs other
   fleet ops, has Python + SSH keys for dodserver.
 - Clone KTPInfrastructure to /opt/ktp-infra (or wherever).
 - Install paramiko: `pip3 install paramiko` (or apt).
@@ -53,7 +53,13 @@ from pathlib import Path
 
 import paramiko
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+# The report is UTF-8 whatever the console's codepage is. reconfigure() in
+# preference to a fresh TextIOWrapper: wrapping .buffer leaves the old wrapper
+# unreferenced, and collecting it closes the fd out from under the caller.
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+elif hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 SNAPSHOT_SCRIPT = Path(__file__).with_name('fleet-drift-snapshot.sh')
 EXPECTED_SYSCTLS = Path(__file__).resolve().parent.parent / 'provision' / 'expected-sysctls.conf'
@@ -110,12 +116,96 @@ IGNORED_KEYS = {
     'HOST > cpu-cores',          # Chicago 4 vs baremetal 8 expected
     'HOST > mem-total-kb',       # Denver 16GB vs others 32GB expected
     'HOST > cpu-model',          # Denver has older Xeon E3-1240 V2
+    'HOST > cpu-microcode',      # same root cause as cpu-model — Denver's older Xeon
     'SYSCTL (KTP-relevant) > net.ipv4.udp_mem',  # auto-scales with RAM
     'SYSCTL (KTP-relevant) > net.netfilter.nf_conntrack_max',  # auto-scales with RAM
     'KTP SAMPLE PORT > port',    # per-host override to dodge canary ports
 }
 
+# Same job as IGNORED_KEYS, but fnmatch globs. A LIST_SECTIONS fact IS its own
+# key, so a fact whose *content* is per-host by construction can never be named
+# by a literal string — every host contributes a different one.
+IGNORED_KEY_PATTERNS = (
+    'GRUB CMDLINE > root=UUID=*',    # root filesystem UUID, one distinct value per host
+    'GRUB CMDLINE > BOOT_IMAGE=*',   # kernel image path; /boot vs / depends on the /boot layout
+)
+
+
+def is_ignored_key(qualified_key):
+    """True if `SECTION > key` is expected to differ per host."""
+    if qualified_key in IGNORED_KEYS:
+        return True
+    return any(fnmatch.fnmatchcase(qualified_key, pat) for pat in IGNORED_KEY_PATTERNS)
+
+
+# Sections whose facts go through normalize_list_fact before comparison.
+NORMALIZED_LIST_SECTIONS = {
+    '/etc/rc.local (non-comment, sorted)',
+}
+
+# enp1s0f0 / enp2s0f0 / eth0 — the same tuning line on a differently-named NIC.
+_IFACE_RE = re.compile(r'\b(?:enp\d+s\d+(?:f\d+)?|eno\d+|ens\d+|eth\d+)\b')
+# A whole argument that is one quoted variable: "$IFACE" vs $IFACE.
+_QUOTED_VAR_RE = re.compile(r'(?<![\\\w])"(\$[A-Za-z_][A-Za-z0-9_]*)"')
+# Rendering: a fact made OF a control character is otherwise an invisible table row.
+_CTRL_RE = re.compile(r'[\x00-\x08\x0b-\x1f\x7f]')
+
+
+def normalize_list_fact(section, line):
+    """Canonicalise a LIST_SECTIONS fact so cosmetic per-host variation stops
+    reading as drift.
+
+    Only transformations that cannot change what the line *does* belong here.
+    Interface renaming and quote/indent style qualify; a guard that is present
+    on one host and absent on another does not, and is left visible.
+    """
+    if section not in NORMALIZED_LIST_SECTIONS:
+        return line
+    line = _IFACE_RE.sub('$IFACE', line)
+    line = _QUOTED_VAR_RE.sub(r'\1', line)
+    return ' '.join(line.split())
+
+
+def visible(text):
+    """Escape control characters for markdown rendering.
+
+    The one genuinely-real host-to-host item found in the 2026-08-24 audit was a
+    stray 0x01 in Atlanta's and Dallas's /proc/cmdline — and it rendered as an
+    empty table cell, which is the one presentation that hides a real finding.
+    """
+    return _CTRL_RE.sub(lambda m: f'\\x{ord(m.group()):02x}', text)
+
+
 # Sections where every line is a standalone fact (no key=value split).
+#
+# NOTE on the host-to-host drift sections (compute_drift / render_drift_section,
+# used for "Baremetal-only drift" and "Fleet-wide drift"): for these sections the
+# "key" IS the full line, so IGNORED_KEYS can only suppress a line that is
+# byte-identical across hosts — it cannot suppress a line that legitimately
+# differs per host in its *content* (a UUID, an interface name, indentation from
+# a differently-styled script). Three such classes were found in the 2026-08-24
+# audit and are now suppressed at their source rather than in a reader's head:
+#   - GRUB CMDLINE `root=UUID=...` / `BOOT_IMAGE=...` — one distinct line per
+#     host by construction. Handled by IGNORED_KEY_PATTERNS.
+#   - /etc/rc.local NIC-name lines (`enp1s0f0` / `enp2s0f0` / `eth0`) — same
+#     tuning line, different interface name. Handled by normalize_list_fact.
+#   - /etc/rc.local indentation and quoting — Chicago wraps its NOTRACK block in
+#     `if command -v iptables; then ... fi` and writes $IFACE unquoted; the raw
+#     lines then read as absent on both sides. Handled by normalize_list_fact.
+#     (The NOTRACK rules themselves are identical on all five hosts: `iptables
+#     -t raw -S` returns the same two -A lines everywhere, checked 2026-08-24.)
+#
+# What deliberately still shows: a guard, a loop or a whole tuning line that is
+# present on one host and absent on another. Chicago legitimately lacks the IRQ
+# smp_affinity loop, and that is a fact worth seeing.
+#
+# One structural caveat that no filter removes: a divergence in a list section
+# produces one item per distinct variant, not one per divergence — three hosts
+# writing a cron line three ways is 3 items, each reported as present-here /
+# absent-there. Read the count as "distinct variants", never as "problems".
+#
+# The repo-vs-fleet sections further down (sysctl/binary/cmdline/timer/rc.local)
+# remain the authoritative correctness check.
 LIST_SECTIONS = {
     'GRUB CMDLINE',
     'CPU GOVERNOR (distinct values)',
@@ -213,6 +303,9 @@ def compute_drift(host_snapshots, hosts_subset=None):
     For list sections, key IS the line and value is None (so we're measuring
     presence/absence). For key=value, we group values across hosts per key.
 
+    List-section facts pass through normalize_list_fact first, so a line that
+    differs only in NIC name or quoting style is one key rather than two.
+
     If hosts_subset is provided, only facts from those hosts contribute.
     """
     drift = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
@@ -227,18 +320,20 @@ def compute_drift(host_snapshots, hosts_subset=None):
         sections_seen.update(host_snapshots.get(host, {}).keys())
 
     for section in sorted(sections_seen):
-        # Union of keys in this section across subset
+        # Normalised facts per host, and the union of keys across the subset
+        per_host = {}
         keys_seen = set()
         for host in all_hosts:
-            for k, v in host_snapshots.get(host, {}).get(section, []):
-                keys_seen.add(k)
+            facts = [(normalize_list_fact(section, k), v)
+                     for k, v in host_snapshots.get(host, {}).get(section, [])]
+            per_host[host] = facts
+            keys_seen.update(k for k, _ in facts)
 
         for key in keys_seen:
             for host in all_hosts:
-                facts = host_snapshots.get(host, {}).get(section, [])
                 value = None
                 present = False
-                for k, v in facts:
+                for k, v in per_host[host]:
                     if k == key:
                         present = True
                         value = v if v is not None else '<present>'
@@ -413,7 +508,7 @@ def render_repo_drift_section(title, intro, drift_items, expected_by_group, expe
     return out
 
 
-def render_drift_section(title, drift, intro=None):
+def render_drift_section(title, drift, intro=None, include_ignored=False):
     """Render a markdown section for one drift computation."""
     out = [f'## {title}']
     if intro:
@@ -426,7 +521,7 @@ def render_drift_section(title, drift, intro=None):
         for key, value_map in key_map.items():
             if len(value_map) > 1:
                 qualified_key = f'{section} > {key}'
-                if qualified_key in IGNORED_KEYS:
+                if is_ignored_key(qualified_key):
                     ignored_items.append((section, key, value_map))
                 else:
                     drift_items.append((section, key, value_map))
@@ -438,15 +533,30 @@ def render_drift_section(title, drift, intro=None):
         out.append(f'**{len(drift_items)} drift items:**')
         out.append('')
         for section, key, value_map in sorted(drift_items):
-            out.append(f'### {section} > `{key}`')
+            out.append(f'### {section} > `{visible(key)}`')
             sorted_values = sorted(value_map.items(), key=lambda x: -len(x[1]))
             out.append('')
             out.append('| Value | Hosts |')
             out.append('|-------|-------|')
             for val, hosts in sorted_values:
                 hosts_fmt = ', '.join(hosts)
-                out.append(f'| `{val}` | {hosts_fmt} |')
+                out.append(f'| `{visible(val)}` | {hosts_fmt} |')
             out.append('')
+
+    if include_ignored and ignored_items:
+        out.append(f'<details><summary>Ignored by rule ({len(ignored_items)})</summary>')
+        out.append('')
+        out.append('| Key | Values |')
+        out.append('|-----|--------|')
+        for section, key, value_map in sorted(ignored_items):
+            vals = '; '.join(
+                f'{visible(val)} ({", ".join(hosts)})'
+                for val, hosts in sorted(value_map.items(), key=lambda x: -len(x[1]))
+            )
+            out.append(f'| `{section} > {visible(key)}` | {vals} |')
+        out.append('')
+        out.append('</details>')
+        out.append('')
 
     total_keys = sum(len(key_map) for key_map in drift.values())
     matching = total_keys - len(drift_items) - len(ignored_items)
@@ -484,7 +594,8 @@ def render_report(host_snapshots, errors, include_ignored=False):
     bm_lines, bm_items = render_drift_section(
         f'Baremetal-only drift ({len(baremetals)} hosts)',
         bm_drift,
-        intro=f'Comparing baremetals only: {", ".join(baremetals)}. This is the primary signal — baremetals should be tuned identically.'
+        intro=f'Comparing baremetals only: {", ".join(baremetals)}. This is the primary signal — baremetals should be tuned identically. /etc/rc.local facts are shown normalised (NIC name -> $IFACE, quoting and indentation collapsed), so a line here may not be byte-identical to the file.',
+        include_ignored=include_ignored,
     )
     out.extend(bm_lines)
 
@@ -493,7 +604,8 @@ def render_report(host_snapshots, errors, include_ignored=False):
     fleet_lines, fleet_items = render_drift_section(
         'Fleet-wide drift (includes VPS vs baremetal topology differences)',
         fleet_drift,
-        intro='Includes Chicago VPS, which has expected topology differences from the baremetals (no isolcpus, different kernel params, eth0 vs enpNsNfN NIC naming, etc). Useful for completeness but most items here are not actionable.'
+        intro='Includes Chicago VPS, which has expected topology differences from the baremetals (no isolcpus, different kernel params, eth0 vs enpNsNfN NIC naming, etc). Useful for completeness but most items here are not actionable.',
+        include_ignored=include_ignored,
     )
     out.extend(fleet_lines)
 

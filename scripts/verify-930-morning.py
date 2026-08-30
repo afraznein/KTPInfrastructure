@@ -24,7 +24,7 @@ from ktp_hosts import connect, run, FLEET, PORTS  # noqa: E402
 
 WANT = {"engine_i486.so": "9be1cfd9032a8c0c1f3e4270c66bd173",
         "hlds_linux":     "fbebc79b6fdfb0ebc2081af7c55a155e"}
-SENSITIVE = ("74.91.112.242",)          # data server: HLStatsX + all 24 HLTV proxies
+SENSITIVE = ("74.91.112.242",)          # data server
 
 MD5 = r'''for d in $HOME/dod-*; do p=$(basename "$d" | sed 's/dod-//');
 for f in engine_i486.so hlds_linux; do

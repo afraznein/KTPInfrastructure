@@ -1,7 +1,7 @@
 #!/bin/bash
 # package-hlstatsx-bundle.sh — produce a portable HLStatsX install bundle.
 #
-# Run this on the production data server (74.91.112.242) to capture the
+# Run this on the production data server (<DATA_SERVER_IP>) to capture the
 # /opt/hlstatsx/{scripts,sql}/ tree minus log output and the
 # password-bearing hlstats.conf. Resulting tarball is suitable for
 # HLSTATSX_SOURCE_PATH in a LAN deployment.

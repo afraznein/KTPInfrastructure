@@ -4,6 +4,93 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: reconcile the restart scripts' three lineages, and make the next divergence visible (2026-08-27)
+
+- `~/restart-all-servers.sh` had drifted into **two mutually incompatible fleet variants** and neither
+  matches the generator. Atlanta/Dallas/Denver run one shape; New York/Chicago run another that carries
+  `set -e` alongside `((running++))`, so its verify loop exits 1 at the FIRST healthy server and never
+  prints its summary. On Chicago it dies earlier still, on `~/dod-27019` - an instance deleted
+  2026-07-13 that the hardcoded `1 2 3 4 5` loop still addresses. Every copy dates from Feb-Mar 2026.
+  The repair path already exists -- #169's `--regen-management-scripts` and
+  `docs/runbooks/FLEET_MANAGEMENT_SCRIPTS.md` -- and its pinned output is re-derived here rather than
+  taken on trust: a sandboxed `HOME` reproduces both md5s exactly. What was missing is anything that
+  NOTICES a host has fallen off it.
+- `ktp-scheduled-restart.sh` drifted the other way. This `.example` is the most complete of the three
+  lineages, the gitignored working copy stopped at 2026-08-04 (no #164, and a relay secret the fleet is
+  not using), and the fleet sits between them. Its header asserted a regeneration direction that
+  produced exactly that; corrected here to name `.example` as the source of truth.
+- **No script is deployed and no server is restarted by this change.** `docs/runbooks/SCHEDULED_RESTART_LINEAGES.md` records
+  what each lineage has, which differences are deliberate versus drift, and the per-host blast radius of
+  a later deploy - including the two ways a naive one destroys something: pushing the gitignored copy
+  reverts #164, pushing `.example` blanks the relay secret and both channel IDs.
+- **`scripts/ktp-restart-drift.py`** (new, read-only) checks both scripts on every host. The scheduled
+  script is compared against `.example` with secret VALUES masked, so a rotation is not drift and no
+  secret leaves the host. The manual script is checked by PROPERTY after comments are stripped, not by
+  string: the generator's own warning comment contains `((running++))` once, so a literal grep reports
+  the correct file as broken. Hosts reached is printed beside every count.
+
+### `tier2`: a re-sync tool for the runner stack, and the section the checklist pointed at (2026-08-26)
+
+- **`scripts/sync-runner-stack.py`** mirrors the Tier-2 runner's stack from a live fleet instance. The
+  runner is a declared must-match-fleet environment and the only thing enforcing that was a checklist
+  line — `Re-sync the Tier-2 runner stack (above)` — that pointed at no section. The detector
+  (`ktp-tier2-stack-drift.py`, in the 6h heartbeat) worked correctly and alerted `ok -> drift` within
+  hours of the 2026-08-26 ABI wave; nothing existed to act on it, so the runner kept testing against
+  the pre-wave engine, core, dodx and reapi.
+- The synced file set is **imported from the drift checker** rather than restated, and the artifacts it
+  refuses to overwrite are asserted against that set rather than merely documented: KTPMatchHandler and
+  KTPPracticeMode are `KTP_TEST_MODE` builds where byte-equality with the fleet is wrong, and
+  KTPHudObserver is rebuilt from upstream by `tier2-integration.yml` on every run.
+- Dry run by default. `--apply` backs up each drifted file on the runner first — neither the fleet nor
+  the runner keeps rollback copies — and re-reads md5 after the pull and after the push. It refuses
+  while a Tier-2 run is live, and while the reference instance holds staged `.new` files, since a sync
+  into a pending wave is stale again at the next 03:00.
+- `docs/RELEASE_CHECKLISTS.md` gains the § *Tier-2 runner re-sync* section, including what the tool does
+  **not** cover and therefore still needs a per-wave look: test-mode plugins, KTPHudObserver, and configs.
+
+
+### `ops`: loud swap failures, and a two-marker Tier 2 heartbeat (2026-08-26)
+
+- `ktp-scheduled-restart.sh`: a `.new` -> live swap failure used to be logged and
+  otherwise ignored — the server start proceeded and Discord could still report
+  a full green "restart complete" while a wave sat half-applied. Deliberately
+  NOT escalated to aborting the start (a down server is worse than a
+  partially-applied one); instead the run now forces the Discord status off
+  green, names every unswapped file, and exits non-zero. New
+  `ktp-verify-post-swap.sh` re-derives the same swap globs to check the morning
+  after — a failed `mv -f` leaves its `.new` file in place, which is itself the
+  durable record.
+- `ktp-tier2-heartbeat.sh`: now watches `tier2-last-run.json` (main) and
+  `tier2-last-run-preprod.json` (preprod) independently and names both in every
+  alert, instead of only the former. Watching one marker produced a false
+  alarm claiming the runner was offline/broken off a 65h-stale `main` marker
+  while the runner was healthy and had completed a `preprod` job 35 minutes
+  earlier — that run simply never touched the marker being watched. Either
+  marker going stale or failing is reported by name; `KTP_TIER2_WATCH_PREPROD=0`
+  is the one-line way to stop watching the preprod leg if it is ever retired,
+  without repointing it at the main marker (which would just recreate the same
+  blind spot under a different name).
+
+### `local`: bot-backed game server on ktp-game-2 for go-live testing (2026-08-25)
+
+- `ktp-game-2` is now a **bot server** and no longer a plain second game server
+  on 27017: Metamod-R hosts new_bot while ktpamx keeps loading through
+  `extensions.ini`, so plugins still run in extension mode. `ktp-game-1` is
+  deliberately untouched as the control — under Metamod `fakemeta` is reachable
+  and it is not on the fleet.
+- New targets: `local-bots-amxx`, `local-bots-plugins`, `local-bots-build`,
+  `local-bots-up`, `local-bots-match`. `local-bots-match` fills 6v6 with bots and
+  drives the real `.ktp`/`.confirm`/`.ready` flow through go-live, so the local
+  stack can finally exercise the mass-respawn stat re-wipe, wave clock and
+  halftime swap.
+- The bot server requires a `KTP_LANE_B_FAKECLIENTS` ktpamx, which is NOT a
+  production binary; `runtime/entrypoint-bots.sh` refuses to boot without one
+  rather than warning, because a bot-blind core is silent and looks healthy.
+  `local-up` / `local-up-full` start game-1 (and `data`) alone when no core has
+  been built, instead of letting game-2 crash-loop.
+- The image carries third-party binaries (new_bot, Metamod-R), both SHA-256
+  pinned, and must never be pushed to a registry. Runbook and limits — including
+  that the custom map pool ships no bot waypoints — in `build/bots/README.md`.
 ### `analytics`: coordinated FPS-stat private-shadow bundle (2026-08-19)
 
 - Match analytics schema version 6 adds symmetric basic trades, all-death-reset
@@ -769,13 +856,13 @@ Deploy note: `ktp_spike_daily` created manually + per-table GRANT to
 
 ### ktp-perf-rollup: retire the stale NY5 default exclusion
 
-NY5 (74.91.123.64:27019) was still excluded from WARN evaluation and the
+NY5 (<NYC_GAME_IP>:27019) was still excluded from WARN evaluation and the
 fleet median despite the operator clearing `PERF_EXCLUDED_HOSTS=""` in
 `/etc/ktp/discord-relay.conf` on 2026-05-13 (when NY5 retired from
 pingboost-4 canary duty back to fleet config). Root cause: `resolve()`
 `or`-chains env → config → default, so an explicitly-empty config value is
 falsy and silently falls back to the baked-in default — which still carried
-the canary-era `74.91.123.64:27019`.
+the canary-era `<NYC_GAME_IP>:27019`.
 
 - `DEFAULT_EXCLUDED` now empty; NY5 participates in WARN evaluation and the
   fleet median like every other instance.
@@ -1184,7 +1271,7 @@ Validation: re-replayed `--day 2026-05-05 --dry-run` against deployed 1.5.21:
 ```
 findings: 24 hosts; warn=1; fleet_median_fps=978.6
 title: WARN — 2026-05-05
-hosts in WARN (1): NY3 (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4)
+hosts in WARN (1): NY3 (<NYC_GAME_IP>:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4)
 ```
 
 Down from 3 WARN (NY3 + DAL1 + DAL4 → "CRITICAL (partial fleet)" tier) to 1 WARN (NY3 → standard WARN tier). DAL1 + DAL4 boundary alerts suppressed as intended. NY3's real signal preserved. Embed Source-field text updated to `fps 2σ + ≥1 fps floor / spike 2.5σ thresholds` so operators see the gating logic in the alert itself.
@@ -1201,8 +1288,8 @@ Down from 3 WARN (NY3 + DAL1 + DAL4 → "CRITICAL (partial fleet)" tier) to 1 WA
 
 ```bash
 # Already done — recorded for repeatability:
-scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
-ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+scp scripts/ktp-perf-rollup.py root@<DATA_SERVER_IP>:/usr/local/bin/ktp-perf-rollup
+ssh root@<DATA_SERVER_IP> chmod 755 /usr/local/bin/ktp-perf-rollup
 ```
 
 Live at md5 `14914a8b…` on data server. Backup of pre-fix script at `/usr/local/bin/ktp-perf-rollup.bak-20260506-103910`. Cron unchanged — picks up the new script at next 04:30 ET fire.
@@ -1267,8 +1354,8 @@ Aggregator daemon on data server is still running 1.5.x without the umbrella han
 
 ```bash
 # When ready (operator):
-scp aggregator.py spike_signatures.py root@74.91.112.242:/opt/ktp-profile-aggregator/
-ssh root@74.91.112.242 systemctl restart ktp-profile-aggregator
+scp aggregator.py spike_signatures.py root@<DATA_SERVER_IP>:/opt/ktp-profile-aggregator/
+ssh root@<DATA_SERVER_IP> systemctl restart ktp-profile-aggregator
 journalctl -u ktp-profile-aggregator -f --since "1 minute ago"
 # Verify first-cycle output: "wrote <endpoint>: ... signatures=N" in debug logs
 # Verify rows: SELECT * FROM ktp_spike_signatures ORDER BY first_seen DESC LIMIT 10
@@ -1353,9 +1440,9 @@ Second dry-run fire (2026-05-06 04:30:01 ET, target_day=2026-05-05) ran clean of
 
 3 hosts WARN today, all FPS-side:
 
-- **NY3** (74.91.123.64:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4). **Real ~6 fps regression.** Drilled down: localized to a single 21:15-22:00 EDT window where NY3-only dropped to 818-890 fps for 9 consecutive 5-min samples while NY1/NY2/NY4 held 974-985 normal. Spike total 84 vs 12-18 on siblings (7× baseline). Pattern is transient gameplay load (12man/scrim on NY3 specifically), not a systemic regression — recovered fully by next sample, 2026-05-06 NY3 back to 979.7 fps avg post-nightly-restart. The alert correctly surfaced a real per-instance anomaly worth a brief investigation.
-- **DAL1** (74.91.126.55:27015) — fps 980.2 < 980.2 (μ 980.7 σ 0.3). Sub-1-fps drop.
-- **DAL4** (74.91.126.55:27018) — fps 978.7 < 978.8 (μ 979.1 σ 0.2). Sub-1-fps drop.
+- **NY3** (<NYC_GAME_IP>:27017) — fps 973.2 < 978.7 (μ 979.5 σ 0.4). **Real ~6 fps regression.** Drilled down: localized to a single 21:15-22:00 EDT window where NY3-only dropped to 818-890 fps for 9 consecutive 5-min samples while NY1/NY2/NY4 held 974-985 normal. Spike total 84 vs 12-18 on siblings (7× baseline). Pattern is transient gameplay load (12man/scrim on NY3 specifically), not a systemic regression — recovered fully by next sample, 2026-05-06 NY3 back to 979.7 fps avg post-nightly-restart. The alert correctly surfaced a real per-instance anomaly worth a brief investigation.
+- **DAL1** (<DAL_GAME_IP>:27015) — fps 980.2 < 980.2 (μ 980.7 σ 0.3). Sub-1-fps drop.
+- **DAL4** (<DAL_GAME_IP>:27018) — fps 978.7 < 978.8 (μ 979.1 σ 0.2). Sub-1-fps drop.
 
 DAL1 + DAL4 are the same flavor as the earlier spike-side DAL3 false-positive: tight-σ hosts trigger 2σ technically while the actual fps drop is player-imperceptible (~0.05% throughput). Filed as a low-priority follow-up TODO ("FPS floor refinement") to add an absolute-drop minimum (e.g., `WARN only if fps drop ≥ 1.0 fps OR ≥ 0.1%` AND 2σ). Not blocking the lift — DAL1/DAL4-style alerts are estimated at ~1-2 false positives/week on tight-σ hosts, an acceptable noise floor in exchange for surfacing real signals like NY3.
 
@@ -1370,7 +1457,7 @@ DAL1 + DAL4 are the same flavor as the earlier spike-side DAL3 false-positive: t
 
 ```bash
 # (Already done — recorded for repeatability)
-scp scripts/cron.d/ktp-perf-rollup-daily root@74.91.112.242:/etc/cron.d/ktp-perf-rollup-daily
+scp scripts/cron.d/ktp-perf-rollup-daily root@<DATA_SERVER_IP>:/etc/cron.d/ktp-perf-rollup-daily
 ```
 
 cron auto-reloads `/etc/cron.d/` on file change; no `systemctl reload` needed. Verified live execution line is `--dry-run`-free; cron service active. Backup of pre-lift cron at `/etc/cron.d/ktp-perf-rollup-daily.bak-20260506-093758`.
@@ -1380,7 +1467,9 @@ cron auto-reloads `/etc/cron.d/` on file change; no `systemctl reload` needed. V
 - 1.5.17 — spike threshold widening (2σ → 2.5σ) that this 1.5.18 lift validates
 - 1.5.16 — initial perf-rollup deploy
 - TODO.md "FPS floor refinement" — filed follow-up tracking the DAL1/DAL4 sub-1-fps boundary case
-- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "perf-rollup spike threshold tuned" — pre-lift decision rationale
+- Why 2.5σ: the first dry-run fire tripped DAL3 on a single spike over the 2σ boundary. Spike counts
+  are Poisson-distributed (averaging well under one per window, with rare bursts an order of magnitude
+  higher), and a Gaussian-σ rule applied to a Poisson metric mistunes at the boundary by construction.
 
 ---
 
@@ -1407,11 +1496,11 @@ Same DAL3 example with 2.5σ: μ + 2.5σ = 200 + 165 = 365. DAL3's 333 sits comf
 
 #### Operator deploy step
 
-Stage updated `scripts/ktp-perf-rollup.py` to `/usr/local/bin/ktp-perf-rollup` on data server (74.91.112.242) before tomorrow's 04:30 ET cron fire. The cron itself is unchanged.
+Stage updated `scripts/ktp-perf-rollup.py` to `/usr/local/bin/ktp-perf-rollup` on data server (<DATA_SERVER_IP>) before tomorrow's 04:30 ET cron fire. The cron itself is unchanged.
 
 ```bash
-scp scripts/ktp-perf-rollup.py root@74.91.112.242:/usr/local/bin/ktp-perf-rollup
-ssh root@74.91.112.242 chmod 755 /usr/local/bin/ktp-perf-rollup
+scp scripts/ktp-perf-rollup.py root@<DATA_SERVER_IP>:/usr/local/bin/ktp-perf-rollup
+ssh root@<DATA_SERVER_IP> chmod 755 /usr/local/bin/ktp-perf-rollup
 ```
 
 After the 2nd dry-run fire (tomorrow 04:30 ET), re-eyeball the table + log to confirm the threshold widening eliminates the false-positives. If clean, lift `--dry-run` from `/etc/cron.d/ktp-perf-rollup-daily` per the original 48h-suppression protocol.
@@ -1419,7 +1508,6 @@ After the 2nd dry-run fire (tomorrow 04:30 ET), re-eyeball the table + log to co
 #### Cross-references
 
 - TODO.md § "Tier 3 Project 1 follow-up" — original spec
-- discord-embeds/CHANGES_SUMMARY_2026-05-08.md § "Perf-rollup dry-run review" — first-fire data + decision rationale
 - 1.5.16 (entry below) — initial deploy
 
 ---
@@ -1476,7 +1564,7 @@ DELETE pre-authorizes future replay scenarios (script is idempotent on `ON DUPLI
 Also add to `/etc/ktp/discord-relay.conf`:
 ```
 PERF_ALERT_CHANNEL="<channel_id>"
-PERF_EXCLUDED_HOSTS="74.91.123.64:27019"
+PERF_EXCLUDED_HOSTS="<NYC_GAME_IP>:27019"
 # Optional:
 # FLEET_CRITICAL_FPS=963
 # KTP_ADMIN_ROLE_ID=1002394466700767332
@@ -1982,7 +2070,7 @@ Two new features for flexible deployments and LAN events.
 #### `ktp-scheduled-restart.sh`
 - **Dynamic port detection** — Scans `~/dod-*` directories at runtime to build port list. No more hardcoded `27015-27019` loops.
 - **Dynamic CPU pinning** — CPU map generated at runtime based on detected server count and `nproc --all`.
-- **Chicago server name** — Added 172.238.176.101 to IP-to-name lookup.
+- **Chicago server name** — Added <CHI_GAME_IP> to IP-to-name lookup.
 
 ### Changed
 
@@ -2077,15 +2165,15 @@ Extended provisioning and restart scripts for 5-location deployment.
 - **dodx.ini auto-created** - Creates default `pdata_offset = 4` if missing
 - **Server name prefix** - Uses `$SERVER_NAME_PREFIX` consistently (supports "KTPSCRIM" branding)
 - **nice=-5 in common.cfg** - Adds process priority to new and existing installations
-- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55 in restart script name lookup
+- **Updated Dallas IP** - <DAL_VPS_GAME_IP> → <DAL_GAME_IP> in restart script name lookup
 
 #### `provision-gameserver.sh`
 - **`mitigations=off`** - Added to GRUB for Spectre/Meltdown performance bypass
 - **`nice=-5` in limits.conf** - Allows dodserver user to use negative nice values
 
 #### `ktp-scheduled-restart.sh`
-- **New York server name** - Added 74.91.123.64 → "KTPSCRIM - New York"
-- **Updated Dallas IP** - 74.91.114.195 → 74.91.126.55
+- **New York server name** - Added <NYC_GAME_IP> → "KTPSCRIM - New York"
+- **Updated Dallas IP** - <DAL_VPS_GAME_IP> → <DAL_GAME_IP>
 
 ### Added
 - **`OLDSERVERS.md`** - Decommissioned server reference (Atlanta VPS, Dallas VPS)

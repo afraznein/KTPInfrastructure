@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-06. Evidence-based survey of what per-player stats exist in HLStatsX vs the
 HUD observer, and what actually exists for the Philly LAN weekend (2026-08-01/08-02). All row
-counts and samples were measured live on the data server (74.91.112.242, MySQL `hlstatsx`,
+counts and samples were measured live on the data server (`<DATA_SERVER_IP>`, MySQL `hlstatsx`,
 `/opt/hud-observer`, `/opt/ktp-lan-archive`) — not read off schema docs.
 
 ---

@@ -162,6 +162,21 @@ cp ktp-scheduled-restart.sh.example ktp-scheduled-restart.sh
 0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
 ```
 
+**Swap failures:** a `.new` -> live `mv -f` that fails is logged, but never aborts the server start
+that follows (leaving players on a DOWN server is a worse outcome than one running a partial wave).
+Instead a swap failure forces the Discord status off green, exits the script non-zero even when every
+server comes back up, and — because the failed `mv` leaves the `.new` file exactly where it was —
+`ktp-verify-post-swap.sh` (below) is the durable, run-anytime way to confirm a wave fully activated.
+
+### ktp-verify-post-swap.sh
+Read-only, run on a game host any time after a nightly restart. Re-derives the same swap-glob set
+`ktp-scheduled-restart.sh` uses and reports any `.new` file still sitting unswapped — the durable
+signature of an incomplete activation, independent of whether you caught the restart log live.
+
+```bash
+./ktp-verify-post-swap.sh   # exit 0 = fully activated, exit 1 = leftover .new file(s) found
+```
+
 ### stage-wave.py
 **The standard way to push a wave to the fleet — prefer this over calling `deploy-to-fleet.py` directly.**
 It wraps that script (single source of truth for the 24-instance topology and the password-from-env rule)
@@ -217,6 +232,27 @@ python3 deploy-to-fleet.py \
 
 **First live use:** always pair `--hosts <one> --ports <one>` as a smoke test before `--all`. The dry-run validates routing + arg parsing locally; the SCP + remote-md5-verify path is paramiko-shaped boilerplate but should still be confirmed on one instance before broadcasting.
 
+### sync-runner-stack.py
+**Mirrors the Tier-2 runner's stack onto a live fleet instance — the deploy-flow step that had a checklist line but no tool.**
+The runner is must-match-fleet; a green suite certifying a stack production doesn't run is the worst
+failure mode a test tier has, and `ktp-tier2-stack-drift.py` could only ever report it.
+
+- **Syncs exactly what the tripwire alerts on**, imported from that module rather than restated — the
+  repo already carries several hand-kept copies of the test-mode plugin list, and this is not another.
+- **Never touches** KTPMatchHandler / KTPPracticeMode (`KTP_TEST_MODE` builds, where byte-equality with
+  the fleet is wrong) or KTPHudObserver (rebuilt from upstream per run). Asserted, not just documented.
+- **Dry run by default.** `--apply` backs each drifted file up on the runner first, then verifies md5
+  after the pull and again after the push. It refuses during a live Tier-2 run, and refuses when the
+  reference instance holds staged `.new` files.
+
+Holds no IPs — hosts come from `KTP_TIER2_SSH_HOST` / `KTP_DRIFT_REF_HOST`. Full procedure and ordering:
+`docs/RELEASE_CHECKLISTS.md` § Tier-2 runner re-sync.
+
+```bash
+python3 sync-runner-stack.py            # what drifted?
+python3 sync-runner-stack.py --apply    # sync it
+```
+
 ### ktp-organize-hltv-demos.sh
 Organizes HLTV demo files into hostname/matchtype directories.
 
@@ -254,6 +290,10 @@ cp hltv-api.py.example hltv-api.py
 Scheduled restart script for all HLTV instances with Discord notification.
 
 **Note:** This script reads credentials from `/etc/ktp/discord-relay.conf` on the data server.
+
+**Note:** It restarts the `hltv@<port>` units only. The `hltv-api` service is not
+in its scope, so a change to `hltv-api.py` needs an explicit
+`systemctl restart hltv-api` - waiting for the scheduled restart will not pick it up.
 
 **Deployed to:** `/usr/local/bin/hltv-restart-all.sh` (data server)
 
