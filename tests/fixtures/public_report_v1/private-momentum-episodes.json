@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "match_id": "golden-development-TEST",
+  "halves_played": 1,
+  "episodes": [
+    {
+      "half": 1, "start_time": 0, "end_time": 15,
+      "team_key": "team_a",
+      "start_momentum": 0, "end_momentum": 8.5, "swing": 8.5,
+      "reason_codes": ["territory_pressure", "three_kill_chain"],
+      "contribution": {"value": 8.5},
+      "confidence": {"level": "medium", "reason_code": "partial_evidence"},
+      "coverage": {"status": "partial", "reason_code": "partial_evidence"},
+      "clip_ref": "clip_a1b2c3d4e5f60718293a4b5c6d7e8f90"
+    }
+  ]
+}
