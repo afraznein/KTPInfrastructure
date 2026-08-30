@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktp.example/schemas/1.2.0/momentumEpisode-v1.json",
+  "title": "KTP sanitized analytics momentum episodes v1 contract 1.2.0",
+  "type": "object",
+  "required": ["schema_version", "contract_version", "match_id", "halves_played", "team_keys", "producer", "browser_inference_allowed", "coverage", "episodes"],
+  "properties": {
+    "schema_version": {"const": "momentumEpisode-v1"},
+    "contract_version": {"const": "1.2.0"},
+    "match_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"},
+    "halves_played": {"type": "integer", "minimum": 1, "maximum": 10},
+    "team_keys": {"const": ["team_a", "team_b"]},
+    "producer": {"const": "analytics_only"},
+    "browser_inference_allowed": {"const": false},
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "episodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["episode_id", "half", "start_time", "end_time", "team_key", "direction", "start_momentum", "end_momentum", "swing", "reason_codes", "contribution", "confidence", "coverage", "clip_ref"],
+        "properties": {
+          "episode_id": {"type": "string", "pattern": "^episode_[a-f0-9]{16}$"},
+          "half": {"type": "integer", "minimum": 1, "maximum": 10},
+          "start_time": {"type": "number", "minimum": 0, "maximum": 21600},
+          "end_time": {"type": "number", "minimum": 0, "maximum": 21600},
+          "team_key": {"$ref": "#/$defs/teamKey"},
+          "direction": {"enum": ["positive", "negative", "neutral"]},
+          "start_momentum": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+          "end_momentum": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+          "swing": {"type": "number", "minimum": -1000000, "maximum": 1000000},
+          "reason_codes": {
+            "type": "array", "minItems": 1, "uniqueItems": true,
+            "items": {"enum": ["capture", "cap_break", "capout", "three_kill_chain", "multi_kill_chain", "opening_duel", "trade_kill", "objective_hold", "flag_defense", "combat_swing", "territory_pressure", "mixed", "insufficient_evidence"]}
+          },
+          "contribution": {
+            "type": "object", "required": ["kind", "value", "unit"],
+            "properties": {"kind": {"const": "momentum_swing"}, "value": {"type": "number", "minimum": -1000000, "maximum": 1000000}, "unit": {"const": "momentum_index"}},
+            "additionalProperties": false
+          },
+          "confidence": {
+            "type": "object", "required": ["level", "reason_code"],
+            "properties": {
+              "level": {"enum": ["high", "medium", "low", "unavailable"]},
+              "reason_code": {"enum": ["complete_evidence", "partial_evidence", "insufficient_evidence"]}
+            },
+            "additionalProperties": false
+          },
+          "coverage": {"$ref": "#/$defs/coverage"},
+          "clip_ref": {"type": ["string", "null"], "pattern": "^clip_[a-f0-9]{32}$"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "teamKey": {"enum": ["team_a", "team_b"]},
+    "coverage": {
+      "type": "object", "required": ["status", "reason_code"],
+      "properties": {
+        "status": {"enum": ["available", "partial", "unavailable"]},
+        "reason_code": {"enum": ["complete", "partial_evidence", "insufficient_evidence", "no_episodes"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

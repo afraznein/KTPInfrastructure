@@ -1,0 +1,122 @@
+{
+  "schema_version": "public-timeline-v1",
+  "contract_version": "1.2.0",
+  "match_id": "golden-development-TEST",
+  "halves_played": 1,
+  "bin_seconds": 15.0,
+  "team_keys": [
+    "team_a",
+    "team_b"
+  ],
+  "momentum_sign": {
+    "positive_team": "team_a",
+    "negative_team": "team_b"
+  },
+  "privacy": {
+    "scope": "team_only",
+    "player_scoring": "not_exported",
+    "team_points": "precomputed_aggregate_only",
+    "individual_timing": "not_exported",
+    "spatial_detail": "not_exported"
+  },
+  "quality": {
+    "calculation": "producer_precomputed",
+    "browser_calculation_allowed": false,
+    "conservation_checked": true
+  },
+  "coverage": {
+    "status": "available",
+    "reason_code": "complete"
+  },
+  "halves": [
+    {
+      "half": 1,
+      "bins": [
+        {
+          "start_time": 0.0,
+          "end_time": 15.0,
+          "teams": {
+            "team_a": {
+              "points_gained": 45.0,
+              "cumulative_points": 45.0
+            },
+            "team_b": {
+              "points_gained": 20.0,
+              "cumulative_points": 20.0
+            }
+          },
+          "momentum": 8.5,
+          "momentum_change": 8.5,
+          "coverage": {
+            "status": "available",
+            "reason_code": "complete"
+          }
+        },
+        {
+          "start_time": 15.0,
+          "end_time": 30.0,
+          "teams": {
+            "team_a": {
+              "points_gained": 0.0,
+              "cumulative_points": 45.0
+            },
+            "team_b": {
+              "points_gained": 25.0,
+              "cumulative_points": 45.0
+            }
+          },
+          "momentum": -3.0,
+          "momentum_change": -11.5,
+          "coverage": {
+            "status": "available",
+            "reason_code": "complete"
+          }
+        }
+      ],
+      "half_end_annotations": [
+        {
+          "team_key": "team_a",
+          "kind": "untimed_reconciliation"
+        },
+        {
+          "team_key": "team_b",
+          "kind": "untimed_reconciliation"
+        }
+      ],
+      "conservation": {
+        "equations": [
+          "timed_total = sum(points_gained)",
+          "reconciled_total = timed_total + untimed_reconciliation_delta"
+        ],
+        "teams": [
+          {
+            "team_key": "team_a",
+            "timed_gain_sum": 45.0,
+            "timed_total": 45.0,
+            "untimed_reconciliation_delta": 5.0,
+            "reconciled_total": 50.0,
+            "timed_difference": 0.0,
+            "reconciled_difference": 0.0,
+            "status": "pass",
+            "reason_code": "equations_hold"
+          },
+          {
+            "team_key": "team_b",
+            "timed_gain_sum": 45.0,
+            "timed_total": 45.0,
+            "untimed_reconciliation_delta": 4.0,
+            "reconciled_total": 49.0,
+            "timed_difference": 0.0,
+            "reconciled_difference": 0.0,
+            "status": "pass",
+            "reason_code": "equations_hold"
+          }
+        ]
+      },
+      "coverage": {
+        "status": "available",
+        "reason_code": "complete"
+      }
+    }
+  ]
+}

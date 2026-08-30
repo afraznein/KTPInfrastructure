@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "public_contract_version": "1.2.0",
+  "classification": "restricted_reference_only",
+  "publicly_servable": false,
+  "input_contracts": [
+    {"artifact": "analytics_box_score", "schema_version": 3, "public_use": "allowlisted descriptive facts"},
+    {"artifact": "readiness_report", "schema_version": 1, "public_use": "closed status only"},
+    {"artifact": "private_scoring_report", "schema_version": 1, "public_use": "version and match compatibility only"},
+    {"artifact": "private_team_timeline", "schema_version": 1, "public_use": "precomputed aggregate team timeline"},
+    {"artifact": "private_momentum_episodes", "schema_version": 1, "public_use": "allowlisted sanitized team episodes"}
+  ],
+  "required_public_team_keys": ["team_a", "team_b"],
+  "forbidden_public_classes": [
+    "stable_or_database_identity", "player_elo", "player_bradley_terry",
+    "player_accumulated_overall_or_impact_rating", "player_points_or_rank",
+    "player_or_component_allocations", "internal_scoring_ledgers",
+    "individual_or_sparse_spatial_evidence", "source_provenance_or_paths"
+  ]
+}

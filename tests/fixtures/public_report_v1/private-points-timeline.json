@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "match_id": "golden-development-TEST",
+  "halves_played": 1,
+  "bin_seconds": 15,
+  "teams": ["team_a", "team_b"],
+  "momentum_sign": {"positive_team": "team_a", "negative_team": "team_b"},
+  "halves": [
+    {
+      "half": 1,
+      "bins": [
+        {
+          "start_time": 0, "end_time": 15,
+          "teams": {
+            "team_a": {"timed_points_gained": 45, "cumulative_timed_points": 45},
+            "team_b": {"timed_points_gained": 20, "cumulative_timed_points": 20}
+          },
+          "momentum": 8.5, "momentum_change": 8.5
+        },
+        {
+          "start_time": 15, "end_time": 30,
+          "teams": {
+            "team_a": {"timed_points_gained": 0, "cumulative_timed_points": 45},
+            "team_b": {"timed_points_gained": 25, "cumulative_timed_points": 45}
+          },
+          "momentum": -3, "momentum_change": -11.5
+        }
+      ],
+      "untimed_reconciliation_by_team": {"team_a": 5, "team_b": 4},
+      "reconciled_total_by_team": {"team_a": 50, "team_b": 49}
+    }
+  ]
+}

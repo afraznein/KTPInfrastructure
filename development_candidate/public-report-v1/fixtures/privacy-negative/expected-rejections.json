@@ -1,0 +1,6 @@
+{
+  "schema_version": 3,
+  "rule": "Every case must be rejected by every named guard; additional guards may also reject it.",
+  "case_count": 156,
+  "fixtures": ["expanded-cases.json"]
+}

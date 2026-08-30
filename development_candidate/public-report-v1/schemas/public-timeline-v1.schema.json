@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktp.example/schemas/1.2.0/public-timeline-v1.json",
+  "title": "KTP public precomputed team timeline v1 contract 1.2.0",
+  "type": "object",
+  "required": ["schema_version", "contract_version", "match_id", "halves_played", "bin_seconds", "team_keys", "momentum_sign", "privacy", "quality", "coverage", "halves"],
+  "properties": {
+    "schema_version": {"const": "public-timeline-v1"},
+    "contract_version": {"const": "1.2.0"},
+    "match_id": {"$ref": "#/$defs/publicToken"},
+    "halves_played": {"type": "integer", "minimum": 1, "maximum": 10},
+    "bin_seconds": {"type": "number", "minimum": 1, "maximum": 300},
+    "team_keys": {"const": ["team_a", "team_b"]},
+    "momentum_sign": {
+      "type": "object", "required": ["positive_team", "negative_team"],
+      "properties": {
+        "positive_team": {"$ref": "#/$defs/teamKey"},
+        "negative_team": {"$ref": "#/$defs/teamKey"}
+      },
+      "additionalProperties": false
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["scope", "player_scoring", "team_points", "individual_timing", "spatial_detail"],
+      "properties": {
+        "scope": {"const": "team_only"}, "player_scoring": {"const": "not_exported"},
+        "team_points": {"const": "precomputed_aggregate_only"}, "individual_timing": {"const": "not_exported"},
+        "spatial_detail": {"const": "not_exported"}
+      },
+      "additionalProperties": false
+    },
+    "quality": {
+      "type": "object", "required": ["calculation", "browser_calculation_allowed", "conservation_checked"],
+      "properties": {
+        "calculation": {"const": "producer_precomputed"},
+        "browser_calculation_allowed": {"const": false},
+        "conservation_checked": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "halves": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["half", "bins", "half_end_annotations", "conservation", "coverage"],
+        "properties": {
+          "half": {"type": "integer", "minimum": 1, "maximum": 10},
+          "bins": {"type": "array", "items": {"$ref": "#/$defs/bin"}},
+          "half_end_annotations": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["team_key", "kind"],
+              "properties": {
+                "team_key": {"$ref": "#/$defs/teamKey"},
+                "kind": {"const": "untimed_reconciliation"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "conservation": {
+            "type": "object", "required": ["equations", "teams"],
+            "properties": {
+              "equations": {"const": ["timed_total = sum(points_gained)", "reconciled_total = timed_total + untimed_reconciliation_delta"]},
+              "teams": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/conservationTeam"}}
+            },
+            "additionalProperties": false
+          },
+          "coverage": {"$ref": "#/$defs/coverage"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "$defs": {
+    "publicToken": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"},
+    "teamKey": {"enum": ["team_a", "team_b"]},
+    "coverage": {
+      "type": "object", "required": ["status", "reason_code"],
+      "properties": {
+        "status": {"enum": ["available", "partial", "unavailable"]},
+        "reason_code": {"enum": ["complete", "partial_input", "no_bins", "missing_totals", "missing_momentum", "missing_halves", "irregular_interval"]}
+      },
+      "additionalProperties": false
+    },
+    "teamValues": {
+      "type": "object", "required": ["points_gained", "cumulative_points"],
+      "properties": {
+        "points_gained": {"type": ["number", "null"], "minimum": 0, "maximum": 1000000000},
+        "cumulative_points": {"type": ["number", "null"], "minimum": 0, "maximum": 1000000000}
+      },
+      "additionalProperties": false
+    },
+    "bin": {
+      "type": "object", "required": ["start_time", "end_time", "teams", "momentum", "momentum_change", "coverage"],
+      "properties": {
+        "start_time": {"type": ["number", "null"], "minimum": 0, "maximum": 21600},
+        "end_time": {"type": ["number", "null"], "minimum": 0, "maximum": 21600},
+        "teams": {
+          "type": "object", "required": ["team_a", "team_b"],
+          "properties": {"team_a": {"$ref": "#/$defs/teamValues"}, "team_b": {"$ref": "#/$defs/teamValues"}},
+          "additionalProperties": false
+        },
+        "momentum": {"type": ["number", "null"], "minimum": -1000000, "maximum": 1000000},
+        "momentum_change": {"type": ["number", "null"], "minimum": -1000000, "maximum": 1000000},
+        "coverage": {"$ref": "#/$defs/coverage"}
+      },
+      "additionalProperties": false
+    },
+    "conservationTeam": {
+      "type": "object",
+      "required": ["team_key", "timed_gain_sum", "timed_total", "untimed_reconciliation_delta", "reconciled_total", "timed_difference", "reconciled_difference", "status", "reason_code"],
+      "properties": {
+        "team_key": {"$ref": "#/$defs/teamKey"},
+        "timed_gain_sum": {"type": ["number", "null"], "minimum": 0, "maximum": 1000000000},
+        "timed_total": {"type": ["number", "null"], "minimum": 0, "maximum": 1000000000},
+        "untimed_reconciliation_delta": {"type": ["number", "null"], "minimum": -1000000000, "maximum": 1000000000},
+        "reconciled_total": {"type": ["number", "null"], "minimum": 0, "maximum": 1000000000},
+        "timed_difference": {"type": ["number", "null"], "minimum": -1000000000, "maximum": 1000000000},
+        "reconciled_difference": {"type": ["number", "null"], "minimum": -1000000000, "maximum": 1000000000},
+        "status": {"enum": ["pass", "fail", "unavailable"]},
+        "reason_code": {"enum": ["equations_hold", "missing_totals", "equation_mismatch"]}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
