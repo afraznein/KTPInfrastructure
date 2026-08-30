@@ -33,6 +33,32 @@ def _sha256(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
 
 
+def _objective_score_markdown(report: dict[str, Any]) -> str:
+    score = report.get("objectiveScoreTimeline") or {}
+    quality = score.get("quality") or {}
+    lines = [
+        "", "## Official objective score", "",
+        f"Status: **{quality.get('status', 'unavailable')}**. "
+        f"Flags: {', '.join(quality.get('flags') or []) or 'none'}.", "",
+    ]
+    points = [
+        (half.get("half"), point)
+        for half in score.get("halves") or []
+        for point in half.get("points") or []
+    ]
+    if points:
+        lines += ["| Half | Seconds | Team 1 | Team 2 | Boundary |",
+                  "|---:|---:|---:|---:|---|"]
+        lines += [
+            f"| {half} | {point['halfTimeSeconds']} | {point['team1Score']} | "
+            f"{point['team2Score']} | {point['observationKind']} |"
+            for half, point in points
+        ]
+    else:
+        lines.append("No authoritative objective-score points are available.")
+    return "\n".join(lines) + "\n"
+
+
 def render_html(report: dict[str, Any]) -> str:
     """Render a portable, sanitized report browser for downloaded artifacts."""
     esc = lambda value: html.escape(str(value if value is not None else "—"))
@@ -79,6 +105,29 @@ def render_html(report: dict[str, Any]) -> str:
         if points_timeline else "<p>Points timeline unavailable.</p>"
     normalization = report.get("impact_index") or {}
     match = report.get("match") or {}
+    objective_score = report.get("objectiveScoreTimeline") or {}
+    objective_rows = []
+    for half in objective_score.get("halves") or []:
+        for point in half.get("points") or []:
+            objective_rows.append(
+                "<tr>"
+                f"<td>{int(half.get('half') or 0)}</td>"
+                f"<td>{float(point.get('halfTimeSeconds') or 0):.3f}</td>"
+                f"<td>{int(point.get('team1Score') or 0)}</td>"
+                f"<td>{int(point.get('team2Score') or 0)}</td>"
+                f"<td>{esc(point.get('observationKind'))}</td></tr>"
+            )
+    objective_quality = objective_score.get("quality") or {}
+    objective_panel = (
+        "<div class=\"panel\"><h2>Official objective score</h2>"
+        f"<p>Status: <b>{esc(objective_quality.get('status'))}</b>; flags: "
+        f"{esc(', '.join(objective_quality.get('flags') or []) or 'none')}</p>"
+        + ("<table><thead><tr><th>Half</th><th>Seconds</th><th>Team 1</th>"
+           "<th>Team 2</th><th>Boundary</th></tr></thead><tbody>"
+           + "".join(objective_rows) + "</tbody></table>" if objective_rows else
+           "<p>No authoritative objective-score points are available.</p>")
+        + "</div>"
+    )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>KTP match report — {esc(match.get('match_id'))}</title>
@@ -94,6 +143,7 @@ svg{{max-width:100%;height:auto;background:white;border-radius:6px}}code{{color:
 <div class="panel"><h2>Player scoreboard</h2><p>Overall rating uses the complete accumulated score. The provisional match median is {float(normalization.get('center_index') or 100):.0f}; momentum is one bounded additive component.</p>
 <table><thead><tr><th>#</th><th>Player</th><th>Team</th><th>Rating</th><th>Minutes</th><th>Raw</th><th>Combat</th><th>Context</th><th>Position</th><th>Momentum</th><th>K/D/A</th><th>Damage</th></tr></thead><tbody>{''.join(players)}</tbody></table></div>
 <div class="panel"><h2>Accumulated points over time</h2>{points_graph}<p><a href="points-timeline.svg">Open the full-size graph</a> · <a href="points-timeline.json">Inspect the sanitized 15-second data</a></p></div>
+{objective_panel}
 <div class="panel"><h2>Team momentum</h2>{graph}</div>
 <div class="panel"><h2>Component totals</h2><table><thead><tr><th>Component</th><th>Points</th><th>Share</th></tr></thead><tbody>{components}</tbody></table></div>
 <div class="panel"><h2>Evidence quality</h2><table><thead><tr><th>Gate</th><th>Status</th><th>Detail</th></tr></thead><tbody>{gates}</tbody></table></div>
@@ -103,20 +153,45 @@ svg{{max-width:100%;height:auto;background:white;border-radius:6px}}code{{color:
 
 def build_bundle(
     facts: dict[str, Any], profile: dict[str, Any], output_dir: Path,
-    ai_response: dict[str, Any] | None = None,
+    ai_response: dict[str, Any] | None = None, *,
+    objective_score_result: Any | None = None,
 ) -> dict[str, Any]:
     """Write a reproducible bundle; AI review is separate and never mutates it."""
     report = score_match(facts, profile)
+    from scripts import team_score_telemetry
+    match = report.get("match") or {}
+    if objective_score_result is None:
+        objective_score_result = team_score_telemetry.bound_unavailable_projection(
+            str(match.get("match_id") or ""), str(match.get("map_name") or ""),
+        )
+    facts_sha256 = _sha256(_json_bytes(facts))
+    objective_score_result = team_score_telemetry.bind_projection_to_analytics(
+        objective_score_result,
+        analytics_match_id=str(match.get("match_id") or ""),
+        analytics_map_name=str(match.get("map_name") or ""),
+        analytics_facts_sha256=facts_sha256,
+    )
+    objective_dto = team_score_telemetry.validate_private_projection_binding(
+        objective_score_result,
+        analytics_match_id=str(match.get("match_id") or ""),
+        analytics_map_name=str(match.get("map_name") or ""),
+        analytics_facts_sha256=facts_sha256,
+    )
+    report["objectiveScoreTimeline"] = objective_dto["objectiveScoreTimeline"]
+    report["objectiveScoreSha256"] = objective_score_result.sha256
     comparison = compare_models(facts, profile)
     checkpoint = build_ai_checkpoint(report)
     match_id = report["match"]["match_id"]
     files: dict[str, bytes] = {
         "report.json": _json_bytes(report),
-        "report.md": render_markdown(report).encode("utf-8"),
+        "report.md": (
+            render_markdown(report) + _objective_score_markdown(report)
+        ).encode("utf-8"),
         "report.html": render_html(report).encode("utf-8"),
         "comparison.json": _json_bytes(comparison),
         "comparison.md": render_comparison(comparison).encode("utf-8"),
         "ai-request.json": _json_bytes(checkpoint),
+        "objective-score-timeline.json": objective_score_result.canonical_json + b"\n",
     }
     if report.get("momentum"):
         files["momentum.svg"] = render_momentum_svg(
@@ -155,7 +230,7 @@ def build_bundle(
         "match_id": match_id,
         "profile": report["profile"],
         "profile_sha256": _sha256(_json_bytes(profile)),
-        "facts_sha256": _sha256(_json_bytes(facts)),
+        "facts_sha256": facts_sha256,
         # The semantic hash excludes only wall-clock generation metadata, so
         # rerunning identical facts/profile produces the same identity.
         "deterministic_report_sha256": _sha256(_json_bytes({
@@ -174,6 +249,8 @@ def build_bundle(
             "ai_can_publish": False,
             "raw_individual_positions_exported": False,
             "points_timeline_team_only": True,
+            "objective_score_team_only": True,
+            "objective_score_private_binding_exported": False,
         },
     }
     manifest_body = _json_bytes(manifest)

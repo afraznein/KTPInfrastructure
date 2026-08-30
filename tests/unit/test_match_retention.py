@@ -46,10 +46,25 @@ def test_apply_deletes_children_before_match_metadata():
     assert "DELETE t FROM `ktp_objective_attempt_events`" in sql
     assert "ktp_grenade_entity_events" in retention.MATCH_TABLES
     assert "DELETE t FROM `ktp_grenade_entity_events`" in sql
+    assert "ktp_team_score_observations" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_team_score_observations`" in sql
+    assert "ktp_team_score_ingest_conflicts" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_team_score_ingest_conflicts`" in sql
+    assert "ktp_team_score_ingest_audits" in retention.MATCH_TABLES
+    assert "DELETE t FROM `ktp_team_score_ingest_audits`" in sql
     last_child = max(sql.index(f"DELETE t FROM `{table}`") for table in retention.MATCH_TABLES)
     parent = sql.index("DELETE t FROM `ktp_matches`")
     assert last_child < parent
-    assert "GET_LOCK('ktp_match_retention'" in sql
+    assert "GET_LOCK('ktp_team_score_ledger_v1'" in sql
+    assert sql.index("START TRANSACTION") < sql.index("DELETE t FROM `ktp_team_score_ingest_conflicts`")
+    assert sql.index("DELETE t FROM `ktp_team_score_ingest_conflicts`") < sql.index(
+        "DELETE t FROM `ktp_team_score_observations`"
+    )
+    assert sql.index("DELETE t FROM `ktp_team_score_observations`") < sql.index(
+        "DELETE t FROM `ktp_team_score_ingest_manifests`"
+    )
+    assert sql.index("DELETE t FROM `ktp_team_score_ingest_manifests`") < sql.index("COMMIT")
+    assert "RELEASE_LOCK('ktp_team_score_ledger_v1')" in sql
 
 
 def test_producer_context_has_index_friendly_precedence_over_receipt_context():
@@ -76,4 +91,8 @@ def test_producer_context_has_index_friendly_precedence_over_receipt_context():
 
 
 def test_dry_run_contains_no_delete():
-    assert "DELETE " not in retention.build_sql(14, apply=False)
+    sql = retention.build_sql(14, apply=False)
+    assert "DELETE " not in sql
+    assert "START TRANSACTION" in sql
+    assert "ROLLBACK" in sql
+    assert "RELEASE_LOCK('ktp_team_score_ledger_v1')" in sql

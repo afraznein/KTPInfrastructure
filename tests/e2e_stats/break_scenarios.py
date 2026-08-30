@@ -80,6 +80,30 @@ _CLEAN_CAPTURE_RESULT_RE = re.compile(
     r"count_after=(?P<count_after>-?\d+) "
     r"deaths=(?P<deaths>\d+) flushed=(?P<flushed>[01]) "
     r"contaminated=(?P<contaminated>[01])")
+_CANONICAL_FRAG_BEGIN_RE = re.compile(
+    r"\[BD\] canonical_frag BEGIN killer=(?P<killer>\d+) "
+    r"killer_userid=(?P<killer_userid>\d+) victim=(?P<victim>\d+) "
+    r"victim_userid=(?P<victim_userid>\d+) roster=(?P<roster>\d+) "
+    r"isolated=(?P<isolated>\d+) preflushed=(?P<preflushed>[01])")
+_CANONICAL_FRAG_POSTFLUSH_RE = re.compile(
+    r"\[BD\] canonical_frag POSTFLUSH killer=(?P<killer>\d+) "
+    r"killer_userid=(?P<killer_userid>\d+) victim=(?P<victim>\d+) "
+    r"victim_userid=(?P<victim_userid>\d+) weapon=(?P<weapon>\d+) "
+    r"death_count=(?P<death_count>\d+) flush_ack=(?P<flush_ack>[01])")
+_CANONICAL_FRAG_FACT_RE = re.compile(
+    r"\[BD\] canonical_frag FACT killer=(?P<killer>\d+) "
+    r"killer_userid=(?P<killer_userid>\d+) victim=(?P<victim>\d+) "
+    r"victim_userid=(?P<victim_userid>\d+) weapon=(?P<weapon>\d+) "
+    r"death_observed=(?P<death_observed>[01]) "
+    r"preflushed=(?P<preflushed>[01]) postflushed=(?P<postflushed>[01])")
+_CANONICAL_FRAG_RESULT_RE = re.compile(
+    r"\[BD\] canonical_frag RESULT killer=(?P<killer>\d+) "
+    r"killer_userid=(?P<killer_userid>\d+) victim=(?P<victim>\d+) "
+    r"victim_userid=(?P<victim_userid>\d+) roster=(?P<roster>\d+) "
+    r"isolated=(?P<isolated>\d+) respawned=(?P<respawned>[01]) "
+    r"death_count=(?P<death_count>\d+) preflushed=(?P<preflushed>[01]) "
+    r"postflushed=(?P<postflushed>[01])")
+_CANONICAL_FRAG_ABORT_RE = re.compile(r"\[BD\] canonical_frag ABORT (?P<reason>.*)")
 _SCAN_RE = re.compile(
     r"\[BD\] flag (\d+) name=(\S+) owner=(-?\d+) capping=(-?\d+) "
     r"capteam=(-?\d+) allies=(-?\d+) axis=(-?\d+)")
@@ -130,6 +154,22 @@ _PLAYER_CAPTURE_RE = re.compile(
     + r'"(?P<name>[^"<]*)<(?P<userid>\d+)><[^<>]*>'
     + r'<(?P<team>[^<>]*)>" triggered a "dod_capture_area" - '
     + r'"(?P<flag_name>[^"]+)"\r?$',
+    re.MULTILINE,
+)
+_ENGINE_KILL_RE = re.compile(
+    _ENGINE_LOG_PREFIX
+    + r'"(?P<killer_name>[^"<]*)<(?P<killer_userid>\d+)><[^<>]*>'
+    + r'<(?P<killer_team>[^<>]*)>" killed '
+    + r'"(?P<victim_name>[^"<]*)<(?P<victim_userid>\d+)><[^<>]*>'
+    + r'<(?P<victim_team>[^<>]*)>" with "(?P<weapon>[^"]+)"',
+    re.MULTILINE,
+)
+_FRAG_CONTEXT_RE = re.compile(
+    _ENGINE_LOG_PREFIX
+    + r'"(?P<killer_name>[^"<]*)<(?P<killer_userid>\d+)><[^<>]*>'
+    + r'<(?P<killer_team>[^<>]*)>" triggered "frag_context" against '
+    + r'"(?P<victim_name>[^"<]*)<(?P<victim_userid>\d+)><[^<>]*>'
+    + r'<(?P<victim_team>[^<>]*)>" with "(?P<weapon>[^"]+)"',
     re.MULTILINE,
 )
 _MANIFEST_RE = re.compile(
@@ -452,6 +492,127 @@ class BreakDriver:
         output = self.handle.rcon("ktp_bd_end_series")
         self.series_started = False
         return "KTP_BD_SERIES_ENDED" in str(output or "")
+
+    def canonical_diagnostic_frag(self, *, timeout: float = 35.0) -> Scenario:
+        """Require one engine kill and its canonical producer marker.
+
+        The plugin freezes the exact roster and drives one real bot weapon
+        attack. A producer preflush closes prior play; its acknowledged
+        postflush closes this factual window. The marker is allowed to appear
+        after FACT in the file because stats_logging output is buffered, but it
+        must exist exactly once before RESULT with the exact engine identity.
+        """
+        s = Scenario("canonical_diagnostic_frag")
+        if self.series_started and not self._series_live():
+            return self._scenario_abort(s)
+        mark = len(self._read())
+        self.handle.rcon("ktp_bd_stage_canonical_frag")
+        deadline = self._series_deadline_for(timeout)
+        tail = ""
+        while time.monotonic() < deadline:
+            if self.series_started and not self._series_live():
+                return self._scenario_abort(s)
+            tail = _tail(self._read(), mark)
+            if (_CANONICAL_FRAG_RESULT_RE.search(tail)
+                    or _CANONICAL_FRAG_ABORT_RE.search(tail)):
+                break
+            time.sleep(0.1)
+        else:
+            s.detail = "canonical engine frag produced no bounded result"
+            return s
+
+        abort = _CANONICAL_FRAG_ABORT_RE.search(tail)
+        begins = list(_CANONICAL_FRAG_BEGIN_RE.finditer(tail))
+        postflushes = list(_CANONICAL_FRAG_POSTFLUSH_RE.finditer(tail))
+        facts = list(_CANONICAL_FRAG_FACT_RE.finditer(tail))
+        results = list(_CANONICAL_FRAG_RESULT_RE.finditer(tail))
+        if (len(begins) != 1 or len(postflushes) != 1
+                or len(facts) != 1 or len(results) != 1):
+            s.detail = (f"plugin aborted: {abort.group('reason')}" if abort else
+                        "canonical frag did not emit one exact "
+                        "begin/postflush/fact/result")
+            return s
+
+        begin, postflush, fact, result = (
+            begins[0], postflushes[0], facts[0], results[0]
+        )
+        identity = ("killer", "killer_userid", "victim", "victim_userid")
+        if any(begin.group(key) != postflush.group(key)
+               or begin.group(key) != fact.group(key)
+               or begin.group(key) != result.group(key)
+               for key in identity):
+            s.detail = ("canonical frag begin/postflush/fact/result identity "
+                        "did not reconcile")
+            return s
+        if (begin.group("preflushed") != "1"
+                or begin.group("roster") != begin.group("isolated")
+                or postflush.group("flush_ack") != "1"
+                or postflush.group("death_count") != "1"
+                or postflush.group("weapon") != fact.group("weapon")
+                or fact.group("death_observed") != "1"
+                or fact.group("preflushed") != "1"
+                or fact.group("postflushed") != "1"
+                or result.group("respawned") != "1"
+                or result.group("death_count") != "1"
+                or result.group("preflushed") != "1"
+                or result.group("postflushed") != "1"
+                or int(result.group("roster")) < 2
+                or result.group("roster") != result.group("isolated")
+                or result.group("roster") != begin.group("roster")):
+            s.detail = ("canonical frag flush/death contract did not restore "
+                        "and freeze the exact roster")
+            return s
+        if not (begin.start() < postflush.start() < fact.start() < result.start()):
+            s.detail = "canonical frag flush acknowledgment ordering was invalid"
+            return s
+
+        # The product buffer may append frag_context after FACT even though the
+        # synchronous postflush call was acknowledged before FACT. RESULT is
+        # therefore the closed evidence boundary, not FACT.
+        factual_window = tail[begin.start():result.end()]
+        kills = list(_ENGINE_KILL_RE.finditer(factual_window))
+        contexts = list(_FRAG_CONTEXT_RE.finditer(factual_window))
+        killer_userid = int(begin.group("killer_userid"))
+        victim_userid = int(begin.group("victim_userid"))
+        matching_kills = [row for row in kills
+                          if int(row.group("killer_userid")) == killer_userid
+                          and int(row.group("victim_userid")) == victim_userid]
+        if len(kills) != 1 or len(matching_kills) != 1:
+            s.detail = "diagnostic window did not contain one exact engine frag"
+            return s
+        kill = matching_kills[0]
+        matching_contexts = [
+            row for row in contexts
+            if int(row.group("killer_userid")) == killer_userid
+            and int(row.group("victim_userid")) == victim_userid
+            and row.group("weapon") == kill.group("weapon")
+        ]
+        if (kill.start() <= 0 or any(row.start() <= kill.start()
+                                    for row in matching_contexts)):
+            s.detail = "canonical marker did not follow its factual engine frag"
+            return s
+        s.extra = {
+            "killer_userid": killer_userid,
+            "victim_userid": victim_userid,
+            "weapon": kill.group("weapon"),
+            "engine_frag_facts": len(matching_kills),
+            "canonical_frag_markers": len(matching_contexts),
+            "roster_players": int(result.group("roster")),
+            "isolated_players": int(result.group("isolated")),
+            "preflush_ack": True,
+            "postflush_ack": True,
+            "death_count": 1,
+        }
+        if len(contexts) != 1 or len(matching_contexts) != 1:
+            s.status = "violation"
+            s.detail = ("one factual engine frag did not emit one exact canonical "
+                        "frag_context marker")
+            return s
+        s.status = "ok"
+        s.detail = (f"one factual engine frag {killer_userid}->{victim_userid}:"
+                    f"{kill.group('weapon')} emitted one canonical marker; exact "
+                    f"{result.group('roster')}-player roster respawned and froze")
+        return s
 
     def scan(self) -> list[dict]:
         """Current flag state, as the plugin sees it."""
@@ -1226,12 +1387,13 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     Retries because a fail-closed engine precondition can still be transient.
     A verdict of ok or violation is final and stops the loop immediately —
     retrying past a violation would be shopping for a green run. The three
-    unmatched-frag diagnostics run first and use a real capture that the
-    diagnostic creates deterministically from the map's capture-area bounds.
-    Every command is also bound to one five-minute series epoch; a half end,
-    changelevel, plugin/manifest activation, userid change, or deadline aborts
-    all remaining commands. The strict downstream contract still requires the
-    exact three synthetic diagnostics to stage and reconcile.
+    factual canonical frag runs first, followed by the three unmatched-frag
+    diagnostics that use a real capture created deterministically from the
+    map's capture-area bounds. Every command is also bound to one five-minute
+    series epoch; a half end, changelevel, plugin/manifest activation, userid
+    change, or deadline aborts all remaining commands. The strict downstream
+    contract still requires the one accepted factual frag and exact three
+    synthetic diagnostics to stage and reconcile.
     """
     d = BreakDriver(handle, log_path)
     if not d.begin_series():
@@ -1245,20 +1407,36 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
             "attempts": 1,
         }]
     out = []
+    # Deliberately create one ordinary engine frag before the closed-world
+    # scenarios.  The plugin acknowledges it only after the exact full roster
+    # respawns and freezes, so the diagnostic match always exercises accepted
+    # producer clocks and ktp_match_stats without depending on bot luck.
+    canonical = d.canonical_diagnostic_frag()
+    canonical.extra["attempts"] = 1
+    print(f"  scenario {canonical.name:<28} {canonical.status:<12} "
+          f"{canonical.detail}", flush=True)
+    out.append({"name": canonical.name, "status": canonical.status,
+                "detail": canonical.detail,
+                "breaks_seen": canonical.breaks_seen, **canonical.extra})
+
     # The three scenarios that intentionally dispatch unmatched synthetic
-    # deaths run first. This guarantees that the exact-three reconciliation is
-    # never held hostage by stochastic optional capture observations. Each is
-    # now staged from a frozen, plugin-created live capture. The two remaining
-    # no-dispatch behavior checks still run, but cannot consume the shared
-    # series budget before the required diagnostic trio.
-    scenarios = (
+    # deaths still run before optional capture observations. This guarantees
+    # that exact-three reconciliation is never held hostage by the latter.
+    # The canonical frag above is factual and accepted, so it is not part of
+    # this intentionally rejected diagnostic set.
+    scenarios = () if canonical.status != "ok" else (
         (d.negative_off_point_kill, 1),
         (d.positive_kill_on_point, attempts),
         (d.negative_round_restart, attempts),
         (d.negative_voluntary_walkoff, attempts),
         (d.negative_clean_capture, attempts),
     )
+    if canonical.status != "ok":
+        print("  diagnostics HARD STOP: canonical factual frag did not "
+              "stage and reconcile exactly", flush=True)
     for fn, scenario_attempts in scenarios:
+        if canonical.extra.get("series_abort"):
+            break
         s = None
         for attempt in range(1, scenario_attempts + 1):
             s = fn()

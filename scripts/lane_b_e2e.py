@@ -43,6 +43,7 @@ from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
                                          summary_for_lane)
 from scripts.match_analytics import (match_capture_authorization,  # noqa: E402
                                      sql_literal, tsv_rows)
+from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
 from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
@@ -614,6 +615,9 @@ def judge_capture_context_isolation(
             diagnostic_frag.get("daemon_rejected") == expected
             and diagnostic_frag.get("correlation_failure_count") == expected
         ),
+        "diagnostic_frag_accepted": (
+            int(diagnostic_frag.get("daemon_accepted") or 0) == 1
+        ),
     }
     ok = all(checks.values())
     return {
@@ -622,8 +626,9 @@ def judge_capture_context_isolation(
         "detail": (
             f"clean report match {report_match_id} is authorized with "
             "frag rejected=0/correlation_failure=0; diagnostic match "
-            f"{diagnostic_match_id} reconciles {expected} intentional "
-            "BreakDrive rejection(s) and remains unauthorized"
+            f"{diagnostic_match_id} retains exactly one accepted factual "
+            f"frag, reconciles {expected} intentional BreakDrive rejection(s), "
+            "and remains unauthorized"
             if ok else
             "clean/report and contaminated/diagnostic capture contexts were "
             "not isolated exactly"
@@ -694,6 +699,100 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     out["kills_during_match"] = out["live_to"] - out["live_from"]
     print(f"  match ended after {out['kills_during_match']} kills", flush=True)
     return out
+
+
+def import_lane_b_score_fixture(db, *, match_id: str, template_path: Path,
+                                output_root: Path):
+    """Materialize and import the explicit synthetic observer score fixture.
+
+    This proves the production importer/projector/report path without claiming
+    that the bare-metal bot server ran an observer. The fixture owns its score
+    facts; no score is inferred from captures, players, KTPR, or match_end.
+    """
+    template = json.loads(template_path.read_text(encoding="utf-8"))
+    if set(template) != {
+        "schemaVersion", "sourceServer", "startedAt", "endedAt", "scoreRows",
+    } or template["schemaVersion"] != 1:
+        raise ValueError("Lane B observer score fixture template contract changed")
+    context = tsv_rows(db.sql(f"""
+SELECT MAX(map_name) AS map_name, COUNT(DISTINCT map_name) AS maps,
+       MAX(half) AS terminal_half, COUNT(*) AS match_rows,
+       MIN(match_type) AS match_type, COUNT(DISTINCT match_type) AS match_types,
+       SUM(end_time IS NULL) AS open_rows
+FROM ktp_matches WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+GROUP BY match_id
+"""))
+    if len(context) != 1:
+        raise ValueError("Lane B score fixture needs one closed analytics match")
+    row = context[0]
+    if (int(row["maps"]) != 1 or int(row["match_types"]) != 1
+            or int(row["open_rows"]) != 0):
+        raise ValueError("Lane B score fixture analytics context is mixed or open")
+    map_name = str(row["map_name"])
+    match_type = int(row["match_type"])
+    terminal_half = int(row["terminal_half"])
+    source_server = str(template["sourceServer"])
+    score_rows = template["scoreRows"]
+    if not isinstance(score_rows, list) or not score_rows:
+        raise ValueError("Lane B score fixture needs explicit score rows")
+    events = []
+    for item in score_rows:
+        if not isinstance(item, dict):
+            raise ValueError("Lane B score fixture row is invalid")
+        events.append({
+            "tick": item["tick"], "match_id": match_id, "map": map_name,
+            "match_type": match_type, "half": terminal_half,
+            "event": "team_score", "allies_score": item["allies_score"],
+            "axis_score": item["axis_score"],
+            "allies_team_slot": item["allies_team_slot"],
+            "axis_team_slot": item["axis_team_slot"],
+            "event_sequence": item["event_sequence"],
+            "source": team_score_telemetry.OFFICIAL_SOURCE,
+            "sample_kind": item["sample_kind"],
+        })
+    lifecycle = {
+        "event": "ktp_match_end", "match_id": match_id, "map": map_name,
+        "match_type": match_type, "half": terminal_half,
+        "allies_score": score_rows[-1]["allies_score"],
+        "axis_score": score_rows[-1]["axis_score"],
+    }
+    # Model real transport: match_end closes metadata, then the final
+    # changelevel sample can arrive during the observer's 30-second window.
+    events.insert(len(events) - 1, lifecycle)
+    match_dir = output_root / match_id
+    match_dir.mkdir(parents=True, exist_ok=True)
+    events_path = match_dir / "events.jsonl"
+    events_path.write_text(
+        "".join(json.dumps(item, separators=(",", ":")) + "\n" for item in events),
+        encoding="utf-8",
+    )
+    metadata = {
+        "matchId": match_id, "map": map_name, "matchType": match_type,
+        "half": terminal_half, "startedAt": template["startedAt"],
+        "endedAt": template["endedAt"], "eventCount": len(events),
+        "sourceServer": source_server,
+    }
+    (match_dir / "metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8",
+    )
+    parsed = team_score_telemetry.read_event_files(
+        [events_path], source_server_roots={source_server: output_root},
+    )
+    mysql = team_score_telemetry.MysqlCli(
+        mysql_bin=db.client, database=db.database, socket=db.socket_path,
+        user="root",
+    )
+    imported = mysql.import_observations(parsed)
+    if imported.conflict_keys:
+        raise ValueError("Lane B score fixture import produced a conflict")
+    snapshot = mysql.fetch_match(match_id)
+    result = team_score_telemetry.project_official_score(
+        snapshot.rows, conflict_keys=snapshot.conflict_keys,
+        context=snapshot.context,
+    )
+    if result.dto["objectiveScoreTimeline"]["quality"]["status"] == "unavailable":
+        raise ValueError("Lane B score fixture projection is unavailable")
+    return result
 
 
 def gamerules_clock_preflight(handle, log_path: Path) -> dict:
@@ -939,6 +1038,10 @@ def main() -> int:
                     default=Path("/work/config/analytics/accumulation_v6_schema22_2s.toml"))
     ap.add_argument("--map-objectives", type=Path,
                     default=Path("/work/config/analytics/map_objectives.toml"))
+    ap.add_argument(
+        "--objective-score-fixture-template", type=Path, default=None,
+        help="explicit test-owned observer fixture; enables required score ingestion/projection",
+    )
     ap.add_argument("--artifact-manifest", type=Path, default=None,
                     help="artifact manifest carrying the exact four-repository "
                          "bundle; invalid or incomplete provenance is fatal")
@@ -983,6 +1086,7 @@ def main() -> int:
         # rows, the server row, and the server config. A row inserted after it
         # boots is not live and its log lines are dropped without an error.
         db.prepare(schema_files=list(args.schema), seed_files=list(args.seed))
+        db.load_file(team_score_telemetry.MIGRATION)
         db.assert_action_seeded("assist", for_pa="0", for_ppa="1")
         db.assert_action_seeded("cap_break", for_pa="1", for_ppa="0")
         report["schema_repairs"] = HlstatsDaemon.repair_reconstructed_schema(db)
@@ -1761,11 +1865,21 @@ def main() -> int:
         report["table_samples"] = changed_table_samples(db, before_counts, limit=10)
         if report.get("match"):
             try:
+                objective_score_result = None
+                objective_score_required = args.objective_score_fixture_template is not None
+                if objective_score_required:
+                    objective_score_result = import_lane_b_score_fixture(
+                        db, match_id=report["match"]["match_id"],
+                        template_path=args.objective_score_fixture_template,
+                        output_root=args.match_report_dir.parent / "observer-score-fixture",
+                    )
                 generated = generate_lane_b_report(
                     db, report["match"]["match_id"], args.match_report_dir,
                     expected_players=args.per_team * 2,
                     profile_path=args.report_profile,
                     objectives_path=args.map_objectives,
+                    objective_score_result=objective_score_result,
+                    objective_score_required=objective_score_required,
                 )
                 report["v5_match_report"] = summary_for_lane(generated)
             except Exception as exc:

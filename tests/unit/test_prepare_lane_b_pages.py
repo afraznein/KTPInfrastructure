@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import team_score_telemetry
 from scripts.prepare_lane_b_pages import (
     COMPONENT_FIELDS,
     EXPECTED_REPOSITORY,
@@ -218,12 +219,18 @@ def _build_report(report_dir: Path, match_id: str) -> None:
         "match_total_points": 12.0,
         "quality_gates": quality,
     }
+    objective = team_score_telemetry.bound_unavailable_projection(
+        match_id, "dod_anzio",
+    )
+    report["objectiveScoreTimeline"] = objective.dto["objectiveScoreTimeline"]
+    report["objectiveScoreSha256"] = objective.sha256
     files: dict[str, str] = {
         "ai-request.json": "{}\n",
         "comparison.json": "{}\n",
         "comparison.md": "# Private comparison source\n",
         "facts.normalized.json": "{}\n",
         "momentum.svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
+        "objective-score-timeline.json": objective.canonical_json.decode("utf-8") + "\n",
         "points-timeline.json": json.dumps(_timeline(match_id)) + "\n",
         "points-timeline.svg": '<svg xmlns="http://www.w3.org/2000/svg"></svg>\n',
         "report.html": '<!doctype html><html><body>untrusted source</body></html>\n',
@@ -248,6 +255,8 @@ def _build_report(report_dir: Path, match_id: str) -> None:
             "ai_can_publish": False,
             "raw_individual_positions_exported": False,
             "points_timeline_team_only": True,
+            "objective_score_team_only": True,
+            "objective_score_private_binding_exported": False,
         },
     })
     _write_json(report_dir / "report-verification.json", {
@@ -257,6 +266,7 @@ def _build_report(report_dir: Path, match_id: str) -> None:
             "manifest_hashes": "PASS",
             "public_privacy": "PASS",
             "points_timeline_privacy": "PASS",
+            "objective_score": "PASS",
             "required_files": "PASS",
         },
         "errors": [],

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
+from pathlib import Path
 
 import pytest
 
 from scripts import match_report_bundle as bundle
+from scripts import team_score_telemetry as score
 
 
 def analytics(match_id="example-TEST"):
@@ -74,6 +77,21 @@ def atlas(match_id="example-TEST"):
     }
 
 
+def score_result(value, *, match_id="example-TEST", map_name="dod_anzio",
+                 facts_digest=None):
+    body = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return score.projection_result_from_release(value, {
+        "schemaVersion": 1,
+        "objectiveScoreSha256": hashlib.sha256(body).hexdigest(),
+        "selectedMatchId": match_id,
+        "analyticsFactsSha256": facts_digest,
+        "context": {"mapName": map_name},
+    })
+
+
 def test_bundle_joins_sources_but_removes_database_identity():
     report = bundle.build_bundle(
         analytics(), readiness(), accumulation(), atlas(),
@@ -91,6 +109,8 @@ def test_bundle_joins_sources_but_removes_database_identity():
     assert "steam_id" not in serialized
     assert "player_id" not in serialized
     assert "bot:private" not in serialized
+    assert report["objectiveScoreTimeline"]["quality"]["status"] == "unavailable"
+    assert report["objectiveScoreTimeline"]["halves"] == []
 
 
 def test_bundle_rejects_cross_match_artifacts():
@@ -130,3 +150,90 @@ def test_privacy_guard_catches_nested_coordinates_and_ids():
     assert bundle.privacy_violations({
         "players": [{"playerId": 1}], "spatial": {"pos_victim_x": 10}
     }) == ["report.players[0].playerId", "report.spatial.pos_victim_x"]
+
+
+def test_bundle_attaches_sanitized_lane_b_official_score_fixture():
+    fixture = Path(__file__).parents[1] / "fixtures" / "team_score" / "lane-b-objective-score.json"
+    objective_score = json.loads(fixture.read_text(encoding="utf-8"))
+    report = bundle.build_bundle(
+        analytics(), readiness(), objective_score_result=score_result(objective_score)
+    )
+    projected = report["objectiveScoreTimeline"]
+    assert projected["quality"]["status"] == "complete"
+    assert projected["halves"][-1]["points"][-1]["team2Score"] == 2
+    rendered = bundle.render_markdown(report)
+    assert "## Official objective score" in rendered
+    assert "Stable match-local labels" in rendered
+
+
+def test_bundle_rejects_bare_or_foreign_score_artifacts():
+    fixture = Path(__file__).parents[1] / "fixtures" / "team_score" / "lane-b-objective-score.json"
+    objective_score = json.loads(fixture.read_text(encoding="utf-8"))
+    with pytest.raises(TypeError, match="bound ProjectionResult"):
+        bundle.build_bundle(
+            analytics(), readiness(), objective_score_result=objective_score,
+        )
+    with pytest.raises(ValueError, match="foreign match"):
+        bundle.build_bundle(
+            analytics(), readiness(),
+            objective_score_result=score_result(objective_score, match_id="foreign-TEST"),
+        )
+    with pytest.raises(ValueError, match="context disagrees"):
+        bundle.build_bundle(
+            analytics(), readiness(),
+            objective_score_result=score_result(objective_score, map_name="dod_caen"),
+        )
+    with pytest.raises(ValueError, match="foreign analytics facts"):
+        bundle.build_bundle(
+            analytics(), readiness(),
+            objective_score_result=score_result(objective_score, facts_digest="aa" * 32),
+        )
+
+
+def test_score_release_loader_rejects_missing_or_mismatched_private_binding():
+    fixture = Path(__file__).parents[1] / "fixtures" / "team_score" / "lane-b-objective-score.json"
+    objective_score = json.loads(fixture.read_text(encoding="utf-8"))
+    with pytest.raises(ValueError, match="private release schema"):
+        score.projection_result_from_release(objective_score, {})
+    with pytest.raises(ValueError, match="digest disagrees"):
+        score.projection_result_from_release(objective_score, {
+            "schemaVersion": 1,
+            "objectiveScoreSha256": "00" * 32,
+            "selectedMatchId": "example-TEST",
+            "analyticsFactsSha256": None,
+            "context": {"mapName": "dod_anzio"},
+        })
+
+
+def test_cli_requires_paired_private_release_and_strips_binding(tmp_path):
+    fixture = Path(__file__).parents[1] / "fixtures" / "team_score" / "lane-b-objective-score.json"
+    objective_score = json.loads(fixture.read_text(encoding="utf-8"))
+    result = score_result(objective_score)
+    analytics_path = tmp_path / "analytics.json"
+    readiness_path = tmp_path / "readiness.json"
+    public_path = tmp_path / "score.json"
+    private_path = tmp_path / "score-private.json"
+    analytics_path.write_text(json.dumps(analytics()), encoding="utf-8")
+    readiness_path.write_text(json.dumps(readiness()), encoding="utf-8")
+    public_path.write_text(json.dumps(result.dto), encoding="utf-8")
+    private_path.write_text(json.dumps(result.private_release_metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="required together"):
+        bundle.main([
+            "--analytics-json", str(analytics_path),
+            "--readiness-json", str(readiness_path),
+            "--objective-score-json", str(public_path),
+            "--output-dir", str(tmp_path / "missing-private"),
+        ])
+    output = tmp_path / "bound"
+    assert bundle.main([
+        "--analytics-json", str(analytics_path),
+        "--readiness-json", str(readiness_path),
+        "--objective-score-json", str(public_path),
+        "--objective-score-private-release", str(private_path),
+        "--output-dir", str(output),
+    ]) == 0
+    report = json.loads((output / "match-report.json").read_text(encoding="utf-8"))
+    serialized = json.dumps(report)
+    assert "selectedMatchId" not in serialized
+    assert "analyticsFactsSha256" not in serialized
+    assert report["objectiveScoreTimeline"]["quality"]["status"] == "complete"

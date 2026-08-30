@@ -327,6 +327,7 @@ jobs:
             -v "${PWD}/KTPHLStatsX:/repos/KTPHLStatsX:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -v "${PWD}/build/lane-b-artifacts:/work/build" \
             -w /work \
             ktp-lane-b:ci \
@@ -425,6 +426,7 @@ jobs:
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/config:/work/config:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -v "${PWD}/build/lane-b-artifacts:/work/build" \
             -v "${PWD}/KTPMatchHandler:/src/KTPMatchHandler:ro" \
             -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
@@ -468,7 +470,9 @@ jobs:
               --summary-out /work/build/lane-b-summary.md \
               --match-report-dir /work/build/match-report \
               --report-profile /work/config/analytics/accumulation_v6_schema22_2s.toml \
-              --map-objectives /work/config/analytics/map_objectives.toml
+              --map-objectives /work/config/analytics/map_objectives.toml \
+              --objective-score-fixture-template \
+                /work/tests/e2e_stats/fixtures/team_score/lane-b-observer-template.json
 
       - name: Publish match summary
         if: ${{ always() && env.LANE == 'full' }}

@@ -1,8 +1,10 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from scripts import team_score_telemetry as team_score
 from scripts.lane_b_e2e import (check_kill_switch,
                                 clean_assists_after_reenable,
                                 judge_capture_context_isolation,
@@ -440,7 +442,8 @@ def _schema22_health(*, frag_rejections: int = 0) -> list[dict]:
         "life", "damage", "position", "frag", "assist", "break",
         "flag_state", "flag_position", "objective_attempt", "grenade_entity",
     ):
-        attempted = 6 if event_type == "frag" else 0
+        attempted = ((4 if frag_rejections else 6)
+                     if event_type == "frag" else 0)
         rejected = frag_rejections if event_type == "frag" else 0
         rows.append({
             "half": 1, "event_type": event_type,
@@ -494,6 +497,8 @@ def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
     assert report_authorization["authorized"] is True
     assert diagnostic_frag["daemon_rejected"] == 3
     assert diagnostic_frag["correlation_failure_count"] == 3
+    assert diagnostic_frag["daemon_accepted"] == 1
+    assert verdict["checks"]["diagnostic_frag_accepted"] is True
     assert diagnostic_authorization["authorized"] is False
     assert any(
         "frag counters do not reconcile" in error
@@ -506,6 +511,35 @@ def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
         "authorized"
     ] is True
     assert generated["verification"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("accepted", (0, 2, 6))
+def test_breakdrive_isolation_requires_exactly_one_accepted_diagnostic_frag(
+        accepted: int):
+    report_authorization = {"authorized": True, "errors": []}
+    diagnostic_authorization = {
+        "authorized": False,
+        "errors": ["half 1 frag counters do not reconcile"],
+    }
+    verdict = judge_capture_context_isolation(
+        report_match_id="clean-TEST",
+        diagnostic_match_id="breakdrive-diagnostic-TEST",
+        expected_frag_diagnostics=3,
+        report_frag={"daemon_rejected": 0, "correlation_failure_count": 0},
+        diagnostic_frag={
+            "daemon_accepted": accepted,
+            "daemon_rejected": 3,
+            "correlation_failure_count": 3,
+        },
+        report_health={"status": "ok"},
+        diagnostic_health={"status": "ok"},
+        report_authorization=report_authorization,
+        diagnostic_authorization=diagnostic_authorization,
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["checks"]["diagnostic_frag_exact"] is True
+    assert verdict["checks"]["diagnostic_frag_accepted"] is False
 
 
 @pytest.mark.parametrize("latency", (0, 1, 2, 3))
@@ -659,8 +693,8 @@ def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: P
 
     original = lane_b_match_report.build_bundle
 
-    def leaking_bundle(input_facts, profile, output_dir):
-        manifest = original(input_facts, profile, output_dir)
+    def leaking_bundle(input_facts, profile, output_dir, **kwargs):
+        manifest = original(input_facts, profile, output_dir, **kwargs)
         path = output_dir / "report.json"
         report = json.loads(path.read_text())
         report["players"][0]["pos_x"] = 123
@@ -670,6 +704,71 @@ def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: P
     monkeypatch.setattr(lane_b_match_report, "build_bundle", leaking_bundle)
     with pytest.raises(ValueError, match="public report contains private keys"):
         generate_lane_b_report(object(), facts["match"]["match_id"], tmp_path)
+
+
+def _complete_objective_score(match_id="lane-b-unit-TEST"):
+    manifest = bytes.fromhex("44" * 32)
+    rows = [
+        team_score.TeamScoreObservation(
+            match_id=match_id, map_name="dod_anzio", match_type=0, half=1,
+            tick_seconds=Decimal("10.25"), event_sequence=1, observed_at=None,
+            allies_score=0, axis_score=0, allies_team_id=1, axis_team_id=2,
+            source_server="lane-b-score-fixture", observation_kind="baseline",
+            manifest_content_sha256=manifest,
+        ),
+        team_score.TeamScoreObservation(
+            match_id=match_id, map_name="dod_anzio", match_type=0, half=1,
+            tick_seconds=Decimal("360.5"), event_sequence=2, observed_at=None,
+            allies_score=1, axis_score=0, allies_team_id=1, axis_team_id=2,
+            source_server="lane-b-score-fixture", observation_kind="final",
+            manifest_content_sha256=manifest,
+        ),
+    ]
+    context = team_score.ProjectionContext(
+        match_id=match_id, map_name="dod_anzio", match_type=0,
+        source_server="lane-b-score-fixture", terminal_half=1,
+        event_count=3, official_row_count=2, retained_row_count=2,
+        events_file_sha256=bytes.fromhex("55" * 32),
+        metadata_file_sha256=bytes.fromhex("66" * 32),
+        manifest_content_sha256=manifest, observer_closed=True, settled=True,
+        lifecycle_complete=True, database_context_valid=True,
+    )
+    return team_score.project_official_score(rows, context=context)
+
+
+def test_score_enabled_lane_b_attaches_available_verified_public_artifact(monkeypatch, tmp_path):
+    facts = _facts()
+    monkeypatch.setattr(
+        "scripts.lane_b_match_report.build_facts",
+        lambda *args, **kwargs: (facts, {"retained": False}),
+    )
+    generated = generate_lane_b_report(
+        object(), facts["match"]["match_id"], tmp_path,
+        objective_score_result=_complete_objective_score(),
+        objective_score_required=True,
+    )
+    assert generated["verification"]["checks"]["objective_score"] == "PASS"
+    assert generated["report"]["objectiveScoreTimeline"]["quality"]["status"] == "complete"
+    artifact = json.loads((tmp_path / "objective-score-timeline.json").read_text())
+    assert artifact["objectiveScoreTimeline"]["teams"] == [
+        {"id": "team-1", "label": "Team 1"},
+        {"id": "team-2", "label": "Team 2"},
+    ]
+    assert "selectedMatchId" not in json.dumps(generated["report"])
+
+
+def test_lane_b_report_rejects_foreign_private_score_binding(monkeypatch, tmp_path):
+    facts = _facts()
+    monkeypatch.setattr(
+        "scripts.lane_b_match_report.build_facts",
+        lambda *args, **kwargs: (facts, {"retained": False}),
+    )
+    with pytest.raises(ValueError, match="foreign match"):
+        generate_lane_b_report(
+            object(), facts["match"]["match_id"], tmp_path,
+            objective_score_result=_complete_objective_score("foreign-TEST"),
+            objective_score_required=True,
+        )
 
 
 def test_participation_windows_handle_a_mid_match_substitution():

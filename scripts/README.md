@@ -8,6 +8,21 @@ Operational scripts for KTP game servers and data server.
 
 **Note:** Scripts with `.example` extension are templates. Copy to the actual filename and fill in your credentials before deploying.
 
+### Official team-score ingestion and projection
+
+`import_team_score_events.py` validates settled local/mounted observer
+`events.jsonl` plus adjacent `metadata.json`, requires an explicit
+`--source-server-root SOURCE_SERVER=ROOT`, binds the pair to its configured
+source path and closed analytics context, and imports
+only exact `engine-team-score-v1` rows into the append-only migration-023
+ledgers. `project_team_score.py` runs the strict
+post-match boundary, ordering, side-map, carryover, and conflict checks before
+writing a canonical neutral-team DTO and immutable release digest.
+
+Neither tool infers score from captures, players, KTPR, or `ktp_match_end`.
+See `docs/OFFICIAL_TEAM_SCORE_TELEMETRY.md` for the migration, local commands,
+quality behavior, privacy boundary, and retention integration.
+
 ## Scripts
 
 ### Bounded match accumulation and automated reports
@@ -47,7 +62,11 @@ expected map/match coverage, and public privacy boundary before distribution.
 `match_report_bundle.py` joins the canonical analytics JSON, readiness JSON,
 optional shareable accumulation JSON, and optional atlas metadata into one
 privacy-checked Markdown/JSON bundle. `metric_confidence.py` supplies versioned
-source/sample labels. `spatial_map_registry.py` discovers all KTP match configs
+source/sample labels. Official score input is accepted only as the paired
+`objective-score-timeline.json` plus private release produced by the projector;
+the bundle validates the match/map/facts digest binding and strips it before
+publication. A bare sanitized score DTO is deliberately rejected.
+`spatial_map_registry.py` discovers all KTP match configs
 and produces the map readiness matrix; it does not infer geometry or waypoints.
 
 `match_fixture_storage.py` measures SQL archive/transfer size and match-tagged

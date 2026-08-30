@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "sourceServer": "lane-b-score-fixture",
+  "startedAt": "2026-01-01T00:00:00.000Z",
+  "endedAt": "2026-01-01T00:06:00.000Z",
+  "scoreRows": [
+    {
+      "tick": 10.25,
+      "event_sequence": 1,
+      "allies_score": 0,
+      "axis_score": 0,
+      "allies_team_slot": 1,
+      "axis_team_slot": 2,
+      "sample_kind": "baseline"
+    },
+    {
+      "tick": 180.5,
+      "event_sequence": 2,
+      "allies_score": 1,
+      "axis_score": 0,
+      "allies_team_slot": 1,
+      "axis_team_slot": 2,
+      "sample_kind": "change"
+    },
+    {
+      "tick": 360.75,
+      "event_sequence": 3,
+      "allies_score": 1,
+      "axis_score": 0,
+      "allies_team_slot": 1,
+      "axis_team_slot": 2,
+      "sample_kind": "final"
+    },
+    {
+      "tick": 361.0,
+      "event_sequence": 4,
+      "allies_score": 1,
+      "axis_score": 0,
+      "allies_team_slot": 1,
+      "axis_team_slot": 2,
+      "sample_kind": "final"
+    }
+  ]
+}
