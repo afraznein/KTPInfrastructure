@@ -9,7 +9,8 @@ decides metric eligibility after collection.
 - Producer schema **22** is the complete current contract. Schema 21 is
   membership-only and must be marked partial.
 - Every captured marker has a producer-global monotonic sequence, a producer
-  event_epoch, game_time, matchid, and half. The daemon validates the
+  event_epoch, game_time, matchid, and half. Together, matchid, half, and
+  sequence form its stable private source-event key. The daemon validates the
   match-half context before persistence; a replay is idempotent and a conflict
   is rejected.
 - Private analysis normalizes event order to match_id, half, game_time, and
@@ -31,10 +32,10 @@ decides metric eligibility after collection.
 | Objective attempt | objective identity, start/stop/capture disposition, actor/team, time, sequence | validated lifecycle identity and match context. |
 | Capture health | type, attempted/enqueued/dropped/emitted counts, sequence range | reconciles producer loss and makes affected metrics partial or unavailable. |
 
-source_event_id, parent/child event links, fire outcome, stance, velocity,
-view direction, and a universal map-revision registry are **not** present in
-v1. Consumers must report those properties as unavailable rather than infer
-them.
+Explicit causal parent/child links (for example, a damage event claimed by a
+frag), fire outcome, stance, velocity, view direction, and a universal
+map-revision registry are **not** present in v1. Consumers must report those
+properties as unavailable rather than infer them.
 
 ## Required handling
 
