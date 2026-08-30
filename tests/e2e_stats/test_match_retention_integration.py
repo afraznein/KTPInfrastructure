@@ -173,7 +173,7 @@ def _start_lock_holder(db: EphemeralMysql) -> subprocess.Popen:
             "--raw",
             db.database,
             "-e",
-            "SELECT GET_LOCK('ktp_match_retention', 0); SELECT SLEEP(60);",
+            "SELECT GET_LOCK('ktp_team_score_ledger_v1', 0); SELECT SLEEP(60);",
         ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -183,7 +183,7 @@ def _start_lock_holder(db: EphemeralMysql) -> subprocess.Popen:
     while time.monotonic() < deadline:
         if holder.poll() is not None:
             raise AssertionError("retention lock-holder client exited early")
-        owner = db.scalar("SELECT IS_USED_LOCK('ktp_match_retention')")
+        owner = db.scalar("SELECT IS_USED_LOCK('ktp_team_score_ledger_v1')")
         if owner not in (None, "NULL"):
             return holder
         time.sleep(0.1)
@@ -226,6 +226,24 @@ def test_retention_classification_precedence_and_idempotency_against_mysql(tmp_p
             assert db.count(f"SELECT COUNT(*) FROM `{table}`") == expected
             assert _canonical_match_ids(db, table) == RETAINED_MATCHES
             _assert_no_canonical_orphans(db, table)
+
+        # Schema-22 lifecycle ledgers are named explicitly so a future
+        # allowlist refactor cannot silently drop their 14-day policy coverage.
+        for table in (
+            "ktp_objective_attempt_events",
+            "ktp_grenade_entity_events",
+        ):
+            assert _audit_count(applied, table) == len(PURGED_MATCHES)
+            assert db.count(f"SELECT COUNT(*) FROM `{table}`") == len(RETAINED_MATCHES)
+            assert _canonical_match_ids(db, table) == RETAINED_MATCHES
+            markers = set(
+                db.sql(f"SELECT marker FROM `{table}` ORDER BY marker")
+                .strip().splitlines()[1:]
+            )
+            assert "baseline:draft-old" in markers
+            assert "baseline:scrim-old" not in markers
+            assert "baseline:twelve-old" not in markers
+            assert "baseline:official-test-TEST" not in markers
 
         for table in retention.PRODUCER_CONTEXT_TABLES:
             markers = set(
@@ -273,3 +291,63 @@ def test_retention_lock_contention_is_a_database_backed_noop(tmp_path):
                 else (table,)
             )
             assert all(_audit_count(blocked, label) == 0 for label in labels)
+
+
+def test_crashed_ledger_deletion_rolls_back_conflict_and_observation_together(tmp_path):
+    with EphemeralMysql.start(parent=tmp_path) as db:
+        _prepare_retention_fixture(db)
+        before_conflicts = db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_ingest_conflicts "
+            "WHERE match_id='scrim-old'"
+        )
+        before_observations = db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_observations "
+            "WHERE match_id='scrim-old'"
+        )
+        before_audits = db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_ingest_audits "
+            "WHERE match_id='scrim-old'"
+        )
+        crashed = subprocess.Popen(
+            [
+                db.client, "--no-defaults", f"--socket={db.socket_path}",
+                "-u", "root", "--batch", "--raw", db.database, "-e",
+                "SELECT GET_LOCK('ktp_team_score_ledger_v1',0);"
+                "START TRANSACTION;"
+                "DELETE FROM ktp_team_score_ingest_audits WHERE match_id='scrim-old';"
+                "DELETE FROM ktp_team_score_ingest_conflicts WHERE match_id='scrim-old';"
+                "SELECT SLEEP(60);"
+                "DELETE FROM ktp_team_score_observations WHERE match_id='scrim-old';"
+                "COMMIT;",
+            ],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if crashed.poll() is not None:
+                raise AssertionError("crash simulation exited before interruption")
+            owner = db.scalar("SELECT IS_USED_LOCK('ktp_team_score_ledger_v1')")
+            if owner not in (None, "NULL"):
+                break
+            time.sleep(0.1)
+        else:
+            crashed.terminate()
+            crashed.wait(timeout=5)
+            raise AssertionError("crash simulation did not acquire the ledger lock")
+
+        time.sleep(0.25)
+        crashed.terminate()
+        crashed.wait(timeout=5)
+        assert db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_ingest_conflicts "
+            "WHERE match_id='scrim-old'"
+        ) == before_conflicts
+        assert db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_observations "
+            "WHERE match_id='scrim-old'"
+        ) == before_observations
+        assert db.count(
+            "SELECT COUNT(*) FROM ktp_team_score_ingest_audits "
+            "WHERE match_id='scrim-old'"
+        ) == before_audits

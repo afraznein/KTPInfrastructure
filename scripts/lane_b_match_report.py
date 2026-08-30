@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify a v5 match report from Lane B's live ephemeral MySQL."""
+"""Build and verify a match report from Lane B's live ephemeral MySQL."""
 
 from __future__ import annotations
 
@@ -16,17 +16,26 @@ from typing import Any
 from scripts.accumulation_v3 import load_profile, score_match, validate_facts
 from scripts.build_automated_match_report import build_bundle
 from scripts.life_impact_v4 import derive_life_impact
-from scripts.match_analytics import sql_literal, tsv_rows
+from scripts.match_analytics import (
+    evaluate_capture_authorization,
+    grenade_entity_summary,
+    objective_attempt_summary,
+    sql_literal,
+    tsv_rows,
+)
 from scripts.momentum_v5 import derive_momentum
 from scripts.points_timeline import (
     BIN_SECONDS,
     CONSERVATION_TOLERANCE,
     privacy_violations as timeline_privacy_violations,
 )
+from scripts import team_score_telemetry
 
 
 REPO = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = REPO / "config/analytics/accumulation_v5_momentum.toml"
+LEGACY_PROFILE = REPO / "config/analytics/accumulation_v5_momentum.toml"
+SCHEMA22_PROFILE = REPO / "config/analytics/accumulation_v6_schema22_2s.toml"
+DEFAULT_PROFILE = SCHEMA22_PROFILE
 DEFAULT_OBJECTIVES = REPO / "config/analytics/map_objectives.toml"
 DEFAULT_SPATIAL_CATALOG = REPO / "config/analytics/spatial_maps"
 PUBLIC_FORBIDDEN_KEYS = {
@@ -144,7 +153,7 @@ def _participation_seconds(
             right - left for left, right in zip(ordered, ordered[1:])
             if 0.1 <= right - left <= 30.0
         )
-    sample_interval = statistics.median(intervals) if intervals else 5.0
+    sample_interval = statistics.median(intervals) if intervals else 2.0
     result: dict[int, float] = defaultdict(float)
     for (player_id, _half), times in by_player_half.items():
         result[player_id] += max(times) - min(times) + sample_interval
@@ -290,6 +299,7 @@ def build_facts(
     match_rows = _rows(db, "match", f"""
 SELECT match_id, MAX(server_id) AS server_id, MAX(map_name) AS map_name,
        COUNT(*) AS halves_played,
+       GROUP_CONCAT(DISTINCT half ORDER BY half) AS observed_halves,
        SUM(CASE WHEN end_time IS NULL THEN 1 ELSE 0 END) AS open_halves,
        MAX(match_type) AS match_type,
        COUNT(DISTINCT match_type) AS distinct_match_types,
@@ -311,6 +321,45 @@ FROM ktp_matches WHERE match_id={match} GROUP BY match_id
     with objectives_path.open("rb") as source:
         topology = tomllib.load(source).get("maps", {}).get(map_name, {})
     profile = load_profile(profile_path)
+    manifest_rows = _rows(db, "capture_manifests", f"""
+SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
+       cm.event_epoch AS producer_activation_epoch,
+       UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch,
+       UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
+FROM ktp_capture_manifests cm
+LEFT JOIN ktp_matches m
+  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE BINARY cm.match_id=BINARY {match}
+ORDER BY cm.half, cm.id
+""")
+    health_rows = _rows(db, "capture_health", f"""
+SELECT half, event_type, attempted, enqueued, dropped, emitted,
+       daemon_received, daemon_accepted, daemon_rejected,
+       correlation_failure_count, sequence_gap_count,
+       duplicate_or_reordered_count
+FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {match}
+ORDER BY half, event_type
+""")
+    observed_halves = {
+        _i(value) for value in str(match_row.get("observed_halves") or "").split(",")
+        if _i(value) > 0
+    }
+    capture_authorization = evaluate_capture_authorization(
+        observed_halves, manifest_rows, health_rows,
+        require_activation=True,
+    )
+    profile_contract = profile.get("profile") or {}
+    requires_schema22 = (
+        _i(profile_contract.get("requires_capture_schema")) == 22
+        or abs(_f(profile_contract.get("requires_position_interval")) - 2.0) <= 0.01
+    )
+    if requires_schema22 and not capture_authorization["authorized"]:
+        errors = "; ".join(capture_authorization.get("errors") or [])
+        raise ValueError(
+            "schema22/2s scoring profile requires an authorized capture for every "
+            f"observed half ({capture_authorization['status']}: {errors or 'not captured'})"
+        )
     minimum_observed = _f(
         (profile.get("impact_index") or {}).get("minimum_observed_seconds"), 300.0
     )
@@ -376,6 +425,24 @@ ORDER BY p.half, game_time, p.id
                 row["half"], fallback_baselines[row["half"]]
             )
             row["game_time"] = max(0.0, row["game_time"] - baseline)
+
+    objective_attempt_rows = _rows(db, "objective_attempts", f"""
+SELECT server_id, half, attempt_id, event_kind, stop_reason
+FROM ktp_objective_attempt_events
+WHERE match_id={match} AND half>0
+ORDER BY half, event_epoch, producer_sequence
+""") if capture_authorization["authorized"] else []
+    grenade_entity_rows = _rows(db, "grenade_entities", f"""
+SELECT server_id, half, entindex, serial, entity_kind, weapon_id, weapon_type
+FROM ktp_grenade_entity_events
+WHERE match_id={match} AND half>0
+ORDER BY half, event_epoch, producer_sequence
+""") if capture_authorization["authorized"] else []
+    telemetry_lifecycles = {
+        "privacy": "aggregate_only_no_entity_or_position_detail",
+        "objective_attempts": objective_attempt_summary(objective_attempt_rows),
+        "grenade_entities": grenade_entity_summary(grenade_entity_rows),
+    }
     sides, stable_teams = _stable_and_side_teams(samples, roster_team)
     side_stable_votes: dict[tuple[int, int], list[int]] = defaultdict(list)
     for (half, player_id), side in sides.items():
@@ -589,8 +656,8 @@ ORDER BY flag_index
         players, samples, flags, frags, captures, profile, topology, flag_states
     )
 
-    observed_halves = {row["half"] for row in samples}
-    ownership_reliable = _ownership_is_reliable(flag_states, flags, observed_halves)
+    position_halves = {row["half"] for row in samples}
+    ownership_reliable = _ownership_is_reliable(flag_states, flags, position_halves)
     if not ownership_reliable:
         for row in cap_breaks:
             row["prevented_capout"] = False
@@ -610,7 +677,10 @@ ORDER BY flag_index
                   "is_test_match": match_id.endswith("-TEST"),
                   "source_mode": getattr(db, "source_mode", "lane_b_ephemeral_mysql"),
                   "flag_position_source": flag_position_source,
-                  "scoring_iteration": "v5_team_momentum"},
+                  "scoring_iteration": (
+                      "v6_schema22_2s" if requires_schema22 else "v5_team_momentum"
+                  ),
+                  "capture_authorization": capture_authorization},
         "players": players, "frags": frags, "damage_events": damage_events,
         "death_resets": death_resets, "captures": captures, "cap_breaks": cap_breaks,
         "position_points": {str(pid): row["position_points"]
@@ -619,6 +689,7 @@ ORDER BY flag_index
         "team_position_contributions": team_position_contributions,
         "momentum_points": {str(pid): value for pid, value in sorted(momentum_points.items())},
         "momentum_summary": momentum_summary,
+        "telemetry_lifecycles": telemetry_lifecycles,
         "reliability": {
             "life_boundaries": bool(frags), "damage_events": bool(raw_damage),
             "capture_events": bool(captures), "ownership": ownership_reliable,
@@ -634,6 +705,7 @@ ORDER BY flag_index
         "retained": False, "position_samples": len(samples),
         "reconstructed_lives": len(private_lives),
         "momentum_private_ticks": len(private_momentum.get("curve_components") or []),
+        "grenade_entity_position_rows": len(grenade_entity_rows),
     }
     validate_facts(facts)
     return facts, private_meta
@@ -713,6 +785,7 @@ def verify_bundle(
         "report.json", "report.md", "report.html", "comparison.json", "comparison.md",
         "ai-request.json", "momentum.svg",
         "points-timeline.json", "points-timeline.svg",
+        "objective-score-timeline.json",
     }
     manifest_files = {item.get("path") for item in manifest.get("files") or []}
     missing_files = sorted(required_files - manifest_files)
@@ -742,6 +815,26 @@ def verify_bundle(
         hashlib.sha256(semantic(second).encode()).hexdigest()
     if not deterministic:
         errors.append("identical facts/profile did not reproduce the semantic report")
+    objective_score_valid = True
+    try:
+        objective_dto = {
+            "objectiveScoreTimeline": report["objectiveScoreTimeline"],
+        }
+        team_score_telemetry.validate_public_projection(objective_dto)
+        objective_body = json.dumps(
+            objective_dto, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        if hashlib.sha256(objective_body).hexdigest() != report.get("objectiveScoreSha256"):
+            raise ValueError("objective score digest mismatch")
+        artifact = json.loads(
+            (output_dir / "objective-score-timeline.json").read_text(encoding="utf-8")
+        )
+        if artifact != objective_dto:
+            raise ValueError("objective score artifact/report mismatch")
+    except (KeyError, OSError, json.JSONDecodeError, ValueError) as exc:
+        objective_score_valid = False
+        errors.append(f"objective score validation failed: {exc}")
     return {
         "schema_version": 1, "status": "PASS" if not errors else "FAIL",
         "checks": {
@@ -761,6 +854,7 @@ def verify_bundle(
             "facts_hash": "PASS" if facts_hash == manifest.get("facts_sha256") else "FAIL",
             "profile_hash": "PASS" if profile_hash == manifest.get("profile_sha256") else "FAIL",
             "semantic_determinism": "PASS" if deterministic else "FAIL",
+            "objective_score": "PASS" if objective_score_valid else "FAIL",
         },
         "errors": errors,
     }
@@ -770,6 +864,8 @@ def generate_lane_b_report(
     db, match_id: str, output_dir: Path, *, expected_players: int = 12,
     profile_path: Path = DEFAULT_PROFILE, objectives_path: Path = DEFAULT_OBJECTIVES,
     spatial_catalog_dir: Path | None = None,
+    objective_score_result: team_score_telemetry.ProjectionResult | None = None,
+    objective_score_required: bool = False,
 ) -> dict[str, Any]:
     facts, private_meta = build_facts(
         db, match_id, profile_path=profile_path, objectives_path=objectives_path,
@@ -782,19 +878,29 @@ def generate_lane_b_report(
         encoding="utf-8",
     )
     profile = load_profile(profile_path)
-    manifest = build_bundle(facts, profile, output_dir)
+    manifest = build_bundle(
+        facts, profile, output_dir,
+        objective_score_result=objective_score_result,
+    )
     report = json.loads((output_dir / "report.json").read_text(encoding="utf-8"))
     verification = verify_bundle(
         facts, report, manifest, output_dir, expected_players=expected_players,
         profile=profile,
     )
     verification["private_derivation"] = private_meta
+    score_status = (report.get("objectiveScoreTimeline") or {}).get("quality", {}).get("status")
+    if objective_score_required and score_status == "unavailable":
+        verification["status"] = "FAIL"
+        verification["checks"]["objective_score"] = "FAIL"
+        verification["errors"].append(
+            "score-enabled Lane B requires an available official objective score"
+        )
     (output_dir / "report-verification.json").write_text(
         json.dumps(verification, indent=2, ensure_ascii=False, allow_nan=False) + "\n",
         encoding="utf-8",
     )
     if verification["status"] != "PASS":
-        raise ValueError("v5 report verification failed: " + "; ".join(verification["errors"]))
+        raise ValueError("Lane B report verification failed: " + "; ".join(verification["errors"]))
     return {"facts": facts, "report": report, "manifest": manifest,
             "verification": verification}
 

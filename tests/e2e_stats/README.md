@@ -606,20 +606,20 @@ context is closed. Lane B therefore compares `ktp_flag_state_events` only with
 `KTP_FLAG_STATE` markers between the ordered start/end markers. Counting the
 whole server log would fabricate a one-row pipeline loss at shutdown.
 
-### V5 report generation is part of the match
+### V6 schema22/2s report generation is part of the match
 
 The full lane keeps its ephemeral MySQL alive long enough to run
 `scripts/lane_b_match_report.py`. The same completed `-TEST` match is extracted into
-sanitized normalized facts, scored with `accumulation_v5_momentum`, rendered, and verified
+sanitized normalized facts, scored with `accumulation_v6_schema22_2s`, rendered, and verified
 before database teardown. This is a hard pipeline check, not bot-behaviour coverage: Lane B
 fails if the report has anything other than 12 players, lacks normalized overall ratings,
 does not pass position and momentum gates, leaks raw positional/platform identity fields,
 breaks component or momentum-pool conservation, fails a manifest hash, or cannot reproduce
 the same semantic result from identical inputs.
 
-The normal full play window is 360 seconds because the v5 profile requires 300 observed
+The normal full play window is 360 seconds because the v6 profile requires 300 observed
 seconds before issuing an overall rating. A shorter manually requested run may still be
-useful for capture diagnostics, but it deliberately fails v5 report verification rather than
+useful for capture diagnostics, but it deliberately fails v6 report verification rather than
 publishing misleading normalized ratings.
 
 The job summary contains the all-player rating/raw/momentum table. The uploaded
@@ -633,7 +633,7 @@ public bundle.
 
 Early runs used `ktp_match_players.steam_id VARCHAR(32)` while the daemon gives bots a
 36-character synthetic ID. Migration 011 widens that identity column, so the current full
-lane requires all 12 roster rows and the v5 report requires the same 12 players. Older saved
+lane requires all 12 roster rows and the v6 report requires the same 12 players. Older saved
 fixtures can still exhibit the former `Data too long` condition. It was reported as a
 coverage gap — never silently dropped, because those rows genuinely did not get
 written.

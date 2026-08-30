@@ -1,4 +1,7 @@
-# KTP Lane B — stats-capture end-to-end (bots + ephemeral MySQL, containerised)
+# KTP Lane B — stats-capture end-to-end (containerised, ephemeral MySQL)
+#
+# Two lanes: `full` = 12 bots in a synthetic 6v6; `corpus` = deterministic replay
+# of committed fixture logs. They have different gating rules — see below.
 #
 # Runs on a GITHUB-HOSTED runner, deliberately, not the Tier 2 self-hosted one:
 #
@@ -12,11 +15,35 @@
 #     smoke-callable.yml already boots the runtime container here, so the shape
 #     is proven.
 #
-# NOT a required status check, and no `pull_request` trigger. Bot AI is
-# non-deterministic; a lane that can flake must never gate a merge, or the
-# result is the "disable the integration test to merge the urgent fix"
-# antipattern TEST_INFRASTRUCTURE_PLAN already warns about. Lane A
-# (tier2-integration.yml) is the gate.
+# ## What may gate a merge, and what may not — READ THE LANE, not the workflow
+#
+# This file has TWO lanes and they differ on exactly the property that decides
+# this. Six steps are gated `LANE == 'full'` (the 12-bot 6v6 match and its
+# machinery); one is gated `LANE == 'corpus'` (a replay of committed fixture
+# logs through the daemon). The corpus lane never starts a bot.
+#
+#   `full`   — NOT a required status check, and no `pull_request` trigger. Bot
+#              AI is non-deterministic; a lane that can flake must never gate a
+#              merge, or the result is the "disable the integration test to
+#              merge the urgent fix" antipattern TEST_INFRASTRUCTURE_PLAN
+#              already warns about. Lane A (tier2-integration.yml) is the gate.
+#
+#   `corpus` — MAY gate. Deterministic by construction: committed fixtures, no
+#              bot, no AI. It is required on KTPAMXX `main` and `preprod` as
+#              `corpus-regression / Lane B (corpus, preprod, run 1)`, and it has
+#              caught a real regression (a migrate_022 failure that reproduced
+#              on two PRs and cleared on the fix).
+#
+# ⚠️ This paragraph used to forbid BOTH lanes from gating. It was written when
+# this workflow was bots-only — the title above still says so — and the corpus
+# lane was added later without updating it. The prohibition was never violated
+# in substance: `full` has never been a required check.
+#
+# ⚠️ Green on `corpus` means "no regression against the committed fixtures", NOT
+# "the stats are correct". It replays what is committed, so a bug the fixtures
+# do not exercise passes cleanly — that has happened (KTP_FLAG_POSITION). Widen
+# the fixtures to widen the claim; do not read the badge as more than it is.
+#
 #
 # ## What this proves, and what it does not
 #
@@ -67,7 +94,7 @@ on:
         type: string
         default: dod_anzio
       play_seconds:
-        description: Full-match play window (v5 ratings require at least 300 seconds)
+        description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
         required: false
         type: string
         default: '360'
@@ -300,6 +327,7 @@ jobs:
             -v "${PWD}/KTPHLStatsX:/repos/KTPHLStatsX:ro" \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -v "${PWD}/build/lane-b-artifacts:/work/build" \
             -w /work \
             ktp-lane-b:ci \
@@ -339,6 +367,22 @@ jobs:
             --repository amxx "${{ github.repository_owner }}/KTPAMXX" "$AMXX_REF" "$AMXX_SHA" \
             --repository hlstatsx "${{ github.repository_owner }}/KTPHLStatsX" "$DAEMON_REF" "$DAEMON_SHA"
           cat build/lane-b-artifacts/bundle-provenance.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Validate schema-22 telemetry contract and migration
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -v "${PWD}/KTPHLStatsX:/repos/KTPHLStatsX:ro" \
+            -v "${PWD}/tests:/work/tests:ro" \
+            -v "${PWD}/build/lane-b-artifacts:/work/build:ro" \
+            -w /work ktp-lane-b:ci \
+            bash -lc '
+              set -euo pipefail
+              perl /repos/KTPHLStatsX/scripts/selftest-telemetry22.pl
+              python3 /repos/KTPHLStatsX/scripts/selftest-migration22.py \
+                --infrastructure-root /work \
+                --migration /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql
+            '
 
       - name: Assemble full-match daemon and base schema
         if: ${{ env.LANE == 'full' }}
@@ -382,6 +426,7 @@ jobs:
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/config:/work/config:ro" \
+            -v "${PWD}/sql:/work/sql:ro" \
             -v "${PWD}/build/lane-b-artifacts:/work/build" \
             -v "${PWD}/KTPMatchHandler:/src/KTPMatchHandler:ro" \
             -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
@@ -411,6 +456,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
+                       /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -423,8 +469,10 @@ jobs:
               --out /work/build/lane-b-e2e.json \
               --summary-out /work/build/lane-b-summary.md \
               --match-report-dir /work/build/match-report \
-              --report-profile /work/config/analytics/accumulation_v5_momentum.toml \
-              --map-objectives /work/config/analytics/map_objectives.toml
+              --report-profile /work/config/analytics/accumulation_v6_schema22_2s.toml \
+              --map-objectives /work/config/analytics/map_objectives.toml \
+              --objective-score-fixture-template \
+                /work/tests/e2e_stats/fixtures/team_score/lane-b-observer-template.json
 
       - name: Publish match summary
         if: ${{ always() && env.LANE == 'full' }}
@@ -486,6 +534,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_019_clear_uncertified_frag_context.sql \
                        /work/build/artifacts/sql/migrate_020_frag_context_certified.sql \
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
+                       /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

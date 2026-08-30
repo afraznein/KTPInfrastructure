@@ -95,6 +95,17 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "life_boundaries": True,
         "assist_context": True,
         "capture_health": False,
+        "objective_attempts": False,
+        "grenade_entities": False,
+    }
+    assert report["telemetry_lifecycles"] == {
+        "privacy": "aggregate_public_private_timeline",
+        "objective_attempts": {"status": "not_captured"},
+        "grenade_entities": {"status": "not_captured"},
+        "private_facts": {
+            "objective_attempt_timeline": [],
+            "grenade_entity_timeline": [],
+        },
     }
     for player in report["players"]:
         if player["deaths"]:
@@ -103,7 +114,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             )
         else:
             assert player["damage_per_life"] is None
-    assert report["schema_version"] == 6
+    assert report["schema_version"] == 7
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []
@@ -254,3 +265,69 @@ def test_replay_report_suppresses_time_normalized_metrics(tmp_path):
     ] == "timed_metrics_suppressed"
     assert any(check["code"] == "replay_timing_compressed"
                for check in report["quality"]["checks"])
+
+
+def test_schema22_activation_authorization_uses_daemon_receipt_clock(tmp_path):
+    """Producer and daemon clocks can straddle the persisted match second."""
+    with EphemeralMysql.start(parent=tmp_path) as db:
+        db.sql("""
+CREATE TABLE ktp_matches (
+  match_id VARCHAR(64) NOT NULL, half TINYINT NOT NULL,
+  start_time DATETIME NOT NULL
+);
+CREATE TABLE ktp_capture_manifests (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  match_id VARCHAR(64) NOT NULL, half TINYINT NOT NULL,
+  schema_version SMALLINT NOT NULL, capabilities TEXT NOT NULL,
+  position_interval DECIMAL(5,2) NOT NULL,
+  event_epoch BIGINT NOT NULL, created_at DATETIME NOT NULL
+);
+CREATE TABLE ktp_capture_health (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  match_id VARCHAR(64) NOT NULL, half TINYINT NOT NULL,
+  event_type VARCHAR(32) NOT NULL,
+  attempted BIGINT NOT NULL, enqueued BIGINT NOT NULL,
+  dropped BIGINT NOT NULL, emitted BIGINT NOT NULL,
+  daemon_received BIGINT NOT NULL, daemon_accepted BIGINT NOT NULL,
+  daemon_rejected BIGINT NOT NULL, correlation_failure_count BIGINT NOT NULL,
+  sequence_gap_count BIGINT NOT NULL,
+  duplicate_or_reordered_count BIGINT NOT NULL
+);
+INSERT INTO ktp_matches VALUES
+  ('receipt-clock-TEST',1,'2026-08-28 21:16:04');
+INSERT INTO ktp_capture_manifests
+  (match_id,half,schema_version,capabilities,position_interval,event_epoch,created_at)
+VALUES
+  ('receipt-clock-TEST',1,22,'objective_attempt,grenade_entity',2.00,
+   UNIX_TIMESTAMP('2026-08-28 21:16:03'),'2026-08-28 21:16:04');
+""")
+        values = ",".join(
+            "('receipt-clock-TEST',1," + analytics.sql_literal(event_type)
+            + ",0,0,0,0,0,0,0,0,0,0)"
+            for event_type in analytics.CAPTURE_EVENT_TYPES
+        )
+        db.sql("""
+INSERT INTO ktp_capture_health
+  (match_id,half,event_type,attempted,enqueued,dropped,emitted,
+   daemon_received,daemon_accepted,daemon_rejected,
+   correlation_failure_count,sequence_gap_count,
+   duplicate_or_reordered_count)
+VALUES """ + values)
+
+        authorized = analytics.match_capture_authorization(
+            db, "receipt-clock-TEST", capture_tables_available=True
+        )
+        db.sql("""
+UPDATE ktp_capture_manifests
+SET created_at='2026-08-28 21:16:08'
+WHERE match_id='receipt-clock-TEST'
+""")
+        late = analytics.match_capture_authorization(
+            db, "receipt-clock-TEST", capture_tables_available=True
+        )
+
+    assert authorized["authorized"] is True
+    assert authorized["errors"] == []
+    assert late["authorized"] is False
+    assert any("activation receipt latency 4s" in error
+               for error in late["errors"])

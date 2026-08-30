@@ -836,6 +836,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "shareable_position_field": "derived_position_points_only",
         },
         "quality_gates": quality_gates,
+        "telemetry_lifecycles": facts.get("telemetry_lifecycles") or {},
         "component_totals": component_totals,
         "component_shares_percent": component_shares,
         "position_component_totals": position_component_totals,
@@ -1043,7 +1044,9 @@ def validate_ai_response(request: dict[str, Any], response: dict[str, Any]) -> N
 
 
 def render_markdown(report: dict[str, Any]) -> str:
-    is_v5 = report.get("profile") == "accumulation_v5_momentum"
+    is_v5 = report.get("profile") in {
+        "accumulation_v5_momentum", "accumulation_v6_schema22_2s",
+    }
     lines = [
         f"# Bounded accumulation shadow — {report['match']['match_id']}", "",
         f"Profile: `{report['profile']}` · State: **{report['publication_state']}** · "

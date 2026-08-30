@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+import math
+import statistics
 
 # `hlstats_Events_PlayerPlayerActions` and `_PlayerActions` both carry pos_x/y/z
 # on a KTP schema; upstream HLStatsX has them only on some tables. Lane B runs
@@ -432,42 +434,107 @@ def check_untagged_after_match(db, *, match_id: str, kill_window: dict) -> dict:
             **evidence}
 
 
-def check_statsme_flushed(db, *, weaponstats_lines: int,
-                          match_id: str | None = None,
-                          half: int | None = None) -> dict:
-    """Assert Lane B's test-only bot weaponstats reach StatsMe.
+def check_statsme_flushed(
+        db, *, source_rows_by_context: dict[tuple[str, int], int]) -> dict:
+    """Reconcile every Lane B weaponstats line to an exercised match/half.
 
     The full lane compiles ``stats_logging.sma`` with
     ``KTP_LANE_B_BOT_WEAPONSTATS``. Production builds omit that define and
     retain their bot exclusion. Zero source lines is therefore a pipeline
-    failure rather than an accepted all-bot limitation.
+    failure rather than an accepted all-bot limitation. Exact per-context
+    equality rejects duplicated clean or diagnostic rows; requiring the global
+    count to equal their sum rejects NULL/half-0 and foreign rows as well.
     """
     rows = db.count("SELECT COUNT(*) FROM hlstats_Events_Statsme")
-    if weaponstats_lines == 0:
-        return {"code": "statsme", "status": "pipeline", "rows": rows,
-                "detail": "Lane B emitted no bot `weaponstats` lines; the "
-                          "test-only compile flag or DODX flush path failed."}
-    if rows == 0:
-        return {"code": "statsme", "status": "pipeline", "rows": rows,
-                "detail":
-                    f"{weaponstats_lines} `weaponstats` line(s) in the game log "
-                    f"but 0 rows in hlstats_Events_Statsme — the daemon is "
-                    f"dropping them."}
-    if match_id is not None and half is not None:
-        attributed = db.count(
+    contexts = []
+    for (match_id, half), source_rows in source_rows_by_context.items():
+        attributed_rows = db.count(
             "SELECT COUNT(*) FROM hlstats_Events_Statsme "
-            f"WHERE match_id = '{match_id}' AND half = {int(half)}"
+            f"WHERE BINARY match_id = BINARY {_sql_text(match_id)} "
+            f"AND half = {int(half)}"
         )
-        if attributed != rows:
-            return {"code": "statsme", "status": "pipeline", "rows": rows,
-                    "attributed": attributed, "detail":
-                    f"{rows} weaponstats row(s) landed, but only {attributed} "
-                    f"carry match_id={match_id} half={half}. StatsMe must flush "
-                    "before KTP_MATCH_END clears daemon match context."}
-    return {"code": "statsme", "status": "ok", "rows": rows,
-            "detail": f"{rows} weaponstats row(s) from {weaponstats_lines} line(s)"
-                      + (f", all tagged {match_id} half={half}"
-                         if match_id is not None and half is not None else "")}
+        contexts.append({
+            "match_id": match_id,
+            "half": int(half),
+            "source_rows": int(source_rows),
+            "database_rows": attributed_rows,
+        })
+
+    source_rows = sum(context["source_rows"] for context in contexts)
+    known_context_rows = sum(context["database_rows"] for context in contexts)
+    unexpected_rows = rows - known_context_rows
+    common = {
+        "code": "statsme",
+        "rows": rows,
+        "source_rows": source_rows,
+        "known_context_rows": known_context_rows,
+        "unexpected_rows": unexpected_rows,
+        "contexts": contexts,
+    }
+    empty_source_contexts = [
+        context for context in contexts if context["source_rows"] <= 0
+    ]
+    if not contexts or empty_source_contexts:
+        missing = ", ".join(
+            f"{context['match_id']} half={context['half']}"
+            for context in empty_source_contexts
+        ) or "no exercised contexts supplied"
+        return {
+            **common,
+            "status": "pipeline",
+            "detail": f"Lane B emitted no bot `weaponstats` lines for required "
+                      f"context(s): {missing}; the test-only compile flag or "
+                      "DODX flush path failed.",
+        }
+
+    mismatches = [
+        context for context in contexts
+        if context["source_rows"] != context["database_rows"]
+    ]
+    if mismatches or unexpected_rows != 0:
+        mismatch_detail = ", ".join(
+            f"{context['match_id']} half={context['half']}: source="
+            f"{context['source_rows']} db={context['database_rows']}"
+            for context in mismatches
+        ) or "none"
+        return {
+            **common,
+            "status": "pipeline",
+            "detail": f"StatsMe context mismatches: {mismatch_detail}; "
+                      f"unexpected rows outside exercised contexts="
+                      f"{unexpected_rows}. Every source row and database row "
+                      "must resolve exactly to an exercised match/half.",
+        }
+    return {
+        **common,
+        "status": "ok",
+        "detail": f"{source_rows} weaponstats source line(s) exactly match "
+                  f"{known_context_rows} row(s) across {len(contexts)} explicit "
+                  "match/half context(s); no unattributed or foreign rows",
+    }
+
+
+def check_statsme_unattributed_replay(*, post_match_lines: int) -> dict:
+    """Reject stale weaponstats replayed after one match and before the next.
+
+    Valid flushes for a later diagnostic match are outside this source window.
+    Any weaponstats line here is necessarily emitted after daemon context was
+    cleared and would land without the clean match/half attribution.
+    """
+    if post_match_lines:
+        return {
+            "code": "statsme_unattributed_replay",
+            "status": "pipeline",
+            "rows": post_match_lines,
+            "detail": f"{post_match_lines} stale `weaponstats` line(s) replayed "
+                      "after KTP_MATCH_END and before the next match start",
+        }
+    return {
+        "code": "statsme_unattributed_replay",
+        "status": "ok",
+        "rows": 0,
+        "detail": "no weaponstats replayed after clean-match context clearing",
+    }
 
 
 def check_match_stats_reconciled(db, *, match_id: str) -> dict:
@@ -971,6 +1038,263 @@ def check_position_samples(db, *, emitted: int,
                                      if match_id is not None else None))
 
 
+def check_position_cadence(db, *, match_id: str, half: int) -> dict:
+    output = db.sql(
+        "SELECT DISTINCT game_time FROM ktp_position_samples WHERE "
+        f"BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)} "
+        "ORDER BY game_time"
+    ).strip().splitlines()
+    ticks = [float(line) for line in output[1:]]
+    gaps = sorted(
+        right - left for left, right in zip(ticks, ticks[1:]) if right > left
+    )
+    if not gaps:
+        return {
+            "code": "position_cadence", "status": "not_exercised",
+            "sample_ticks": len(ticks),
+            "detail": "not enough consecutive position samples to measure cadence",
+        }
+    median = statistics.median(gaps)
+    jitter = sorted(abs(gap - 2.0) for gap in gaps)
+    p95_index = min(len(jitter) - 1, math.ceil(0.95 * len(jitter)) - 1)
+    p95_jitter = jitter[p95_index]
+    ok = 1.5 <= median <= 2.5 and p95_jitter <= 1.0
+    return {
+        "code": "position_cadence",
+        "status": "ok" if ok else "pipeline",
+        "sample_ticks": len(ticks),
+        "gaps": len(gaps), "median_seconds": round(median, 3),
+        "p95_jitter_seconds": round(p95_jitter, 3),
+        "detail": f"median={median:.3f}s p95 absolute jitter="
+                  f"{p95_jitter:.3f}s across {len(gaps)} consecutive snapshot ticks; "
+                  "expected fixed 2s cadence",
+    }
+
+
+def check_objective_attempts(db, *, emitted: int,
+                             match_id: str, half: int) -> dict:
+    scope = f"BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)}"
+    rows = db.count(f"SELECT COUNT(*) FROM ktp_objective_attempt_events WHERE {scope}")
+    invalid = db.count(f"""
+SELECT COUNT(*) FROM ktp_objective_attempt_events
+WHERE {scope} AND (
+    event_kind IS NULL OR event_kind NOT IN ('start','complete','stop')
+ OR lifecycle_slot IS NULL OR lifecycle_slot <> IF(event_kind='start',0,1)
+ OR attempt_id IS NULL OR attempt_id <= 0
+ OR flag_name IS NULL OR TRIM(flag_name) = ''
+ OR map_name IS NULL OR TRIM(map_name) = ''
+ OR capturing_team IS NULL OR capturing_team NOT IN (1,2)
+ OR owner_before IS NULL OR owner_before NOT IN (0,1,2)
+ OR capturing_team=owner_before OR event_epoch <= 0 OR producer_sequence <= 0
+ OR event_epoch IS NULL OR producer_sequence IS NULL OR event_time IS NULL
+ OR NOT (UNIX_TIMESTAMP(event_time) <=> event_epoch)
+ OR allies_in_zone IS NULL OR allies_in_zone < 0
+ OR axis_in_zone IS NULL OR axis_in_zone < 0
+ OR (event_kind='start' AND attempt_id <> producer_sequence)
+ OR (event_kind IN ('complete','stop') AND attempt_id >= producer_sequence)
+ OR (event_kind='start' AND ((capturing_team=1 AND allies_in_zone <= 0)
+                          OR (capturing_team=2 AND axis_in_zone <= 0)))
+ OR (event_kind='stop' AND
+     (stop_reason IS NULL OR stop_reason NOT IN ('capture_stopped','context_reset')))
+ OR (event_kind<>'stop' AND stop_reason IS NOT NULL AND TRIM(stop_reason)<>'')
+)
+""")
+    starts = db.count(f"SELECT COUNT(*) FROM ktp_objective_attempt_events "
+                      f"WHERE {scope} AND event_kind='start'")
+    completes = db.count(f"SELECT COUNT(*) FROM ktp_objective_attempt_events "
+                         f"WHERE {scope} AND event_kind='complete'")
+    stops = db.count(f"SELECT COUNT(*) FROM ktp_objective_attempt_events "
+                     f"WHERE {scope} AND event_kind='stop'")
+    duplicate_terminals = db.count(f"""
+SELECT COUNT(*) FROM (
+  SELECT server_id, attempt_id FROM ktp_objective_attempt_events WHERE {scope}
+  AND event_kind IN ('complete','stop')
+  GROUP BY server_id, attempt_id HAVING COUNT(*) > 1
+) duplicates
+""")
+    invalid_sequence_order = db.count(f"""
+SELECT COUNT(*) FROM ktp_objective_attempt_events starts
+JOIN ktp_objective_attempt_events terminals
+  ON terminals.server_id=starts.server_id
+ AND BINARY terminals.match_id=BINARY starts.match_id
+ AND terminals.half=starts.half AND terminals.attempt_id=starts.attempt_id
+ AND terminals.event_kind IN ('complete','stop')
+WHERE BINARY starts.match_id=BINARY {_sql_literal(match_id)}
+  AND starts.half={int(half)} AND starts.event_kind='start'
+  AND terminals.producer_sequence <= starts.producer_sequence
+""")
+    health_accepted = db.count(f"""
+SELECT COALESCE(SUM(daemon_accepted),0) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)}
+  AND event_type='objective_attempt'
+""")
+    common = {
+        "code": "objective_attempts", "emitted": emitted, "rows": rows,
+        "starts": starts, "completes": completes, "stops": stops,
+        "invalid": invalid, "duplicate_terminals": duplicate_terminals,
+        "invalid_sequence_order": invalid_sequence_order,
+        "health_accepted": health_accepted,
+    }
+    if (rows != emitted or rows != health_accepted or invalid
+            or duplicate_terminals or invalid_sequence_order):
+        return {
+            **common, "status": "pipeline",
+            "detail": f"{emitted} marker(s), {rows} row(s); starts={starts} "
+                      f"completes={completes} stops={stops} invalid={invalid} "
+                      f"duplicate_terminals={duplicate_terminals} "
+                      f"invalid_sequence_order={invalid_sequence_order} "
+                      f"health_accepted={health_accepted}",
+        }
+    if emitted == 0:
+        return {**common, "status": "not_exercised",
+                "detail": "no objective-attempt lifecycle occurred"}
+    return {
+        **common, "status": "ok",
+        "detail": f"{rows}/{emitted} factual objective-attempt row(s) carried; "
+                  f"starts={starts} completes={completes} stops={stops}",
+    }
+
+
+def check_objective_attempt_witness(db, *, match_id: str, half: int) -> dict:
+    """Require four exact deterministic lifecycle witnesses by keyed sequence."""
+    carried = check_objective_attempts(
+        db, emitted=7, match_id=match_id, half=half
+    )
+    scope = f"BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)}"
+    expected = (
+        (2, "start", "", 2), (2, "complete", "", 3),
+        (4, "start", "", 4),
+        (4, "stop", "capture_stopped", 5),
+        (6, "start", "", 6),
+        (6, "stop", "context_reset", 7),
+        (1, "complete", "", 8),
+    )
+    mismatches = 0
+    for attempt_id, kind, reason, sequence in expected:
+        reason_sql = (
+            "stop_reason IS NULL" if not reason
+            else f"stop_reason={_sql_literal(reason)}"
+        )
+        count = db.count(
+            "SELECT COUNT(*) FROM ktp_objective_attempt_events WHERE "
+            f"{scope} AND attempt_id={attempt_id} "
+            f"AND event_kind={_sql_literal(kind)} AND {reason_sql} "
+            f"AND producer_sequence={sequence}"
+        )
+        mismatches += int(count != 1)
+    orphan_starts = db.count(
+        "SELECT COUNT(*) FROM ktp_objective_attempt_events WHERE "
+        f"{scope} AND attempt_id=1 AND event_kind='start'"
+    )
+    ok = carried["status"] == "ok" and mismatches == 0 and orphan_starts == 0
+    return {
+        "code": "objective_attempt_wire_witness",
+        "status": "ok" if ok else "pipeline",
+        "rows": carried["rows"], "health_accepted": carried["health_accepted"],
+        "scenario_mismatches": mismatches, "orphan_start_rows": orphan_starts,
+        "evidence_scope": "synthetic_wire_to_real_daemon_to_ephemeral_mysql",
+        "production_polling_scope": "separate_live_bot_capture_health_only",
+        "detail": (
+            "exact start->complete, capture_stopped, context_reset, and "
+            "left-censored terminal witnesses persisted in keyed sequence order"
+            if ok else "objective wire witness rows or health did not reconcile"
+        ),
+    }
+
+
+def check_grenade_entities(
+    db, *, emitted: int, match_id: str, half: int,
+    expected_witnesses: list[dict] | None = None,
+) -> dict:
+    scope = f"BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)}"
+    rows = db.count(f"SELECT COUNT(*) FROM ktp_grenade_entity_events WHERE {scope}")
+    entities = db.count(
+        "SELECT COUNT(*) FROM (SELECT entindex,serial FROM "
+        f"ktp_grenade_entity_events WHERE {scope} "
+        "GROUP BY entindex,serial) grenade_entities"
+    )
+    invalid = db.count(f"""
+SELECT COUNT(*) FROM ktp_grenade_entity_events
+WHERE {scope} AND (
+    entity_kind NOT IN ('tracked','removed')
+ OR lifecycle_slot <> IF(entity_kind='tracked',0,1)
+ OR weapon_id NOT IN (13,14,36)
+ OR NOT ((weapon_id=13 AND weapon_type='handgrenade')
+      OR (weapon_id=14 AND weapon_type='stickgrenade')
+      OR (weapon_id=36 AND weapon_type='mills_bomb'))
+ OR owner_player_id <= 0 OR owner_engine_userid <= 0
+ OR event_epoch <= 0 OR producer_sequence <= 0
+ OR UNIX_TIMESTAMP(event_time) <> event_epoch
+)
+""")
+    incomplete = db.count(
+        "SELECT COUNT(*) FROM (SELECT entindex,serial FROM "
+        f"ktp_grenade_entity_events WHERE {scope} "
+        "GROUP BY entindex,serial "
+        "HAVING SUM(entity_kind='tracked')=1 AND SUM(entity_kind='removed')=0"
+        ") incomplete_entities"
+    )
+    forbidden = db.count(
+        f"SELECT COUNT(*) FROM ktp_grenade_entity_events WHERE {scope} "
+        "AND (weapon_id IN (29,30,31,40) OR "
+        "weapon_type IN ('bazooka','panzerschreck','piat','mortar'))"
+    )
+    health_accepted = db.count(f"""
+SELECT COALESCE(SUM(daemon_accepted),0) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {_sql_literal(match_id)} AND half={int(half)}
+  AND event_type='grenade_entity'
+""")
+    witness_mismatches = 0
+    witness_rows = 0
+    for witness in expected_witnesses or []:
+        entindex = int(witness["entindex"])
+        serial = int(witness["serial"])
+        weapon_id = int(witness["weapon_id"])
+        weapon_type = _sql_literal(str(witness["weapon_type"]))
+        kinds = tuple(str(kind) for kind in witness["entity_kinds"])
+        kind_sql = ",".join(_sql_literal(kind) for kind in kinds)
+        key_scope = (
+            f"{scope} AND entindex={entindex} AND serial={serial}"
+        )
+        key_rows = db.count(
+            f"SELECT COUNT(*) FROM ktp_grenade_entity_events WHERE {key_scope}"
+        )
+        matching = db.count(
+            "SELECT COUNT(*) FROM ktp_grenade_entity_events WHERE "
+            f"{key_scope} AND weapon_id={weapon_id} AND weapon_type={weapon_type} "
+            f"AND entity_kind IN ({kind_sql})"
+        )
+        witness_rows += key_rows
+        if key_rows != len(kinds) or matching != len(kinds):
+            witness_mismatches += 1
+        for kind in kinds:
+            exact_kind = db.count(
+                "SELECT COUNT(*) FROM ktp_grenade_entity_events WHERE "
+                f"{key_scope} AND weapon_id={weapon_id} AND weapon_type={weapon_type} "
+                f"AND entity_kind={_sql_literal(kind)}"
+            )
+            if exact_kind != 1:
+                witness_mismatches += 1
+    common = {
+        "code": "grenade_entities", "emitted": emitted, "rows": rows,
+        "entities": entities, "incomplete": incomplete, "invalid": invalid,
+        "forbidden_weapons": forbidden, "health_accepted": health_accepted,
+        "witness_rows": witness_rows, "witness_mismatches": witness_mismatches,
+    }
+    ok = (
+        emitted == rows == health_accepted
+        and invalid == 0 and forbidden == 0 and witness_mismatches == 0
+    )
+    return {
+        **common, "status": "ok" if ok else "pipeline",
+        "detail": f"{rows}/{emitted} tracked/removed factual row(s); "
+                  f"entities={entities}, incomplete={incomplete}, invalid={invalid}, "
+                  f"health_accepted={health_accepted}, witness_rows={witness_rows}, "
+                  f"witness_mismatches={witness_mismatches}, "
+                  f"rocket_or_mortar_rows={forbidden}; removal is not an outcome claim",
+    }
+
+
 def check_flag_states(db, *, emitted: int) -> dict:
     carried = _check_direct_rows(
         db, code="flag_states", table="ktp_flag_state_events", emitted=emitted
@@ -1249,7 +1573,8 @@ SELECT COUNT(*) FROM (
             AND BINARY m.map_name = BINARY a.map_name) <> 1
 ) event_context_mismatches
 """)
-    wrong_context = rows - scoped
+    other_context_rows = rows - scoped
+    wrong_context = max(emitted - scoped, 0)
 
     common = {
         "code": "assist_context",
@@ -1261,17 +1586,20 @@ SELECT COUNT(*) FROM (
         "duplicate_keys": duplicate_keys,
         "interval_mismatches": interval_mismatches,
         "wrong_context": wrong_context,
+        "other_context_rows": other_context_rows,
     }
-    if (rows != emitted or scoped != emitted or invalid or duplicate_keys
-            or interval_mismatches or wrong_context):
+    if (scoped != emitted or invalid or duplicate_keys
+            or interval_mismatches):
         return {
             **common,
             "status": "pipeline",
-            "detail": f"{emitted} in-match assist marker(s), {rows} canonical "
-                      f"row(s) ({scoped} in the expected match/half); "
+            "detail": f"{emitted} clean-match assist marker(s), {scoped} "
+                      f"canonical row(s) in the expected match/half "
+                      f"({rows} across all exercised matches); "
                       f"invalid={invalid}, duplicate_keys={duplicate_keys}, "
                       f"interval_mismatches={interval_mismatches}, "
-                      f"wrong_context={wrong_context}; generic PPA rows={generic}",
+                      f"wrong_context={wrong_context}, other_context_rows="
+                      f"{other_context_rows}; generic PPA rows={generic}",
         }
     if emitted == 0:
         return {
@@ -1283,8 +1611,10 @@ SELECT COUNT(*) FROM (
     return {
         **common,
         "status": "ok",
-        "detail": f"{rows}/{emitted} canonical producer-time assist row(s) "
-                  f"carried in the expected match/half; generic PPA rows={generic}",
+        "detail": f"{scoped}/{emitted} canonical producer-time assist row(s) "
+                  f"carried in the expected match/half; {other_context_rows} "
+                  f"valid row(s) belong to other exercised matches; generic "
+                  f"PPA rows={generic}",
     }
 
 
@@ -1354,6 +1684,10 @@ def summarise(db, *, match_id: str | None = None) -> dict:
             "SELECT COUNT(*) FROM ktp_position_samples"),
         "flag_states": db.count("SELECT COUNT(*) FROM ktp_flag_state_events"),
         "life_events": db.count("SELECT COUNT(*) FROM ktp_life_events"),
+        "objective_attempt_events": db.count(
+            "SELECT COUNT(*) FROM ktp_objective_attempt_events"),
+        "grenade_entity_events": db.count(
+            "SELECT COUNT(*) FROM ktp_grenade_entity_events"),
         "assist_context": db.count("SELECT COUNT(*) FROM ktp_assist_events"),
         "assist_positions": _safe(assert_positions_populated, db, "assist", table=_PPA),
         "break_positions": _safe(assert_positions_populated, db, "cap_break", table=_PA),
@@ -1362,7 +1696,7 @@ def summarise(db, *, match_id: str | None = None) -> dict:
 
 def check_capture_health(db, *, match_id: str, half: int,
                          expected_frag_correlation_failures: int = 0) -> dict:
-    """Require the 1.17.0 producer manifest and exact end-to-end counts."""
+    """Require the schema-22 producer manifest and exact end-to-end counts."""
     expected_frag_failures = int(expected_frag_correlation_failures)
     if expected_frag_failures < 0:
         return {
@@ -1381,7 +1715,10 @@ def check_capture_health(db, *, match_id: str, half: int,
     manifest = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_manifests
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND producer='stats_logging' AND schema_version >= 21
+  AND producer='stats_logging' AND schema_version = 22
+  AND ABS(position_interval - 2.0) <= 0.01
+  AND FIND_IN_SET('objective_attempt', capabilities) > 0
+  AND FIND_IN_SET('grenade_entity', capabilities) > 0
 """)
     rows = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
@@ -1390,10 +1727,18 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
     bad = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND (event_type IS NULL OR emitted IS NULL OR emitted < 0
-       OR NOT (dropped <=> 0)
+  AND (event_type NOT IN ('life','damage','position','frag','assist','break',
+                          'flag_state','flag_position','objective_attempt',
+                          'grenade_entity')
+       OR attempted IS NULL OR attempted < 0
+       OR enqueued IS NULL OR enqueued < 0
+       OR dropped IS NULL OR dropped < 0
+       OR emitted IS NULL OR emitted < 0
+       OR NOT (attempted <=> enqueued + dropped)
+       OR NOT (enqueued <=> emitted)
        OR NOT (emitted <=> daemon_received)
        OR (event_type='frag' AND emitted < {expected_frag_failures})
+       OR NOT (daemon_accepted + daemon_rejected <=> daemon_received)
        OR NOT (daemon_accepted <=> CASE WHEN event_type='frag'
             THEN emitted - {expected_frag_failures} ELSE emitted END)
        OR NOT (daemon_rejected <=> CASE WHEN event_type='frag'
@@ -1403,16 +1748,22 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
        OR NOT (sequence_gap_count <=> 0)
        OR NOT (duplicate_or_reordered_count <=> 0))
 """)
-    ok = manifest == 1 and rows == 8 and bad == 0
+    distinct_types = db.count(f"""
+SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
+""")
+    ok = manifest == 1 and rows == 10 and distinct_types == 10 and bad == 0
     return {
         "code": "capture_health",
         "status": "ok" if ok else "pipeline",
         "detail": (
-            "Manifest and all eight producer/daemon event counters reconcile"
+            "Schema-22 manifest and all ten attempted/enqueued/emitted/receipt counters reconcile"
             if ok else
-            f"manifest={manifest} health_rows={rows}/8 unhealthy_rows={bad}"
+            f"manifest={manifest} health_rows={rows}/10 "
+            f"distinct_types={distinct_types}/10 unhealthy_rows={bad}"
         ),
         "manifest_rows": manifest,
         "health_rows": rows,
+        "distinct_types": distinct_types,
         "unhealthy_rows": bad,
     }

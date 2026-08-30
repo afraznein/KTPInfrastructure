@@ -1,8 +1,14 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from scripts import team_score_telemetry as team_score
+from scripts.lane_b_e2e import (check_kill_switch,
+                                clean_assists_after_reenable,
+                                judge_capture_context_isolation,
+                                match_log_segment)
 from scripts.lane_b_match_report import (
     _aggregate_team_life_timing,
     _ownership_is_reliable,
@@ -12,6 +18,7 @@ from scripts.lane_b_match_report import (
     generate_lane_b_report,
     summary_for_lane,
 )
+from scripts.match_analytics import evaluate_capture_authorization
 
 
 def _facts() -> dict:
@@ -61,6 +68,21 @@ def _facts() -> dict:
                       {"half": 1, "time": 360, "momentum": 0}],
             "episodes": [],
         },
+        "telemetry_lifecycles": {
+            "privacy": "aggregate_only_no_entity_or_position_detail",
+            "objective_attempts": {
+                "status": "available", "events": 0, "attempts": 0,
+                "starts": 0, "completes": 0, "stops": 0,
+                "orphan_terminals": 0, "open_attempts": 0,
+                "stop_reasons": {"capture_stopped": 0, "context_reset": 0},
+            },
+            "grenade_entities": {
+                "status": "available", "semantics": "entity_tracked_removed_only",
+                "events": 0, "entities": 0, "tracked": 0, "removed": 0,
+                "complete_lifecycles": 0, "incomplete_tracked": 0,
+                "left_censored_removed": 0, "allowed_weapon_ids_only": True,
+            },
+        },
         "reliability": {
             "life_boundaries": True, "damage_events": False,
             "capture_events": False, "ownership": False,
@@ -86,10 +108,51 @@ class ExtractorDb:
         if marker == "match":
             return _tsv(
                 ["match_id", "server_id", "map_name", "halves_played",
-                 "open_halves", "duration_seconds"],
+                 "observed_halves", "open_halves", "match_type",
+                 "distinct_match_types", "unclassified_halves",
+                 "duration_seconds"],
                 [{"match_id": "extractor-TEST", "server_id": 1,
                   "map_name": "dod_anzio", "halves_played": 1,
-                  "open_halves": 0, "duration_seconds": 360}],
+                  "observed_halves": "1", "open_halves": 0,
+                  "match_type": 3, "distinct_match_types": 1,
+                  "unclassified_halves": 0, "duration_seconds": 360}],
+            )
+        if marker == "capture_manifests":
+            return _tsv(
+                ["half", "schema_version", "capabilities", "position_interval",
+                 "producer_activation_epoch", "activation_receipt_epoch",
+                 "match_start_epoch"],
+                [{"half": 1, "schema_version": 22,
+                  "capabilities": "objective_attempt,grenade_entity",
+                  "position_interval": 2.0,
+                  "producer_activation_epoch": 1787097599,
+                  "activation_receipt_epoch": 1787097601,
+                  "match_start_epoch": 1787097600}],
+            )
+        if marker == "capture_health":
+            event_types = (
+                "life", "damage", "position", "frag", "assist", "break",
+                "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+            )
+            rows = []
+            for event_type in event_types:
+                count = 4 if event_type == "objective_attempt" else (
+                    3 if event_type == "grenade_entity" else 0
+                )
+                rows.append({
+                    "half": 1, "event_type": event_type,
+                    "attempted": count, "enqueued": count, "dropped": 0,
+                    "emitted": count, "daemon_received": count,
+                    "daemon_accepted": count, "daemon_rejected": 0,
+                    "correlation_failure_count": 0, "sequence_gap_count": 0,
+                    "duplicate_or_reordered_count": 0,
+                })
+            return _tsv(
+                ["half", "event_type", "attempted", "enqueued", "dropped",
+                 "emitted", "daemon_received", "daemon_accepted",
+                 "daemon_rejected", "correlation_failure_count",
+                 "sequence_gap_count", "duplicate_or_reordered_count"],
+                rows,
             )
         if marker == "roster":
             return _tsv(
@@ -99,7 +162,7 @@ class ExtractorDb:
             )
         if marker == "positions":
             rows = []
-            for when in range(0, 361, 5):
+            for when in range(0, 361, 2):
                 for pid in range(1, 13):
                     team = 1 if pid <= 6 else 2
                     rows.append({"player_id": pid, "team": team, "half": 1,
@@ -170,6 +233,36 @@ class ExtractorDb:
                 ["id", "half", "flag_index", "flag_name", "owner_team",
                  "is_initial", "game_time"], rows,
             )
+        if marker == "objective_attempts":
+            return _tsv(
+                ["server_id", "half", "attempt_id", "event_kind", "stop_reason"],
+                [
+                    {"server_id": 1, "half": 1, "attempt_id": 10,
+                     "event_kind": "start", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 10,
+                     "event_kind": "complete", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 11,
+                     "event_kind": "start", "stop_reason": "NULL"},
+                    {"server_id": 1, "half": 1, "attempt_id": 11,
+                     "event_kind": "stop", "stop_reason": "context_reset"},
+                ],
+            )
+        if marker == "grenade_entities":
+            return _tsv(
+                ["server_id", "half", "entindex", "serial", "entity_kind",
+                 "weapon_id", "weapon_type"],
+                [
+                    {"server_id": 1, "half": 1, "entindex": 101, "serial": 10001,
+                     "entity_kind": "tracked", "weapon_id": 13,
+                     "weapon_type": "handgrenade"},
+                    {"server_id": 1, "half": 1, "entindex": 101, "serial": 10001,
+                     "entity_kind": "removed", "weapon_id": 13,
+                     "weapon_type": "handgrenade"},
+                    {"server_id": 1, "half": 1, "entindex": 102, "serial": 10002,
+                     "entity_kind": "tracked", "weapon_id": 36,
+                     "weapon_type": "mills_bomb"},
+                ],
+            )
         raise AssertionError(marker)
 
 
@@ -189,7 +282,36 @@ def test_live_database_extractor_builds_private_derived_public_facts():
     position_timing = facts["team_position_contributions"]
     assert position_timing
     assert not any("player" in key for row in position_timing for key in row)
-    assert private["position_samples"] == 876
+    assert private["position_samples"] == 2172
+    assert private["grenade_entity_position_rows"] == 3
+    assert facts["telemetry_lifecycles"]["objective_attempts"] == {
+        "status": "available", "events": 4, "attempts": 2, "starts": 2,
+        "completes": 1, "stops": 1, "orphan_terminals": 0,
+        "open_attempts": 0,
+        "stop_reasons": {"capture_stopped": 0, "context_reset": 1},
+    }
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["entities"] == 2
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["incomplete_tracked"] == 1
+    assert facts["telemetry_lifecycles"]["grenade_entities"]["allowed_weapon_ids_only"] is True
+
+
+def test_live_report_rejects_crossed_allowed_grenade_id_type_pair():
+    class CrossedPairDb(ExtractorDb):
+        def sql(self, query):
+            if "lane_b_v5_grenade_entities" in query:
+                return _tsv(
+                    ["server_id", "half", "entindex", "serial", "entity_kind",
+                     "weapon_id", "weapon_type"],
+                    [{"server_id": 1, "half": 1, "entindex": 101,
+                      "serial": 10001, "entity_kind": "tracked",
+                      "weapon_id": 13, "weapon_type": "stickgrenade"}],
+                )
+            return super().sql(query)
+
+    facts, _ = build_facts(CrossedPairDb(), "extractor-TEST")
+    assert facts["telemetry_lifecycles"]["grenade_entities"][
+        "allowed_weapon_ids_only"
+    ] is False
 
 
 def test_damage_rows_are_bounded_to_the_victims_next_death():
@@ -314,6 +436,253 @@ def test_live_extractor_bundle_is_generated_verified_and_summarized(tmp_path: Pa
     assert len(summary["players"]) == 12
 
 
+def _schema22_health(*, frag_rejections: int = 0) -> list[dict]:
+    rows = []
+    for event_type in (
+        "life", "damage", "position", "frag", "assist", "break",
+        "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+    ):
+        attempted = ((4 if frag_rejections else 6)
+                     if event_type == "frag" else 0)
+        rejected = frag_rejections if event_type == "frag" else 0
+        rows.append({
+            "half": 1, "event_type": event_type,
+            "attempted": attempted, "enqueued": attempted, "dropped": 0,
+            "emitted": attempted, "daemon_received": attempted,
+            "daemon_accepted": attempted - rejected,
+            "daemon_rejected": rejected,
+            "correlation_failure_count": rejected,
+            "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+        })
+    return rows
+
+
+def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
+        tmp_path: Path):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+    }]
+    report_health_rows = _schema22_health()
+    diagnostic_health_rows = _schema22_health(frag_rejections=3)
+    report_authorization = evaluate_capture_authorization(
+        {1}, manifest, report_health_rows
+    )
+    diagnostic_authorization = evaluate_capture_authorization(
+        {1}, manifest, diagnostic_health_rows
+    )
+    report_frag = next(
+        row for row in report_health_rows if row["event_type"] == "frag"
+    )
+    diagnostic_frag = next(
+        row for row in diagnostic_health_rows if row["event_type"] == "frag"
+    )
+
+    verdict = judge_capture_context_isolation(
+        report_match_id="clean-TEST",
+        diagnostic_match_id="breakdrive-diagnostic-TEST",
+        expected_frag_diagnostics=3,
+        report_frag=report_frag,
+        diagnostic_frag=diagnostic_frag,
+        report_health={"status": "ok"},
+        diagnostic_health={"status": "ok"},
+        report_authorization=report_authorization,
+        diagnostic_authorization=diagnostic_authorization,
+    )
+
+    assert verdict["status"] == "ok"
+    assert report_frag["daemon_rejected"] == 0
+    assert report_frag["correlation_failure_count"] == 0
+    assert report_authorization["authorized"] is True
+    assert diagnostic_frag["daemon_rejected"] == 3
+    assert diagnostic_frag["correlation_failure_count"] == 3
+    assert diagnostic_frag["daemon_accepted"] == 1
+    assert verdict["checks"]["diagnostic_frag_accepted"] is True
+    assert diagnostic_authorization["authorized"] is False
+    assert any(
+        "frag counters do not reconcile" in error
+        for error in diagnostic_authorization["errors"]
+    )
+
+    generated = generate_lane_b_report(ExtractorDb(), "extractor-TEST", tmp_path)
+    assert generated["facts"]["match"]["scoring_iteration"] == "v6_schema22_2s"
+    assert generated["facts"]["match"]["capture_authorization"][
+        "authorized"
+    ] is True
+    assert generated["verification"]["status"] == "PASS"
+
+
+@pytest.mark.parametrize("accepted", (0, 2, 6))
+def test_breakdrive_isolation_requires_exactly_one_accepted_diagnostic_frag(
+        accepted: int):
+    report_authorization = {"authorized": True, "errors": []}
+    diagnostic_authorization = {
+        "authorized": False,
+        "errors": ["half 1 frag counters do not reconcile"],
+    }
+    verdict = judge_capture_context_isolation(
+        report_match_id="clean-TEST",
+        diagnostic_match_id="breakdrive-diagnostic-TEST",
+        expected_frag_diagnostics=3,
+        report_frag={"daemon_rejected": 0, "correlation_failure_count": 0},
+        diagnostic_frag={
+            "daemon_accepted": accepted,
+            "daemon_rejected": 3,
+            "correlation_failure_count": 3,
+        },
+        report_health={"status": "ok"},
+        diagnostic_health={"status": "ok"},
+        report_authorization=report_authorization,
+        diagnostic_authorization=diagnostic_authorization,
+    )
+
+    assert verdict["status"] == "pipeline"
+    assert verdict["checks"]["diagnostic_frag_exact"] is True
+    assert verdict["checks"]["diagnostic_frag_accepted"] is False
+
+
+@pytest.mark.parametrize("latency", (0, 1, 2, 3))
+def test_schema22_manifest_activation_receipt_latency_is_authorized(
+        latency: int):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": 100 + latency,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is True
+
+
+@pytest.mark.parametrize("receipt", (99, 104, None))
+def test_schema22_manifest_activation_receipt_outside_policy_is_unauthorized(
+        receipt: int | None):
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "producer_activation_epoch": 99,
+        "activation_receipt_epoch": receipt,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("manifest activation" in error
+               for error in authorization["errors"])
+
+
+def test_schema22_missing_producer_activation_epoch_is_unauthorized():
+    manifest = [{
+        "half": 1, "schema_version": 22,
+        "capabilities": "objective_attempt,grenade_entity",
+        "position_interval": 2.0,
+        "match_start_epoch": 100,
+        "producer_activation_epoch": None,
+        "activation_receipt_epoch": 100,
+    }]
+
+    authorization = evaluate_capture_authorization(
+        {1}, manifest, _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("producer activation" in error
+               for error in authorization["errors"])
+
+
+def test_schema22_never_confirmed_without_manifest_is_not_authorized():
+    authorization = evaluate_capture_authorization(
+        {1}, [], _schema22_health(), require_activation=True
+    )
+
+    assert authorization["authorized"] is False
+    assert any("manifest half set/count" in error
+               for error in authorization["errors"])
+
+
+def test_match_log_segments_keep_breakdrive_markers_out_of_clean_context():
+    clean_start = (
+        'L 08/25/2026 - 10:00:00: KTP_MATCH_START '
+        '(matchid "clean-TEST") (half "1st")'
+    )
+    clean_end = (
+        'L 08/25/2026 - 10:06:00: KTP_MATCH_END '
+        '(matchid "clean-TEST") (status "test")'
+    )
+    diagnostic_start = (
+        'L 08/25/2026 - 10:06:05: KTP_MATCH_START '
+        '(matchid "diagnostic-TEST") (half "1st")'
+    )
+    diagnostic_end = (
+        'L 08/25/2026 - 10:07:00: KTP_MATCH_END '
+        '(matchid "diagnostic-TEST") (status "test")'
+    )
+    synthetic = (
+        '[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far '
+        'victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 '
+        'count_before=2 owner_before=1'
+    )
+    log = "\n".join([
+        clean_start, '"A" triggered "frag_context"', clean_end,
+        '"A" triggered "weaponstats"', diagnostic_start, synthetic,
+        diagnostic_end,
+    ])
+
+    clean = match_log_segment(log, "clean-TEST")
+    diagnostic = match_log_segment(log, "diagnostic-TEST")
+
+    assert synthetic not in clean
+    assert 'triggered "weaponstats"' in clean
+    assert synthetic in diagnostic
+
+
+def test_diagnostic_assist_cannot_fake_clean_kill_switch_recovery():
+    report = {
+        "assists_before_match": 4,
+        "assists_at_clean_match_end": 4,
+        # The diagnostic match later raises the global total to five, but that
+        # value is intentionally absent from the clean recovery calculation.
+        "emitted": {"assist": 5},
+    }
+
+    clean_assists = clean_assists_after_reenable(report)
+    verdict = check_kill_switch(
+        {"kills_while_off": 2, "assists_while_off": 0},
+        assists_after_on=clean_assists,
+    )
+
+    assert clean_assists == 0
+    assert verdict["status"] == "not_exercised"
+
+
+def test_clean_post_enable_assist_still_proves_kill_switch_recovery():
+    report = {
+        "assists_before_match": 4,
+        "assists_at_clean_match_end": 5,
+        "emitted": {"assist": 6},
+    }
+
+    clean_assists = clean_assists_after_reenable(report)
+    verdict = check_kill_switch(
+        {"kills_while_off": 2, "assists_while_off": 0},
+        assists_after_on=clean_assists,
+    )
+
+    assert clean_assists == 1
+    assert verdict["status"] == "ok"
+
+
 def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: Path):
     facts = _facts()
     monkeypatch.setattr(
@@ -324,8 +693,8 @@ def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: P
 
     original = lane_b_match_report.build_bundle
 
-    def leaking_bundle(input_facts, profile, output_dir):
-        manifest = original(input_facts, profile, output_dir)
+    def leaking_bundle(input_facts, profile, output_dir, **kwargs):
+        manifest = original(input_facts, profile, output_dir, **kwargs)
         path = output_dir / "report.json"
         report = json.loads(path.read_text())
         report["players"][0]["pos_x"] = 123
@@ -335,6 +704,71 @@ def test_bundle_verifier_rejects_public_positional_data(monkeypatch, tmp_path: P
     monkeypatch.setattr(lane_b_match_report, "build_bundle", leaking_bundle)
     with pytest.raises(ValueError, match="public report contains private keys"):
         generate_lane_b_report(object(), facts["match"]["match_id"], tmp_path)
+
+
+def _complete_objective_score(match_id="lane-b-unit-TEST"):
+    manifest = bytes.fromhex("44" * 32)
+    rows = [
+        team_score.TeamScoreObservation(
+            match_id=match_id, map_name="dod_anzio", match_type=0, half=1,
+            tick_seconds=Decimal("10.25"), event_sequence=1, observed_at=None,
+            allies_score=0, axis_score=0, allies_team_id=1, axis_team_id=2,
+            source_server="lane-b-score-fixture", observation_kind="baseline",
+            manifest_content_sha256=manifest,
+        ),
+        team_score.TeamScoreObservation(
+            match_id=match_id, map_name="dod_anzio", match_type=0, half=1,
+            tick_seconds=Decimal("360.5"), event_sequence=2, observed_at=None,
+            allies_score=1, axis_score=0, allies_team_id=1, axis_team_id=2,
+            source_server="lane-b-score-fixture", observation_kind="final",
+            manifest_content_sha256=manifest,
+        ),
+    ]
+    context = team_score.ProjectionContext(
+        match_id=match_id, map_name="dod_anzio", match_type=0,
+        source_server="lane-b-score-fixture", terminal_half=1,
+        event_count=3, official_row_count=2, retained_row_count=2,
+        events_file_sha256=bytes.fromhex("55" * 32),
+        metadata_file_sha256=bytes.fromhex("66" * 32),
+        manifest_content_sha256=manifest, observer_closed=True, settled=True,
+        lifecycle_complete=True, database_context_valid=True,
+    )
+    return team_score.project_official_score(rows, context=context)
+
+
+def test_score_enabled_lane_b_attaches_available_verified_public_artifact(monkeypatch, tmp_path):
+    facts = _facts()
+    monkeypatch.setattr(
+        "scripts.lane_b_match_report.build_facts",
+        lambda *args, **kwargs: (facts, {"retained": False}),
+    )
+    generated = generate_lane_b_report(
+        object(), facts["match"]["match_id"], tmp_path,
+        objective_score_result=_complete_objective_score(),
+        objective_score_required=True,
+    )
+    assert generated["verification"]["checks"]["objective_score"] == "PASS"
+    assert generated["report"]["objectiveScoreTimeline"]["quality"]["status"] == "complete"
+    artifact = json.loads((tmp_path / "objective-score-timeline.json").read_text())
+    assert artifact["objectiveScoreTimeline"]["teams"] == [
+        {"id": "team-1", "label": "Team 1"},
+        {"id": "team-2", "label": "Team 2"},
+    ]
+    assert "selectedMatchId" not in json.dumps(generated["report"])
+
+
+def test_lane_b_report_rejects_foreign_private_score_binding(monkeypatch, tmp_path):
+    facts = _facts()
+    monkeypatch.setattr(
+        "scripts.lane_b_match_report.build_facts",
+        lambda *args, **kwargs: (facts, {"retained": False}),
+    )
+    with pytest.raises(ValueError, match="foreign match"):
+        generate_lane_b_report(
+            object(), facts["match"]["match_id"], tmp_path,
+            objective_score_result=_complete_objective_score("foreign-TEST"),
+            objective_score_required=True,
+        )
 
 
 def test_participation_windows_handle_a_mid_match_substitution():

@@ -185,8 +185,11 @@ python -m pytest tests/unit/test_match_readiness.py `
 ```
 
 Those fixtures are deliberately legacy 16-bot captures. Their expected result
-is `WARN`, not `PASS`, because they predate the current 6v6 roster, 5-second
-sampling, StatsMe coverage, and flag ownership timeline. The regression tests
+is `WARN`, not `PASS`, because they predate the current 6v6 roster and retain
+captures from before both the former 5-second cadence and the current
+schema-22 2-second cadence. Their observed median alone is not authorization:
+they have no exact schema-22/2.00 manifest for every observed half. They also
+predate StatsMe coverage and the flag ownership timeline. The regression tests
 ensure those limitations remain visible and that source facts are never
 silently repaired.
 

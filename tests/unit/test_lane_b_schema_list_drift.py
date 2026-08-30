@@ -105,13 +105,12 @@ def test_guard_actually_fails_on_injected_drift(injected, tmp_path, monkeypatch)
     # nothing this guard looks at.
     anchor = _workflow_schema_blocks()[0][-1]
     drifted = tmp_path / "drifted.yml"
+    schema_start = text.index("--schema")
     drifted.write_text(
-        text.replace(
-            f"/work/build/artifacts/sql/{anchor}",
-            f"/work/build/artifacts/sql/{injected}", 1),
+        text[:schema_start] + text[schema_start:].replace(anchor, injected, 1),
         encoding="utf-8")
-    monkeypatch.setattr(
-        "tests.unit.test_lane_b_schema_list_drift.WORKFLOW", drifted)
+    monkeypatch.setitem(_workflow_schema_blocks.__globals__, "WORKFLOW", drifted)
+    assert injected in _workflow_schema_blocks()[0]
 
     with pytest.raises(AssertionError):
         test_no_migration_is_applied_without_being_extracted()
@@ -129,8 +128,7 @@ def test_guard_catches_a_list_that_trails_the_extraction_set(tmp_path, monkeypat
         "\n".join(ln for ln in text.splitlines()
                   if f"/work/build/artifacts/sql/{trailing}" not in ln),
         encoding="utf-8")
-    monkeypatch.setattr(
-        "tests.unit.test_lane_b_schema_list_drift.WORKFLOW", drifted)
+    monkeypatch.setitem(_workflow_schema_blocks.__globals__, "WORKFLOW", drifted)
 
     with pytest.raises(AssertionError):
         test_no_migration_is_extracted_without_being_applied()

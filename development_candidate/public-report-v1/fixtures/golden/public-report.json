@@ -1,0 +1,424 @@
+{
+  "schema_version": "public-report-v1",
+  "contract_version": "1.2.0",
+  "match": {
+    "match_id": "golden-development-TEST",
+    "map_name": "dod_anzio",
+    "halves_played": 1,
+    "duration_seconds": 30.0,
+    "synthetic": true
+  },
+  "status": "WARN",
+  "quality": {
+    "analytics_status": "PASS",
+    "readiness_status": "WARN"
+  },
+  "privacy": {
+    "classification": "public_descriptive",
+    "player_identity": "display_name_only",
+    "ratings_and_accumulated_scoring": "not_exported",
+    "individual_positions": "not_exported"
+  },
+  "teams": [
+    {
+      "team_key": "team_a",
+      "display_name": "Gold Team",
+      "side_by_half": [
+        {
+          "half": 1,
+          "side": "allies"
+        }
+      ],
+      "kills": 5,
+      "deaths": 4,
+      "assists": 2,
+      "headshots": 1,
+      "team_kills": 0,
+      "suicides": 0,
+      "damage_dealt": 600,
+      "damage_taken": 500,
+      "capture_credits": 1,
+      "cap_breaks": 0,
+      "shots": 30,
+      "hits": 10,
+      "plus_minus": 1,
+      "damage_differential": 100,
+      "raw_accuracy": 0.3333333333333333,
+      "players": 1,
+      "metric_status": {
+        "kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "deaths": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "plus_minus": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "assists": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "headshots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "team_kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "suicides": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_dealt": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_taken": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_differential": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "capture_credits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "cap_breaks": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "shots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "hits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "raw_accuracy": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        }
+      }
+    },
+    {
+      "team_key": "team_b",
+      "display_name": "Blue Team",
+      "side_by_half": [
+        {
+          "half": 1,
+          "side": "axis"
+        }
+      ],
+      "kills": 4,
+      "deaths": 5,
+      "assists": 0,
+      "headshots": 0,
+      "team_kills": null,
+      "suicides": null,
+      "damage_dealt": null,
+      "damage_taken": null,
+      "capture_credits": 0,
+      "cap_breaks": null,
+      "shots": 0,
+      "hits": 0,
+      "plus_minus": -1,
+      "damage_differential": null,
+      "raw_accuracy": null,
+      "players": 1,
+      "metric_status": {
+        "kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "deaths": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "plus_minus": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "assists": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "headshots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "team_kills": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "suicides": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_dealt": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_taken": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_differential": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "capture_credits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "cap_breaks": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "shots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "hits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "raw_accuracy": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "undefined_zero_denominator"
+        }
+      }
+    }
+  ],
+  "players": [
+    {
+      "name": "Alpha",
+      "team_key": "team_a",
+      "kills": 5,
+      "deaths": 4,
+      "assists": 2,
+      "headshots": 1,
+      "team_kills": 0,
+      "suicides": 0,
+      "damage_dealt": 600,
+      "damage_taken": 500,
+      "capture_credits": 1,
+      "cap_breaks": 0,
+      "shots": 30,
+      "hits": 10,
+      "plus_minus": 1,
+      "damage_differential": 100,
+      "raw_accuracy": 0.3333333333333333,
+      "metric_status": {
+        "kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "deaths": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "plus_minus": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "assists": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "headshots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "team_kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "suicides": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_dealt": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_taken": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "damage_differential": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "capture_credits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "cap_breaks": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "shots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "hits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "raw_accuracy": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        }
+      }
+    },
+    {
+      "name": "Bravo",
+      "team_key": "team_b",
+      "kills": 4,
+      "deaths": 5,
+      "assists": 0,
+      "headshots": 0,
+      "team_kills": null,
+      "suicides": null,
+      "damage_dealt": null,
+      "damage_taken": null,
+      "capture_credits": 0,
+      "cap_breaks": null,
+      "shots": 0,
+      "hits": 0,
+      "plus_minus": -1,
+      "damage_differential": null,
+      "raw_accuracy": null,
+      "metric_status": {
+        "kills": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "deaths": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "plus_minus": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "assists": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "headshots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "team_kills": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "suicides": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_dealt": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_taken": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "damage_differential": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "capture_credits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "cap_breaks": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "not_supplied"
+        },
+        "shots": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "hits": {
+          "availability": "available",
+          "confidence": "synthetic",
+          "reason_code": "synthetic_fixture"
+        },
+        "raw_accuracy": {
+          "availability": "unavailable",
+          "confidence": "unavailable",
+          "reason_code": "undefined_zero_denominator"
+        }
+      }
+    }
+  ]
+}

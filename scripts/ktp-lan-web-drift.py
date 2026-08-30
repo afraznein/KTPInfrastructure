@@ -136,6 +136,12 @@ def source_provenance(repo_root: str, src_root: str, base_ref: str) -> str:
     if rel.startswith(".."):
         return "source: %s -- OUTSIDE the repo, no ref to compare against" % src_root
     try:
+        top = _git(repo_root, "rev-parse", "--show-toplevel")
+        actual_top = top.stdout.strip()
+        if (top.returncode or
+                os.path.normcase(os.path.realpath(actual_top)) !=
+                os.path.normcase(os.path.realpath(repo_root))):
+            return "source: %s -- provenance UNKNOWN (not a git checkout)" % rel
         head = _git(repo_root, "rev-parse", "--short", "HEAD")
         name = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD")
         if head.returncode or name.returncode:

@@ -1,4 +1,8 @@
-from scripts.match_analytics import tsv_rows
+from scripts.match_analytics import (
+    grenade_entity_summary,
+    objective_attempt_summary,
+    tsv_rows,
+)
 from scripts.match_analytics_batch import choose_representatives, safe_report_name
 
 
@@ -40,3 +44,51 @@ def test_test_match_id_is_not_labeled_malformed():
     selected = choose_representatives([report("1786978609-TEST", halves=1)])
     assert selected["test_match_id"] == "1786978609-TEST"
     assert "malformed_or_orphan_id" not in selected
+
+
+def test_schema22_objective_summary_keeps_orphans_and_open_attempts_explicit():
+    rows = [
+        {"server_id": 1, "half": 1, "attempt_id": 10, "event_kind": "start",
+         "stop_reason": None},
+        {"server_id": 1, "half": 1, "attempt_id": 10, "event_kind": "complete",
+         "stop_reason": None},
+        {"server_id": 1, "half": 1, "attempt_id": 11, "event_kind": "start",
+         "stop_reason": None},
+        {"server_id": 1, "half": 1, "attempt_id": 12, "event_kind": "stop",
+         "stop_reason": "context_reset"},
+    ]
+    assert objective_attempt_summary(rows) == {
+        "status": "available", "events": 4, "attempts": 3, "starts": 2,
+        "completes": 1, "stops": 1, "orphan_terminals": 1,
+        "open_attempts": 1,
+        "stop_reasons": {"capture_stopped": 0, "context_reset": 1},
+    }
+
+
+def test_schema22_grenade_summary_is_entity_lifecycle_only():
+    rows = [
+        {"server_id": 1, "half": 1, "entindex": 101, "serial": 1001,
+         "entity_kind": "tracked", "weapon_id": 13,
+         "weapon_type": "handgrenade"},
+        {"server_id": 1, "half": 1, "entindex": 101, "serial": 1001,
+         "entity_kind": "removed", "weapon_id": 13,
+         "weapon_type": "handgrenade"},
+        {"server_id": 1, "half": 1, "entindex": 102, "serial": 1002,
+         "entity_kind": "tracked", "weapon_id": 36,
+         "weapon_type": "mills_bomb"},
+    ]
+    assert grenade_entity_summary(rows) == {
+        "status": "available", "semantics": "entity_tracked_removed_only",
+        "events": 3, "entities": 2, "tracked": 2, "removed": 1,
+        "complete_lifecycles": 1, "incomplete_tracked": 1,
+        "left_censored_removed": 0, "allowed_weapon_ids_only": True,
+    }
+
+
+def test_schema22_grenade_summary_rejects_crossed_allowed_weapon_pair():
+    summary = grenade_entity_summary([{
+        "server_id": 1, "half": 1, "entindex": 101, "serial": 1001,
+        "entity_kind": "tracked", "weapon_id": 13,
+        "weapon_type": "stickgrenade",
+    }])
+    assert summary["allowed_weapon_ids_only"] is False

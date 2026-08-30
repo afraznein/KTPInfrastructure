@@ -31,13 +31,12 @@
  * `ksc_queue_break_candidate` rejects `killer == victim` — correctly, since a
  * suicide on a point is not somebody else breaking the cap.
  *
- * ## Why 2D distance
+ * ## Capture-area placement
  *
- * `CP_VALUE` exposes `CP_origin_x` and `CP_origin_y` but no z, so proximity is
- * measured in the XY plane. That is fine for picking who is standing on a
- * flag: DoD capture zones are wide and flat relative to their height, and the
- * alternative — reading the area entity's bounds — needs fakemeta, which is
- * deliberately not in the production module set.
+ * The diagnostic reads each real capture area's absolute bounds through
+ * ReAPI and places the required number of bots at its three-dimensional
+ * centre. Existing 2D control-point distance is used only to recognise the
+ * prepared capper while the game updates the real in-zone count.
  *
  * ## Not for production
  *
@@ -62,6 +61,7 @@
 // "Far" has to be unambiguous — a player this distance away cannot be inside
 // the zone, so their death must NOT be credited as a break.
 #define BD_FAR_RADIUS  900.0
+#define BD_ANCHOR_AREA_MARGIN 128.0
 
 #define BD_TEAM_ALLIES 1
 #define BD_TEAM_AXIS   2
@@ -72,22 +72,66 @@
 #define BD_TASK_RESTART_FINISH 77134
 #define BD_TASK_ISOLATION_HOLD 77135
 #define BD_TASK_ISOLATION_END 77136
+#define BD_TASK_CLEAN_CAPTURE_POLL 77137
+#define BD_TASK_CLEAN_CAPTURE_FINISH 77138
+#define BD_TASK_CANONICAL_FRAG_POLL 77139
 #define BD_TASK_UNPROTECT_BASE 77140
-#define BD_WALKOFF_MAX_POLLS 2400
-#define BD_KILL_MAX_POLLS 600
+#define BD_TASK_REPORT_BASE 77200
+#define BD_WALKOFF_MAX_POLLS 100
+#define BD_KILL_MAX_POLLS 100
+#define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS
 #define BD_RESTART_MAX_POLLS 60
 #define BD_RESTART_TIMER_SECS 1.0
+#define BD_RESTART_ARM_IDLE 0
+#define BD_RESTART_ARM_NORMALIZING 1
+#define BD_RESTART_ARM_STABILIZING 2
+#define BD_RESTART_ARM_PREPARED 3
+#define BD_RESTART_POSTRESPAWN_STABLE_POLLS 5
+#define BD_RESTART_POSITION_EPSILON 1.0
 #define BD_BREAK_CANDIDATE_SECS 2.5
 #define BD_OFFPOINT_DEATH_QUIET_SECS 4.1
 #define BD_KILL_ISOLATION_SECS 7.5
 #define BD_WALKOFF_DEATH_QUIET_SECS 5.0
 #define BD_WALKOFF_PROTECT_SECS 5.0
+#define BD_PREPARED_CAPTURE_SECS 30
+#define BD_CLEAN_CAPTURE_SECS 2
+#define BD_CLEAN_CAPTURE_MAX_POLLS 120
+#define BD_CLEAN_QUIET_SECS 3.0
+#define BD_CLEAN_EVIDENCE_SECS 7.0
+#define BD_CLEAN_ARM_MAX_POLLS 300
+#define BD_CLEAN_TARGET_STABLE_POLLS 5
+#define BD_CANONICAL_FRAG_MAX_POLLS 300
+#define BD_CANONICAL_STAGE_STABLE_POLLS 5
+#define BD_CANONICAL_FRAG_RESTORE_STABLE_POLLS 3
+#define BD_CANONICAL_POSTFLUSH_ACK_POLLS 2
+#define BD_IN_ATTACK (1<<0)
+#define BD_OWNER_ANY -99
+#define BD_CANONICAL_WAIT_STAGE 1
+#define BD_CANONICAL_WAIT_ENGINE_FRAG 2
+#define BD_CANONICAL_WAIT_POSTFLUSH 3
+#define BD_CANONICAL_WAIT_RESTORE 4
 
 new g_bdWalkoffPolls = 0
 new g_bdKillPolls = 0
 new bool:g_bdKillNear = true
 new Float:g_bdLastTeamDeath[3]
 new g_bdRestartArmPolls = 0
+new g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
+new bool:g_bdRestartNormalizeRebased = false
+new Float:g_bdRestartNormalizeRoundBefore = -1.0
+new Float:g_bdRestartNormalizeRoundPeak = -1.0
+new Float:g_bdRestartNormalizeRoundLimit = -1.0
+new g_bdRestartStablePolls = 0
+new g_bdRestartStableFlag = -1
+new g_bdRestartStableTeam = 0
+new g_bdRestartRosterCount = 0
+new bool:g_bdRestartRosterSelected[33]
+new g_bdRestartRosterUserid[33]
+new g_bdRestartRosterTeam[33]
+new g_bdRestartRosterSpawnBaseline[33]
+new g_bdRestartRosterSpawnStable[33]
+new Float:g_bdRestartRosterOrigin[33][3]
+new g_bdSpawnGeneration[33]
 new g_bdRestartPolls = 0
 new g_bdRestartSeq = 0
 new g_bdRestartFlag = -1
@@ -118,28 +162,396 @@ new bool:g_bdIsolationHeld[33]
 new bool:g_bdIsolationWasFrozen[33]
 new bool:g_bdIsolationWasGodmode[33]
 new g_bdIsolationUserid[33]
+new g_bdIsolationSpawnGeneration[33]
+new Float:g_bdIsolationOrigin[33][3]
+new bool:g_bdIsolationOriginSaved[33]
 new bool:g_bdIsolationActive = false
+new g_bdPreparedFlag = -1
+new g_bdPreparedTeam = 0
+new g_bdPreparedCapTime = 0
+new g_bdPreparedMode[16]
+new Float:g_bdPreparedAnchor[3]
+new bool:g_bdPreparedAnchorSaved = false
+new Float:g_bdPreparedCenter[3]
+new bool:g_bdPreparedCenterSaved = false
+new bool:g_bdCleanActive = false
+new bool:g_bdCleanCompleted = false
+new bool:g_bdCleanCappersPlaced = false
+new Float:g_bdCleanQuietStarted = 0.0
+new g_bdCleanPolls = 0
+new g_bdCleanFlag = -1
+new g_bdCleanTeam = 0
+new g_bdCleanOwnerBefore = 0
+new g_bdCleanOwnerAfter = 0
+new g_bdCleanRequired = 0
+new g_bdCleanIsolated = 0
+new g_bdCleanRosterCount = 0
+new g_bdCleanTeamDeaths = 0
+new bool:g_bdCleanContaminated = false
+new bool:g_bdCleanRosterSelected[33]
+new g_bdCleanRosterUserid[33]
+new g_bdCleanRosterTeam[33]
+new g_bdCleanRosterSpawn[33]
+new bool:g_bdCleanCapperSelected[33]
+new g_bdCleanCapperUserid[33]
+new g_bdCleanCapperCount = 0
+new g_bdCleanCapperUseridList[512]
+new g_bdCleanFlagName[32]
+new bool:g_bdCleanArming = false
+new g_bdCleanArmPolls = 0
+new g_bdCleanStablePolls = 0
+new g_bdCleanStableFlag = -1
+new g_bdCleanStableTeam = 0
+new g_bdCleanStableOwner = BD_OWNER_ANY
+new bool:g_bdSeriesRosterSelected[33]
+new g_bdSeriesRosterUserid[33]
+new g_bdSeriesRosterTeam[33]
+new g_bdSeriesRosterCount = 0
+new bool:g_bdCanonicalActive = false
+new g_bdCanonicalPhase = 0
+new g_bdCanonicalPolls = 0
+new g_bdCanonicalStablePolls = 0
+new g_bdCanonicalKiller = 0
+new g_bdCanonicalVictim = 0
+new g_bdCanonicalKillerUserid = 0
+new g_bdCanonicalVictimUserid = 0
+new g_bdCanonicalVictimSpawn = 0
+new g_bdCanonicalWeapon = 0
+new g_bdCanonicalDeathCount = 0
+new g_bdCanonicalPrewindowDeaths = 0
+new bool:g_bdCanonicalContaminated = false
+new bool:g_bdCanonicalPreflushed = false
+new bool:g_bdCanonicalPostflushed = false
+new bool:g_bdCanonicalVictimHealthSaved = false
+new Float:g_bdCanonicalVictimHealth = 0.0
+new g_bdUseridEpoch = 0
+new g_bdSeriesUseridEpoch = -1
+new g_bdActivationEpoch = 0
+new bool:g_bdSeriesActive = false
 
 public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_bd_scan", "cmd_scan")
 	register_srvcmd("ktp_bd_kill", "cmd_kill")
 	register_srvcmd("ktp_bd_arm_kill", "cmd_arm_kill")
+	register_srvcmd("ktp_bd_disarm_kill", "cmd_disarm_kill")
 	register_srvcmd("ktp_bd_arm_restart", "cmd_arm_restart")
 	register_srvcmd("ktp_bd_clock_preflight", "cmd_clock_preflight")
 	register_srvcmd("ktp_bd_walkoff", "cmd_walkoff")
 	register_srvcmd("ktp_bd_arm_walkoff", "cmd_arm_walkoff")
+	register_srvcmd("ktp_bd_arm_clean_capture", "cmd_arm_clean_capture")
+	register_srvcmd("ktp_bd_stage_canonical_frag", "cmd_stage_canonical_frag")
+	register_srvcmd("ktp_bd_begin_series", "cmd_begin_series")
+	register_srvcmd("ktp_bd_abort_series", "cmd_abort_series")
+	register_srvcmd("ktp_bd_end_series", "cmd_end_series")
+	register_logevent("bd_lifecycle_log_boundary", 1, "0&KTP_HALF_END")
+	register_logevent("bd_lifecycle_log_boundary", 1, "0&KTP_MATCH_END")
+	g_bdActivationEpoch = get_systime()
 	log_amx("[BD] loaded — NOT FOR PRODUCTION")
 }
 
 public plugin_end() {
+	if (g_bdSeriesActive)
+		bd_abort_series("plugin_end", false)
+	else
+		bd_cleanup_tasks()
+}
+
+public client_putinserver(id) {
+	g_bdSpawnGeneration[id] = 0
+	g_bdUseridEpoch++
+	if (g_bdSeriesActive)
+		bd_abort_series("userid_epoch_change", true)
+}
+
+public client_disconnected(id) {
+	g_bdSpawnGeneration[id] = 0
+	g_bdUseridEpoch++
+	if (g_bdSeriesActive)
+		bd_abort_series("userid_epoch_change", true)
+}
+
+// The normalization restart can lower the round clock before DoD has
+// respawned the bot roster.  Track the real DODX spawn forward per slot so the
+// restart probe can prove that every selected player belongs to the new round
+// generation before it freezes or moves anybody.
+public dod_client_spawn(id) {
+	if (id >= 1 && id <= 32 && is_user_connected(id))
+		g_bdSpawnGeneration[id]++
+}
+
+public server_changelevel(map[]) {
+	if (g_bdSeriesActive)
+		bd_abort_series("changelevel", true)
+}
+
+// KTPMatchHandler's explicit forwards are the reliable in-process lifecycle
+// signals. Its KTP_HALF_END/KTP_MATCH_END log_message output does not reach
+// AMXX register_logevent in extension mode; the Python harness still watches
+// those lines as an independent fail-closed boundary.
+public ktp_half_end(const matchId[], const map[], matchType, half,
+		team1Score, team2Score) {
+	if (g_bdSeriesActive)
+		bd_abort_series("half_end", true)
+}
+
+public ktp_match_end(const matchId[], const map[], matchType,
+		team1Score, team2Score) {
+	if (g_bdSeriesActive)
+		bd_abort_series("match_end", true)
+}
+
+public bd_lifecycle_log_boundary() {
+	if (g_bdSeriesActive)
+		bd_abort_series("match_lifecycle_boundary", true)
+}
+
+stock bd_reset_restart_arm_state() {
+	g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
+	g_bdRestartNormalizeRebased = false
+	g_bdRestartNormalizeRoundBefore = -1.0
+	g_bdRestartNormalizeRoundPeak = -1.0
+	g_bdRestartNormalizeRoundLimit = -1.0
+	g_bdRestartStablePolls = 0
+	g_bdRestartStableFlag = -1
+	g_bdRestartStableTeam = 0
+	g_bdRestartRosterCount = 0
+	for (new id = 1; id <= 32; id++) {
+		g_bdRestartRosterSelected[id] = false
+		g_bdRestartRosterUserid[id] = 0
+		g_bdRestartRosterTeam[id] = 0
+		g_bdRestartRosterSpawnBaseline[id] = 0
+		g_bdRestartRosterSpawnStable[id] = 0
+		for (new axis = 0; axis < 3; axis++)
+			g_bdRestartRosterOrigin[id][axis] = 0.0
+	}
+}
+
+stock bd_reset_clean_state() {
+	g_bdCleanActive = false
+	g_bdCleanArming = false
+	g_bdCleanCompleted = false
+	g_bdCleanCappersPlaced = false
+	g_bdCleanQuietStarted = 0.0
+	g_bdCleanPolls = 0
+	g_bdCleanArmPolls = 0
+	g_bdCleanStablePolls = 0
+	g_bdCleanStableFlag = -1
+	g_bdCleanStableTeam = 0
+	g_bdCleanStableOwner = BD_OWNER_ANY
+	g_bdCleanFlag = -1
+	g_bdCleanTeam = 0
+	g_bdCleanOwnerBefore = 0
+	g_bdCleanOwnerAfter = 0
+	g_bdCleanRequired = 0
+	g_bdCleanIsolated = 0
+	g_bdCleanRosterCount = 0
+	g_bdCleanCapperCount = 0
+	g_bdCleanTeamDeaths = 0
+	g_bdCleanContaminated = false
+	g_bdCleanFlagName[0] = 0
+	g_bdCleanCapperUseridList[0] = 0
+	for (new id = 1; id <= 32; id++) {
+		g_bdCleanRosterSelected[id] = false
+		g_bdCleanRosterUserid[id] = 0
+		g_bdCleanRosterTeam[id] = 0
+		g_bdCleanRosterSpawn[id] = 0
+		g_bdCleanCapperSelected[id] = false
+		g_bdCleanCapperUserid[id] = 0
+	}
+}
+
+stock bd_reset_series_roster() {
+	g_bdSeriesRosterCount = 0
+	for (new id = 1; id <= 32; id++) {
+		g_bdSeriesRosterSelected[id] = false
+		g_bdSeriesRosterUserid[id] = 0
+		g_bdSeriesRosterTeam[id] = 0
+	}
+}
+
+/** Pin every connected combat player for the entire diagnostic series.
+ *
+ * Death/respawn is expected between scenarios, so spawn generation is checked
+ * only by the scenario that owns it.  Membership, userid, and team are exact:
+ * a partial live view after an abort can never become a smaller "full" roster.
+ */
+stock bd_snapshot_series_roster() {
+	bd_reset_series_roster()
+	for (new id = 1; id <= 32; id++) {
+		if (!is_user_connected(id))
+			continue
+		new team = get_user_team(id)
+		if (team != BD_TEAM_ALLIES && team != BD_TEAM_AXIS)
+			continue
+		g_bdSeriesRosterSelected[id] = true
+		g_bdSeriesRosterUserid[id] = get_user_userid(id)
+		g_bdSeriesRosterTeam[id] = team
+		g_bdSeriesRosterCount++
+	}
+	return g_bdSeriesRosterCount
+}
+
+stock bool:bd_series_roster_current(bool:require_alive) {
+	if (g_bdSeriesRosterCount < 2)
+		return false
+	new seen = 0
+	for (new id = 1; id <= 32; id++) {
+		if (!is_user_connected(id)) {
+			if (g_bdSeriesRosterSelected[id])
+				return false
+			continue
+		}
+		new team = get_user_team(id)
+		if (!g_bdSeriesRosterSelected[id]) {
+			if (team == BD_TEAM_ALLIES || team == BD_TEAM_AXIS)
+				return false
+			continue
+		}
+		if (get_user_userid(id) != g_bdSeriesRosterUserid[id] ||
+				team != g_bdSeriesRosterTeam[id] ||
+				(require_alive && !is_user_alive(id)))
+			return false
+		seen++
+	}
+	return seen == g_bdSeriesRosterCount
+}
+
+stock bool:bd_canonical_series_player_current(id) {
+	return g_bdSeriesRosterSelected[id] && is_user_connected(id) &&
+		get_user_userid(id) == g_bdSeriesRosterUserid[id] &&
+		get_user_team(id) == g_bdSeriesRosterTeam[id]
+}
+
+stock bd_canonical_clear_attack() {
+	new killer = g_bdCanonicalKiller
+	if (killer < 1 || killer > 32 || !is_user_connected(killer) ||
+			get_user_userid(killer) != g_bdCanonicalKillerUserid)
+		return
+	new buttons = get_entvar(killer, var_button)
+	new oldbuttons = get_entvar(killer, var_oldbuttons)
+	set_entvar(killer, var_button, buttons & ~BD_IN_ATTACK)
+	set_entvar(killer, var_oldbuttons, oldbuttons & ~BD_IN_ATTACK)
+}
+
+stock bd_canonical_restore_victim_health() {
+	new victim = g_bdCanonicalVictim
+	if (g_bdCanonicalVictimHealthSaved && victim >= 1 && victim <= 32 &&
+			is_user_connected(victim) && is_user_alive(victim) &&
+			get_user_userid(victim) == g_bdCanonicalVictimUserid &&
+			g_bdSpawnGeneration[victim] == g_bdCanonicalVictimSpawn)
+		set_entvar(victim, var_health, g_bdCanonicalVictimHealth)
+	g_bdCanonicalVictimHealthSaved = false
+	g_bdCanonicalVictimHealth = 0.0
+}
+
+stock bd_reset_canonical_state() {
+	bd_canonical_clear_attack()
+	bd_canonical_restore_victim_health()
+	g_bdCanonicalActive = false
+	g_bdCanonicalPhase = 0
+	g_bdCanonicalPolls = 0
+	g_bdCanonicalStablePolls = 0
+	g_bdCanonicalKiller = 0
+	g_bdCanonicalVictim = 0
+	g_bdCanonicalKillerUserid = 0
+	g_bdCanonicalVictimUserid = 0
+	g_bdCanonicalVictimSpawn = 0
+	g_bdCanonicalWeapon = 0
+	g_bdCanonicalDeathCount = 0
+	g_bdCanonicalPrewindowDeaths = 0
+	g_bdCanonicalContaminated = false
+	g_bdCanonicalPreflushed = false
+	g_bdCanonicalPostflushed = false
+}
+
+stock bd_cleanup_tasks() {
 	remove_task(BD_TASK_KILL_POLL)
 	remove_task(BD_TASK_WALKOFF_POLL)
 	remove_task(BD_TASK_RESTART_ARM_POLL)
 	remove_task(BD_TASK_RESTART_POLL)
 	remove_task(BD_TASK_RESTART_FINISH)
+	remove_task(BD_TASK_CLEAN_CAPTURE_POLL)
+	remove_task(BD_TASK_CLEAN_CAPTURE_FINISH)
+	remove_task(BD_TASK_CANONICAL_FRAG_POLL)
+	g_bdKillPolls = 0
+	g_bdWalkoffPolls = 0
+	g_bdRestartArmPolls = 0
+	g_bdRestartPolls = 0
+	g_bdRestartActive = false
+	g_bdRestartSyntheticDispatch = false
+	for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
+		new taskid = BD_TASK_UNPROTECT_BASE + team
+		if (task_exists(taskid)) {
+			remove_task(taskid)
+			bd_unprotect_team(taskid)
+		}
+	}
+	for (new f = 0; f < BD_MAX_FLAGS; f++)
+		remove_task(BD_TASK_REPORT_BASE + f)
 	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
+	bd_reset_restart_arm_state()
+	bd_reset_clean_state()
+	bd_reset_canonical_state()
+	bd_reset_series_roster()
+}
+
+stock bd_abort_series(const reason[], bool:log_abort) {
+	g_bdSeriesActive = false
+	bd_cleanup_tasks()
+	if (log_abort)
+		log_amx("[BD] series ABORT reason=%s", reason)
+}
+
+stock bool:bd_series_guard(const command[]) {
+	if (!g_bdSeriesActive) {
+		log_amx("[BD] series ABORT reason=inactive command=%s", command)
+		return false
+	}
+	if (g_bdUseridEpoch != g_bdSeriesUseridEpoch) {
+		bd_abort_series("userid_epoch_change", true)
+		return false
+	}
+	if (!bd_series_roster_current(false)) {
+		bd_abort_series("combat_roster_change", true)
+		return false
+	}
+	return true
+}
+
+public cmd_begin_series() {
+	g_bdSeriesActive = false
+	bd_cleanup_tasks()
+	g_bdSeriesUseridEpoch = g_bdUseridEpoch
+	if (bd_snapshot_series_roster() < 2) {
+		log_amx("[BD] series ABORT reason=insufficient_combat_roster")
+		server_print("KTP_BD_SERIES_ABORTED reason=insufficient_combat_roster")
+		return PLUGIN_HANDLED
+	}
+	g_bdSeriesActive = true
+	server_print("KTP_BD_SERIES_BEGUN activation=%d userid_epoch=%d roster=%d",
+		g_bdActivationEpoch, g_bdSeriesUseridEpoch, g_bdSeriesRosterCount)
+	log_amx("[BD] series BEGIN activation=%d userid_epoch=%d roster=%d",
+		g_bdActivationEpoch, g_bdSeriesUseridEpoch, g_bdSeriesRosterCount)
+	return PLUGIN_HANDLED
+}
+
+public cmd_abort_series() {
+	new reason[48]
+	read_argv(1, reason, charsmax(reason))
+	if (!reason[0]) copy(reason, charsmax(reason), "harness_request")
+	bd_abort_series(reason, true)
+	server_print("KTP_BD_SERIES_ABORTED reason=%s", reason)
+	return PLUGIN_HANDLED
+}
+
+public cmd_end_series() {
+	g_bdSeriesActive = false
+	bd_cleanup_tasks()
+	server_print("KTP_BD_SERIES_ENDED")
+	log_amx("[BD] series END")
+	return PLUGIN_HANDLED
 }
 
 public cmd_clock_preflight() {
@@ -157,10 +569,348 @@ public cmd_clock_preflight() {
 	return PLUGIN_HANDLED
 }
 
+stock bool:bd_pick_canonical_frag_pair(&killer, &victim) {
+	killer = 0
+	victim = 0
+	for (new attacker = 1; attacker <= 32; attacker++) {
+		if (!g_bdSeriesRosterSelected[attacker] ||
+				!is_user_connected(attacker) || !is_user_alive(attacker) ||
+				!g_bdIsolationHeld[attacker] ||
+				g_bdIsolationWasGodmode[attacker] ||
+				g_bdIsolationWasFrozen[attacker] ||
+				dod_get_user_weapon(attacker) <= 0)
+			continue
+		for (new target = 1; target <= 32; target++) {
+			if (!g_bdSeriesRosterSelected[target] || target == attacker ||
+					!is_user_connected(target) || !is_user_alive(target) ||
+					!g_bdIsolationHeld[target] ||
+					g_bdIsolationWasGodmode[target] ||
+					g_bdSeriesRosterTeam[target] ==
+						g_bdSeriesRosterTeam[attacker])
+				continue
+			killer = attacker
+			victim = target
+			return true
+		}
+	}
+	return false
+}
+
+/** Put one opposing pair in a known open trigger volume.
+ *
+ * The same real capture-area centres drive the established BreakDrive
+ * scenarios.  ReAPI/DODX positioning and view-angle natives are already part
+ * of the Lane B runtime.  No damage or death forward is dispatched here: the
+ * bot must fire its actual weapon through the game DLL.
+ */
+stock bool:bd_prepare_canonical_frag_pair(killer, victim) {
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	new Float:center[3], Float:killer_origin[3], Float:victim_origin[3]
+	new bool:have_center = false
+	for (new f = 0; f < n; f++) {
+		if (!bd_area_center(f, center))
+			continue
+		have_center = true
+		break
+	}
+	if (!have_center)
+		return false
+
+	for (new axis = 0; axis < 3; axis++) {
+		killer_origin[axis] = center[axis]
+		victim_origin[axis] = center[axis]
+	}
+	// Forty-eight units keeps the target inside an ordinary melee swing as
+	// well as a gun trace, while avoiding identical overlapping origins.
+	killer_origin[0] -= 24.0
+	victim_origin[0] += 24.0
+	if (!dodx_set_user_origin(killer, killer_origin) ||
+			!dodx_set_user_origin(victim, victim_origin))
+		return false
+
+	new Float:killer_angles[3], Float:victim_angles[3]
+	killer_angles[0] = 0.0
+	killer_angles[1] = 0.0
+	killer_angles[2] = 0.0
+	victim_angles[0] = 0.0
+	victim_angles[1] = 180.0
+	victim_angles[2] = 0.0
+	if (!dodx_set_user_angles(killer, killer_angles) ||
+			!dodx_set_user_angles(victim, victim_angles))
+		return false
+
+	g_bdCanonicalVictimHealth = get_entvar(victim, var_health)
+	g_bdCanonicalVictimHealthSaved = true
+	set_entvar(victim, var_health, 1.0)
+	return true
+}
+
+/** The hold task protects every player except this one exact victim. */
+stock bd_allow_canonical_victim_damage() {
+	new victim = g_bdCanonicalVictim
+	if (!g_bdCanonicalActive ||
+			g_bdCanonicalPhase != BD_CANONICAL_WAIT_ENGINE_FRAG ||
+			victim < 1 || victim > 32 || !is_user_connected(victim) ||
+			!is_user_alive(victim) ||
+			get_user_userid(victim) != g_bdCanonicalVictimUserid ||
+			g_bdSpawnGeneration[victim] != g_bdCanonicalVictimSpawn)
+		return
+	new flags = get_entvar(victim, var_flags)
+	set_entvar(victim, var_flags, (flags | FL_FROZEN) & ~FL_GODMODE)
+}
+
+/** Drive actual bot weapon input; the game DLL still owns hit/death facts.
+ *
+ * ReHLDS deliberately zeros every usercmd button while FL_FROZEN is set, so
+ * the one selected attacker must be the sole movement-lock exception during
+ * this phase.  It remains godmode-protected and is velocity-stopped here on
+ * every poll. Every other player is both frozen and protected; the exact
+ * victim stays frozen and is the only damageable player. Thus no unrelated
+ * organic frag can enter the closed factual window.
+ */
+stock bd_drive_canonical_attacker() {
+	new killer = g_bdCanonicalKiller
+	if (!g_bdCanonicalActive ||
+			g_bdCanonicalPhase != BD_CANONICAL_WAIT_ENGINE_FRAG ||
+			killer < 1 || killer > 32 || !is_user_connected(killer) ||
+			!is_user_alive(killer) ||
+			get_user_userid(killer) != g_bdCanonicalKillerUserid)
+		return
+	new Float:angles[3]
+	new Float:stopped[3]
+	angles[0] = 0.0
+	angles[1] = 0.0
+	angles[2] = 0.0
+	set_entvar(killer, var_velocity, stopped)
+	new flags = get_entvar(killer, var_flags)
+	set_entvar(killer, var_flags, (flags | FL_GODMODE) & ~FL_FROZEN)
+	dodx_set_user_angles(killer, angles)
+	new buttons = get_entvar(killer, var_button)
+	new oldbuttons = get_entvar(killer, var_oldbuttons)
+	set_entvar(killer, var_oldbuttons, oldbuttons & ~BD_IN_ATTACK)
+	set_entvar(killer, var_button, buttons | BD_IN_ATTACK)
+}
+
+stock bd_canonical_frag_abort(const reason[]) {
+	remove_task(BD_TASK_CANONICAL_FRAG_POLL)
+	log_amx("[BD] canonical_frag ABORT %s", reason)
+	bd_reset_canonical_state()
+	if (g_bdIsolationActive)
+		bd_end_test_isolation(true)
+}
+
+/** Stage one real engine frag, then hand the next scenario a complete world.
+ *
+ * The exact full roster is frozen first, so no organic kill can enter this
+ * diagnostic window. One protected bot is aimed at one opposing 1-HP victim;
+ * it is the only temporarily unfrozen bot, only that victim loses the
+ * diagnostic's godmode, and the bot's actual engine attack input must produce
+ * the kill. The product buffer is flushed before BEGIN and synchronously again
+ * after the exact DODX death callback. This diagnostic never prints a killed
+ * or frag_context product fact itself.
+ */
+public cmd_stage_canonical_frag() {
+	if (!bd_series_guard("stage_canonical_frag"))
+		return PLUGIN_HANDLED
+	if (g_bdCanonicalActive || g_bdIsolationActive) {
+		log_amx("[BD] canonical_frag ABORT mutator already active")
+		return PLUGIN_HANDLED
+	}
+	bd_reset_canonical_state()
+	g_bdCanonicalActive = true
+	g_bdCanonicalPhase = BD_CANONICAL_WAIT_STAGE
+	new acquired = bd_begin_test_isolation()
+	log_amx("[BD] canonical_frag ARMED roster=%d acquired=%d",
+		g_bdSeriesRosterCount, acquired)
+	set_task(0.1, "bd_canonical_frag_poll",
+		BD_TASK_CANONICAL_FRAG_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public bd_canonical_frag_poll() {
+	if (!g_bdCanonicalActive)
+		return PLUGIN_HANDLED
+	if (!bd_series_guard("canonical_frag_poll"))
+		return PLUGIN_HANDLED
+	if (++g_bdCanonicalPolls >= BD_CANONICAL_FRAG_MAX_POLLS) {
+		bd_canonical_frag_abort("full live roster was unavailable before deadline")
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdCanonicalPhase == BD_CANONICAL_WAIT_STAGE) {
+		// Acquire the pinned roster progressively. A member may be dead when the
+		// command arrives; every other exact live userid is protected at once,
+		// and the hold task acquires the missing member on its next spawn.
+		bd_hold_test_players()
+		if (!bd_series_roster_current(true) ||
+				!bd_isolation_exact_series()) {
+			g_bdCanonicalStablePolls = 0
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdCanonicalStablePolls <
+				BD_CANONICAL_STAGE_STABLE_POLLS)
+			return PLUGIN_HANDLED
+
+		new killer, victim
+		if (!bd_pick_canonical_frag_pair(killer, victim))
+			return PLUGIN_HANDLED
+
+		g_bdCanonicalKiller = killer
+		g_bdCanonicalVictim = victim
+		g_bdCanonicalKillerUserid = get_user_userid(killer)
+		g_bdCanonicalVictimUserid = get_user_userid(victim)
+		g_bdCanonicalVictimSpawn = g_bdSpawnGeneration[victim]
+
+		new isolated = bd_isolation_count()
+		if (isolated != g_bdSeriesRosterCount ||
+				!bd_isolation_exact_series() ||
+				!bd_series_roster_current(true)) {
+			bd_canonical_frag_abort("could not freeze the exact live roster")
+			return PLUGIN_HANDLED
+		}
+		if (!bd_prepare_canonical_frag_pair(killer, victim)) {
+			bd_canonical_frag_abort("could not stage the factual engine pair")
+			return PLUGIN_HANDLED
+		}
+		if (!bd_flush_stats_capture()) {
+			bd_canonical_frag_abort("stats capture preflush unavailable")
+			return PLUGIN_HANDLED
+		}
+		// The preflush is the evidence boundary. Organic deaths while the
+		// initially partial roster was being acquired are deliberately outside
+		// it; reset only the strict factual-window counters immediately before
+		// BEGIN. Every death after BEGIN remains exact-or-contaminated below.
+		g_bdCanonicalDeathCount = 0
+		g_bdCanonicalWeapon = 0
+		g_bdCanonicalContaminated = false
+		g_bdCanonicalPreflushed = true
+		log_amx("[BD] canonical_frag BEGIN killer=%d killer_userid=%d victim=%d victim_userid=%d roster=%d isolated=%d preflushed=1 prewindow_deaths=%d",
+			killer, g_bdCanonicalKillerUserid, victim,
+			g_bdCanonicalVictimUserid, g_bdSeriesRosterCount, isolated,
+			g_bdCanonicalPrewindowDeaths)
+		g_bdCanonicalPhase = BD_CANONICAL_WAIT_ENGINE_FRAG
+		g_bdCanonicalStablePolls = 0
+		bd_allow_canonical_victim_damage()
+		bd_drive_canonical_attacker()
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdCanonicalContaminated) {
+		bd_canonical_frag_abort("factual frag window contained a foreign death")
+		return PLUGIN_HANDLED
+	}
+	if (g_bdCanonicalPhase == BD_CANONICAL_WAIT_ENGINE_FRAG) {
+		if (!is_user_alive(g_bdCanonicalVictim)) {
+			bd_canonical_frag_abort("victim died without the exact DODX callback")
+			return PLUGIN_HANDLED
+		}
+		bd_allow_canonical_victim_damage()
+		bd_drive_canonical_attacker()
+		return PLUGIN_HANDLED
+	}
+	if (g_bdCanonicalPhase == BD_CANONICAL_WAIT_POSTFLUSH) {
+		bd_canonical_clear_attack()
+		if (g_bdCanonicalDeathCount != 1 ||
+				g_bdCanonicalWeapon <= 0) {
+			bd_canonical_frag_abort("exact factual death did not reconcile")
+			return PLUGIN_HANDLED
+		}
+		if (!g_bdCanonicalPostflushed) {
+			if (!bd_flush_stats_capture()) {
+				bd_canonical_frag_abort("stats capture postflush unavailable")
+				return PLUGIN_HANDLED
+			}
+			g_bdCanonicalPostflushed = true
+			g_bdCanonicalStablePolls = 0
+			log_amx("[BD] canonical_frag POSTFLUSH killer=%d killer_userid=%d victim=%d victim_userid=%d weapon=%d death_count=1 flush_ack=1",
+				g_bdCanonicalKiller, g_bdCanonicalKillerUserid,
+				g_bdCanonicalVictim, g_bdCanonicalVictimUserid,
+				g_bdCanonicalWeapon)
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdCanonicalStablePolls < BD_CANONICAL_POSTFLUSH_ACK_POLLS)
+			return PLUGIN_HANDLED
+		log_amx("[BD] canonical_frag FACT killer=%d killer_userid=%d victim=%d victim_userid=%d weapon=%d death_observed=1 preflushed=1 postflushed=1",
+			g_bdCanonicalKiller, g_bdCanonicalKillerUserid,
+			g_bdCanonicalVictim, g_bdCanonicalVictimUserid,
+			g_bdCanonicalWeapon)
+		g_bdCanonicalPhase = BD_CANONICAL_WAIT_RESTORE
+		g_bdCanonicalStablePolls = 0
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdCanonicalPhase != BD_CANONICAL_WAIT_RESTORE ||
+			!g_bdCanonicalPreflushed || !g_bdCanonicalPostflushed ||
+			g_bdCanonicalDeathCount != 1 || !g_bdIsolationActive ||
+			!bd_series_roster_current(true) ||
+			!bd_isolation_exact_series() ||
+			!is_user_connected(g_bdCanonicalVictim) ||
+			get_user_userid(g_bdCanonicalVictim) !=
+				g_bdCanonicalVictimUserid ||
+			g_bdSpawnGeneration[g_bdCanonicalVictim] <=
+				g_bdCanonicalVictimSpawn) {
+		g_bdCanonicalStablePolls = 0
+		return PLUGIN_HANDLED
+	}
+	if (++g_bdCanonicalStablePolls <
+			BD_CANONICAL_FRAG_RESTORE_STABLE_POLLS)
+		return PLUGIN_HANDLED
+
+	new isolated = bd_isolation_count()
+	if (isolated != g_bdSeriesRosterCount ||
+			!bd_series_roster_current(true) ||
+			!bd_isolation_exact_series()) {
+		bd_canonical_frag_abort("exact restored roster was not still frozen")
+		return PLUGIN_HANDLED
+	}
+	remove_task(BD_TASK_CANONICAL_FRAG_POLL)
+	log_amx("[BD] canonical_frag RESULT killer=%d killer_userid=%d victim=%d victim_userid=%d roster=%d isolated=%d respawned=1 death_count=1 preflushed=1 postflushed=1",
+		g_bdCanonicalKiller, g_bdCanonicalKillerUserid,
+		g_bdCanonicalVictim, g_bdCanonicalVictimUserid,
+		g_bdSeriesRosterCount, isolated)
+	bd_reset_canonical_state()
+	return PLUGIN_HANDLED
+}
+
 public client_death(killer, victim, wpnindex, hitplace, TK) {
+	if (g_bdCanonicalActive) {
+		if (g_bdCanonicalPhase == BD_CANONICAL_WAIT_STAGE) {
+			// This is before the preflush/BEGIN evidence boundary. It may happen
+			// while a pinned dead member is respawning; retain it only as an
+			// auditable pre-window count and continue progressive acquisition.
+			g_bdCanonicalPrewindowDeaths++
+		} else {
+			g_bdCanonicalDeathCount++
+			if (g_bdCanonicalPhase == BD_CANONICAL_WAIT_ENGINE_FRAG &&
+				g_bdCanonicalDeathCount == 1 &&
+				killer == g_bdCanonicalKiller &&
+				victim == g_bdCanonicalVictim &&
+				is_user_connected(killer) && is_user_connected(victim) &&
+				get_user_userid(killer) == g_bdCanonicalKillerUserid &&
+				get_user_userid(victim) == g_bdCanonicalVictimUserid &&
+				wpnindex > 0 && !TK) {
+			g_bdCanonicalWeapon = wpnindex
+			g_bdCanonicalPhase = BD_CANONICAL_WAIT_POSTFLUSH
+			g_bdCanonicalStablePolls = 0
+			bd_canonical_clear_attack()
+			} else {
+				g_bdCanonicalContaminated = true
+			}
+		}
+	}
+
 	new team = get_user_team(victim)
 	if (team == BD_TEAM_ALLIES || team == BD_TEAM_AXIS)
 		g_bdLastTeamDeath[team] = get_gametime()
+	if (g_bdCleanActive &&
+			(team == BD_TEAM_ALLIES || team == BD_TEAM_AXIS)) {
+		if (team == g_bdCleanTeam)
+			g_bdCleanTeamDeaths++
+		g_bdCleanContaminated = true
+		log_amx("[BD] clean_capture contamination kind=death killer=%d victim=%d team=%d",
+			killer, victim, team)
+	}
 
 	// The restart scenario dispatches one synthetic death forward without an
 	// engine kill. Every other death between queueing and the authoritative
@@ -226,12 +976,18 @@ stock bd_isolate_test_players() {
 		new id = players[i]
 		if (!is_user_connected(id) || !is_user_alive(id))
 			continue
+		if (g_bdCanonicalActive &&
+				!bd_canonical_series_player_current(id))
+			continue
 
 		new flags = get_entvar(id, var_flags)
 		g_bdIsolationHeld[id] = true
 		g_bdIsolationWasFrozen[id] = bool:(flags & FL_FROZEN)
 		g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)
 		g_bdIsolationUserid[id] = get_user_userid(id)
+		g_bdIsolationSpawnGeneration[id] = g_bdSpawnGeneration[id]
+		g_bdIsolationOriginSaved[id] = bool:dodx_get_user_origin(id,
+			g_bdIsolationOrigin[id])
 		set_entvar(id, var_velocity, stopped)
 		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
 		isolated++
@@ -247,17 +1003,36 @@ stock bd_hold_test_players() {
 		new id = players[i]
 		if (!is_user_connected(id) || !is_user_alive(id))
 			continue
+		if (g_bdCanonicalActive &&
+				!bd_canonical_series_player_current(id))
+			continue
 
 		new userid = get_user_userid(id)
 		new flags = get_entvar(id, var_flags)
-		if (!g_bdIsolationHeld[id] || g_bdIsolationUserid[id] != userid) {
+		if (!g_bdIsolationHeld[id] || g_bdIsolationUserid[id] != userid ||
+				g_bdIsolationSpawnGeneration[id] != g_bdSpawnGeneration[id]) {
 			g_bdIsolationHeld[id] = true
 			g_bdIsolationWasFrozen[id] = bool:(flags & FL_FROZEN)
 			g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)
 			g_bdIsolationUserid[id] = userid
+			g_bdIsolationSpawnGeneration[id] = g_bdSpawnGeneration[id]
+			g_bdIsolationOriginSaved[id] = bool:dodx_get_user_origin(id,
+				g_bdIsolationOrigin[id])
 		}
 		set_entvar(id, var_velocity, stopped)
-		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
+		new held_flags = flags | FL_FROZEN | FL_GODMODE
+		if (g_bdCanonicalActive &&
+				g_bdCanonicalPhase == BD_CANONICAL_WAIT_ENGINE_FRAG &&
+				g_bdSpawnGeneration[id] == g_bdIsolationSpawnGeneration[id]) {
+			if (id == g_bdCanonicalKiller &&
+					userid == g_bdCanonicalKillerUserid)
+				held_flags &= ~FL_FROZEN
+			else if (id == g_bdCanonicalVictim &&
+					userid == g_bdCanonicalVictimUserid &&
+					g_bdSpawnGeneration[id] == g_bdCanonicalVictimSpawn)
+				held_flags &= ~FL_GODMODE
+		}
+		set_entvar(id, var_flags, held_flags)
 	}
 }
 
@@ -271,6 +1046,7 @@ stock bd_hold_test_players() {
 stock bd_allow_isolated_death(id) {
 	if (!g_bdIsolationHeld[id] || !is_user_connected(id) ||
 			get_user_userid(id) != g_bdIsolationUserid[id] ||
+			g_bdSpawnGeneration[id] != g_bdIsolationSpawnGeneration[id] ||
 			g_bdIsolationWasGodmode[id])
 		return
 
@@ -284,6 +1060,17 @@ stock bd_begin_test_isolation() {
 	new isolated = bd_isolate_test_players()
 	set_task(0.1, "bd_isolation_hold", BD_TASK_ISOLATION_HOLD, .flags="b")
 	return isolated
+}
+
+stock bd_isolation_count() {
+	new count = 0
+	for (new id = 1; id <= 32; id++) {
+		if (g_bdIsolationHeld[id] && is_user_connected(id) &&
+				get_user_userid(id) == g_bdIsolationUserid[id] &&
+				g_bdSpawnGeneration[id] == g_bdIsolationSpawnGeneration[id])
+			count++
+	}
+	return count
 }
 
 public bd_isolation_hold() {
@@ -302,6 +1089,7 @@ stock bd_end_test_isolation(bool:log_end) {
 	remove_task(BD_TASK_ISOLATION_END)
 	g_bdIsolationActive = false
 	bd_restore_isolated_players()
+	bd_restore_prepared_capture()
 	if (log_end)
 		log_amx("[BD] isolation END")
 }
@@ -311,7 +1099,10 @@ stock bd_restore_isolated_players() {
 		if (!g_bdIsolationHeld[id])
 			continue
 		if (is_user_connected(id) &&
-				get_user_userid(id) == g_bdIsolationUserid[id]) {
+				get_user_userid(id) == g_bdIsolationUserid[id] &&
+				g_bdSpawnGeneration[id] == g_bdIsolationSpawnGeneration[id]) {
+			if (g_bdIsolationOriginSaved[id] && is_user_alive(id))
+				dodx_set_user_origin(id, g_bdIsolationOrigin[id])
 			new flags = get_entvar(id, var_flags)
 			if (g_bdIsolationWasFrozen[id]) flags |= FL_FROZEN
 			else flags &= ~FL_FROZEN
@@ -323,8 +1114,488 @@ stock bd_restore_isolated_players() {
 		g_bdIsolationWasFrozen[id] = false
 		g_bdIsolationWasGodmode[id] = false
 		g_bdIsolationUserid[id] = 0
+		g_bdIsolationSpawnGeneration[id] = 0
+		g_bdIsolationOriginSaved[id] = false
 	}
 	g_bdRestartFrozenCount = 0
+}
+
+stock bd_restore_prepared_capture() {
+	if (g_bdPreparedFlag >= 0)
+		dodx_area_set_data(g_bdPreparedFlag, CA_timetocap,
+			g_bdPreparedCapTime)
+	g_bdPreparedFlag = -1
+	g_bdPreparedTeam = 0
+	g_bdPreparedCapTime = 0
+	g_bdPreparedMode[0] = 0
+	g_bdPreparedAnchorSaved = false
+	g_bdPreparedCenterSaved = false
+	for (new axis = 0; axis < 3; axis++) {
+		g_bdPreparedAnchor[axis] = 0.0
+		g_bdPreparedCenter[axis] = 0.0
+	}
+}
+
+stock bool:bd_area_center(f, Float:center[3]) {
+	new area = dodx_area_get_data(f, CA_edict)
+	if (area <= 0)
+		return false
+	new Float:mins[3], Float:maxs[3]
+	get_entvar(area, var_absmin, mins)
+	get_entvar(area, var_absmax, maxs)
+	for (new axis = 0; axis < 3; axis++) {
+		if (maxs[axis] <= mins[axis])
+			return false
+		center[axis] = (mins[axis] + maxs[axis]) * 0.5
+	}
+	return true
+}
+
+stock bd_live_team_count(team) {
+	new players[32], num, count = 0
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (is_user_connected(id) && is_user_alive(id) &&
+				get_user_team(id) == team)
+			count++
+	}
+	return count
+}
+
+/** Require that the held live set is exactly the frozen pinned series set. */
+stock bool:bd_isolation_exact_series() {
+	if (!g_bdIsolationActive || g_bdSeriesRosterCount < 2 ||
+			bd_isolation_count() != g_bdSeriesRosterCount)
+		return false
+
+	new exact = 0
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdSeriesRosterSelected[id]) {
+			if (g_bdIsolationHeld[id] && is_user_connected(id) &&
+					is_user_alive(id) &&
+					get_user_userid(id) == g_bdIsolationUserid[id] &&
+					g_bdSpawnGeneration[id] ==
+						g_bdIsolationSpawnGeneration[id])
+				return false
+			continue
+		}
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				get_user_userid(id) != g_bdSeriesRosterUserid[id] ||
+				get_user_team(id) != g_bdSeriesRosterTeam[id] ||
+				!g_bdIsolationHeld[id] ||
+				g_bdIsolationUserid[id] != g_bdSeriesRosterUserid[id] ||
+				g_bdIsolationSpawnGeneration[id] != g_bdSpawnGeneration[id])
+			return false
+		new flags = get_entvar(id, var_flags)
+		if (!(flags & FL_FROZEN) || !(flags & FL_GODMODE))
+			return false
+		exact++
+	}
+	return exact == g_bdSeriesRosterCount
+}
+
+stock bool:bd_owner_canonical(owner) {
+	return owner == 0 || owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS
+}
+
+/** A shared isolation anchor must not accidentally stage a second objective. */
+stock bool:bd_anchor_outside_capture_areas(const Float:origin[3]) {
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	for (new f = 0; f < n; f++) {
+		new area = dodx_area_get_data(f, CA_edict)
+		if (area <= 0)
+			continue
+		new Float:mins[3], Float:maxs[3]
+		get_entvar(area, var_absmin, mins)
+		get_entvar(area, var_absmax, maxs)
+		new bool:inside = true
+		for (new axis = 0; axis < 3; axis++) {
+			if (maxs[axis] <= mins[axis])
+				return false
+			if (origin[axis] < mins[axis] - BD_ANCHOR_AREA_MARGIN ||
+					origin[axis] > maxs[axis] + BD_ANCHOR_AREA_MARGIN)
+				inside = false
+		}
+		if (inside)
+			return false
+	}
+	return true
+}
+
+stock bd_far_anchor(const Float:center[3], Float:anchor[3]) {
+	new players[32], num, best = 0
+	new Float:best_dist = 0.0, Float:origin[3]
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				!dodx_get_user_origin(id, origin) ||
+				!bd_anchor_outside_capture_areas(origin))
+			continue
+		new Float:dist = bd_dist2d(origin, center)
+		if (dist >= BD_FAR_RADIUS && dist > best_dist) {
+			best = id
+			best_dist = dist
+			for (new axis = 0; axis < 3; axis++)
+				anchor[axis] = origin[axis]
+		}
+	}
+	return best
+}
+
+/** Pin the combat roster before the neutralizing restart is issued.
+ *
+ * A slot is relevant when it is connected and assigned to a combat team at
+ * arm time.  The series-level userid epoch guard protects membership, while
+ * the per-slot spawn baseline below proves that the same player has respawned
+ * into the normalized round before staging begins.
+ */
+stock bd_snapshot_restart_roster() {
+	g_bdRestartRosterCount = 0
+	for (new id = 1; id <= 32; id++) {
+		g_bdRestartRosterSelected[id] = false
+		g_bdRestartRosterUserid[id] = 0
+		g_bdRestartRosterTeam[id] = 0
+		g_bdRestartRosterSpawnBaseline[id] = 0
+		g_bdRestartRosterSpawnStable[id] = 0
+	}
+
+	new players[32], num
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		new team = get_user_team(id)
+		if (!is_user_connected(id) ||
+				(team != BD_TEAM_ALLIES && team != BD_TEAM_AXIS))
+			continue
+		g_bdRestartRosterSelected[id] = true
+		g_bdRestartRosterUserid[id] = get_user_userid(id)
+		g_bdRestartRosterTeam[id] = team
+		g_bdRestartRosterSpawnBaseline[id] = g_bdSpawnGeneration[id]
+		g_bdRestartRosterCount++
+	}
+	return g_bdRestartRosterCount
+}
+
+/** Fail closed if combat membership changes without a connect/disconnect.
+ *
+ * The series userid epoch catches new connections, but an already-connected
+ * spectator can join Allies/Axis without changing that epoch. Every current
+ * combat player must therefore be one of the arm-time selections with the
+ * same userid and team. During normalization exactly zero or one newer spawn
+ * generation is valid; after the stable snapshot the generation is pinned
+ * exactly too.
+ */
+stock bool:bd_restart_roster_pinned_complete(bool:stable_generation) {
+	new players[32], num, seen = 0
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (!is_user_connected(id))
+			continue
+		new team = get_user_team(id)
+		if (team != BD_TEAM_ALLIES && team != BD_TEAM_AXIS)
+			continue
+		if (!g_bdRestartRosterSelected[id] ||
+				get_user_userid(id) != g_bdRestartRosterUserid[id] ||
+				team != g_bdRestartRosterTeam[id])
+			return false
+		if (stable_generation) {
+			if (g_bdRestartRosterSpawnStable[id] <=
+					g_bdRestartRosterSpawnBaseline[id] ||
+					g_bdSpawnGeneration[id] !=
+						g_bdRestartRosterSpawnStable[id])
+				return false
+		} else if (g_bdSpawnGeneration[id] <
+				g_bdRestartRosterSpawnBaseline[id] ||
+				g_bdSpawnGeneration[id] >
+					g_bdRestartRosterSpawnBaseline[id] + 1) {
+			return false
+		}
+		seen++
+	}
+	return seen == g_bdRestartRosterCount
+}
+
+stock bool:bd_restart_roster_respawned() {
+	if (g_bdRestartRosterCount < 2 ||
+			!bd_restart_roster_pinned_complete(false))
+		return false
+	new seen = 0
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdRestartRosterSelected[id])
+			continue
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				get_user_userid(id) != g_bdRestartRosterUserid[id] ||
+				get_user_team(id) != g_bdRestartRosterTeam[id] ||
+				g_bdSpawnGeneration[id] !=
+					g_bdRestartRosterSpawnBaseline[id] + 1)
+			return false
+		seen++
+	}
+	return seen == g_bdRestartRosterCount
+}
+
+stock bool:bd_restart_roster_generation_current() {
+	if (!bd_restart_roster_respawned() ||
+			!bd_restart_roster_pinned_complete(true))
+		return false
+	for (new id = 1; id <= 32; id++) {
+		if (g_bdRestartRosterSelected[id] &&
+				g_bdSpawnGeneration[id] !=
+					g_bdRestartRosterSpawnStable[id])
+			return false
+	}
+	return true
+}
+
+/** Find a neutral, quiescent objective that the frozen new-round roster can
+ * stage.  This is intentionally read-only; placement happens only after the
+ * post-respawn stability window closes.
+ */
+stock bool:bd_find_restart_plan(&chosen_flag, &chosen_team) {
+	chosen_flag = -1
+	chosen_team = 0
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	new Float:center[3], Float:anchor[3]
+	for (new f = 0; f < n; f++) {
+		new owner = dodx_area_get_data(f, CA_owning_team)
+		if (owner != 0 ||
+				dodx_area_get_data(f, CA_is_capturing) ||
+				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
+				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
+				!bd_area_center(f, center) || !bd_far_anchor(center, anchor))
+			continue
+
+		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
+			new needed = dodx_area_get_data(f,
+				(team == BD_TEAM_ALLIES) ? CA_allies_numcap : CA_axis_numcap)
+			new enemy = (team == BD_TEAM_ALLIES) ?
+				BD_TEAM_AXIS : BD_TEAM_ALLIES
+			if (needed < 1 || bd_live_team_count(team) < needed ||
+					bd_live_team_count(enemy) < 1)
+				continue
+			chosen_flag = f
+			chosen_team = team
+			return true
+		}
+	}
+	return false
+}
+
+stock bool:bd_restart_same_origin(const Float:a[3], const Float:b[3]) {
+	new Float:distance2 = 0.0
+	for (new axis = 0; axis < 3; axis++) {
+		new Float:delta = a[axis] - b[axis]
+		distance2 += delta * delta
+	}
+	return distance2 <=
+		BD_RESTART_POSITION_EPSILON * BD_RESTART_POSITION_EPSILON
+}
+
+/** Freeze the proven new-round roster and begin a multi-frame stability
+ * sample.  Spawns, identity/team changes, movement, capture-area occupancy,
+ * or capture activity invalidate the sample before any player is moved.
+ */
+stock bool:bd_restart_begin_stability(flag, team) {
+	if (!bd_restart_roster_respawned())
+		return false
+	new isolated = bd_begin_test_isolation()
+	if (isolated < g_bdRestartRosterCount) {
+		bd_end_test_isolation(false)
+		return false
+	}
+
+	g_bdRestartStableFlag = flag
+	g_bdRestartStableTeam = team
+	g_bdRestartStablePolls = 0
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdRestartRosterSelected[id])
+			continue
+		g_bdRestartRosterSpawnStable[id] = g_bdSpawnGeneration[id]
+		if (!dodx_get_user_origin(id, g_bdRestartRosterOrigin[id])) {
+			bd_end_test_isolation(false)
+			g_bdRestartStableFlag = -1
+			g_bdRestartStableTeam = 0
+			return false
+		}
+	}
+	return true
+}
+
+stock bool:bd_restart_stability_current() {
+	if (!g_bdIsolationActive || g_bdRestartStableFlag < 0 ||
+			!bd_restart_roster_generation_current())
+		return false
+	if (dodx_area_get_data(g_bdRestartStableFlag, CA_owning_team) != 0 ||
+			dodx_area_get_data(g_bdRestartStableFlag, CA_is_capturing) ||
+			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_ALLIES) != 0 ||
+			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_AXIS) != 0)
+		return false
+
+	new Float:origin[3]
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdRestartRosterSelected[id])
+			continue
+		if (!dodx_get_user_origin(id, origin) ||
+				!bd_restart_same_origin(origin,
+					g_bdRestartRosterOrigin[id]))
+			return false
+	}
+	return true
+}
+
+stock bd_restart_drop_stability() {
+	bd_end_test_isolation(false)
+	g_bdRestartStablePolls = 0
+	g_bdRestartStableFlag = -1
+	g_bdRestartStableTeam = 0
+}
+
+stock bd_restart_arm_abort(const reason[]) {
+	remove_task(BD_TASK_RESTART_ARM_POLL)
+	log_amx("[BD] restart ABORT flag=-1 %s", reason)
+	bd_end_test_isolation(false)
+	bd_restore_restart_timer()
+	bd_reset_restart_arm_state()
+}
+
+/** Create a real, bounded capture instead of waiting for random bot routing.
+ *
+ * Every live player is frozen and moved away from one engine capture area;
+ * exactly the map-declared number of cappers is then placed at its center.
+ * The engine still owns CA_is_capturing/counts and the production detector
+ * still observes a real count transition. Only the prerequisite positioning
+ * is deterministic. Original positions and cap time are restored at the
+ * isolation boundary, guarded by the original userid for every slot.
+ */
+stock bool:bd_prepare_capture(const mode[], bool:need_far,
+		bool:require_neutral, expected_flag = -1, expected_team = 0,
+		bool:defer_cappers = false, expected_owner = BD_OWNER_ANY) {
+	if (!bd_series_roster_current(true)) {
+		log_amx("[BD] %s ABORT flag=-1 exact full live roster unavailable",
+			mode)
+		return false
+	}
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+
+	new chosen = -1, chosen_team = 0, required = 0
+	new Float:center[3], Float:anchor[3]
+	for (new f = 0; f < n && chosen < 0; f++) {
+		if (expected_flag >= 0 && f != expected_flag)
+			continue
+		new owner = dodx_area_get_data(f, CA_owning_team)
+		if (!bd_owner_canonical(owner) ||
+				(expected_owner != BD_OWNER_ANY && owner != expected_owner))
+			continue
+		if (defer_cappers &&
+				(dodx_area_get_data(f, CA_is_capturing) ||
+				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
+				bd_zone_count(f, BD_TEAM_AXIS) != 0))
+			continue
+		if (require_neutral &&
+				(owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS))
+			continue
+		new Float:candidate[3], Float:far_origin[3]
+		if (!bd_area_center(f, candidate) ||
+				!bd_far_anchor(candidate, far_origin))
+			continue
+
+		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
+			if (expected_team && team != expected_team)
+				continue
+			if (owner == team)
+				continue
+			new needed = dodx_area_get_data(f,
+				(team == BD_TEAM_ALLIES) ? CA_allies_numcap : CA_axis_numcap)
+			if (needed < 1)
+				continue
+			if (bd_live_team_count(team) < needed + (need_far ? 1 : 0))
+				continue
+			chosen = f
+			chosen_team = team
+			required = needed
+			for (new axis = 0; axis < 3; axis++) {
+				center[axis] = candidate[axis]
+				anchor[axis] = far_origin[axis]
+			}
+			break
+		}
+	}
+	if (chosen < 0) {
+		log_amx("[BD] %s ABORT flag=-1 no deterministic capture area", mode)
+		return false
+	}
+
+	// Restart readiness already owns a frozen post-respawn roster. Reuse that
+	// exact generation instead of ending isolation (which would briefly restore
+	// movement) and taking a second, racy snapshot before placement.
+	new isolated = g_bdIsolationActive ?
+		bd_isolation_count() : bd_begin_test_isolation()
+	if (isolated != g_bdSeriesRosterCount ||
+			!bd_series_roster_current(true)) {
+		log_amx("[BD] %s ABORT flag=%d exact full live isolated roster unavailable isolated=%d expected=%d",
+			mode, chosen, isolated, g_bdSeriesRosterCount)
+		bd_end_test_isolation(false)
+		return false
+	}
+
+	g_bdPreparedFlag = chosen
+	g_bdPreparedTeam = chosen_team
+	copy(g_bdPreparedMode, charsmax(g_bdPreparedMode), mode)
+	g_bdPreparedCapTime = dodx_area_get_data(chosen, CA_timetocap)
+	dodx_area_set_data(chosen, CA_timetocap, BD_PREPARED_CAPTURE_SECS)
+	for (new axis = 0; axis < 3; axis++) {
+		g_bdPreparedAnchor[axis] = anchor[axis]
+		g_bdPreparedCenter[axis] = center[axis]
+	}
+	g_bdPreparedAnchorSaved = true
+	g_bdPreparedCenterSaved = true
+
+	new players[32], num, placed = 0
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (!is_user_connected(id) || !is_user_alive(id))
+			continue
+		dodx_set_user_origin(id, anchor)
+	}
+	if (defer_cappers) {
+		log_amx("[BD] capture PREPARED mode=%s flag=%d team=%d cappers=0 required=%d isolated=%d deferred=1",
+			mode, chosen, chosen_team, required, isolated)
+		return true
+	}
+	for (new i = 0; i < num && placed < required; i++) {
+		new id = players[i]
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				get_user_team(id) != chosen_team)
+			continue
+		dodx_set_user_origin(id, center)
+		placed++
+	}
+	if (placed != required) {
+		log_amx("[BD] %s ABORT flag=%d placed=%d required=%d",
+			mode, chosen, placed, required)
+		bd_end_test_isolation(false)
+		return false
+	}
+	log_amx("[BD] capture PREPARED mode=%s flag=%d team=%d cappers=%d isolated=%d",
+		mode, chosen, chosen_team, placed, isolated)
+	return true
+}
+
+stock bd_find_prepared_capture() {
+	if (g_bdPreparedFlag < 0 ||
+			!dodx_area_get_data(g_bdPreparedFlag, CA_is_capturing) ||
+			dodx_area_get_data(g_bdPreparedFlag, CA_capturing_team) !=
+				g_bdPreparedTeam ||
+			bd_zone_count(g_bdPreparedFlag, g_bdPreparedTeam) < 1)
+		return -1
+	return g_bdPreparedFlag
 }
 
 /**
@@ -337,6 +1608,8 @@ stock bd_restore_isolated_players() {
  * reason. Picking at command time removes the gap instead of racing it.
  */
 stock bd_find_capturing() {
+	if (g_bdPreparedFlag >= 0)
+		return bd_find_prepared_capture()
 	new n = dodx_objectives_get_num()
 	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
 
@@ -513,7 +1786,8 @@ stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
 	// death can change the same count or emit a same-name break; for the far
 	// negative it can create the candidate being tested. Selection happens
 	// first so isolation never manufactures a qualifying victim or capture.
-	new isolated = bd_begin_test_isolation()
+	new isolated = g_bdIsolationActive ?
+		bd_isolation_count() : bd_begin_test_isolation()
 	set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end",
 		BD_TASK_ISOLATION_END)
 	log_amx("[BD] kill flag=%d capteam=%d mode=%s victim=%d vname=%s killer=%d kname=%s dist=%.0f count_before=%d owner_before=%d isolated=%d",
@@ -526,11 +1800,13 @@ stock bool:bd_execute_kill(f, bool:want_near, bool:log_abort = true) {
 	bd_allow_isolated_death(victim)
 	dod_user_kill(victim)
 
-	set_task(1.5, "bd_report_after", f)
+	bd_schedule_report_after(f)
 	return true
 }
 
 public cmd_kill() {
+	if (!bd_series_guard("kill"))
+		return PLUGIN_HANDLED
 	new arg_flag[8], arg_mode[8]
 	read_argv(1, arg_flag, charsmax(arg_flag))
 	read_argv(2, arg_mode, charsmax(arg_mode))
@@ -544,6 +1820,8 @@ public cmd_kill() {
  * RCON race, matching the established ktp_bd_arm_walkoff design.
  */
 public cmd_arm_kill() {
+	if (!bd_series_guard("arm_kill"))
+		return PLUGIN_HANDLED
 	new arg_mode[8]
 	read_argv(1, arg_mode, charsmax(arg_mode))
 	if (!equal(arg_mode, "near") && !equal(arg_mode, "far")) {
@@ -551,11 +1829,24 @@ public cmd_arm_kill() {
 		return PLUGIN_HANDLED
 	}
 
+	// Rearming is an explicit reset boundary.  A prior bounded attempt must
+	// never leave its poll count or task alive to shorten the next attempt.
 	remove_task(BD_TASK_KILL_POLL)
 	g_bdKillNear = bool:equal(arg_mode, "near")
 	g_bdKillPolls = 0
+	if (!bd_prepare_capture(arg_mode, !g_bdKillNear, false))
+		return PLUGIN_HANDLED
 	log_amx("[BD] kill ARMED mode=%s", arg_mode)
 	set_task(0.1, "bd_kill_poll", BD_TASK_KILL_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public cmd_disarm_kill() {
+	remove_task(BD_TASK_KILL_POLL)
+	g_bdKillPolls = 0
+	bd_end_test_isolation(false)
+	server_print("KTP_BD_KILL_DISARMED")
+	log_amx("[BD] kill DISARMED")
 	return PLUGIN_HANDLED
 }
 
@@ -567,10 +1858,12 @@ public bd_kill_poll() {
 		return PLUGIN_HANDLED
 	}
 
-	if (g_bdKillPolls >= BD_KILL_MAX_POLLS) {
+	new max_polls = g_bdKillNear ? BD_KILL_MAX_POLLS : BD_FAR_KILL_MAX_POLLS
+	if (g_bdKillPolls >= max_polls) {
 		remove_task(BD_TASK_KILL_POLL)
 		log_amx("[BD] kill ABORT flag=-1 mode=%s no stageable capture while armed",
 			g_bdKillNear ? "near" : "far")
+		bd_end_test_isolation(false)
 	}
 	return PLUGIN_HANDLED
 }
@@ -651,7 +1944,8 @@ stock bool:bd_execute_restart(f) {
 	// Freezing only the capping team left them exposed to opposing bots and let
 	// opponents alter other flag state. The restart poll reapplies this after
 	// respawn; the userid guard prevents restoration from touching a reused slot.
-	g_bdRestartFrozenCount = bd_begin_test_isolation()
+	g_bdRestartFrozenCount = g_bdIsolationActive ?
+		bd_isolation_count() : bd_begin_test_isolation()
 
 	// Dispatching the DODX death forward is the production-shaped queue input.
 	// Deliberately omit dod_user_kill: the live area count must remain unchanged
@@ -690,6 +1984,8 @@ stock bool:bd_execute_restart(f) {
 }
 
 public cmd_arm_restart() {
+	if (!bd_series_guard("arm_restart"))
+		return PLUGIN_HANDLED
 	if (g_bdRestartActive) {
 		log_amx("[BD] restart ABORT flag=%d previous restart probe still active",
 			g_bdRestartFlag)
@@ -701,6 +1997,7 @@ public cmd_arm_restart() {
 	remove_task(BD_TASK_RESTART_FINISH)
 	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
+	bd_reset_restart_arm_state()
 	g_bdRestartTimerSaved = get_cvar_float("mp_clan_timer")
 	g_bdRestartTimerPending = true
 	set_cvar_float("mp_clan_timer", BD_RESTART_TIMER_SECS)
@@ -710,34 +2007,118 @@ public cmd_arm_restart() {
 		bd_restore_restart_timer()
 		return PLUGIN_HANDLED
 	}
+	if (bd_snapshot_restart_roster() < 2) {
+		bd_restart_arm_abort("insufficient combat roster before normalization")
+		return PLUGIN_HANDLED
+	}
 	g_bdRestartArmPolls = 0
+	g_bdRestartArmPhase = BD_RESTART_ARM_NORMALIZING
+	g_bdRestartNormalizeRoundBefore = dodx_get_round_time()
+	g_bdRestartNormalizeRoundPeak = g_bdRestartNormalizeRoundBefore
+	g_bdRestartNormalizeRoundLimit =
+		get_cvar_float("mp_timelimit") * 60.0
+	if (g_bdRestartNormalizeRoundBefore < 0.0 ||
+			g_bdRestartNormalizeRoundLimit <= 0.0) {
+		bd_restart_arm_abort("normalization clock unavailable")
+		return PLUGIN_HANDLED
+	}
 	// Normalize the map first. By the time this LAST scenario runs, naturally
 	// neutral points have usually been captured and can never exercise 0 -> 0.
-	// The poll's round-clock precondition refuses to stage during this setup
-	// countdown; only the later, candidate-backed restart is adjudicated.
+	// The poll must observe this clock's complete rebase, every selected roster
+	// member's later DODX spawn generation, and a stable frozen world before it
+	// is allowed to prepare the candidate-backed restart.
 	log_amx("[BD] restart ARMED preparing neutral reset timer_before=%.2f timer_used=%.2f",
 		g_bdRestartTimerSaved, g_bdRestartTimerUsed)
 	server_cmd("mp_clan_restartround 1")
 	server_exec()
+	new Float:after_command = dodx_get_round_time()
+	if (after_command > g_bdRestartNormalizeRoundPeak)
+		g_bdRestartNormalizeRoundPeak = after_command
 	set_task(0.1, "bd_restart_arm_poll", BD_TASK_RESTART_ARM_POLL, .flags="b")
 	return PLUGIN_HANDLED
 }
 
 public bd_restart_arm_poll() {
 	g_bdRestartArmPolls++
-	new n = dodx_objectives_get_num()
-	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
-	for (new f = 0; f < n; f++) {
-		if (bd_execute_restart(f)) {
-			remove_task(BD_TASK_RESTART_ARM_POLL)
-			return PLUGIN_HANDLED
-		}
+	if (!g_bdSeriesActive)
+		return PLUGIN_HANDLED
+	if (g_bdRestartArmPolls >= BD_KILL_MAX_POLLS) {
+		bd_restart_arm_abort("no stageable capture while armed")
+		return PLUGIN_HANDLED
+	}
+	new bool:stable_generation =
+		g_bdRestartArmPhase == BD_RESTART_ARM_PREPARED ||
+		(g_bdRestartArmPhase == BD_RESTART_ARM_STABILIZING &&
+			g_bdRestartStableFlag >= 0)
+	if (!bd_restart_roster_pinned_complete(stable_generation)) {
+		bd_restart_arm_abort("combat roster changed while restart armed")
+		return PLUGIN_HANDLED
 	}
 
-	if (g_bdRestartArmPolls >= BD_KILL_MAX_POLLS) {
-		remove_task(BD_TASK_RESTART_ARM_POLL)
-		log_amx("[BD] restart ABORT flag=-1 no stageable capture while armed")
-		bd_restore_restart_timer()
+	new Float:round_now = dodx_get_round_time()
+	if (g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING) {
+		if (round_now > g_bdRestartNormalizeRoundPeak)
+			g_bdRestartNormalizeRoundPeak = round_now
+		if (!g_bdRestartNormalizeRebased &&
+				g_bdRestartNormalizeRoundPeak >
+					g_bdRestartNormalizeRoundLimit + 0.01 &&
+				g_bdRestartNormalizeRoundPeak >
+					g_bdRestartNormalizeRoundBefore + 0.01)
+			g_bdRestartNormalizeRebased = true
+
+		if (g_bdRestartNormalizeRebased &&
+				round_now >= g_bdRestartNormalizeRoundLimit - 5.0 &&
+				round_now <= g_bdRestartNormalizeRoundLimit + 0.01) {
+			g_bdRestartArmPhase = BD_RESTART_ARM_STABILIZING
+			g_bdRestartStablePolls = 0
+		}
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdRestartArmPhase == BD_RESTART_ARM_STABILIZING) {
+		if (g_bdRestartStableFlag < 0) {
+			if (!bd_restart_roster_respawned())
+				return PLUGIN_HANDLED
+			new flag, team
+			if (!bd_find_restart_plan(flag, team) ||
+					!bd_restart_begin_stability(flag, team))
+				return PLUGIN_HANDLED
+			// Never prepare in the first frame that observes the post-respawn
+			// roster. The following polls must independently prove stability.
+			return PLUGIN_HANDLED
+		}
+
+		bd_hold_test_players()
+		if (!bd_restart_stability_current()) {
+			bd_restart_drop_stability()
+			return PLUGIN_HANDLED
+		}
+		g_bdRestartStablePolls++
+		if (g_bdRestartStablePolls <
+				BD_RESTART_POSTRESPAWN_STABLE_POLLS)
+			return PLUGIN_HANDLED
+
+		if (!bd_prepare_capture("restart", false, true,
+				g_bdRestartStableFlag, g_bdRestartStableTeam)) {
+			bd_restart_arm_abort("post-respawn capture preparation failed")
+			return PLUGIN_HANDLED
+		}
+		g_bdRestartArmPhase = BD_RESTART_ARM_PREPARED
+		// CA_is_capturing is engine-owned and may update after this callback.
+		// Do not dispatch or queue until a later poll observes it active.
+		return PLUGIN_HANDLED
+	}
+
+	if (g_bdRestartArmPhase == BD_RESTART_ARM_PREPARED) {
+		if (!bd_restart_roster_generation_current()) {
+			bd_restart_arm_abort("roster respawned after capture preparation")
+			return PLUGIN_HANDLED
+		}
+		new f = bd_find_prepared_capture()
+		if (f == g_bdRestartStableFlag && bd_execute_restart(f)) {
+			remove_task(BD_TASK_RESTART_ARM_POLL)
+			g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
+		}
 	}
 	return PLUGIN_HANDLED
 }
@@ -830,6 +2211,7 @@ public bd_restart_finish() {
 	g_bdRestartSyntheticDispatch = false
 	bd_end_test_isolation(false)
 	bd_restore_restart_timer()
+	bd_reset_restart_arm_state()
 	return PLUGIN_HANDLED
 }
 
@@ -841,12 +2223,429 @@ public bd_restart_finish() {
  * therefore produces no break for correct reasons, and without the owner the
  * harness cannot tell that apart from a missed break.
  */
-public bd_report_after(f) {
+stock bd_schedule_report_after(f) {
+	if (f < 0 || f >= BD_MAX_FLAGS)
+		return
+	new taskid = BD_TASK_REPORT_BASE + f
+	remove_task(taskid)
+	set_task(1.5, "bd_report_after", taskid)
+}
+
+public bd_report_after(taskid) {
+	if (!g_bdSeriesActive)
+		return PLUGIN_HANDLED
+	new f = taskid - BD_TASK_REPORT_BASE
+	if (f < 0 || f >= BD_MAX_FLAGS)
+		return PLUGIN_HANDLED
 	log_amx("[BD] after flag=%d allies=%d axis=%d capping=%d owner=%d",
 		f, dodx_area_get_data(f, CA_num_allies),
 		dodx_area_get_data(f, CA_num_axis),
 		dodx_area_get_data(f, CA_is_capturing),
 		dodx_area_get_data(f, CA_owning_team))
+	return PLUGIN_HANDLED
+}
+
+/** Read-only clean-capture target selection.
+ *
+ * DoD transiently exposes CA_owning_team=-1 around resets.  Only the three
+ * canonical owner values may enter the stability latch, and no player is
+ * moved until the same flag/team/owner tuple survives several exact-roster
+ * polls.
+ */
+stock bool:bd_find_clean_plan(&chosen_flag, &chosen_team, &chosen_owner) {
+	chosen_flag = -1
+	chosen_team = 0
+	chosen_owner = BD_OWNER_ANY
+	if (!bd_series_roster_current(true))
+		return false
+
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	new Float:center[3], Float:anchor[3]
+	for (new f = 0; f < n; f++) {
+		new owner = dodx_area_get_data(f, CA_owning_team)
+		if (!bd_owner_canonical(owner) ||
+				dodx_area_get_data(f, CA_is_capturing) ||
+				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
+				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
+				!bd_area_center(f, center) || !bd_far_anchor(center, anchor))
+			continue
+
+		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
+			if (owner == team)
+				continue
+			new needed = dodx_area_get_data(f,
+				(team == BD_TEAM_ALLIES) ? CA_allies_numcap : CA_axis_numcap)
+			if (needed < 1 || bd_live_team_count(team) < needed)
+				continue
+			chosen_flag = f
+			chosen_team = team
+			chosen_owner = owner
+			return true
+		}
+	}
+	return false
+}
+
+/** Pin the complete combat roster for the clean ownership transition.
+ *
+ * The normal isolation helper follows respawns so other diagnostics can keep
+ * running. This scenario is stricter: every combat player must already be
+ * alive and held, and userid/team/spawn generation must remain exact until
+ * the evidence window closes.
+ */
+stock bool:bd_clean_snapshot_roster() {
+	g_bdCleanRosterCount = 0
+	if (!g_bdIsolationActive || !bd_series_roster_current(true) ||
+			bd_isolation_count() != g_bdSeriesRosterCount)
+		return false
+	for (new id = 1; id <= 32; id++) {
+		g_bdCleanRosterSelected[id] = false
+		g_bdCleanRosterUserid[id] = 0
+		g_bdCleanRosterTeam[id] = 0
+		g_bdCleanRosterSpawn[id] = 0
+		if (!g_bdSeriesRosterSelected[id])
+			continue
+		new team = get_user_team(id)
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				get_user_userid(id) != g_bdSeriesRosterUserid[id] ||
+				team != g_bdSeriesRosterTeam[id] ||
+				!g_bdIsolationHeld[id] ||
+				g_bdIsolationUserid[id] != get_user_userid(id) ||
+				g_bdIsolationSpawnGeneration[id] != g_bdSpawnGeneration[id])
+			return false
+		g_bdCleanRosterSelected[id] = true
+		g_bdCleanRosterUserid[id] = get_user_userid(id)
+		g_bdCleanRosterTeam[id] = team
+		g_bdCleanRosterSpawn[id] = g_bdSpawnGeneration[id]
+		g_bdCleanRosterCount++
+	}
+	return g_bdCleanRosterCount == g_bdSeriesRosterCount
+}
+
+/** Pin the exact engine userids that will receive the real capture credit. */
+stock bool:bd_clean_pin_cappers() {
+	g_bdCleanCapperCount = 0
+	g_bdCleanCapperUseridList[0] = 0
+	for (new id = 1; id <= 32; id++) {
+		g_bdCleanCapperSelected[id] = false
+		g_bdCleanCapperUserid[id] = 0
+		if (!g_bdCleanRosterSelected[id] ||
+				g_bdCleanRosterTeam[id] != g_bdCleanTeam ||
+				g_bdCleanCapperCount >= g_bdCleanRequired)
+			continue
+		new userid = g_bdCleanRosterUserid[id]
+		if (userid <= 0)
+			return false
+		for (new other = 1; other <= 32; other++) {
+			if (g_bdCleanCapperSelected[other] &&
+					g_bdCleanCapperUserid[other] == userid)
+				return false
+		}
+		g_bdCleanCapperSelected[id] = true
+		g_bdCleanCapperUserid[id] = userid
+		new token[16]
+		num_to_str(userid, token, charsmax(token))
+		if (g_bdCleanCapperCount)
+			add(g_bdCleanCapperUseridList,
+				charsmax(g_bdCleanCapperUseridList), ",")
+		add(g_bdCleanCapperUseridList,
+			charsmax(g_bdCleanCapperUseridList), token)
+		g_bdCleanCapperCount++
+	}
+	return g_bdCleanCapperCount == g_bdCleanRequired
+}
+
+stock bool:bd_clean_roster_current() {
+	new seen = 0
+	for (new id = 1; id <= 32; id++) {
+		if (!is_user_connected(id)) {
+			if (g_bdCleanRosterSelected[id])
+				return false
+			continue
+		}
+		new team = get_user_team(id)
+		if (!g_bdCleanRosterSelected[id]) {
+			if (team == BD_TEAM_ALLIES || team == BD_TEAM_AXIS)
+				return false
+			continue
+		}
+		if (!is_user_alive(id) ||
+				get_user_userid(id) != g_bdCleanRosterUserid[id] ||
+				team != g_bdCleanRosterTeam[id] ||
+				g_bdSpawnGeneration[id] != g_bdCleanRosterSpawn[id] ||
+				!g_bdIsolationHeld[id] ||
+				g_bdIsolationUserid[id] != g_bdCleanRosterUserid[id] ||
+				g_bdIsolationSpawnGeneration[id] != g_bdCleanRosterSpawn[id])
+			return false
+		seen++
+	}
+	return seen == g_bdCleanRosterCount
+}
+
+/** Move the still-frozen roster away from the captured point.
+ *
+ * This supplies the real post-capture count drop whose stale candidate clear
+ * is under test. Godmode/freeze remain in place, so no organic combat can own
+ * any cap_break observed before the final synchronous buffer drain.
+ */
+stock bool:bd_clean_move_roster_off_point() {
+	if (!g_bdPreparedAnchorSaved || !bd_clean_roster_current())
+		return false
+	new moved = 0
+	new Float:stopped[3]
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdCleanRosterSelected[id])
+			continue
+		dodx_set_user_origin(id, g_bdPreparedAnchor)
+		set_entvar(id, var_velocity, stopped)
+		new flags = get_entvar(id, var_flags)
+		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
+		moved++
+	}
+	return moved == g_bdCleanRosterCount
+}
+
+/** Place only the already pinned cappers after the quiet quarantine drains. */
+stock bool:bd_clean_place_pinned_cappers() {
+	if (!g_bdPreparedCenterSaved || !bd_clean_roster_current() ||
+			g_bdCleanCapperCount != g_bdCleanRequired)
+		return false
+	new placed = 0
+	new Float:stopped[3]
+	for (new id = 1; id <= 32; id++) {
+		if (!g_bdCleanCapperSelected[id])
+			continue
+		if (get_user_userid(id) != g_bdCleanCapperUserid[id])
+			return false
+		dodx_set_user_origin(id, g_bdPreparedCenter)
+		set_entvar(id, var_velocity, stopped)
+		new flags = get_entvar(id, var_flags)
+		set_entvar(id, var_flags, flags | FL_FROZEN | FL_GODMODE)
+		placed++
+	}
+	return placed == g_bdCleanRequired
+}
+
+stock bd_clean_abort(const reason[]) {
+	remove_task(BD_TASK_CLEAN_CAPTURE_POLL)
+	remove_task(BD_TASK_CLEAN_CAPTURE_FINISH)
+	log_amx("[BD] clean_capture ABORT flag=%d %s", g_bdCleanFlag, reason)
+	g_bdCleanActive = false
+	bd_end_test_isolation(true)
+	bd_reset_clean_state()
+}
+
+/** Stage one REAL engine capture and keep a closed evidence world afterward.
+ *
+ * No product event is fabricated. The command only freezes and positions the
+ * live test roster inside an actual map capture area, then waits for the
+ * engine's ownership field and ordinary dod_capture_area markers to change.
+ */
+public cmd_arm_clean_capture() {
+	if (!bd_series_guard("arm_clean_capture"))
+		return PLUGIN_HANDLED
+	remove_task(BD_TASK_CLEAN_CAPTURE_POLL)
+	remove_task(BD_TASK_CLEAN_CAPTURE_FINISH)
+	bd_end_test_isolation(false)
+	bd_reset_clean_state()
+
+	new initial_flushed = bd_flush_stats_capture() ? 1 : 0
+	if (!initial_flushed) {
+		log_amx("[BD] clean_capture ABORT flag=-1 stats capture preflush unavailable")
+		return PLUGIN_HANDLED
+	}
+	g_bdCleanArming = true
+	log_amx("[BD] clean_capture ARMED roster=%d", g_bdSeriesRosterCount)
+	set_task(0.1, "bd_clean_capture_poll",
+		BD_TASK_CLEAN_CAPTURE_POLL, .flags="b")
+	return PLUGIN_HANDLED
+}
+
+public bd_clean_capture_poll() {
+	if (g_bdCleanArming) {
+		if (!g_bdSeriesActive || g_bdUseridEpoch != g_bdSeriesUseridEpoch ||
+				!bd_series_roster_current(false)) {
+			bd_clean_abort("series/userid/roster boundary changed while arming")
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdCleanArmPolls >= BD_CLEAN_ARM_MAX_POLLS) {
+			bd_clean_abort("no stable canonical target with exact full live roster")
+			return PLUGIN_HANDLED
+		}
+
+		new flag, team, owner
+		if (!bd_find_clean_plan(flag, team, owner)) {
+			g_bdCleanStablePolls = 0
+			g_bdCleanStableFlag = -1
+			g_bdCleanStableTeam = 0
+			g_bdCleanStableOwner = BD_OWNER_ANY
+			return PLUGIN_HANDLED
+		}
+		if (flag != g_bdCleanStableFlag || team != g_bdCleanStableTeam ||
+				owner != g_bdCleanStableOwner) {
+			g_bdCleanStableFlag = flag
+			g_bdCleanStableTeam = team
+			g_bdCleanStableOwner = owner
+			g_bdCleanStablePolls = 1
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdCleanStablePolls < BD_CLEAN_TARGET_STABLE_POLLS)
+			return PLUGIN_HANDLED
+
+		if (!bd_prepare_capture("clean_capture", false, false,
+				flag, team, true, owner)) {
+			bd_clean_abort("stable target could not freeze exact full roster")
+			return PLUGIN_HANDLED
+		}
+		g_bdCleanFlag = g_bdPreparedFlag
+		g_bdCleanTeam = g_bdPreparedTeam
+		g_bdCleanOwnerBefore = dodx_area_get_data(
+			g_bdCleanFlag, CA_owning_team)
+		g_bdCleanRequired = dodx_area_get_data(
+			g_bdCleanFlag, (g_bdCleanTeam == BD_TEAM_ALLIES) ?
+			CA_allies_numcap : CA_axis_numcap)
+		g_bdCleanIsolated = bd_isolation_count()
+		dodx_objective_get_data(g_bdCleanFlag, CP_name, g_bdCleanFlagName,
+			charsmax(g_bdCleanFlagName))
+		if (!bd_owner_canonical(g_bdCleanOwnerBefore) ||
+				g_bdCleanOwnerBefore != owner ||
+				g_bdCleanOwnerBefore == g_bdCleanTeam ||
+				g_bdCleanRequired < 1 ||
+				g_bdCleanIsolated != g_bdSeriesRosterCount ||
+				!bd_clean_snapshot_roster() || !bd_clean_pin_cappers()) {
+			bd_clean_abort("roster/ownership precondition was not exact")
+			return PLUGIN_HANDLED
+		}
+
+		g_bdCleanArming = false
+		g_bdCleanActive = true
+		g_bdCleanQuietStarted = get_gametime()
+		return PLUGIN_HANDLED
+	}
+	if (!g_bdCleanActive)
+		return PLUGIN_HANDLED
+	if (!g_bdSeriesActive || g_bdUseridEpoch != g_bdSeriesUseridEpoch ||
+			!bd_clean_roster_current()) {
+		bd_clean_abort("series/userid/roster boundary changed")
+		return PLUGIN_HANDLED
+	}
+	if (g_bdCleanTeamDeaths || g_bdCleanContaminated) {
+		bd_clean_abort("combat death contaminated evidence window")
+		return PLUGIN_HANDLED
+	}
+
+	new owner = dodx_area_get_data(g_bdCleanFlag, CA_owning_team)
+	if (!bd_owner_canonical(owner)) {
+		bd_clean_abort("capture owner became noncanonical")
+		return PLUGIN_HANDLED
+	}
+	if (!g_bdCleanCappersPlaced) {
+		if (owner != g_bdCleanOwnerBefore) {
+			bd_clean_abort("ownership changed during quiet quarantine")
+			return PLUGIN_HANDLED
+		}
+		if (dodx_area_get_data(g_bdCleanFlag, CA_is_capturing) ||
+				bd_zone_count(g_bdCleanFlag, BD_TEAM_ALLIES) != 0 ||
+				bd_zone_count(g_bdCleanFlag, BD_TEAM_AXIS) != 0) {
+			bd_clean_abort("target capture area was not quiet and empty")
+			return PLUGIN_HANDLED
+		}
+		if (get_gametime() - g_bdCleanQuietStarted < BD_CLEAN_QUIET_SECS)
+			return PLUGIN_HANDLED
+
+		new flushed = bd_flush_stats_capture() ? 1 : 0
+		if (!flushed || !g_bdSeriesActive ||
+				g_bdUseridEpoch != g_bdSeriesUseridEpoch ||
+				!bd_clean_roster_current() || g_bdCleanTeamDeaths ||
+				g_bdCleanContaminated ||
+				dodx_area_get_data(g_bdCleanFlag, CA_is_capturing) ||
+				bd_zone_count(g_bdCleanFlag, BD_TEAM_ALLIES) != 0 ||
+				bd_zone_count(g_bdCleanFlag, BD_TEAM_AXIS) != 0) {
+			bd_clean_abort("quiet boundary or final preflush was contaminated")
+			return PLUGIN_HANDLED
+		}
+		dodx_area_set_data(g_bdCleanFlag, CA_timetocap,
+			BD_CLEAN_CAPTURE_SECS)
+		if (!bd_clean_place_pinned_cappers()) {
+			bd_clean_abort("could not place exact pinned cappers")
+			return PLUGIN_HANDLED
+		}
+		g_bdCleanCappersPlaced = true
+		g_bdCleanPolls = 0
+		new quiet_ms = floatround(
+			(get_gametime() - g_bdCleanQuietStarted) * 1000.0)
+		log_amx("[BD] clean_capture BEGIN flag=%d fname=%s capteam=%d owner_before=%d required=%d isolated=%d roster=%d cappers=%s quiet_ms=%d flushed=%d userid_epoch=%d",
+			g_bdCleanFlag, g_bdCleanFlagName, g_bdCleanTeam,
+			g_bdCleanOwnerBefore, g_bdCleanRequired, g_bdCleanIsolated,
+			g_bdCleanRosterCount, g_bdCleanCapperUseridList, quiet_ms,
+			flushed, g_bdSeriesUseridEpoch)
+		return PLUGIN_HANDLED
+	}
+	if (g_bdCleanCompleted) {
+		if (owner != g_bdCleanTeam) {
+			bd_clean_abort("ownership changed after staged completion")
+			return PLUGIN_HANDLED
+		}
+		return PLUGIN_HANDLED
+	}
+
+	g_bdCleanPolls++
+	if (owner == g_bdCleanTeam) {
+		g_bdCleanCompleted = true
+		g_bdCleanOwnerAfter = g_bdCleanTeam
+		if (!bd_clean_move_roster_off_point()) {
+			bd_clean_abort("could not move exact frozen roster off captured point")
+			return PLUGIN_HANDLED
+		}
+		log_amx("[BD] clean_capture TRANSITION flag=%d fname=%s owner_before=%d owner_after=%d",
+			g_bdCleanFlag, g_bdCleanFlagName,
+			g_bdCleanOwnerBefore, g_bdCleanOwnerAfter)
+		set_task(BD_CLEAN_EVIDENCE_SECS, "bd_clean_capture_finish",
+			BD_TASK_CLEAN_CAPTURE_FINISH)
+		return PLUGIN_HANDLED
+	}
+	if (owner != g_bdCleanOwnerBefore) {
+		bd_clean_abort("ownership changed to an unexpected team")
+		return PLUGIN_HANDLED
+	}
+	if (g_bdCleanPolls >= BD_CLEAN_CAPTURE_MAX_POLLS)
+		bd_clean_abort("real engine ownership transition did not complete")
+	return PLUGIN_HANDLED
+}
+
+public bd_clean_capture_finish() {
+	remove_task(BD_TASK_CLEAN_CAPTURE_POLL)
+	remove_task(BD_TASK_CLEAN_CAPTURE_FINISH)
+	if (!g_bdCleanActive || !g_bdCleanCompleted || !g_bdSeriesActive ||
+			g_bdUseridEpoch != g_bdSeriesUseridEpoch ||
+			!bd_clean_roster_current() || g_bdCleanTeamDeaths ||
+			g_bdCleanContaminated ||
+			dodx_area_get_data(g_bdCleanFlag, CA_owning_team) !=
+				g_bdCleanTeam) {
+		bd_clean_abort("final evidence state was contaminated")
+		return PLUGIN_HANDLED
+	}
+	new count_after = bd_zone_count(g_bdCleanFlag, g_bdCleanTeam)
+	if (count_after != 0) {
+		bd_clean_abort("frozen cappers did not leave captured point")
+		return PLUGIN_HANDLED
+	}
+	new flushed = bd_flush_stats_capture() ? 1 : 0
+	if (!flushed) {
+		bd_clean_abort("stats capture final flush unavailable")
+		return PLUGIN_HANDLED
+	}
+	log_amx("[BD] clean_capture RESULT flag=%d fname=%s capteam=%d owner_before=%d owner_after=%d required=%d isolated=%d roster=%d cappers=%s count_after=%d deaths=%d flushed=%d contaminated=%d",
+		g_bdCleanFlag, g_bdCleanFlagName, g_bdCleanTeam,
+		g_bdCleanOwnerBefore, g_bdCleanOwnerAfter, g_bdCleanRequired,
+		g_bdCleanIsolated, g_bdCleanRosterCount,
+		g_bdCleanCapperUseridList, count_after,
+		g_bdCleanTeamDeaths, flushed, g_bdCleanContaminated)
+	g_bdCleanActive = false
+	bd_end_test_isolation(true)
+	bd_reset_clean_state()
+	return PLUGIN_HANDLED
 }
 
 /**
@@ -913,7 +2712,10 @@ stock bd_execute_walkoff(f) {
 	log_amx("[BD] walkoff flag=%d mover=%d mname=%s anchor=%d capteam=%d count_before=%d",
 		f, mover, mname, anchor, team, before)
 
-	set_task(1.5, "bd_report_after", f)
+	bd_schedule_report_after(f)
+	if (g_bdIsolationActive)
+		set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end",
+			BD_TASK_ISOLATION_END)
 	return
 }
 
@@ -929,6 +2731,8 @@ public bd_unprotect_team(taskid) {
 }
 
 public cmd_walkoff() {
+	if (!bd_series_guard("walkoff"))
+		return PLUGIN_HANDLED
 	new arg_flag[8]
 	read_argv(1, arg_flag, charsmax(arg_flag))
 	bd_execute_walkoff(bd_resolve_flag(arg_flag))
@@ -942,8 +2746,12 @@ public cmd_walkoff() {
  * between those operations.
  */
 public cmd_arm_walkoff() {
+	if (!bd_series_guard("arm_walkoff"))
+		return PLUGIN_HANDLED
 	remove_task(BD_TASK_WALKOFF_POLL)
 	g_bdWalkoffPolls = 0
+	if (!bd_prepare_capture("walkoff", true, false))
+		return PLUGIN_HANDLED
 	log_amx("[BD] walkoff ARMED")
 	set_task(0.1, "bd_walkoff_poll", BD_TASK_WALKOFF_POLL, .flags="b")
 	return PLUGIN_HANDLED
@@ -965,6 +2773,7 @@ public bd_walkoff_poll() {
 	if (g_bdWalkoffPolls >= BD_WALKOFF_MAX_POLLS) {
 		remove_task(BD_TASK_WALKOFF_POLL)
 		log_amx("[BD] walkoff ABORT flag=-1 no capture started while armed")
+		bd_end_test_isolation(false)
 	}
 	return PLUGIN_HANDLED
 }

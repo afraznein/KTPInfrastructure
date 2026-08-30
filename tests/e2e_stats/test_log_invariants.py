@@ -11,6 +11,9 @@ authid the unpatched stack writes and the `<BOT>` the patched one does.
 
 from __future__ import annotations
 
+import pytest
+
+from . import assertions
 from . import log_invariants as li
 
 TS = "L 08/10/2026 - 04:18:12: "
@@ -273,6 +276,447 @@ def test_periodic_markers_are_counted_only_inside_the_match():
     assert li.count_in_match(log, 'triggered "position_sample"') == 2
 
 
+def test_statsme_replay_window_excludes_clean_and_next_match_flushes():
+    weaponstats = '"Bot<1><BOT><Axis>" triggered "weaponstats"'
+    next_start = MATCH_START.replace("1786376148-TEST", "1786377000-TEST")
+    log = "\n".join([
+        MATCH_START,
+        weaponstats,
+        MATCH_END,
+        weaponstats,
+        next_start,
+        weaponstats,
+    ])
+
+    assert li.count_in_match(log, 'triggered "weaponstats"') == 1
+    assert li.count_after_match(log, 'triggered "weaponstats"') == 1
+
+
+def test_buffered_pre_interval_marker_is_not_diagnostic_match_evidence():
+    buffered = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "100")'
+    )
+    valid = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 9, "Axis")
+        + ' (matchid "1786376148-TEST") (half "1") '
+          '(event_epoch "110")'
+    )
+    wrong_in_interval = (
+        _frag_context("A", 3, "Allies", "B", 4, "Axis")
+        + ' (matchid "other-TEST") (half "1") (event_epoch "111")'
+    )
+    foreign_pre_interval = (
+        _frag_context("C", 5, "Allies", "D", 6, "Axis")
+        + ' (matchid "previous-real-match") (half "1") '
+          '(event_epoch "99")'
+    )
+    scope = li.producer_markers_for_match(
+        "\n".join([
+            MATCH_START, buffered, valid, wrong_in_interval,
+            foreign_pre_interval, MATCH_END,
+        ]),
+        'triggered "frag_context"', match_id="1786376148-TEST", half=1,
+        start_epoch=105, end_epoch=120,
+    )
+
+    assert scope["markers"] == [valid]
+    assert scope["buffered_pre_interval"] == [buffered]
+    assert scope["context_mismatches"] == [
+        wrong_in_interval, foreign_pre_interval,
+    ]
+
+
+def test_structured_transition_scope_ignores_textual_next_start_order():
+    before_text_start = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "125")'
+    )
+    after_text_start = (
+        _frag_context("Crash", 3, "Allies", "Wesker", 8, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "132")'
+    )
+    diagnostic = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 7, "Axis")
+        .replace('with "garand"', 'with "amerknife"')
+        + ' (matchid "diagnostic-TEST") (half "1") '
+          '(event_epoch "140")'
+    )
+    report_start = MATCH_START
+    diagnostic_start = MATCH_START.replace(
+        "1786376148-TEST", "diagnostic-TEST"
+    )
+    diagnostic_end = MATCH_END.replace(
+        "1786376148-TEST", "diagnostic-TEST"
+    )
+    evidence = li.producer_marker_scopes(
+        "\n".join([
+            report_start, MATCH_END, before_text_start, diagnostic_start,
+            after_text_start, diagnostic, diagnostic_end,
+        ]),
+        'triggered "frag_context"',
+        contexts={
+            "report": {
+                "match_id": "1786376148-TEST", "half": 1,
+                "start_epoch": 105, "end_epoch": 120,
+                "producer_activation_epoch": 108,
+            },
+            "diagnostic": {
+                "match_id": "diagnostic-TEST", "half": 1,
+                "start_epoch": 130, "end_epoch": 150,
+                "producer_activation_epoch": 135,
+            },
+        },
+    )
+
+    assert evidence["scopes"]["diagnostic"]["buffered_pre_interval"] == [
+        before_text_start, after_text_start,
+    ]
+    assert evidence["scopes"]["diagnostic"]["markers"] == [diagnostic]
+    assert evidence["context_mismatches"] == []
+
+
+def test_transition_sentinel_scope_is_exact_and_activation_bounded():
+    exact_at_activation = (
+        _frag_context("A", 1, "Allies", "B", 2, "Axis")
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "103")'
+    )
+    after_activation = exact_at_activation.replace(
+        '(event_epoch "103")', '(event_epoch "104")'
+    )
+    manifest = (
+        "L 08/10/2026 - 04:18:12: KTP_CAPTURE_MANIFEST "
+        '(matchid "report-TEST") (half "1") (sequence "1") '
+        '(event_epoch "103")'
+    )
+    same_second_after_manifest = exact_at_activation
+    nonzero_sequence = exact_at_activation.replace(
+        '(sequence "0")', '(sequence "1")'
+    )
+    malformed = exact_at_activation.replace(' (sequence "0")', "")
+    foreign = exact_at_activation.replace('(matchid "-")',
+                                          '(matchid "foreign-TEST")')
+    evidence = li.producer_marker_scopes(
+        "\n".join([
+            exact_at_activation, manifest, same_second_after_manifest,
+            after_activation, nonzero_sequence, malformed, foreign,
+        ]),
+        'triggered "frag_context"',
+        contexts={
+            "report": {
+                "match_id": "report-TEST", "half": 1,
+                "start_epoch": 100, "end_epoch": 120,
+                "producer_activation_epoch": 103,
+            },
+        },
+    )
+
+    assert evidence["scopes"]["report"]["buffered_pre_interval"] == [
+        exact_at_activation,
+    ]
+    assert evidence["context_mismatches"] == [
+        same_second_after_manifest, after_activation, nonzero_sequence,
+        malformed,
+    ]
+    assert evidence["foreign_context"] == [foreign]
+
+
+def test_same_second_sentinel_requires_one_unique_exact_manifest_line():
+    sentinel = (
+        _frag_context("A", 1, "Allies", "B", 2, "Axis")
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "103")'
+    )
+    manifest = (
+        "L 08/10/2026 - 04:18:12: KTP_CAPTURE_MANIFEST "
+        '(matchid "report-TEST") (half "1") (sequence "1") '
+        '(event_epoch "103")'
+    )
+    contexts = {
+        "report": {
+            "match_id": "report-TEST", "half": 1,
+            "start_epoch": 100, "end_epoch": 120,
+            "producer_activation_epoch": 103,
+        },
+    }
+
+    missing = li.producer_marker_scopes(
+        sentinel, 'triggered "frag_context"', contexts=contexts
+    )
+    duplicate = li.producer_marker_scopes(
+        "\n".join([sentinel, manifest, manifest]),
+        'triggered "frag_context"', contexts=contexts,
+    )
+
+    assert missing["context_mismatches"] == [sentinel]
+    assert duplicate["context_mismatches"] == [sentinel]
+
+
+def test_transition_sentinels_cannot_hide_missing_diagnostic_warning():
+    sentinel = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "125")'
+    )
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=7 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    diagnostic_marker = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 7, "Axis")
+        .replace('with "garand"', 'with "amerknife"')
+        + ' (matchid "diagnostic-TEST") (half "1") '
+          '(event_epoch "140")'
+    )
+    diagnostic_start = MATCH_START.replace(
+        "1786376148-TEST", "diagnostic-TEST"
+    )
+    diagnostic_end = MATCH_END.replace(
+        "1786376148-TEST", "diagnostic-TEST"
+    )
+    log = "\n".join([
+        diagnostic_start, sentinel, synthetic, diagnostic_marker,
+        diagnostic_end,
+    ])
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:7,W:BOT:b,T:Axis>',
+        '"Denton" <P:322,U:2,W:BOT:c,T:Allies>',
+        '"Gruntilda" <P:330,U:9,W:BOT:d,T:Axis>',
+        "2026-08-10 04:18:12: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=322 "
+        "victim=330 weapon=mortar",
+    ])
+    scoped = li.producer_marker_scopes(
+        log, 'triggered "frag_context"',
+        contexts={
+            "diagnostic": {
+                "match_id": "diagnostic-TEST", "half": 1,
+                "start_epoch": 130, "end_epoch": 150,
+                "producer_activation_epoch": 135,
+            },
+        },
+    )
+    diagnostic_evidence = li.frag_context_diagnostic_evidence(
+        log, daemon,
+        ignored_producer_markers=(
+            scoped["scopes"]["diagnostic"]["buffered_pre_interval"]
+        ),
+    )
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=diagnostic_evidence["expected_synthetic_unmatched"],
+        observed=diagnostic_evidence["observed_unmatched"],
+        expected_identities=diagnostic_evidence["expected_identities"],
+        observed_identities=diagnostic_evidence["observed_identities"],
+        unresolved_expected=diagnostic_evidence["unresolved_expected"],
+        unparsed_observed=diagnostic_evidence["unparsed_observed"],
+    )
+
+    assert diagnostic_evidence["ignored_pre_interval_warnings"]
+    assert scoped["scopes"]["diagnostic"]["markers"] == [diagnostic_marker]
+    assert verdict["status"] == "pipeline"
+    assert verdict["missing_identities"] == ["321->329:amerknife"]
+
+
+def test_transition_exception_keeps_exact_diagnostic_claim_denominator():
+    sentinel = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 7, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "125")'
+    )
+    diagnostic = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 7, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "diagnostic-TEST") (half "1") '
+          '(event_epoch "140")'
+    )
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:7,W:BOT:b,T:Axis>',
+        "2026-08-10 04:18:12: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=321 "
+        "victim=329 weapon=mortar",
+    ])
+    evidence = li.frag_context_diagnostic_evidence(
+        "", daemon, ignored_producer_markers=[sentinel]
+    )
+    total = li.frag_context_classification(
+        "\n".join([sentinel, diagnostic])
+    )["frags"]
+    ignored = li.frag_context_classification(
+        "\n".join(evidence["ignored_pre_interval_markers"])
+    )["frags"]
+
+    class MissingDiagnosticRowDb:
+        @staticmethod
+        def count(_query):
+            return 0
+
+    verdict = assertions.check_frag_context_claimed(
+        MissingDiagnosticRowDb(), emitted=total - ignored,
+        expected_unmatched=0,
+    )
+
+    assert total - ignored == 1
+    assert verdict["status"] == "pipeline"
+    assert "should claim 1" in verdict["detail"]
+
+
+def _objective(kind: str, match_id: str, epoch: int, *, attempt: int = 7,
+               reason: str | None = None) -> str:
+    reason_property = (f' (stop_reason "{reason}")' if reason else "")
+    return (
+        f'KTP_OBJECTIVE_ATTEMPT (kind "{kind}") '
+        f'(matchid "{match_id}") (half "1") (attempt_id "{attempt}")'
+        f'{reason_property} (event_epoch "{epoch}")'
+    )
+
+
+def _objective_contexts() -> dict[str, dict]:
+    return {
+        "report": {
+            "match_id": "1786376148-TEST", "half": 1,
+            "start_epoch": 105, "end_epoch": 120,
+            "producer_activation_epoch": 106,
+        },
+        "diagnostic": {
+            "match_id": "diagnostic-TEST", "half": 1,
+            "start_epoch": 130, "end_epoch": 150,
+            "producer_activation_epoch": 131,
+        },
+    }
+
+
+def test_objective_scope_admits_only_direct_report_context_reset_end_plus_one():
+    report_attempt_start = _objective("start", "1786376148-TEST", 110)
+    diagnostic = _objective("start", "diagnostic-TEST", 140)
+    terminal = _objective(
+        "stop", "1786376148-TEST", 121, reason="context_reset"
+    )
+    foreign = _objective("start", "foreign-TEST", 140)
+    log = "\n".join([
+        MATCH_START, report_attempt_start, diagnostic, foreign,
+        MATCH_END, terminal,
+    ])
+
+    evidence = li.objective_attempt_marker_scopes(
+        log, contexts=_objective_contexts()
+    )
+
+    report = evidence["scopes"]["report"]
+    assert report["markers"] == [report_attempt_start, terminal]
+    assert report["admitted_context_reset_end_plus_one"] == [terminal]
+    assert evidence["scopes"]["diagnostic"]["markers"] == [diagnostic]
+    assert evidence["foreign_context"] == [foreign]
+    assert evidence["context_mismatches"] == []
+
+
+def test_objective_teardown_admits_two_distinct_active_attempts_as_one_block():
+    first_start = _objective(
+        "start", "1786376148-TEST", 109, attempt=7
+    )
+    second_start = _objective(
+        "start", "1786376148-TEST", 110, attempt=8
+    )
+    first_terminal = _objective(
+        "stop", "1786376148-TEST", 120, attempt=7,
+        reason="context_reset",
+    )
+    second_terminal = _objective(
+        "stop", "1786376148-TEST", 121, attempt=8,
+        reason="context_reset",
+    )
+    evidence = li.objective_attempt_marker_scopes(
+        "\n".join([
+            MATCH_START, first_start, second_start, MATCH_END,
+            first_terminal, second_terminal,
+        ]),
+        contexts=_objective_contexts(),
+    )
+
+    report = evidence["scopes"]["report"]
+    assert report["markers"] == [
+        first_start, second_start, first_terminal, second_terminal,
+    ]
+    assert report["admitted_context_reset_teardown"] == [
+        first_terminal, second_terminal,
+    ]
+    assert report["admitted_context_reset_end_plus_one"] == [
+        second_terminal,
+    ]
+    assert evidence["context_mismatches"] == []
+
+
+def test_objective_teardown_rejects_duplicate_attempt_ids_in_block():
+    start = _objective("start", "1786376148-TEST", 110, attempt=7)
+    at_end = _objective(
+        "stop", "1786376148-TEST", 120, attempt=7,
+        reason="context_reset",
+    )
+    at_end_plus_one = _objective(
+        "stop", "1786376148-TEST", 121, attempt=7,
+        reason="context_reset",
+    )
+    evidence = li.objective_attempt_marker_scopes(
+        "\n".join([MATCH_START, start, MATCH_END, at_end, at_end_plus_one]),
+        contexts=_objective_contexts(),
+    )
+
+    assert evidence["scopes"]["report"][
+        "admitted_context_reset_teardown"
+    ] == []
+    assert at_end in evidence["context_mismatches"]
+    assert at_end_plus_one in evidence["context_mismatches"]
+
+
+@pytest.mark.parametrize("defect", (
+    "missing_start", "wrong_kind", "wrong_reason", "not_direct",
+    "non_exact_end", "plus_two",
+))
+def test_objective_teardown_exception_fails_closed_for_any_shape_loss(defect):
+    start = _objective("start", "1786376148-TEST", 110)
+    terminal = _objective(
+        "stop", "1786376148-TEST", 121, reason="context_reset"
+    )
+    middle: list[str] = []
+    match_end = MATCH_END
+    if defect == "missing_start":
+        start = "unrelated"
+    elif defect == "wrong_kind":
+        terminal = terminal.replace('(kind "stop")', '(kind "complete")')
+    elif defect == "wrong_reason":
+        terminal = terminal.replace('context_reset', 'walkoff')
+    elif defect == "not_direct":
+        middle = ["intervening structural line"]
+    elif defect == "non_exact_end":
+        match_end = MATCH_END.replace(
+            ": KTP_MATCH_END", ": [KTPMatchHandler.amxx] KTP_MATCH_END"
+        )
+    elif defect == "plus_two":
+        terminal = terminal.replace('(event_epoch "121")',
+                                    '(event_epoch "122")')
+
+    evidence = li.objective_attempt_marker_scopes(
+        "\n".join([MATCH_START, start, match_end, *middle, terminal]),
+        contexts=_objective_contexts(),
+    )
+
+    assert evidence["scopes"]["report"][
+        "admitted_context_reset_end_plus_one"
+    ] == []
+    assert terminal in evidence["context_mismatches"]
+
+
 def test_post_match_flag_state_is_not_claimed_as_pipeline_loss():
     """The daemon intentionally drops ownership after match context closes."""
     marker = 'KTP_FLAG_STATE (map "dod_anzio") (flag_index "1")'
@@ -364,6 +808,144 @@ def test_frag_diagnostic_evidence_maps_identity_and_preserves_duplicates():
     assert evidence["observed_identities"] == ["321->329:amerknife"] * 2
     assert evidence["unresolved_expected"] == []
     assert evidence["unparsed_observed"] == []
+
+
+def test_pre_interval_warning_does_not_enter_diagnostic_identity_set():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    buffered = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "100")'
+    )
+    log = "\n".join([MATCH_START, buffered, synthetic, MATCH_END])
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:9,W:BOT:b,T:Axis>',
+        '"Denton" <P:322,U:2,W:BOT:c,T:Allies>',
+        '"Gruntilda" <P:330,U:10,W:BOT:d,T:Axis>',
+        "2026-08-10 04:18:12: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=322 "
+        "victim=330 weapon=mortar",
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=321 "
+        "victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        log, daemon, ignored_producer_markers=[buffered]
+    )
+
+    assert evidence["observed_identities"] == ["321->329:amerknife"]
+    assert evidence["ignored_pre_interval_identities"] == ["322->330:mortar"]
+    assert evidence["ignored_pre_interval_markers"] == [buffered]
+    assert len(evidence["ignored_pre_interval_warnings"]) == 1
+
+
+def test_pre_interval_identity_cannot_hide_expected_breakdrive_warning():
+    synthetic = (
+        TS + "[KTPBreakDrive.amxx] [BD] kill flag=1 capteam=2 mode=far "
+        "victim=9 vname=GLaDOS killer=1 kname=Leon dist=1000 "
+        "count_before=2 owner_before=1"
+    )
+    buffered = (
+        _frag_context("Leon", 1, "Allies", "GLaDOS", 9, "Axis")
+        .replace('with "garand"', 'with "amerknife"')
+        .replace('(headshot "0")', '(headshot "0") (matchid "-") '
+                 '(half "0") (sequence "0") (event_epoch "100")')
+    )
+    daemon = "\n".join([
+        '"Leon" <P:321,U:1,W:BOT:a,T:Allies>',
+        '"GLaDOS" <P:329,U:9,W:BOT:b,T:Axis>',
+        "2026-08-10 04:18:12: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=321 victim=329 weapon=amerknife",
+        "2026-08-10 04:18:13: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=321 victim=329 weapon=amerknife",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        "\n".join([MATCH_START, buffered, synthetic, MATCH_END]), daemon,
+        ignored_producer_markers=[buffered],
+    )
+
+    assert evidence["observed_identities"] == ["321->329:amerknife"] * 2
+    assert evidence["ignored_pre_interval_markers"] == []
+    assert evidence["ignored_pre_interval_warnings"] == []
+    assert evidence["unresolved_ignored_pre_interval"]
+    verdict = assertions.check_frag_context_diagnostics(
+        expected=evidence["expected_synthetic_unmatched"],
+        observed=evidence["observed_unmatched"],
+        expected_identities=evidence["expected_identities"],
+        observed_identities=evidence["observed_identities"],
+        unresolved_expected=evidence["unresolved_expected"],
+        unparsed_observed=evidence["unparsed_observed"],
+    )
+    assert verdict["status"] == "pipeline"
+    assert verdict["unexpected_identities"] == ["321->329:amerknife"]
+
+
+def test_transition_warning_ambiguity_never_grants_an_exception():
+    buffered = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "100")'
+    )
+    warning = (
+        "KTP_NO_ROW_MATCHED: frag_context: no row for killer=322 "
+        "victim=330 weapon=mortar"
+    )
+    daemon = "\n".join([
+        '"Denton" <P:322,U:2,W:BOT:c,T:Allies>',
+        '"Gruntilda" <P:330,U:10,W:BOT:d,T:Axis>',
+        f"2026-08-10 04:18:11: {warning}",
+        f"2026-08-10 04:18:13: {warning}",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        "", daemon, ignored_producer_markers=[buffered]
+    )
+
+    assert evidence["ignored_pre_interval_markers"] == []
+    assert evidence["ignored_pre_interval_warnings"] == []
+    assert evidence["observed_unmatched"] == 2
+    assert "ambiguous" in evidence[
+        "unresolved_ignored_pre_interval"
+    ][0]["reason"]
+
+
+def test_transition_warning_cannot_cancel_same_identity_ordinary_frag_loss():
+    sentinel = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "-") (half "0") (sequence "0") '
+          '(event_epoch "100")'
+    )
+    ordinary = (
+        _frag_context("Denton", 2, "Allies", "Gruntilda", 9, "Axis")
+        .replace('with "garand"', 'with "mortar"')
+        + ' (matchid "diagnostic-TEST") (half "1") (sequence "2") '
+          '(event_epoch "101")'
+    )
+    daemon = "\n".join([
+        '"Denton" <P:322,U:2,W:BOT:c,T:Allies>',
+        '"Gruntilda" <P:330,U:10,W:BOT:d,T:Axis>',
+        "2026-08-10 04:18:12: KTP_NO_ROW_MATCHED: frag_context: "
+        "no row for killer=322 victim=330 weapon=mortar",
+    ])
+
+    evidence = li.frag_context_diagnostic_evidence(
+        ordinary, daemon, ignored_producer_markers=[sentinel]
+    )
+
+    assert evidence["ignored_pre_interval_markers"] == []
+    assert evidence["observed_identities"] == ["322->330:mortar"]
+    assert "non-sentinel producer frag" in evidence[
+        "unresolved_ignored_pre_interval"
+    ][0]["reason"]
 
 
 def test_frag_diagnostic_evidence_does_not_guess_ambiguous_names():

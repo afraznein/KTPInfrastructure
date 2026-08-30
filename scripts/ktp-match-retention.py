@@ -46,7 +46,13 @@ MATCH_TABLES = (
     "ktp_life_events",
     "ktp_match_players",
     "ktp_match_stats",
+    "ktp_objective_attempt_events",
     "ktp_position_samples",
+    "ktp_grenade_entity_events",
+    "ktp_team_score_ingest_audits",
+    "ktp_team_score_ingest_conflicts",
+    "ktp_team_score_observations",
+    "ktp_team_score_ingest_manifests",
 )
 
 # These ledgers retain the historical receipt-time match_id for compatibility,
@@ -93,7 +99,10 @@ HAVING MAX(COALESCE(end_time, start_time)) < DATE_SUB(NOW(), INTERVAL {days} DAY
 
 
 def build_sql(days: int, apply: bool) -> str:
-    prefix = "SELECT GET_LOCK('ktp_match_retention', 0) INTO @retention_lock;\n"
+    prefix = (
+        "SELECT GET_LOCK('ktp_team_score_ledger_v1', 0) INTO @retention_lock;\n"
+        "START TRANSACTION;\n"
+    )
     candidates = candidate_sql(days)
     preview = """
 SELECT COUNT(*) AS candidate_matches FROM purge_match_ids;
@@ -103,7 +112,11 @@ FROM purge_match_ids p JOIN ktp_matches m USING (match_id)
 GROUP BY p.match_id ORDER BY last_activity;
 """.strip()
     if not apply:
-        return f"{prefix}{candidates}\n{preview}\nSELECT IF(@retention_lock = 1, RELEASE_LOCK('ktp_match_retention'), 0);\n"
+        return (
+            f"{prefix}{candidates}\n{preview}\nROLLBACK;\n"
+            "SELECT IF(@retention_lock = 1, "
+            "RELEASE_LOCK('ktp_team_score_ledger_v1'), 0);\n"
+        )
 
     deletes = []
     for table in MATCH_TABLES:
@@ -132,7 +145,8 @@ GROUP BY p.match_id ORDER BY last_activity;
     return (
         f"{prefix}{candidates}\n{preview}\n"
         + "\n".join(deletes)
-        + "\nSELECT IF(@retention_lock = 1, RELEASE_LOCK('ktp_match_retention'), 0);\n"
+        + "\nCOMMIT;\nSELECT IF(@retention_lock = 1, "
+        + "RELEASE_LOCK('ktp_team_score_ledger_v1'), 0);\n"
     )
 
 

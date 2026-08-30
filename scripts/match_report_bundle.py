@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,6 +16,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts import metric_confidence  # noqa: E402
+from scripts import team_score_telemetry  # noqa: E402
 
 
 SCHEMA_VERSION = 1
@@ -211,7 +213,9 @@ def build_bundle(analytics: dict[str, Any], readiness: dict[str, Any],
                  accumulation: dict[str, Any] | None = None,
                  atlas: dict[str, Any] | None = None,
                  *, atlas_link_prefix="spatial",
-                 confidence_config: dict[str, Any] | None = None) -> dict[str, Any]:
+                 confidence_config: dict[str, Any] | None = None,
+                 objective_score_result: team_score_telemetry.ProjectionResult | None = None,
+                 ) -> dict[str, Any]:
     confidence_config = confidence_config or metric_confidence.load_config()
     match_id = str(analytics.get("match_id") or "")
     if readiness.get("match_id") != match_id:
@@ -227,6 +231,30 @@ def build_bundle(analytics: dict[str, Any], readiness: dict[str, Any],
             raise ValueError("analytics and atlas maps differ")
     synthetic = match_id.endswith("-TEST") or bool((analytics.get("match") or {}).get("is_test_match"))
     match = analytics.get("match") or {}
+    map_name = str(match.get("map_name") or "")
+    analytics_digest = hashlib.sha256(json.dumps(
+        analytics, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    if objective_score_result is None:
+        objective_score_result = team_score_telemetry.bound_unavailable_projection(
+            match_id, map_name, "incomplete-stream",
+        )
+    if not isinstance(objective_score_result, team_score_telemetry.ProjectionResult):
+        raise TypeError("objective-score input must be a bound ProjectionResult")
+    bound_score = team_score_telemetry.bind_projection_to_analytics(
+        objective_score_result,
+        analytics_match_id=match_id,
+        analytics_map_name=map_name,
+        analytics_facts_sha256=analytics_digest,
+    )
+    public_score = team_score_telemetry.validate_private_projection_binding(
+        bound_score,
+        analytics_match_id=match_id,
+        analytics_map_name=map_name,
+        analytics_facts_sha256=analytics_digest,
+    )
+    score_timeline = public_score["objectiveScoreTimeline"]
     report = {
         "schema_version": SCHEMA_VERSION,
         "metric_contract_version": confidence_config["contract_version"],
@@ -247,6 +275,7 @@ def build_bundle(analytics: dict[str, Any], readiness: dict[str, Any],
             "readiness_schema": readiness.get("schema_version"),
             "atlas_schema": atlas.get("schema_version") if atlas else None,
             "accumulation_schema": accumulation.get("schema_version") if accumulation else None,
+            "objective_score": score_timeline.get("sourceVersion"),
         },
         "quality": {
             "readiness_status": readiness.get("status"),
@@ -266,6 +295,7 @@ def build_bundle(analytics: dict[str, Any], readiness: dict[str, Any],
             atlas, synthetic=synthetic, link_prefix=atlas_link_prefix,
             confidence_config=confidence_config,
         ),
+        "objectiveScoreTimeline": score_timeline,
     }
     violations = privacy_violations(report)
     if violations:
@@ -344,6 +374,30 @@ def render_markdown(report: dict[str, Any]) -> str:
         )
 
     spatial = report["spatial"]
+    objective_score = report["objectiveScoreTimeline"]
+    out += ["", "## Official objective score", ""]
+    score_quality = objective_score.get("quality") or {}
+    if score_quality.get("status") == "unavailable":
+        flags = ", ".join(score_quality.get("flags") or []) or "incomplete-stream"
+        out.append(
+            "Official engine team-score telemetry is unavailable. "
+            f"It is not inferred from captures, player points, or KTPR (`{flags}`)."
+        )
+    else:
+        out += [
+            f"Quality: **{md(score_quality.get('status'))}**  ",
+            "Stable match-local labels are used; teams may swap engine sides between halves.", "",
+            "| Half | Time (s) | Team 1 | Team 2 | Observation |",
+            "|---:|---:|---:|---:|---|",
+        ]
+        for half in objective_score.get("halves", []):
+            for point in half.get("points", []):
+                out.append(
+                    f"| {md(half.get('half'))} | {md(point.get('halfTimeSeconds'))} | "
+                    f"{md(point.get('team1Score'))} | {md(point.get('team2Score'))} | "
+                    f"{md(point.get('observationKind'))} |"
+                )
+
     out += ["", "## Match patterns and spatial report", ""]
     if not spatial["available"]:
         out.append("Spatial atlas unavailable.")
@@ -396,6 +450,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--atlas-link-prefix")
     parser.add_argument("--copy-atlas", action="store_true")
     parser.add_argument("--confidence-config", type=Path, default=metric_confidence.DEFAULT_CONFIG)
+    parser.add_argument("--objective-score-json", type=Path,
+                        help="sanitized objective-score projector output")
+    parser.add_argument("--objective-score-private-release", type=Path,
+                        help="private projector binding (required with score JSON)")
     parser.add_argument("--output-dir", type=Path, default=Path("build/match-report"))
     return parser.parse_args(argv)
 
@@ -407,6 +465,16 @@ def main(argv: list[str] | None = None) -> int:
     readiness = read_json(args.readiness_json) or {}
     accumulation = read_json(args.accumulation_json)
     atlas = read_json(args.atlas_metadata)
+    if bool(args.objective_score_json) != bool(args.objective_score_private_release):
+        raise ValueError(
+            "--objective-score-json and --objective-score-private-release are required together"
+        )
+    objective_score_result = None
+    if args.objective_score_json:
+        objective_score_result = team_score_telemetry.projection_result_from_release(
+            read_json(args.objective_score_json),
+            read_json(args.objective_score_private_release),
+        )
     if args.copy_atlas:
         if args.atlas_metadata is None:
             raise ValueError("--copy-atlas requires --atlas-metadata")
@@ -423,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
         analytics, readiness, accumulation, atlas,
         atlas_link_prefix=link_prefix,
         confidence_config=metric_confidence.load_config(args.confidence_config),
+        objective_score_result=objective_score_result,
     )
     json_path = args.output_dir / "match-report.json"
     markdown_path = args.output_dir / "MATCH_REPORT.md"
