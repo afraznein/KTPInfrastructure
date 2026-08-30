@@ -38,6 +38,8 @@ SCHEMA22_PROFILE = REPO / "config/analytics/accumulation_v6_schema22_2s.toml"
 DEFAULT_PROFILE = SCHEMA22_PROFILE
 DEFAULT_OBJECTIVES = REPO / "config/analytics/map_objectives.toml"
 DEFAULT_SPATIAL_CATALOG = REPO / "config/analytics/spatial_maps"
+ANALYTICS_PROVENANCE_VERSION = 1
+LANE_B_SOURCE_ADAPTER_VERSION = "lane_b_ephemeral_mysql_v1"
 PUBLIC_FORBIDDEN_KEYS = {
     "pos_x", "pos_y", "pos_z", "origin_x", "origin_y", "origin_z",
     "coordinates", "heatmap_cells", "position_samples", "steam_id",
@@ -49,6 +51,97 @@ def _f(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _content_sha256(path: Path) -> str:
+    """Return a portable revision of a reviewed local contract input."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def build_analytics_provenance(
+    *, map_name: str, profile_path: Path, objectives_path: Path,
+    spatial_catalog_dir: Path | None, flag_position_source: str,
+    lifecycle_confidence: str = "inferred_from_frag_and_reset_events",
+    adapter_version: str = LANE_B_SOURCE_ADAPTER_VERSION,
+) -> dict[str, Any]:
+    """Version the inputs required to reproduce positional derivations.
+
+    This is private derived metadata. It intentionally uses content hashes and
+    basenames, never absolute source paths or participant/match identifiers.
+    A missing reviewed map definition makes spatial interpretation unavailable,
+    even when the live database has flag coordinates.
+    """
+    catalog_path = ((spatial_catalog_dir / f"{map_name}.json")
+                    if spatial_catalog_dir is not None else None)
+    catalog_revision = (
+        _content_sha256(catalog_path) if catalog_path is not None and catalog_path.is_file()
+        else None
+    )
+    inputs = {
+        "contract_version": ANALYTICS_PROVENANCE_VERSION,
+        "source_adapter_version": adapter_version,
+        "profile_sha256": _content_sha256(profile_path),
+        "objective_rules_sha256": _content_sha256(objectives_path),
+        "map_name": map_name,
+        "map_revision_sha256": catalog_revision,
+        "objective_geometry_source": flag_position_source,
+    }
+    build_id = hashlib.sha256(json.dumps(
+        inputs, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")).hexdigest()
+    return {
+        "contract_version": ANALYTICS_PROVENANCE_VERSION,
+        "build_id": f"tapv1-{build_id}",
+        "source_adapter": {
+            "id": "lane_b_ephemeral_mysql",
+            "version": adapter_version,
+        },
+        "ruleset": {
+            "profile": profile_path.name,
+            "profile_sha256": inputs["profile_sha256"],
+            "objective_rules_sha256": inputs["objective_rules_sha256"],
+        },
+        "map_revision": {
+            "map_name": map_name,
+            "status": "available" if catalog_revision else "unavailable",
+            "catalog_sha256": catalog_revision,
+        },
+        "position_provenance": "direct_server_position_sample",
+        "objective_geometry_source": flag_position_source,
+        "lifecycle_confidence": lifecycle_confidence,
+    }
+
+
+def _life_boundary_quality(
+    rows: list[dict[str, Any]], roster_ids: set[int], observed_halves: set[int],
+) -> dict[str, Any]:
+    """Summarize authoritative physical-life evidence without exposing rows."""
+    valid_reasons = {"spawn", "context_live", "death", "disconnect"}
+    starts = death_ends = invalid = 0
+    for row in rows:
+        kind, reason = str(row.get("boundary_kind") or ""), str(row.get("reason") or "")
+        valid = (
+            _i(row.get("player_id")) in roster_ids
+            and _i(row.get("half")) in observed_halves
+            and kind in {"start", "end"}
+            and reason in valid_reasons
+            and (kind != "start" or reason in {"spawn", "context_live"})
+            and (kind != "end" or reason in {"death", "disconnect"})
+            and _i(row.get("team")) in {0, 1, 2}
+            and _f(row.get("game_time"), -1.0) >= 0.0
+        )
+        invalid += not valid
+        if kind == "start":
+            starts += 1
+        if kind == "end" and reason == "death":
+            death_ends += 1
+    status = "available" if rows and not invalid and starts and death_ends else (
+        "partial" if rows and not invalid else "unavailable"
+    )
+    return {
+        "status": status, "rows": len(rows), "starts": starts,
+        "death_ends": death_ends, "invalid_rows": invalid,
+    }
 
 
 def _i(value: Any, default: int = 0) -> int:
@@ -292,7 +385,7 @@ def _ownership_is_reliable(
 def build_facts(
     db, match_id: str, *, profile_path: Path = DEFAULT_PROFILE,
     objectives_path: Path = DEFAULT_OBJECTIVES,
-    spatial_catalog_dir: Path | None = None,
+    spatial_catalog_dir: Path | None = DEFAULT_SPATIAL_CATALOG,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Extract one match and return shareable facts plus private audit metadata."""
     match = sql_literal(match_id)
@@ -381,6 +474,21 @@ FROM ktp_match_players WHERE match_id={match} ORDER BY player_id
     )
     if invalid_roster_teams:
         raise ValueError(f"roster has invalid team values for players {invalid_roster_teams}")
+
+    life_boundary_rows = _rows(db, "life_boundaries", f"""
+SELECT le.half, le.player_id, le.boundary_kind, le.reason, le.team,
+       GREATEST(TIMESTAMPDIFF(MICROSECOND, m.start_time, le.event_time)/1000000.0, 0)
+           AS game_time
+FROM ktp_life_events le
+JOIN ktp_matches m
+  ON m.server_id=le.server_id AND BINARY m.match_id=BINARY le.match_id
+ AND m.half=le.half AND BINARY m.map_name=BINARY le.map_name
+WHERE BINARY le.match_id=BINARY {match} AND le.half>0
+ORDER BY le.half, le.player_id, le.game_time, le.id
+""")
+    life_quality = _life_boundary_quality(
+        life_boundary_rows, set(roster_team), observed_halves,
+    )
 
     state_rows = _rows(db, "flag_states", f"""
 SELECT s.id, s.half, s.flag_index, s.flag_name, s.owner_team, s.is_initial,
@@ -592,6 +700,18 @@ ORDER BY flag_index
     if not flags:
         flags = _catalog_flags(map_name, spatial_catalog_dir)
         flag_position_source = "curated_competitive_map_catalog" if flags else "unavailable"
+    analytics_provenance = build_analytics_provenance(
+        map_name=map_name,
+        profile_path=profile_path,
+        objectives_path=objectives_path,
+        spatial_catalog_dir=spatial_catalog_dir,
+        flag_position_source=flag_position_source,
+        lifecycle_confidence=(
+            "authoritative_life_boundary_events"
+            if life_quality["status"] == "available"
+            else "inferred_from_frag_and_reset_events"
+        ),
+    )
     state_timeline: dict[tuple[int, str], list[tuple[float, int]]] = defaultdict(list)
     for row in flag_states:
         state_timeline[(row["half"], str(row["flag_name"]))].append(
@@ -680,6 +800,7 @@ ORDER BY flag_index
                   "scoring_iteration": (
                       "v6_schema22_2s" if requires_schema22 else "v5_team_momentum"
                   ),
+                  "analytics_provenance": analytics_provenance,
                   "capture_authorization": capture_authorization},
         "players": players, "frags": frags, "damage_events": damage_events,
         "death_resets": death_resets, "captures": captures, "cap_breaks": cap_breaks,
@@ -690,13 +811,17 @@ ORDER BY flag_index
         "momentum_points": {str(pid): value for pid, value in sorted(momentum_points.items())},
         "momentum_summary": momentum_summary,
         "telemetry_lifecycles": telemetry_lifecycles,
+        "private_telemetry_quality": {"life_boundaries": life_quality},
         "reliability": {
-            "life_boundaries": bool(frags), "damage_events": bool(raw_damage),
+            "life_boundaries": life_quality["status"] == "available",
+            "damage_events": bool(raw_damage),
             "capture_events": bool(captures), "ownership": ownership_reliable,
             "map_topology": bool(topology), "break_context": break_context,
             "positions": bool(samples), "flag_positions": bool(flags),
             "life_impact": bool(samples and flags and topology),
-            "life_boundaries_inferred": bool(frags),
+            "life_boundaries_inferred": (
+                life_quality["status"] != "available" and bool(frags)
+            ),
             "momentum": momentum_summary.get("status") != "disabled",
         },
     }
@@ -863,7 +988,7 @@ def verify_bundle(
 def generate_lane_b_report(
     db, match_id: str, output_dir: Path, *, expected_players: int = 12,
     profile_path: Path = DEFAULT_PROFILE, objectives_path: Path = DEFAULT_OBJECTIVES,
-    spatial_catalog_dir: Path | None = None,
+    spatial_catalog_dir: Path | None = DEFAULT_SPATIAL_CATALOG,
     objective_score_result: team_score_telemetry.ProjectionResult | None = None,
     objective_score_required: bool = False,
 ) -> dict[str, Any]:
