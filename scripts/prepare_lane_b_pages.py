@@ -25,6 +25,11 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
+try:
+    from scripts import team_score_telemetry
+except ModuleNotFoundError:  # direct script execution
+    import team_score_telemetry
+
 
 EXPECTED_REPOSITORY = "afraznein/KTPInfrastructure"
 EXPECTED_WORKFLOW_NAME = "Lane B Stats E2E"
@@ -46,6 +51,7 @@ RUN_SOURCE_FILES = {
     "match-report/facts.normalized.json",
     "match-report/manifest.json",
     "match-report/momentum.svg",
+    "match-report/objective-score-timeline.json",
     "match-report/points-timeline.json",
     "match-report/points-timeline.svg",
     "match-report/report-verification.json",
@@ -58,6 +64,7 @@ MANIFEST_FILES = {
     "comparison.json",
     "comparison.md",
     "momentum.svg",
+    "objective-score-timeline.json",
     "points-timeline.json",
     "points-timeline.svg",
     "report.html",
@@ -713,6 +720,11 @@ def _verify_manifest(report_dir: Path) -> dict[str, Any]:
     _require(invariants.get("ai_can_publish") is False, "AI publication invariant is unsafe")
     _require(invariants.get("raw_individual_positions_exported") is False, "raw positions were exported")
     _require(invariants.get("points_timeline_team_only") is True, "timeline is not team-only")
+    _require(invariants.get("objective_score_team_only") is True, "objective score is not team-only")
+    _require(
+        invariants.get("objective_score_private_binding_exported") is False,
+        "objective score private binding was exported",
+    )
 
     entries = manifest.get("files")
     _require(isinstance(entries, list), "manifest file list is missing")
@@ -1084,6 +1096,20 @@ def _verify_report(
     telemetry_lifecycles = _validate_telemetry_lifecycles(
         report.get("telemetry_lifecycles")
     )
+    objective_dto = _load_json(report_dir / "objective-score-timeline.json")
+    objective_timeline = team_score_telemetry.validate_public_projection(objective_dto)
+    _require(
+        report.get("objectiveScoreTimeline") == objective_timeline,
+        "objective score artifact disagrees with report",
+    )
+    objective_digest = hashlib.sha256(json.dumps(
+        objective_dto, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+    _require(
+        report.get("objectiveScoreSha256") == objective_digest,
+        "objective score digest disagrees with report",
+    )
     public_report = {
         "schema_version": 1,
         "scope": "PUBLIC_SYNTHETIC_BOT_TEST_ONLY_ALIASED",
@@ -1101,6 +1127,8 @@ def _verify_report(
         "component_totals": public_components,
         "match_total_points": total_points,
         "quality_gates": report_gates,
+        "objectiveScoreTimeline": objective_timeline,
+        "objectiveScoreSha256": objective_digest,
     }
     public_timeline = _validate_timeline(
         _load_json(report_dir / "points-timeline.json"),
@@ -1334,6 +1362,21 @@ def _render_run_report(run_number: int, report: dict[str, Any], timeline: dict[s
         f"<td>{row['momentum']:.2f}</td></tr>"
         for row in sample_bins
     )
+    objective_score = report["objectiveScoreTimeline"]
+    objective_rows = "\n".join(
+        "<tr>"
+        f"<td>{half_row['half']}</td><td>{point['halfTimeSeconds']}</td>"
+        f"<td>{point['team1Score']}</td><td>{point['team2Score']}</td>"
+        f"<td>{html.escape(point['observationKind'])}</td></tr>"
+        for half_row in objective_score["halves"]
+        for point in half_row["points"]
+    )
+    if not objective_rows:
+        objective_rows = (
+            '<tr><td colspan="5">Unavailable: no closed, settled official '
+            "team-score stream was attached to this run.</td></tr>"
+        )
+    score_flags = ", ".join(objective_score["quality"]["flags"]) or "none"
     objective = report["telemetry_lifecycles"]["objective_attempts"]
     grenade = report["telemetry_lifecycles"]["grenade_entities"]
     return f"""<!doctype html>
@@ -1359,6 +1402,10 @@ replaced with Bot 01 through Bot 12. No source HTML, SVG, names, identifiers, or
 <tbody>{player_rows}</tbody></table>
 <h2>Component totals</h2><table><thead><tr><th>Component</th><th>Points</th></tr></thead><tbody>{component_rows}</tbody></table>
 <h2>Quality gates</h2><table><thead><tr><th>Gate</th><th>Status</th></tr></thead><tbody>{gate_rows}</tbody></table>
+<h2>Official objective score timeline</h2>
+<p>Status: <strong>{html.escape(objective_score['quality']['status'])}</strong>; quality flags: {html.escape(score_flags)}.</p>
+<table><thead><tr><th>Half</th><th>Half seconds</th><th>Team 1</th><th>Team 2</th><th>Observation</th></tr></thead>
+<tbody>{objective_rows}</tbody></table>
 <h2>Telemetry lifecycle aggregates</h2>
 <p>These are synthetic bot-test counts only. Objective boundaries remain factual; missing boundaries are not invented.</p>
 <table><thead><tr><th>Objective attempts</th><th>Starts</th><th>Completes</th><th>Stops</th><th>Orphan terminals</th><th>Open attempts</th></tr></thead>
