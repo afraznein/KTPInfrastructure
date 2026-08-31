@@ -29,6 +29,22 @@ Accept the self-signed cert once.
 Run `local-bots-match` **before** joining the server — `.testmatch` refuses to
 start while a human client is connected. HLTV is exempt and may stay.
 
+## Telemetry-contract check
+
+After the local `-TEST` match has ended and its SQL fixture has been exported,
+verify the aggregate-only quality manifest rather than inferring readiness from
+the HUD alone:
+
+```sh
+python scripts/verify_bot_match_telemetry.py path/to/fixture.sql.gz \
+  --require positional_impact=available \
+  --require combat_context=available
+```
+
+This requires a closed `-TEST` record, 6v6 roster integrity, and bot containment.
+It checks source eligibility only; it neither produces a player score nor turns
+the local bot harness into production evidence.
+
 `make local-bots-up` brings up the `data` service too (`--profile full`), since
 watching the match is the point; it falls back to game servers only if the
 sibling `DoD-hud-observer` checkout is missing, and says so.
