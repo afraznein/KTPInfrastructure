@@ -589,6 +589,14 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         observed_halves, authorization_manifests, health, positions,
         require_activation=True,
     )
+    # Historical archives predate the schema-23 producer contract.  They must
+    # remain usable as explicitly partial evidence rather than becoming a
+    # release-blocking failure.  Once a match declares schema 23, however, its
+    # state/revision evidence is mandatory and stays fail-closed.
+    schema23_declared = any(
+        integer(row.get("schema_version")) >= 23
+        for row in manifests
+    )
     objective_shape_ok, objective_errors = objective_rows_valid(
         objective_attempts, observed_halves
     )
@@ -650,18 +658,22 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         authorization_errors=capture_authorization["errors"],
     ))
     checks.append(finding(
-        "PASS" if position_provenance["authorized"] else "FAIL",
+        "PASS" if position_provenance["authorized"] else
+        "FAIL" if schema23_declared else "WARN",
         "schema23_position_provenance",
         "Every position row has explicit alive/non-spectator state and one "
         "manifest-matched captured BSP revision."
         if position_provenance["authorized"] else
-        "Schema-23 position state or captured BSP revision evidence is incomplete.",
+        "Schema-23 position state or captured BSP revision evidence is incomplete."
+        if schema23_declared else
+        "This archive predates schema-23 position-state and BSP-revision provenance.",
         rows=position_provenance["rows"],
         health_accepted=position_provenance["health_accepted"],
         invalid_state_rows=position_provenance["invalid_state_rows"],
         revision_mismatch_rows=position_provenance["revision_mismatch_rows"],
         persistence_mismatch_halves=position_provenance["persistence_mismatch_halves"],
         captured_bsp_sha256=position_provenance["captured_bsp_sha256"],
+        schema23_declared=schema23_declared,
         authorization_errors=position_provenance["errors"],
     ))
 
