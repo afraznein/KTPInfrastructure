@@ -2,6 +2,51 @@
 
 Moved out of the stack-root `CLAUDE.md` on 2026-07-27 to keep the always-loaded context small. **Required settings for any new or rebuilt game host.** The fleet facts needed mid-task stayed in `CLAUDE.md`: CPU core placement, the server/IP table, the paramiko SSH pattern, `.new` auto-swap, and the crash-core location.
 
+### New Host Provisioning
+
+Moved here 2026-08-30 from the KTP board's `TODO.md`, which was a second, drifting copy of the same
+steps — this file is the named home for new-host setup. **A runbook names a LOOKUP, not a value** —
+this section had already rotted twice from hardcoded values that were later moved or rotated out from
+under it (see the bullet below), so every credential and key path here is a pointer to where the
+current value lives, never the value itself.
+
+**LAN venue (single all-in-one host):** use the orchestrator —
+`cp provision/lan-deploy.conf.example ./lan-deploy.conf`, fill in the 3 required keys (`LAN_IP`,
+`ARTIFACTS_PATH`, `LIBSTEAM_API_PATH`) plus optional bundle paths, then `sudo ./lan-deploy.sh`. Full
+detail, including the day-of runbook and TeamSpeak/HLTV setup: [`../provision/LAN-DEPLOY.md`](../provision/LAN-DEPLOY.md).
+
+**Cloud fleet (per-host, separate gameserver + dataserver):**
+1. Run `provision/provision-gameserver.sh` as root.
+2. Run `provision/install-linuxgsm.sh` as dodserver.
+3. `clone-ktp-stack.sh` is gitignored (it can carry embedded secrets) — copy the committed template
+   first: `cp provision/clone-ktp-stack.sh.example provision/clone-ktp-stack.sh`. Never commit a
+   populated copy. Then run it with full options:
+   ```bash
+   ./clone-ktp-stack.sh /path/to/artifacts \
+       --hostname <name> \
+       --server-name "KTP - CityName" \
+       --ip <SERVER_IP> \
+       --libsteam-api /path/to/libsteam_api.so \
+       --dod-base /path/to/dod-base.tar.gz \
+       --sv-password <JOIN_PASSWORD> \
+       --relay-url <DISCORD_RELAY_URL> \
+       --relay-secret <DISCORD_AUTH_SECRET>
+   ```
+4. **On the data server:**
+   - Append the file distributor's **current** public key to `~dodserver/.ssh/authorized_keys` on the
+     new game server. Take the key path from `/opt/ktp-file-distributor/servers.json`
+     (`privateKeyPath` field) on the data server — never hardcode a path in this doc. This step once
+     named a fixed path directly; that key was later moved out of its original location and then
+     rotated, so a host provisioned from the old, literal text got a dead key and silently received no
+     distributed files. The lookup is what survives the next rotation; a value copied here would not.
+   - Update `/opt/ktp-file-distributor/servers.json` with the new server entries.
+   - Add the server to HLStatsX with the fleet's **current** RCON password — look it up from the
+     private ops doc set (root `CLAUDE.md` § Game RCON password), do not copy the value into this
+     public doc. This step once named a since-rotated value directly, which would have written a dead
+     credential into `hlstats_Servers` and left the new host unable to rcon.
+   - Create HLTV configs and enable systemd services for the new port range.
+   - Restart `ktp-file-distributor.service` to reload config.
+
 ### UDP Buffer Configuration (Required)
 Game servers generate heavy UDP traffic. Default Linux buffer sizes cause packet drops, resulting in lag and hit registration issues.
 

@@ -21,6 +21,14 @@ Design notes:
 - Chicago VPS is flagged separately because its topology differs from baremetals
   (no isolcpus, different kernel params, etc.) — drift within the baremetal
   group is the high-signal comparison.
+- An `expected-*.conf` that is MISSING a key checks nothing for that key and
+  says so nowhere — a stale `expected-sysctls.conf` once omitted
+  `kernel.watchdog` for weeks, and the report read `sysctl: 0` on every run,
+  indistinguishable from every host being correct. This is an allow-list gate:
+  it is blind to removals, and it flags only entries that are PRESENT and
+  disagree. Adding a new tunable to the fleet means adding it to the matching
+  `expected-*.conf` in the same change, not trusting that a clean report means
+  nothing changed.
 
 Deployment (as weekly audit):
 - Target host: data server (<DATA_SERVER_IP>) — always up, already runs other

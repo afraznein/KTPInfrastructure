@@ -81,6 +81,33 @@ SSH_USER = "dodserver"
 # choke_peak=0 loss_worst=0 latency_worst=0.0ms jitter_worst=0.0ms
 FIELD = re.compile(r"(\w+)=([0-9.]+)")
 STAMP = re.compile(r"^L (\d{2}/\d{2}/\d{4}) - (\d{2}:\d{2}:\d{2})")
+# Where the actual DoD log line starts within a grep -H `path:L MM/DD/YYYY -
+# HH:MM:SS: ...` match. Anchoring on this (not a colon split) is deliberate:
+# the path itself can contain colon-adjacent slashes, and the date in the
+# stamp ("08/27/2026") contains slashes too, so neither ":" nor "/" alone can
+# tell path from content apart -- only the stamp's own shape can.
+LOG_START = re.compile(r"L \d{2}/\d{2}/\d{4} - \d{2}:\d{2}:\d{2}")
+# grep -H prefixes each match with its source path, e.g.
+# /home/dodserver/dod-27017/serverfiles/dod/logs/L082721.log:L 08/27/... --
+# this is how a merged per-host stream gets split back into per-instance rows.
+INSTANCE = re.compile(r"/dod-(\d+)/")
+
+
+def _safe_print(*args, **kwargs) -> None:
+    """print() that never raises UnicodeEncodeError on a narrow console codec.
+
+    Player names are arbitrary client input; one outside cp1252 used to crash
+    the whole report on a Windows console instead of just that row.
+    """
+    try:
+        print(*args, **kwargs)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+        safe = tuple(
+            a.encode(enc, errors="replace").decode(enc) if isinstance(a, str) else a
+            for a in args
+        )
+        print(*safe, **kwargs)
 
 COUNTERS = ["drops", "latzero", "choke_peak", "loss_worst", "lagcomp_off", "ignorecmd_hits"]
 GAUGES = ["latency_worst", "jitter_worst"]
@@ -125,8 +152,14 @@ def harvest(host: str, password: str, date: str, want_detail: bool, timeout: int
         # on the stamp so a rolled-over file cannot silently drop the tail.
         base = "~/dod-*/serverfiles/dod/logs/*.log"
         amxx = "~/dod-*/serverfiles/dod/addons/ktpamx/logs/*.log"
+        # -H (not just omitting -h): GNU grep only prefixes matches with the
+        # filename automatically when 2+ files are given, so a night where a
+        # host's glob happens to match exactly one file would silently regress
+        # to unattributed rows without forcing it. The prefix is what lets a
+        # merged per-host stream be split back into per-instance (dod-27015 vs
+        # dod-27016, ...) rows downstream -- see INSTANCE / parse().
         cmd = (
-            f"grep -h '\\[KTP_PROFILE\\] net:' {base} 2>/dev/null "
+            f"grep -H '\\[KTP_PROFILE\\] net:' {base} 2>/dev/null "
             f"| grep -F '{date}' || true"
         )
         out = cli.exec_command(cmd, timeout=timeout * 4)[1].read().decode(errors="replace")
@@ -138,8 +171,10 @@ def harvest(host: str, password: str, date: str, want_detail: bool, timeout: int
 
         detail = "0"
         if want_detail:
+            # Scoped to --date like `out` above -- unscoped, this was a
+            # lifetime-across-retention figure, not a count for this run's date.
             detail = cli.exec_command(
-                f"grep -hc 'net_detail:' {base} 2>/dev/null | paste -sd+ | bc || echo 0",
+                f"grep -h 'net_detail:' {base} 2>/dev/null | grep -F '{date}' | wc -l || echo 0",
                 timeout=timeout * 2,
             )[1].read().decode().strip() or "0"
 
@@ -193,33 +228,49 @@ def report_lagcomp(lag_by_host: dict) -> None:
             elif kind == "LAGCOMP_CHANGED":
                 changed += 1
 
-    print("\ncl_lc / cl_lw observation  (KTPCvarChecker >= 7.33, log-only, never enforced)")
-    print(f"  SAMPLER_OK heartbeats: {ok}   across {len(maps_seen)} distinct map load(s)")
-    print(f"  LAGCOMP_OFF: {off}    LAGCOMP_CHANGED: {changed}")
+    _safe_print("\ncl_lc / cl_lw observation  (KTPCvarChecker >= 7.33, log-only, never enforced)")
+    _safe_print(f"  SAMPLER_OK heartbeats: {ok}   across {len(maps_seen)} distinct map load(s)")
+    _safe_print(f"  LAGCOMP_OFF: {off}    LAGCOMP_CHANGED: {changed}")
 
     if ok == 0:
-        print("  !! NO HEARTBEAT. The zero above is UNMEASURED, not clean --")
-        print("      a broken sampler and a fleet with no offenders look identical.")
-        print("      The heartbeat fires on the first sampled player per map load,")
-        print("      so this is expected until someone actually connects.")
+        _safe_print("  !! NO HEARTBEAT. The zero above is UNMEASURED, not clean --")
+        _safe_print("      a broken sampler and a fleet with no offenders look identical.")
+        _safe_print("      The heartbeat fires on the first sampled player per map load,")
+        _safe_print("      so this is expected until someone actually connects.")
         return
     if not offenders:
-        print("  OK: sampler is alive and found no client with a lag-comp flag off.")
+        _safe_print("  OK: sampler is alive and found no client with a lag-comp flag off.")
         return
-    print(f"\n  {'steamid':<22} {'name':<18} {'host':<10} lc lw  hits")
+    _safe_print(f"\n  {'steamid':<22} {'name':<18} {'host':<10} lc lw  hits")
     for sid, r in sorted(offenders.items(), key=lambda kv: -kv[1]["n"]):
-        print(f"  {sid:<22} {r['name'][:18]:<18} {r['host']:<10} "
-              f"{r['lc']}  {r['lw']}  {r['n']}")
-    print("  NOTE: log-only by design -- v7.25 removed cl_lc/cl_lw from ENFORCEMENT after an")
-    print("     engine-source audit found no exploit. Do not re-enforce off the back of this.")
+        # Player names are arbitrary client input -- never assume a console codec.
+        _safe_print(f"  {sid:<22} {r['name'][:18]:<18} {r['host']:<10} "
+                     f"{r['lc']}  {r['lw']}  {r['n']}")
+    _safe_print("  NOTE: log-only by design -- v7.25 removed cl_lc/cl_lw from ENFORCEMENT after an")
+    _safe_print("     engine-source audit found no exploit. Do not re-enforce off the back of this.")
 
 
 def parse(line: str):
-    vals = {k: float(v) for k, v in FIELD.findall(line)}
+    """line is `<source-path>:<log-line>` -- harvest() keeps grep's filename
+    prefix specifically so the instance can be recovered here (see INSTANCE).
+
+    Split on where the log line's own stamp starts (LOG_START), not on the
+    first colon or "/" -- the path can contain either, and the stamp's date
+    ("08/27/2026") contains a "/" too, so those characters alone don't tell
+    path from content apart.
+    """
+    m_start = LOG_START.search(line)
+    if m_start:
+        path, content = line[: m_start.start()].rstrip(":"), line[m_start.start():]
+    else:
+        path, content = "", line
+    vals = {k: float(v) for k, v in FIELD.findall(content)}
     if "clients" not in vals:
         return None
-    m = STAMP.match(line)
+    m = STAMP.match(content)
     vals["_time"] = m.group(2) if m else "?"
+    inst = INSTANCE.search(path)
+    vals["_instance"] = inst.group(1) if inst else "?"
     return vals
 
 
@@ -264,7 +315,10 @@ def main() -> int:
         return 2
 
     total_seen = total_kept = total_files = total_detail = 0
-    per_host, samples = {}, []
+    # Keyed by (host, instance) -- a host runs 4-5 instances, and grep -h used
+    # to merge them into one number nobody could split back apart (e.g.
+    # "dallas: 719" could not tell DAL4 apart from DAL1).
+    per_host, per_instance, samples = {}, defaultdict(lambda: [0, 0]), []
     for name, (lines, detail, files, _lag) in sorted(results.items()):
         kept = []
         for ln in lines:
@@ -272,8 +326,11 @@ def main() -> int:
             if v is None:
                 continue
             total_seen += 1
+            inst_counts = per_instance[(name, v["_instance"])]
+            inst_counts[0] += 1
             if v["clients"] >= floor:
                 kept.append(v)
+                inst_counts[1] += 1
                 samples.append((name, ln, v))
         per_host[name] = (len(lines), len(kept))
         total_kept += len(kept)
@@ -308,6 +365,10 @@ def main() -> int:
     print("\nper host           net: lines   populated")
     for name, (seen, kept) in sorted(per_host.items()):
         print(f"  {name:<16} {seen:>9}   {kept:>9}")
+        insts = sorted((k[1], c) for k, c in per_instance.items() if k[0] == name)
+        for inst, (iseen, ikept) in insts:
+            label = f"dod-{inst}" if inst != "?" else "dod-? (unattributed)"
+            print(f"    {label:<14} {iseen:>9}   {ikept:>9}")
 
     print(f"\naggregate over {total_kept} populated samples")
     print(f"  {'field':<16} {'sum':>10} {'max':>10} {'p50':>10} {'p95':>10}")

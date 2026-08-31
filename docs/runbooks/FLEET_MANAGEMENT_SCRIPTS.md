@@ -17,6 +17,12 @@ That scheduled script has three divergent copies of its own, and syncing them
 naively destroys something in either direction — see
 [`SCHEDULED_RESTART_LINEAGES.md`](SCHEDULED_RESTART_LINEAGES.md).
 
+**Current state, measured 2026-08-30 — the fleet has not been regenerated since this
+runbook shipped.** `~/restart-all-servers.sh` is `64bcbc2699ef3fe751f915d6fca791af` on
+Atlanta/Dallas/Denver and `7682c579bb6c7123c5a15b63eebab119` on New York/Chicago. **Neither**
+matches the pinned identities below — `origin/main`'s installer emits a *third* hash that no
+host runs. The procedure in this document exists and works; nobody has run it yet.
+
 ---
 
 ## Why a runbook exists for two shell scripts
@@ -118,3 +124,21 @@ is 0, which on a mostly-healthy fleet is the first iteration and nowhere else.
 **`[ -f "$f" ] && cp ...`** in the regen path would have the same class of
 problem: under `set -e` the AND-list returns 1 when the file is absent and ends
 the script before it writes anything. It is written as an `if`.
+
+## The sharp edge this whole runbook exists to blunt
+
+A compiled plugin or module gets staged as `<file>.new` and the nightly restart swaps it in —
+merged code reaches the fleet on its own within a day, with no per-host action. A **shell
+script that lives in an already-provisioned host's home directory has no such path.**
+`install-linuxgsm.sh` runs exactly once, at provisioning time; after that, nothing on the
+fleet re-reads it, ever. This same class of bug has bitten `restart-all-servers.sh` here and
+LinuxGSM's own `command_monitor.sh` (`docs/LINUXGSM.md` — the tmux "old type" detection patch,
+which likewise must be re-applied by hand after every `./dodserver update-lgsm`, because that
+command overwrites the file `install-linuxgsm.sh` patched).
+
+So for this class of file, **"merged" is not evidence of "deployed", ever** — not eventually,
+not by the next restart, not by the next kernel reboot. The only way a repo fix reaches a live
+host is an explicit, by-hand run of the regen/patch step against that host. Treat a merged PR
+against one of these files as leaving a manual rollout step owed on every provisioned host,
+and confirm it landed by re-deriving the live md5 (or re-checking the patch is present), never
+by checking that the PR merged.

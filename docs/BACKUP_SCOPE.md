@@ -23,6 +23,17 @@ refuse to run with them unset.
 provider-diverse hosts we already own. The most recent run reports every file present on every
 target.
 
+> ⚠️ **"Present on every target" is a presence claim, not a content claim.** The Denver/Chicago
+> path (`ssh H "... [ -f $DEST/$f ] ..."`, `ktp-demo-offsite.sh`) only asks whether a name exists
+> at the destination — a demo truncated mid-copy still satisfies `[ -f ]` and reports as
+> transferred. The newer Storage Box path, added when that target turned out to have no shell
+> (`ktp-demo-offsite.sh`'s rsync-only branch), verifies with an `rsync -ani --checksum` itemize
+> instead: any itemized line is a size/checksum mismatch, and an empty result means every file
+> matches byte-for-byte. That is **strictly stronger**, and it exists only because a shell-less
+> target forced a different verification method — not because anyone decided the presence check
+> was insufficient. The gap is documented inline at `ktp-demo-offsite.sh` (the comment above the
+> rsync-only loop) but the two targets still run genuinely different strength checks today.
+
 The archive box bought for exactly this purpose is **wired to nothing**. Nothing on the data server
 references it — no script, no config, no cron entry — and it holds only the `.ssh` directory that
 was created when access was proven. Access itself is fine; a purchased, reachable, empty box reads
