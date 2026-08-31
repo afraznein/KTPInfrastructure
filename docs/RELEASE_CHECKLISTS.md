@@ -13,6 +13,8 @@ Moved out of the stack-root `CLAUDE.md` on 2026-07-27. The **plugin** bump check
 - **KTPAMXX:** console stamps `<ver>.<buildno>`; any rebuild churns it.
 - **ReAPI / AmxxCurl:** `reapi/version/version.h` and the CMake project version.
 
+**A drift-baseline PR (e.g. a re-pin of `provision/expected-binaries.conf` for `scripts/audit-fleet-drift.py`) goes stale the same way, on a shorter clock.** Its md5 pins are only ever as current as the fleet was when the PR was opened. If a nightly `.new` wave lands before the PR merges, the pins are already wrong at merge time — merging it either reports drift that isn't real, or silently stops flagging drift that is. **Re-derive the baseline against the live fleet at merge time, never at PR-open time**, and never treat a repo-vs-`CLAUDE.md` comparison as an independent check of the fleet — both are documents, and a wave can move ahead of either one without moving the other.
+
 **3. Docs — do not skip.**
 - CHANGELOG entry for the cut. If a change was reverted before shipping, say so in the same entry; a changelog that documents a reverted flag is worse than silence.
 - **Re-verify the README build command from a clean clone's perspective, not your tree.** Gitignored maintainer wrappers (`build_linux.sh`) are invisible to a clone and are the single most common rot here.

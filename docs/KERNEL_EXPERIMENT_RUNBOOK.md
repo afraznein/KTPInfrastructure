@@ -365,3 +365,71 @@ NFO's marketing claim: "~1000 ±2 FPS on busy stock HLDS DoD servers at 1000Hz, 
 - Whether the claim holds under actual matchday 20-player traffic vs a synthetic `stats` sampler.
 
 This runbook doesn't try to replicate NFO. It tries to close the gap between our 977 fps baseline and NFO's claimed window using public-kernel knobs. If cmdline experiments close most of the gap, great. If they don't, we have a choice: build a custom kernel (multi-week, ongoing maintenance cost) or accept NY:27019's pingboost 4 pattern as the operational answer for 999-fps-critical instances.
+
+---
+
+## 6. Reboot procedure for an unproven kernel — `grub-reboot`, never `grub-set-default`
+
+Every experiment above ends in a reboot onto a kernel or cmdline that has not been burned in on this
+host yet. This section is the general reboot procedure that makes that safe, independent of which
+experiment triggered it — it is what was actually used for Atlanta's 2026-08-28 `6.8.0-110` →
+`6.8.0-138` move, and it did not previously exist anywhere in this repo.
+
+**Precondition, checked BEFORE the reboot, not during:** confirm out-of-band console access (IPMI,
+KVM, or serial) works. It is the only recovery path if the host does not come back, and it is the one
+precondition SSH itself cannot verify — if SSH is what you'd use to check it, you haven't checked it.
+
+**The key move is `grub-reboot`, not `grub-set-default`.** GRUB writes `next_entry` to grubenv,
+boots that entry exactly once, and then clears it — reverting to `saved_entry` on the boot *after*,
+**whether or not the risky boot succeeded**. A kernel that fails to come up self-heals on the next
+power cycle with no manual grub surgery. `grub-set-default` has no such safety net: it rewrites
+`saved_entry` immediately and permanently, so a bad kernel is what every subsequent boot lands on
+until someone notices and fixes it by hand.
+
+```bash
+# On the host, as root. Identify the target entry first -- see
+# docs/runbooks/GRUB_DEFAULT_KERNEL.md for how menu entries are laid out and
+# numbered on this fleet (grub-mkconfig emits newest-first, lowlatency ahead
+# of generic).
+grep -E '^(menuentry|submenu)' /boot/grub/grub.cfg
+
+# One-shot: boots the target entry on the NEXT reboot only. A positional
+# submenu>index (e.g. '1>2') or a literal menu title both work here --
+# unlike grub-set-default, a one-shot pin cannot go stale, because it is
+# consumed after a single boot regardless of outcome.
+grub-reboot '1>2'          # replace 1>2 with the entry found above
+grub-editenv list          # confirm next_entry is set, saved_entry unchanged
+reboot
+```
+
+**After the host comes back, verify before doing anything else** — instance count, listening ports,
+failed units, whatever the experiment's own success criteria are. Only once the new kernel has had a
+real burn-in (matchday traffic, not just "it booted") do you make it permanent:
+
+```bash
+grub-set-default '1>0'     # the fleet canon -- always "newest lowlatency"; use the
+                            # same entry as the grub-reboot above only if it should
+                            # stay pinned rather than simply become the new "newest"
+grub-editenv list           # next_entry is empty again (one-shot consumed); saved_entry updated
+```
+
+Reverting a risky boot that failed to come up needs nothing — it already happened automatically. If
+it booted but you don't want to keep it, `grub-set-default` back to the previous entry.
+
+### Related trap: an index-based `GRUB_DEFAULT` silently repoints itself
+
+`docs/runbooks/GRUB_DEFAULT_KERNEL.md` covers the literal-menu-title trap this fleet already hit
+(Atlanta, permanently pinned by name via `grub-set-default`, stuck on `6.8.0-110` for months). The
+sibling trap is the opposite failure mode, on a *different* selection style: a **numeric index**
+(`1>2`) does not name a kernel, it names a **position** in the menu. `grub-mkconfig` regenerates that
+menu on every kernel install or removal, so the same index can point at a different kernel after the
+next `update-grub` than it did when it was set — measured on this fleet: Denver's `1>2` and Chicago's
+`1>2` did not agree with each other, and neither reliably meant "newest lowlatency" as kernels were
+added and removed over time.
+
+**Prefer `GRUB_DEFAULT=0`** (or `saved` + `grub-set-default '1>0'`, the fleet's `saved`-based canon —
+see `GRUB_DEFAULT_KERNEL.md`), never a bare numeric index into a submenu. And never a literal menu
+title for a *permanent* default either — that is the Atlanta failure this same runbook triggered in
+the first place. A named or indexed **one-shot** (`grub-reboot`) is fine, because it is consumed after
+one boot and cannot go stale; a named or indexed **permanent** default (`grub-set-default`) is not,
+because nothing ever re-evaluates it.
