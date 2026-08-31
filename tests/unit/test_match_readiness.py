@@ -37,6 +37,7 @@ def test_five_match_anzio_readiness_golden(fixture_name):
     assert {
         "roster_source_missing", "position_sampling_interval",
         "statsme_coverage", "statsme2_coverage", "flag_ownership_coverage",
+        "schema23_position_provenance",
     } <= warning_codes
 
 

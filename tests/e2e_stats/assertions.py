@@ -1696,7 +1696,7 @@ def summarise(db, *, match_id: str | None = None) -> dict:
 
 def check_capture_health(db, *, match_id: str, half: int,
                          expected_frag_correlation_failures: int = 0) -> dict:
-    """Require the schema-22 producer manifest and exact end-to-end counts."""
+    """Require the schema-23 producer manifest and exact end-to-end counts."""
     expected_frag_failures = int(expected_frag_correlation_failures)
     if expected_frag_failures < 0:
         return {
@@ -1715,10 +1715,15 @@ def check_capture_health(db, *, match_id: str, half: int,
     manifest = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_manifests
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND producer='stats_logging' AND schema_version = 22
+  AND producer='stats_logging' AND schema_version = 23
   AND ABS(position_interval - 2.0) <= 0.01
   AND FIND_IN_SET('objective_attempt', capabilities) > 0
   AND FIND_IN_SET('grenade_entity', capabilities) > 0
+  AND FIND_IN_SET('team_membership', capabilities) > 0
+  AND FIND_IN_SET('position_state', capabilities) > 0
+  AND FIND_IN_SET('map_revision', capabilities) > 0
+  AND map_revision_algorithm = 'sha256'
+  AND map_revision_sha256 REGEXP '^[0-9a-f]{{64}}$'
 """)
     rows = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
@@ -1729,7 +1734,7 @@ SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
   AND (event_type NOT IN ('life','damage','position','frag','assist','break',
                           'flag_state','flag_position','objective_attempt',
-                          'grenade_entity')
+                          'grenade_entity','team_membership')
        OR attempted IS NULL OR attempted < 0
        OR enqueued IS NULL OR enqueued < 0
        OR dropped IS NULL OR dropped < 0
@@ -1752,15 +1757,15 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 """)
-    ok = manifest == 1 and rows == 10 and distinct_types == 10 and bad == 0
+    ok = manifest == 1 and rows == 11 and distinct_types == 11 and bad == 0
     return {
         "code": "capture_health",
         "status": "ok" if ok else "pipeline",
         "detail": (
-            "Schema-22 manifest and all ten attempted/enqueued/emitted/receipt counters reconcile"
+            "Schema-23 manifest and all eleven attempted/enqueued/emitted/receipt counters reconcile"
             if ok else
-            f"manifest={manifest} health_rows={rows}/10 "
-            f"distinct_types={distinct_types}/10 unhealthy_rows={bad}"
+            f"manifest={manifest} health_rows={rows}/11 "
+            f"distinct_types={distinct_types}/11 unhealthy_rows={bad}"
         ),
         "manifest_rows": manifest,
         "health_rows": rows,

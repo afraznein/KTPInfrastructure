@@ -10,6 +10,7 @@ MATCH_ID = "capture-health-regression-TEST"
 EVENT_TYPES = (
     "life", "damage", "position", "frag", "assist", "break",
     "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+    "team_membership",
 )
 
 
@@ -24,7 +25,9 @@ CREATE TABLE ktp_capture_manifests (
   producer VARCHAR(32) NOT NULL,
   schema_version INT NOT NULL,
   capabilities VARCHAR(255) NOT NULL,
-  position_interval DECIMAL(5,2) NOT NULL
+  position_interval DECIMAL(5,2) NOT NULL,
+  map_revision_algorithm VARCHAR(16) NULL,
+  map_revision_sha256 CHAR(64) NULL
 );
 CREATE TABLE ktp_capture_health (
   match_id VARCHAR(64) NOT NULL,
@@ -50,10 +53,11 @@ def _seed_health(capture_db, *, frag: dict[str, int] | None = None,
     capture_db.sql("DELETE FROM ktp_capture_health; DELETE FROM ktp_capture_manifests")
     capture_db.sql(f"""
 INSERT INTO ktp_capture_manifests
-  (match_id, half, producer, schema_version, capabilities, position_interval)
-VALUES ('{MATCH_ID}', 1, 'stats_logging', 22,
-        'life,damage,position,frag,assist,break,flag_state,flag_position,objective_attempt,grenade_entity',
-        2.00)
+  (match_id, half, producer, schema_version, capabilities, position_interval,
+   map_revision_algorithm, map_revision_sha256)
+VALUES ('{MATCH_ID}', 1, 'stats_logging', 23,
+        'life,damage,position,frag,assist,break,flag_state,flag_position,objective_attempt,grenade_entity,team_membership,position_state,map_revision',
+        2.00, 'sha256', '{"a" * 64}')
 """)
 
     overrides = dict(event_overrides or {})

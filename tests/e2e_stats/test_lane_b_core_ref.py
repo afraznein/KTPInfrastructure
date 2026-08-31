@@ -47,8 +47,12 @@ def test_objective_wire_witness_stages_exact_lifecycles_and_health():
     )
     assert len(db.statements) == 1
     assert "objective-witness-TEST" in db.statements[0]
-    assert len(daemon.lines) == 18
+    assert len(daemon.lines) == 19
     assert sum("KTP_CAPTURE_MANIFEST " in line for line in daemon.lines) == 1
+    manifest = next(line for line in daemon.lines if "KTP_CAPTURE_MANIFEST " in line)
+    assert '(schema "23")' in manifest
+    assert '(map_revision_algorithm "sha256")' in manifest
+    assert '(map_revision "' + ("0" * 64) + '")' in manifest
     objectives = [line for line in daemon.lines if "KTP_OBJECTIVE_ATTEMPT " in line]
     assert len(objectives) == 7
     assert sum('(kind "start")' in line for line in objectives) == 3
@@ -61,7 +65,8 @@ def test_objective_wire_witness_stages_exact_lifecycles_and_health():
         and '(sequence "8")' in line for line in objectives
     )
     health = [line for line in daemon.lines if "KTP_CAPTURE_HEALTH " in line]
-    assert len(health) == 10
+    assert len(health) == 11
+    assert any('(event_type "team_membership")' in line for line in health)
     objective_health = next(
         line for line in health if '(event_type "objective_attempt")' in line
     )
@@ -121,15 +126,22 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     certification = "/work/build/artifacts/sql/migrate_020_frag_context_certified.sql"
     observability = "/work/build/artifacts/sql/migrate_021_capture_observability.sql"
     telemetry = "/work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql"
+    membership = "/work/build/artifacts/sql/migrate_023_team_membership_intervals.sql"
+    position_provenance = "/work/build/artifacts/sql/migrate_024_position_state_map_revision.sql"
 
     migrations = (
         life, clocks, breaks, correction, certification, observability, telemetry,
+        membership, position_provenance,
     )
-    for migration in migrations[:-1]:
+    for migration in migrations:
+        if migration in {telemetry, position_provenance}:
+            continue
         assert workflow.count(migration) == 2
-    # Migration 022 also appears once in the dedicated production-parity
-    # migration self-test step; its final two uses are the full/corpus lists.
+    # Migrations 022 and 024 also appear once in dedicated production-parity
+    # migration self-test commands; the full/corpus schema lists contain each
+    # migration path exactly twice.
     assert workflow.count(telemetry) == 3
+    assert workflow.count(position_provenance) == 3
 
     def occurrences(value):
         indexes, offset = [], 0
