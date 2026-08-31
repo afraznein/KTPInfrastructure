@@ -106,8 +106,8 @@ def daemon_repo(tmp_path):
         (20, "frag_context_certified"),
         (21, "capture_observability"),
         (22, "objective_attempts_grenade_entities"),
-        (23, "team_membership_intervals"),
-        (24, "position_state_map_revision"),
+        (24, "team_membership_intervals"),
+        (25, "position_state_map_revision"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -142,8 +142,8 @@ def test_default_schema_sequence_includes_retention_through_telemetry23():
         "sql/migrate_020_frag_context_certified.sql",
         "sql/migrate_021_capture_observability.sql",
         "sql/migrate_022_objective_attempts_grenade_entities.sql",
-        "sql/migrate_023_team_membership_intervals.sql",
-        "sql/migrate_024_position_state_map_revision.sql",
+        "sql/migrate_024_team_membership_intervals.sql",
+        "sql/migrate_025_position_state_map_revision.sql",
     )
 
 
@@ -319,8 +319,8 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_020_frag_context_certified.sql",
                  "migrate_021_capture_observability.sql",
                  "migrate_022_objective_attempts_grenade_entities.sql",
-                 "migrate_023_team_membership_intervals.sql",
-                 "migrate_024_position_state_map_revision.sql"):
+                 "migrate_024_team_membership_intervals.sql",
+                 "migrate_025_position_state_map_revision.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 

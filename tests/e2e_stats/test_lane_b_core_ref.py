@@ -126,8 +126,8 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
     certification = "/work/build/artifacts/sql/migrate_020_frag_context_certified.sql"
     observability = "/work/build/artifacts/sql/migrate_021_capture_observability.sql"
     telemetry = "/work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql"
-    membership = "/work/build/artifacts/sql/migrate_023_team_membership_intervals.sql"
-    position_provenance = "/work/build/artifacts/sql/migrate_024_position_state_map_revision.sql"
+    membership = "/work/build/artifacts/sql/migrate_024_team_membership_intervals.sql"
+    position_provenance = "/work/build/artifacts/sql/migrate_025_position_state_map_revision.sql"
 
     migrations = (
         life, clocks, breaks, correction, certification, observability, telemetry,
@@ -137,7 +137,7 @@ def test_full_and_corpus_lanes_apply_context_migrations_in_order():
         if migration in {telemetry, position_provenance}:
             continue
         assert workflow.count(migration) == 2
-    # Migrations 022 and 024 also appear once in dedicated production-parity
+    # Migrations 022 and 025 also appear once in dedicated production-parity
     # migration self-test commands; the full/corpus schema lists contain each
     # migration path exactly twice.
     assert workflow.count(telemetry) == 3
