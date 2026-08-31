@@ -1,0 +1,6 @@
+[Unit]
+Description=One-shot kernel reboot (idle-gated)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-scheduled-kernel-reboot.sh

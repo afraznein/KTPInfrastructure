@@ -337,6 +337,42 @@ cp ktp-backup.sh.example ktp-backup.sh
 0 3 * * 0 /opt/ktp-backup.sh >> /var/log/ktp-backup.log 2>&1
 ```
 
+### ktp-backup-watchdog.sh
+Notices a weekly backup that never ran or finished short. `ktp-backup.sh` logs and alerts on the
+failures it can see; nothing watched for the run that simply did not happen.
+
+**Deployed to:** `/usr/local/bin/ktp-backup-watchdog.sh` (data server)
+
+**Cron:** daily 08:30 ET, after the Sunday 03:00 backup window has closed.
+
+### ktp-scheduled-kernel-reboot.sh
+Reboots the data server into a newer kernel, but only while nobody is playing -- a reboot here stops
+HLTV recording, stats ingest and AC uploads. Aborts and retries the next night otherwise, and posts
+the outcome either way. Disables its own timer before rebooting, so it is one-shot by construction.
+
+**Deployed to:** `/usr/local/bin/ktp-scheduled-kernel-reboot.sh` (data server)
+
+**Units:** [`systemd/ktp-kernel-reboot.service`](systemd/ktp-kernel-reboot.service) +
+[`systemd/ktp-kernel-reboot.timer`](systemd/ktp-kernel-reboot.timer), 02:00 ET.
+
+> 🔴 **Known defect -- the idle gate can never be satisfied, so this has never once rebooted.**
+> The gate requires `frags_20m` **and** `demos_15m` to both be zero. The 24 HLTV proxies write `.dem`
+> files continuously, so `find /home/hltvserver -name '*.dem' -mmin -15` is never zero while HLTV is
+> running -- it counts recording, not play. The log shows a nightly abort with 42-45 demos every time,
+> including nights when frags was genuinely 0.
+> ➡️ **The frags check is the one that measures play; the demo check needs to measure something that
+> actually goes quiet, or come out.** Fixing it arms a real unattended reboot, so it is an operator
+> decision, not a cleanup.
+
+### ktp-post-reboot-verify.sh
+Companion to the above: runs once after the reboot, reports kernel version, HLTV proxy count and any
+failed units, then disables itself.
+
+**Deployed to:** `/usr/local/bin/ktp-post-reboot-verify.sh` (data server)
+
+**Unit:** enabled by `ktp-scheduled-kernel-reboot.sh` immediately before it reboots, so it only ever
+runs on a boot that script caused.
+
 ### ktp-log-rotation.sh
 Compresses old logs and deletes archives older than a year.
 

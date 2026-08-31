@@ -1,0 +1,9 @@
+[Unit]
+Description=Kernel reboot window 02:00 ET
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target
