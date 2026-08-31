@@ -3,29 +3,26 @@
 #
 # WHY A SUBSET. The archive is ~150 GB and grows ~47 GB/month; neither offsite
 # host has room for it twice, and a full copy would fill the larger one within
-# about a month. Operator ruling 2026-08-22: keep league matches and everything
-# recorded during a LAN, regardless of type.
+# about a month. `docs/BACKUP_SCOPE.md` rules the retain/discard split by type:
+# `ktp`/`ktpOT` and `draft` are RETAIN; `12man` and `scrim` are DISCARD
+# (deliberately, and they are the fast-growing 121 GB of the ~150 GB archive).
+# Everything recorded during a LAN is kept regardless of type -- that ruling
+# is unchanged and is not what this revision touches.
 #
-# WIDENED 2026-08-30: "league matches" was implemented as literally `ktp_` and
-# `ktpOT_` -- which is not what KTPMatchHandler's real match types are. Two
-# defects, not one:
-#   1. `.scrim`/`.draft`/`.12man` are just as real a match as `.ktp`, and were
-#      excluded outright unless a LAN window happened to also cover them.
-#   2. `ktpOT_` (mixed case) never matched anything. The renamer forces every
-#      match type to lowercase before it touches a filename (hltv-demo-renamer.py,
-#      `window.match_type.lower()`) because the organizer's own regex is
-#      `[a-z0-9]+` and rejects mixed case -- so an OT demo is named `ktpot_...`,
-#      never `ktpOT_...`. That clause was dead on arrival.
-# Now matches all six real types: ktp, ktpot, draft, draftot, 12man, scrim.
-#
-# ⚠️ THIS CHANGES THE STORAGE MATH THE 08-22 RULING DEPENDED ON. Measured
-# 2026-08-30 against the live archive: the old selector kept 341 files; every
-# one of the six real-type prefixes together match 1,989 of 1,989 `.dem` files
-# in the tree -- effectively the WHOLE ~150 GB archive, not a comfortable
-# subset of it. There is currently no "auto"/pickup noise left under this path
-# to exclude (it appears to get pruned before organizing), so on today's
-# archive this is no longer "a subset with years of headroom" -- re-check
-# offsite host capacity before relying on that framing again.
+# FIXED 2026-08-30, ruling-compliant only -- two things, not a widen to every
+# type:
+#   1. `draft_*.dem` was missing outright. It is RETAIN per BACKUP_SCOPE.md and
+#      was excluded unless a LAN window happened to also cover it. Added.
+#   2. `ktpOT_` (mixed case) never matched anything, live or in principle. The
+#      renamer forces every match type to lowercase before it touches a
+#      filename (hltv-demo-renamer.py, `window.match_type.lower()`) because the
+#      organizer's own regex is `[a-z0-9]+` and rejects mixed case -- so an OT
+#      demo is named `ktpot_...`, never `ktpOT_...`. Corrected the casing
+#      rather than dropping the clause, since `ktp`/`ktpOT` is one RETAIN row
+#      in the ruling -- but no OT demo has ever existed on this fleet to test
+#      the corrected pattern against; it is unverified until one does.
+# `12man`/`scrim` stay OUT of scope on purpose -- that is the discard half of
+# an existing ruling, and reversing it is an operator decision, not this PR.
 #
 # WHY OFF-PROVIDER, NOT JUST OFF-HOST. Most of the estate -- including the data
 # server the demos live on -- sits with a single provider whose terms state it
@@ -93,12 +90,12 @@ WINDOWS=$(wc -l < "$WORK/windows.txt")
 # backs up, so say it rather than letting the count silently mean "type-only".
 echo "[demo-offsite] LAN windows read from the database: $WINDOWS"
 
-# Real matches, always -- all six KTPMatchHandler match types. Lowercase only:
-# the renamer forces every type to lowercase before naming a file (organizer
-# regex is `[a-z0-9]+`), so a `ktpOT_`/`draftOT_` clause here would never match.
+# RETAIN types only, per docs/BACKUP_SCOPE.md -- always. Lowercase: the
+# renamer forces every type to lowercase before naming a file (organizer regex
+# is `[a-z0-9]+`), so a `ktpOT_` clause here never matches. `12man`/`scrim` are
+# the ruled DISCARD types and are deliberately not selected by anything below.
 find "$SRC" -type f \( -name 'ktp_*.dem' -o -name 'ktpot_*.dem' \
-                        -o -name 'draft_*.dem' -o -name 'draftot_*.dem' \
-                        -o -name '12man_*.dem' -o -name 'scrim_*.dem' \) \
+                        -o -name 'draft_*.dem' \) \
      -print > "$LIST"
 
 # Everything recorded during a LAN, whatever its type.
@@ -129,7 +126,7 @@ MANIFEST_NAME="ktp-demo-manifest.txt"
 {
     echo "# ktp-demo-offsite selection manifest -- $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "# $COUNT files, $(( KB / 1024 / 1024 )) GB / $(( KB / 1024 )) MB"
-    echo "# types: ktp, ktpot, draft, draftot, 12man, scrim -- plus anything recorded during a LAN window"
+    echo "# types: ktp, ktpot, draft (RETAIN, per docs/BACKUP_SCOPE.md) -- plus anything recorded during a LAN window"
     cat "$WORK/rel.txt"
 } > "$WORK/$MANIFEST_NAME"
 
