@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "minimum_synthetic_matches": 5,
+  "minimum_human_matches": 20,
+  "defaults": {
+    "priority": null,
+    "overview_transform_reviewed": false,
+    "flag_geometry_reviewed": false,
+    "objective_topology_reviewed": false,
+    "bot_waypoints_verified": false,
+    "synthetic_matches": 0,
+    "human_matches": 0,
+    "spatial_config": null,
+    "notes": "Spatial review has not started."
+  },
+  "maps": {
+    "dod_anzio": {
+      "priority": 1,
+      "overview_transform_reviewed": true,
+      "flag_geometry_reviewed": true,
+      "objective_topology_reviewed": true,
+      "bot_waypoints_verified": true,
+      "synthetic_matches": 5,
+      "human_matches": 0,
+      "spatial_config": "config/analytics/spatial_maps/dod_anzio.json",
+      "notes": "Only current KTP match map with verified bot waypoints and a reviewed synthetic atlas."
+    },
+    "dod_harrington": {
+      "priority": 2,
+      "notes": "Flag weights must reflect its non-linear first/second layout; bot waypoints are not verified."
+    },
+    "dod_lennon_test": {
+      "priority": 3,
+      "notes": "Anzio-like topology requires its own reviewed geometry and weights; bot waypoints are not verified."
+    },
+    "dod_saints": {
+      "priority": 4,
+      "notes": "Linear topology requires its own reviewed geometry and weights; bot waypoints are not verified."
+    }
+  }
+}

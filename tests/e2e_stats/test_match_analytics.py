@@ -146,6 +146,7 @@ def test_markdown_states_positional_privacy_without_player_locations():
         "capture_events": [],
     }
     rendered = analytics.render_markdown(report)
-    assert "Raw player positions" in rendered
+    assert "Raw coordinates, paths, heatmaps" in rendered
+    assert "Private per-player objective" in rendered
     assert "position_samples" not in rendered
     assert "pos_x" not in rendered

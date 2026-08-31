@@ -1,0 +1,148 @@
+# Publishes only a regenerated public view of the exact five-match synthetic Lane B bot comparison artifact.
+# It never downloads the five raw Lane B artifacts and has no fleet, SSH,
+# database, package, or production credentials. See docs/LANE_B_PUBLIC_PAGES.md.
+name: Publish Lane B Bot Reports to Pages
+
+on:
+  repository_dispatch:
+    types: [publish-lane-b-pages]
+  workflow_run:
+    workflows: ["Lane B Stats E2E"]
+    types: [completed]
+
+concurrency:
+  group: lane-b-bot-report-pages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate and prepare public bot reports
+    # Retroactive publication enters only through the exact default-branch repository dispatch.
+    # Automatic publication is fail-closed and separately opt-in at repo level.
+    if: >-
+      (github.event_name == 'repository_dispatch' &&
+       github.event.action == 'publish-lane-b-pages') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       startsWith(github.event.workflow_run.head_branch, 'lane-b-preprod-series-') &&
+       vars.KTP_LANE_B_PAGES_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_artifact_id: ${{ steps.source.outputs.artifact_id }}
+      source_artifact_digest: ${{ steps.source.outputs.artifact_digest }}
+      pages_artifact_name: ${{ steps.pages_artifact.outputs.name }}
+    env:
+      SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && format('{0}', github.event.workflow_run.id) || format('{0}', github.event.client_payload.source_run_id) }}
+      PUBLISHER_EVENT_ACTION: ${{ github.event.action }}
+      PUBLISHER_EVENT_NAME: ${{ github.event_name }}
+      PUBLISHER_REF: ${{ github.ref }}
+      PUBLISHER_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Checkout the default-branch publisher
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Validate source run and exact series artifact
+        id: source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/prepare_lane_b_pages.py validate-run
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$SOURCE_RUN_ID"
+          --publisher-event-name "$PUBLISHER_EVENT_NAME"
+          --publisher-event-action "$PUBLISHER_EVENT_ACTION"
+          --publisher-ref "$PUBLISHER_REF"
+          --publisher-sha "$PUBLISHER_SHA"
+          --output build/lane-b-pages-source.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download the exact five-run comparison only
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          path: build/lane-b-series-source
+          repository: ${{ github.repository }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Revalidate immutable source after download
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/prepare_lane_b_pages.py validate-run
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$SOURCE_RUN_ID"
+          --publisher-event-name "$PUBLISHER_EVENT_NAME"
+          --publisher-event-action "$PUBLISHER_EVENT_ACTION"
+          --publisher-ref "$PUBLISHER_REF"
+          --publisher-sha "$PUBLISHER_SHA"
+          --expected-metadata build/lane-b-pages-source.json
+          --output build/lane-b-pages-source-revalidated.json
+
+      - name: Build the fail-closed public allowlist
+        run: >-
+          python3 scripts/prepare_lane_b_pages.py prepare
+          --source build/lane-b-series-source
+          --source-metadata build/lane-b-pages-source-revalidated.json
+          --output build/lane-b-pages-public
+
+      - name: Write sanitized bot-publication summary
+        run: >-
+          python3 scripts/prepare_lane_b_pages.py write-summary
+          --publication build/lane-b-pages-public/publication-metadata.json
+          --output "$GITHUB_STEP_SUMMARY"
+
+      - name: Select rerun-safe Pages artifact name
+        id: pages_artifact
+        env:
+          PAGES_ARTIFACT_NAME: github-pages-${{ github.run_id }}-${{ github.run_attempt }}
+        run: echo "name=$PAGES_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload prepared Pages artifact
+        # actions/upload-pages-artifact v5.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          name: ${{ steps.pages_artifact.outputs.name }}
+          path: build/lane-b-pages-public
+          retention-days: 14
+
+  deploy:
+    name: Deploy public bot reports
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout the Pages settings validator
+        # actions/checkout v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Require Pages with GitHub Actions source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 scripts/prepare_lane_b_pages.py validate-pages
+          --repository "$GITHUB_REPOSITORY"
+
+      - name: Deploy prepared public directory
+        id: deployment
+        # actions/deploy-pages v5.0.0
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128
+        with:
+          artifact_name: ${{ needs.prepare.outputs.pages_artifact_name }}

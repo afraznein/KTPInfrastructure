@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "map_name": "dod_anzio",
+  "overview": {
+    "origin_x": 307.06,
+    "origin_y": 372.72,
+    "zoom": 1.11,
+    "rotated": false,
+    "width": 1024,
+    "height": 768
+  },
+  "analysis": {
+    "grid_size_units": 256.0,
+    "sample_seconds": 5.0,
+    "objective_radius_units": 512.0,
+    "nearest_sample_seconds": 3.0,
+    "isolation_radius_units": 768.0,
+    "trade_seconds": 5.0,
+    "multikill_seconds": 5.0,
+    "opening_seconds": 45.0,
+    "event_window_seconds": 30.0,
+    "target_cell_minimum_seconds": 15.0,
+    "corpus_cell_minimum_seconds": 60.0,
+    "recurring_lane_minimum": 3
+  },
+  "flags": [
+    {
+      "name": "Laundry",
+      "code": "POINT_ANZIO_LAUNDRY",
+      "x": -1495.0,
+      "y": -326.0,
+      "initial_owner": 1
+    },
+    {
+      "name": "Plaza",
+      "code": "POINT_ANZIO_PLAZA",
+      "x": -698.0,
+      "y": 923.0,
+      "initial_owner": 1
+    },
+    {
+      "name": "Street",
+      "code": "POINT_ANZIO_STREET",
+      "x": 448.0,
+      "y": 800.0,
+      "initial_owner": 0
+    },
+    {
+      "name": "Bridge",
+      "code": "POINT_BRIDGE",
+      "x": 1040.0,
+      "y": -288.0,
+      "initial_owner": 2
+    },
+    {
+      "name": "Hill",
+      "code": "POINT_ANZIO_HILL",
+      "x": 1375.0,
+      "y": 1682.0,
+      "initial_owner": 2
+    }
+  ]
+}

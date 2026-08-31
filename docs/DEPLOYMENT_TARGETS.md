@@ -18,9 +18,9 @@ Both paths live in this repo. This doc clarifies which is which, so a contributo
 | Path | Purpose |
 |------|---------|
 | `provision/provision-gameserver.sh` | Base OS setup — kernel tuning, sysctl, ufw, LinuxGSM install, CPU pinning |
-| `provision/install-linuxgsm.sh` | LinuxGSM instance creation for 5 game server ports |
+| `provision/install-linuxgsm.sh` | LinuxGSM instance creation for N game server ports (`NUM_INSTANCES`, default 5) |
 | `provision/clone-ktp-stack.sh` | Overlay KTP binaries onto a fresh LinuxGSM install |
-| `provision/deploy-chrt-service.sh` | Install the SCHED_FIFO pinning timer service |
+| `scripts/deploy-chrt-service.sh` | Install the SCHED_FIFO pinning timer service |
 
 These scripts are the authoritative recipe for new-region stand-ups and LAN event provisioning. The live fleet (Atlanta BM, Dallas, Denver, New York, Chicago) was built from these scripts.
 

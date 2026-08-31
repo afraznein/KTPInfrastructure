@@ -1,5 +1,11 @@
 # Match accumulation Phase C: private positional shadow
 
+> This document preserves the v0-v2 positional experiment. The current local
+> scoring iteration is the no-penalty, fixed-budget
+> `accumulation_v3_bounded` model documented in
+> `ACCUMULATION_V3_BOUNDED.md`. Existing v0-v2 artifacts remain reproducible
+> and are not rewritten.
+
 Phase C starts the accumulation-style analysis without waiting for public API
 or rating work. It remains local and shadow-only. It does not replace KTPR.
 
@@ -28,7 +34,7 @@ The first profile accumulates transparent components:
 - capped damage;
 - capture credits;
 - cap breaks;
-- teamkill and suicide deductions; and
+- historical v0 teamkill and suicide deductions (removed in v3); and
 - capped objective-proximity points calculated from private position samples.
 
 Position is intentionally a small term. Each sample represents the configured
@@ -74,6 +80,11 @@ emits one baseline row per flag when match context becomes available and then
 only owner changes. Joining each position sample to the most recent preceding
 state for its nearest flag distinguishes holding, attacking, neutral presence,
 and defense under pressure without storing ownership every five seconds.
+
+Private, read-only event correlations are now emitted by match analytics
+schema version 3 through `scripts/match_timelines.py`. Definitions, privacy
+boundaries, and canary validation are documented in
+`docs/CANARY_EVIDENCE_AND_SHADOW_TIMELINES.md`.
 
 When a complete baseline proves that a team owns exactly one flag, passive
 nearby holding receives a small `1.10x` premium. A nearby opponent raises an

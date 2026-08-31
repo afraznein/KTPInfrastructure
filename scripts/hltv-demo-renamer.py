@@ -58,6 +58,16 @@ STATE_FILE = STATE_DIR / "state.json"
 # How often the main loop polls each host for new log content.
 POLL_INTERVAL_SEC = 30
 
+# paramiko's connect/banner/auth timeouts cover the handshake ONLY. Past it a
+# half-open TCP connection blocks the single-threaded poll loop forever at ~0
+# CPU, which is how 2026-08-25/26 lost every demo while the unit read active.
+SSH_KEEPALIVE_SEC = 30
+SFTP_OP_TIMEOUT_SEC = 60
+
+# systemd kills and restarts us if a heartbeat is missed; the loop must beat
+# faster than WatchdogSec or a slow-but-healthy poll gets killed.
+WATCHDOG_ENABLED = bool(os.environ.get("NOTIFY_SOCKET"))
+
 # Match windows older than this without a CLOSE are abandoned (server crash,
 # plugin reload mid-match, etc.). 4 hours covers OT + tech pauses + extra
 # slack; matches finishing later just don't get renamed automatically.
@@ -176,6 +186,12 @@ class State:
     log_offsets: Dict[str, int] = field(default_factory=dict)
     # Open windows awaiting CLOSE
     open_windows: List[OpenWindow] = field(default_factory=list)
+    # Region -> unix time of the last SSH poll that got all the way through that
+    # host's ports. Liveness is NOT the same as reading: the loop can iterate
+    # happily while every SSH session fails, which rewrites state.json on
+    # schedule and so looks healthy to a watchdog, an mtime check, and the
+    # cleanup interlock alike -- while no match window is ever seen.
+    last_read_ok: Dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def load(cls) -> "State":
@@ -190,6 +206,7 @@ class State:
             known = {f.name for f in OpenWindow.__dataclass_fields__.values()}
             return cls(
                 log_offsets=data.get("log_offsets", {}),
+                last_read_ok=data.get("last_read_ok", {}),
                 open_windows=[
                     OpenWindow(**{k: v for k, v in w.items() if k in known})
                     for w in data.get("open_windows", [])
@@ -204,6 +221,7 @@ class State:
         tmp = STATE_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps({
             "log_offsets": self.log_offsets,
+            "last_read_ok": self.last_read_ok,
             "open_windows": [asdict(w) for w in self.open_windows],
         }, indent=2))
         tmp.replace(STATE_FILE)
@@ -212,6 +230,21 @@ class State:
 # ---------------------------------------------------------------------------
 # SSH log tailer
 # ---------------------------------------------------------------------------
+
+def sd_notify(payload: str) -> None:
+    """Best-effort sd_notify. No-op outside systemd; never raises."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    try:
+        if addr.startswith("@"):  # abstract namespace
+            addr = chr(0) + addr[1:]  # abstract socket
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+            sock.connect(addr)
+            sock.sendall(payload.encode("utf-8"))
+    except Exception:
+        pass
+
 
 class HostTailer:
     """Maintains a paramiko SSHClient + SFTP session per game host.
@@ -244,7 +277,14 @@ class HostTailer:
             allow_agent=False,
         )
         self._ssh = client
+        transport = client.get_transport()
+        if transport is not None:
+            # Without this a dead peer is never noticed: the reader just waits.
+            transport.set_keepalive(SSH_KEEPALIVE_SEC)
         self._sftp = client.open_sftp()
+        chan = self._sftp.get_channel()
+        if chan is not None:
+            chan.settimeout(SFTP_OP_TIMEOUT_SEC)
         logging.info("[%s] SSH connected", self.region)
 
     def _disconnect(self) -> None:
@@ -284,10 +324,33 @@ class HostTailer:
             key = self._offset_key(port)
             try:
                 stat = self._sftp.stat(path)  # type: ignore[union-attr]
-            except (FileNotFoundError, IOError):
+            except socket.timeout:
+                # Must precede the IOError clause: socket.timeout subclasses
+                # OSError, so the handler below would file a wedged session as
+                # "log absent" and skip the port forever.
+                logging.warning("[%s/%d] SFTP stat timed out — dropping session",
+                                self.region, port)
+                self._disconnect()
+                return all_lines
+            except FileNotFoundError:
                 # Log doesn't exist yet (server not started today, or no plugin
                 # output yet). Skip silently — next poll will pick it up.
+                # paramiko maps SFTP_NO_SUCH_FILE to IOError(ENOENT), which
+                # Python 3 constructs as FileNotFoundError, so this still covers
+                # the benign case that the old broad IOError clause was for.
                 continue
+            except Exception as e:
+                # Everything else means the session is suspect, and reusing it is
+                # how a transient fault becomes permanent: _connect() returns
+                # early while self._ssh is set, so a torn transport is never
+                # replaced. A torn transport raises EOFError or SSHException,
+                # NEITHER an OSError -- so these escaped the old clause entirely
+                # -- while ConnectionResetError IS an OSError and would have been
+                # filed as "log absent" and skipped silently.
+                logging.warning("[%s/%d] stat failed: %s — dropping session",
+                                self.region, port, e)
+                self._disconnect()
+                return all_lines
 
             offset = state.log_offsets.get(key, 0)
             if offset > stat.st_size:
@@ -302,9 +365,18 @@ class HostTailer:
                 with self._sftp.open(path, "r") as f:  # type: ignore[union-attr]
                     f.seek(offset)
                     chunk = f.read(stat.st_size - offset)
+            except socket.timeout:
+                logging.warning("[%s/%d] SFTP read timed out — dropping session",
+                                self.region, port)
+                self._disconnect()
+                return all_lines
             except Exception as e:
-                logging.warning("[%s/%d] read failed: %s", self.region, port, e)
-                continue
+                # Drop the session rather than reuse it: a torn transport
+                # raises here and every later poll would reuse the corpse.
+                logging.warning("[%s/%d] read failed: %s — dropping session",
+                                self.region, port, e)
+                self._disconnect()
+                return all_lines
 
             # Advance the offset only past the last COMPLETE line. The async
             # line-buffered writer can be mid-line at read time; consuming a
@@ -325,6 +397,8 @@ class HostTailer:
                 if "MATCH_WINDOW_" in line:
                     all_lines.append(line)
 
+        # Reached only on a clean pass: every failure path above returns early.
+        state.last_read_ok[self.region] = int(time.time())
         return all_lines
 
 
@@ -742,6 +816,9 @@ class Service:
         logging.info("hltv-demo-renamer starting (dry_run=%s)", self.renamer.dry_run)
         logging.info("Tailing %d game hosts × %d ports each (24 active instances)",
                      len(self.tailers), 5)
+        sd_notify("READY=1")
+        if WATCHDOG_ENABLED:
+            logging.info("systemd watchdog active — heartbeat once per poll cycle")
         while not self._stop:
             try:
                 for tailer in self.tailers:
@@ -755,10 +832,16 @@ class Service:
             except Exception as e:
                 logging.exception("Main loop iteration failed: %s", e)
 
+            # Beat AFTER the poll, outside the try: an iteration that raised
+            # still completed, but one wedged inside a tailer never gets here
+            # and systemd kills us at WatchdogSec instead of hanging for days.
+            sd_notify("WATCHDOG=1")
+
             for _ in range(POLL_INTERVAL_SEC):
                 if self._stop:
                     break
                 time.sleep(1)
+        sd_notify("STOPPING=1")
         logging.info("Shutdown complete")
 
 

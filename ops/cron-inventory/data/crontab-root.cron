@@ -1,8 +1,0 @@
-0 3 * * 0 /opt/ktp-backup.sh >> /var/log/ktp-backup.log 2>&1
-# KTP HLTV Demo Organization - Daily at 4:00 AM EST
-0 4 * * * /usr/local/bin/ktp-organize-hltv-demos.sh >> /var/log/ktp-demo-organize.log 2>&1
-# Draft Day Monitoring (2026-01-31, noon - midnight ET, every minute)
-* 12-23 31 1 * /usr/bin/python3 /opt/ktp-monitoring/draft_day_monitor.py >> /var/log/ktp-draft-monitor/cron.log 2>&1
-# Nightly Match Monitor (7 PM - 1 AM ET, every 10 minutes)
-*/10 19-23 * * * /usr/bin/python3 /opt/ktp-monitoring/nightly_match_monitor.py >> /var/log/ktp-nightly-monitor/cron.log 2>&1
-*/10 0 * * * /usr/bin/python3 /opt/ktp-monitoring/nightly_match_monitor.py >> /var/log/ktp-nightly-monitor/cron.log 2>&1

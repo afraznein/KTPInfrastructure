@@ -4,6 +4,145 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: reconcile the restart scripts' three lineages, and make the next divergence visible (2026-08-27)
+
+- `~/restart-all-servers.sh` had drifted into **two mutually incompatible fleet variants** and neither
+  matches the generator. Atlanta/Dallas/Denver run one shape; New York/Chicago run another that carries
+  `set -e` alongside `((running++))`, so its verify loop exits 1 at the FIRST healthy server and never
+  prints its summary. On Chicago it dies earlier still, on `~/dod-27019` - an instance deleted
+  2026-07-13 that the hardcoded `1 2 3 4 5` loop still addresses. Every copy dates from Feb-Mar 2026.
+  The repair path already exists -- #169's `--regen-management-scripts` and
+  `docs/runbooks/FLEET_MANAGEMENT_SCRIPTS.md` -- and its pinned output is re-derived here rather than
+  taken on trust: a sandboxed `HOME` reproduces both md5s exactly. What was missing is anything that
+  NOTICES a host has fallen off it.
+- `ktp-scheduled-restart.sh` drifted the other way. This `.example` is the most complete of the three
+  lineages, the gitignored working copy stopped at 2026-08-04 (no #164, and a relay secret the fleet is
+  not using), and the fleet sits between them. Its header asserted a regeneration direction that
+  produced exactly that; corrected here to name `.example` as the source of truth.
+- **No script is deployed and no server is restarted by this change.** `docs/runbooks/SCHEDULED_RESTART_LINEAGES.md` records
+  what each lineage has, which differences are deliberate versus drift, and the per-host blast radius of
+  a later deploy - including the two ways a naive one destroys something: pushing the gitignored copy
+  reverts #164, pushing `.example` blanks the relay secret and both channel IDs.
+- **`scripts/ktp-restart-drift.py`** (new, read-only) checks both scripts on every host. The scheduled
+  script is compared against `.example` with secret VALUES masked, so a rotation is not drift and no
+  secret leaves the host. The manual script is checked by PROPERTY after comments are stripped, not by
+  string: the generator's own warning comment contains `((running++))` once, so a literal grep reports
+  the correct file as broken. Hosts reached is printed beside every count.
+
+### `tier2`: a re-sync tool for the runner stack, and the section the checklist pointed at (2026-08-26)
+
+- **`scripts/sync-runner-stack.py`** mirrors the Tier-2 runner's stack from a live fleet instance. The
+  runner is a declared must-match-fleet environment and the only thing enforcing that was a checklist
+  line — `Re-sync the Tier-2 runner stack (above)` — that pointed at no section. The detector
+  (`ktp-tier2-stack-drift.py`, in the 6h heartbeat) worked correctly and alerted `ok -> drift` within
+  hours of the 2026-08-26 ABI wave; nothing existed to act on it, so the runner kept testing against
+  the pre-wave engine, core, dodx and reapi.
+- The synced file set is **imported from the drift checker** rather than restated, and the artifacts it
+  refuses to overwrite are asserted against that set rather than merely documented: KTPMatchHandler and
+  KTPPracticeMode are `KTP_TEST_MODE` builds where byte-equality with the fleet is wrong, and
+  KTPHudObserver is rebuilt from upstream by `tier2-integration.yml` on every run.
+- Dry run by default. `--apply` backs up each drifted file on the runner first — neither the fleet nor
+  the runner keeps rollback copies — and re-reads md5 after the pull and after the push. It refuses
+  while a Tier-2 run is live, and while the reference instance holds staged `.new` files, since a sync
+  into a pending wave is stale again at the next 03:00.
+- `docs/RELEASE_CHECKLISTS.md` gains the § *Tier-2 runner re-sync* section, including what the tool does
+  **not** cover and therefore still needs a per-wave look: test-mode plugins, KTPHudObserver, and configs.
+
+
+### `ops`: loud swap failures, and a two-marker Tier 2 heartbeat (2026-08-26)
+
+- `ktp-scheduled-restart.sh`: a `.new` -> live swap failure used to be logged and
+  otherwise ignored — the server start proceeded and Discord could still report
+  a full green "restart complete" while a wave sat half-applied. Deliberately
+  NOT escalated to aborting the start (a down server is worse than a
+  partially-applied one); instead the run now forces the Discord status off
+  green, names every unswapped file, and exits non-zero. New
+  `ktp-verify-post-swap.sh` re-derives the same swap globs to check the morning
+  after — a failed `mv -f` leaves its `.new` file in place, which is itself the
+  durable record.
+- `ktp-tier2-heartbeat.sh`: now watches `tier2-last-run.json` (main) and
+  `tier2-last-run-preprod.json` (preprod) independently and names both in every
+  alert, instead of only the former. Watching one marker produced a false
+  alarm claiming the runner was offline/broken off a 65h-stale `main` marker
+  while the runner was healthy and had completed a `preprod` job 35 minutes
+  earlier — that run simply never touched the marker being watched. Either
+  marker going stale or failing is reported by name; `KTP_TIER2_WATCH_PREPROD=0`
+  is the one-line way to stop watching the preprod leg if it is ever retired,
+  without repointing it at the main marker (which would just recreate the same
+  blind spot under a different name).
+
+### `local`: bot-backed game server on ktp-game-2 for go-live testing (2026-08-25)
+
+- `ktp-game-2` is now a **bot server** and no longer a plain second game server
+  on 27017: Metamod-R hosts new_bot while ktpamx keeps loading through
+  `extensions.ini`, so plugins still run in extension mode. `ktp-game-1` is
+  deliberately untouched as the control — under Metamod `fakemeta` is reachable
+  and it is not on the fleet.
+- New targets: `local-bots-amxx`, `local-bots-plugins`, `local-bots-build`,
+  `local-bots-up`, `local-bots-match`. `local-bots-match` fills 6v6 with bots and
+  drives the real `.ktp`/`.confirm`/`.ready` flow through go-live, so the local
+  stack can finally exercise the mass-respawn stat re-wipe, wave clock and
+  halftime swap.
+- The bot server requires a `KTP_LANE_B_FAKECLIENTS` ktpamx, which is NOT a
+  production binary; `runtime/entrypoint-bots.sh` refuses to boot without one
+  rather than warning, because a bot-blind core is silent and looks healthy.
+  `local-up` / `local-up-full` start game-1 (and `data`) alone when no core has
+  been built, instead of letting game-2 crash-loop.
+- The image carries third-party binaries (new_bot, Metamod-R), both SHA-256
+  pinned, and must never be pushed to a registry. Runbook and limits — including
+  that the custom map pool ships no bot waypoints — in `build/bots/README.md`.
+### `analytics`: coordinated FPS-stat private-shadow bundle (2026-08-19)
+
+- Match analytics schema version 6 adds symmetric basic trades, all-death-reset
+  revenge, producer-clock damage conversion, temporally gated sampled objective
+  pressure, weapon kill-time player separation, and physical-life KAT coverage.
+  Every exploration reports definition parameters, source coverage, confidence,
+  private visibility, and zero rating effect; unavailable sources never become
+  observed zeroes.
+- Adds read-only SQL feeds for canonical assist context, producer-clock frag and
+  damage facts, life boundaries, positions, flag geometry, and ownership. Raw
+  coordinates, paths, position timelines, and reconstructed lives are excluded
+  from aggregate explorations; the separately named private kill/objective
+  diagnostic timeline remains local-only and rating-neutral.
+- Extends Lane B for migrations 016/017, life and canonical-assist reconciliation,
+  and a fail-closed four-repository SHA manifest. Manual full runs can pin exact
+  Infrastructure, MatchHandler, AMXX, and HLStatsX refs instead of mutable
+  branch tips.
+- Extends 14-day scrim/12man/`*-TEST` retention to `ktp_life_events` and
+  `ktp_assist_events`; draft and official retention rules are unchanged.
+- Documents the coordinated collection-branch, validation, dependency-order,
+  full-HLDS-restart, privacy, and human-canary gates in
+  `docs/FPS_STAT_EXPLORATION_BUNDLE.md`.
+
+### `analytics`: canary evidence and private event timelines (2026-08-19)
+
+- Adds a local-dump-only canary evidence bundle covering match classification,
+  current capture sources, ownership baselines/transitions, operational log
+  errors, retention eligibility, and fixture provenance.
+- Match analytics schema version 3 adds configurable fast multikills, basic
+  trades, opening duels, head-to-head results, and post-multikill objective
+  conversion. These remain private, read-only shadow outputs with no public API
+  or rating writes; replay-compressed fixtures suppress timed inferences.
+- Extends the isolated MySQL query-contract fixture and tests the new tools
+  against the same Lane B database engine used in CI.
+
+### `scripts`: the lan-web drift check now says which tree it compared (2026-08-18)
+
+`ktp-lan-web-drift.py` reads a working tree, so its verdict was about whichever
+branch was checked out — "in sync" read as "in sync with `main`" no matter what
+was actually out, and the same box could be reported clean and drifted on the
+same day with neither report wrong about anything it said.
+
+- Every report opens with a `source:` line naming the checkout and whether
+  `sites/lan-web/app` matches `LAN_WEB_BASE_REF` (default `origin/main`).
+  `UNKNOWN` is said out loud rather than omitted. Exit codes are unchanged —
+  `deploy-lan-web.sh` branches on them, so they stay an interface.
+- `deploy-lan-web.sh --apply` refuses when that tree differs from the base ref,
+  alongside the existing box-only refusal. An unresolvable base ref is refused
+  too, rather than skipped. Override: `--force-unreviewed-source`.
+- `tests/unit/test_lan_web_drift_provenance.py` pins all five states, including
+  that an edit outside `sites/lan-web/app` is not a divergence.
+
 ### `docs`: one production runbook for the stats and retention release (2026-08-17)
 
 - Adds `docs/STATS_RETENTION_PRODUCTION_DEPLOY.md`: exact reviewed source pins,

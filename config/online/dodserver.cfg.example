@@ -89,8 +89,8 @@ sv_unlagsamples 1  // ⚠️ ABSENT from all 24 live configs — kept here DELIB
                    // protection rests on a line with a rationale rather than on an engine default nobody sees.
 sv_minupdaterate 90   // Fleet-canonical (operator, 2026-08-11); the example said 100 while all 24 ran 90
 sv_maxupdaterate 120
-sv_mincmdrate 100
-sv_maxcmdrate 500
+sv_mincmdrate 100  // INERT — ReHLDS registers no such cvar (Source-engine name); setting it does nothing
+sv_maxcmdrate 500  // INERT — same as sv_mincmdrate above
 sv_minrate 100000
 sv_maxrate 1000000  // Server-side CEILING only, deliberately above sv_minrate. Fleet-canonical (operator, 2026-08-11).
                     // ⚠️ This previously read "locked equal to sv_minrate — identical client bandwidth budgets",

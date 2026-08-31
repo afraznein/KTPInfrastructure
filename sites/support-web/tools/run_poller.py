@@ -32,7 +32,10 @@ def main() -> int:
     args = ap.parse_args()
 
     results = P.poll_fleet()
-    public, detail = P.public_document(results), P.detail_document(results)
+    # Localhost fetch of hud-observer's match feed; {} when it is down, and
+    # the document simply carries no match blocks that run.
+    hud = P.fetch_hud()
+    public, detail = P.public_document(results, hud=hud), P.detail_document(results)
 
     if args.dry_run:
         import json

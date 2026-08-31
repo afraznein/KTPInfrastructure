@@ -8,7 +8,77 @@ Operational scripts for KTP game servers and data server.
 
 **Note:** Scripts with `.example` extension are templates. Copy to the actual filename and fill in your credentials before deploying.
 
+### Official team-score ingestion and projection
+
+`import_team_score_events.py` validates settled local/mounted observer
+`events.jsonl` plus adjacent `metadata.json`, requires an explicit
+`--source-server-root SOURCE_SERVER=ROOT`, binds the pair to its configured
+source path and closed analytics context, and imports
+only exact `engine-team-score-v1` rows into the append-only migration-023
+ledgers. `project_team_score.py` runs the strict
+post-match boundary, ordering, side-map, carryover, and conflict checks before
+writing a canonical neutral-team DTO and immutable release digest.
+
+Neither tool infers score from captures, players, KTPR, or `ktp_match_end`.
+See `docs/OFFICIAL_TEAM_SCORE_TELEMETRY.md` for the migration, local commands,
+quality behavior, privacy boundary, and retention integration.
+
 ## Scripts
+
+### Bounded match accumulation and automated reports
+
+Generate a deterministic v3 report bundle from normalized match facts:
+
+```bash
+python scripts/build_automated_match_report.py \
+  --facts build/match-facts/MATCH_ID.json \
+  --output-dir build/match-reports/MATCH_ID/v3
+```
+
+The bundle contains the bounded score, three-model comparison, immutable
+manifest, and optional AI-review request. AI review is advisory and separate;
+it cannot alter points, reliability gates, privacy, or publication state. See
+`docs/ACCUMULATION_V3_BOUNDED.md` and
+`docs/AUTOMATED_MATCH_REPORTS_AND_AI_CHECKPOINTS.md`.
+
+### Match readiness, report bundle, and spatial map registry
+
+`match_readiness.py` applies an aggregate-only `PASS`/`WARN`/`FAIL` gate to a
+local `.sql` or `.sql.gz` match fixture without starting MySQL or contacting a
+shared service. `build_anzio_spatial_atlas.ps1` turns one or more Anzio fixtures
+into the supported heatmap/report image set. Map geometry and analytical
+windows live in `config/analytics/spatial_maps/dod_anzio.json`.
+
+For checksum-pinned multi-map handovers, `analyze_competitive_corpus.py`
+restores every listed fixture into a separate ephemeral database and keeps
+public aggregate/derived totals separate from private positional working data.
+`build_competitive_spatial_configs.py`, `build_all_competitive_atlases.ps1`,
+and `build_spatial_atlas.ps1` extend the aggregate atlas to dataset-scoped map
+configs without treating those configs as reviewed scoring weights.
+`build_competitive_report_site.py` produces a static, directly viewable report
+site; `verify_competitive_report_site.py` checks its manifest, local links,
+expected map/match coverage, and public privacy boundary before distribution.
+
+`match_report_bundle.py` joins the canonical analytics JSON, readiness JSON,
+optional shareable accumulation JSON, and optional atlas metadata into one
+privacy-checked Markdown/JSON bundle. `metric_confidence.py` supplies versioned
+source/sample labels. Official score input is accepted only as the paired
+`objective-score-timeline.json` plus private release produced by the projector;
+the bundle validates the match/map/facts digest binding and strips it before
+publication. A bare sanitized score DTO is deliberately rejected.
+`spatial_map_registry.py` discovers all KTP match configs
+and produces the map readiness matrix; it does not infer geometry or waypoints.
+
+`match_fixture_storage.py` measures SQL archive/transfer size and match-tagged
+payload without mislabeling that value as InnoDB allocation or a human-match
+average. `release_candidate_manifest.py` binds the three release repositories,
+test-only dependencies, built artifacts, and migrations to exact commits and
+SHA-256 values. `measure_command.py` writes elapsed/CPU/peak-RSS evidence for a
+local command and preserves its exit status.
+
+See `docs/MATCH_REPORT_READINESS.md` for commands and
+`docs/MATCH_METRIC_CONTRACT_V1.md` for normative metric definitions. The first
+human-match procedure is `docs/runbooks/FIRST_REAL_MATCH_ANALYTICS.md`.
 
 ### draft_day_monitor.py
 Monitors CPU steal time, RAM, load, and game server stats during high-load events.
@@ -111,6 +181,21 @@ cp ktp-scheduled-restart.sh.example ktp-scheduled-restart.sh
 0 3 * * * /home/dodserver/ktp-scheduled-restart.sh >> /home/dodserver/log/scheduled-restart.log 2>&1
 ```
 
+**Swap failures:** a `.new` -> live `mv -f` that fails is logged, but never aborts the server start
+that follows (leaving players on a DOWN server is a worse outcome than one running a partial wave).
+Instead a swap failure forces the Discord status off green, exits the script non-zero even when every
+server comes back up, and — because the failed `mv` leaves the `.new` file exactly where it was —
+`ktp-verify-post-swap.sh` (below) is the durable, run-anytime way to confirm a wave fully activated.
+
+### ktp-verify-post-swap.sh
+Read-only, run on a game host any time after a nightly restart. Re-derives the same swap-glob set
+`ktp-scheduled-restart.sh` uses and reports any `.new` file still sitting unswapped — the durable
+signature of an incomplete activation, independent of whether you caught the restart log live.
+
+```bash
+./ktp-verify-post-swap.sh   # exit 0 = fully activated, exit 1 = leftover .new file(s) found
+```
+
 ### stage-wave.py
 **The standard way to push a wave to the fleet — prefer this over calling `deploy-to-fleet.py` directly.**
 It wraps that script (single source of truth for the 24-instance topology and the password-from-env rule)
@@ -165,6 +250,27 @@ python3 deploy-to-fleet.py \
 ```
 
 **First live use:** always pair `--hosts <one> --ports <one>` as a smoke test before `--all`. The dry-run validates routing + arg parsing locally; the SCP + remote-md5-verify path is paramiko-shaped boilerplate but should still be confirmed on one instance before broadcasting.
+
+### sync-runner-stack.py
+**Mirrors the Tier-2 runner's stack onto a live fleet instance — the deploy-flow step that had a checklist line but no tool.**
+The runner is must-match-fleet; a green suite certifying a stack production doesn't run is the worst
+failure mode a test tier has, and `ktp-tier2-stack-drift.py` could only ever report it.
+
+- **Syncs exactly what the tripwire alerts on**, imported from that module rather than restated — the
+  repo already carries several hand-kept copies of the test-mode plugin list, and this is not another.
+- **Never touches** KTPMatchHandler / KTPPracticeMode (`KTP_TEST_MODE` builds, where byte-equality with
+  the fleet is wrong) or KTPHudObserver (rebuilt from upstream per run). Asserted, not just documented.
+- **Dry run by default.** `--apply` backs each drifted file up on the runner first, then verifies md5
+  after the pull and again after the push. It refuses during a live Tier-2 run, and refuses when the
+  reference instance holds staged `.new` files.
+
+Holds no IPs — hosts come from `KTP_TIER2_SSH_HOST` / `KTP_DRIFT_REF_HOST`. Full procedure and ordering:
+`docs/RELEASE_CHECKLISTS.md` § Tier-2 runner re-sync.
+
+```bash
+python3 sync-runner-stack.py            # what drifted?
+python3 sync-runner-stack.py --apply    # sync it
+```
 
 ### ktp-organize-hltv-demos.sh
 Organizes HLTV demo files into hostname/matchtype directories.

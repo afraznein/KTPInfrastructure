@@ -7,6 +7,42 @@
 
 ---
 
+> ## ⛔ CORRECTED 2026-08-29 — do not act on the numbers below without reading this
+>
+> This is a **February 2026 proposal**, kept as a record. Four of its premises were
+> measured against the engine source and the live enforcement set on 2026-08-29 and
+> do not hold. The proposal is not the current fleet configuration.
+>
+> **1. `rate 100000` is NOT an "enforced minimum".** KTPCvarChecker pins it to
+> *exactly* 100000 — the calibrated and alternate values are the same number, a
+> locked single value, not a range. The proposed `rate 1000000` therefore cannot
+> take effect for any compliant client while that lock stands; a player who sets it
+> is corrected back.
+>
+> **2. The engine is not the bandwidth ceiling, and never was.** `MAX_RATE` is
+> **1,000,000** and `MIN_RATE` is 1,000 (`rehlds/engine/net.h:108-109`). The real
+> per-client ceiling is the plugin lock in 1, so "the engine caps us" is the wrong
+> diagnosis for any bandwidth question.
+>
+> **3. `sv_mincmdrate` / `sv_maxcmdrate` DO NOT EXIST in this engine.** Both return
+> **0** cvar registrations across `rehlds/engine/*.cpp`, against a positive control
+> of **2 each** for `sv_minupdaterate` / `sv_maxupdaterate`, which do exist. They are
+> Source-engine names. Config lines setting them are inert — anyone tuning them is
+> tuning nothing, and the lines survive in several `.cfg` templates.
+>
+> **4. `ex_interp 0` in the proposed Quick Reference is now a violation.**
+> KTPCvarChecker enforces `ex_interp` in the range **0.009 – 0.05**, so 0 is below
+> the floor and gets corrected. Since v7.35 the plugin also logs `NETOBS_INTERP_LOW`
+> when `ex_interp` falls under `1/cl_updaterate`.
+>
+> ➡️ **Current enforced ranges, for reference:** `cl_updaterate` 100–120 ·
+> `cl_cmdrate` 100–1000 · `rate` 100000 (locked) · `ex_interp` 0.009–0.05 ·
+> `fps_max` 60–750.
+
+---
+
+---
+
 ## Priority 1: Fix Quick Reference (Actively Bad Advice)
 
 The "Quick Reference" copy/paste block in `KTP Cvar List.md` currently recommends:

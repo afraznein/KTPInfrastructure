@@ -27,6 +27,14 @@ set -uo pipefail
 
 SRC="${KTP_BACKUP_DIR:-/opt/backups}"
 HOSTS="${KTP_OFFSITE_HOSTS:-}"
+# Targets that speak rsync/SFTP but have NO shell (Hetzner Storage Box).
+# Kept as a SEPARATE list, not folded into KTP_OFFSITE_HOSTS: the transport
+# differs, and a shell-capable host silently taking the shell-less path would
+# lose the md5 verification without anything saying so.
+RSYNC_HOSTS="${KTP_OFFSITE_RSYNC_HOSTS:-}"
+RSYNC_RSH="${KTP_OFFSITE_RSYNC_RSH:-}"
+RSYNC_DB_DIR="${KTP_OFFSITE_RSYNC_DB_DIR:-${KTP_OFFSITE_DB_DIR:-}}"
+
 DEST="${KTP_OFFSITE_DB_DIR:-}"
 DRYRUN="${KTP_DB_DRYRUN:-0}"
 
@@ -34,6 +42,10 @@ fail() { echo "[db-offsite] FAILED: $*" >&2; exit 1; }
 
 [ -n "$HOSTS" ] || fail "KTP_OFFSITE_HOSTS is unset. Refusing to guess a target."
 [ -n "$DEST" ]  || fail "KTP_OFFSITE_DB_DIR is unset. Refusing to guess a path."
+if [ -n "$RSYNC_HOSTS" ]; then
+    [ -n "$RSYNC_RSH" ] || fail "KTP_OFFSITE_RSYNC_HOSTS is set but KTP_OFFSITE_RSYNC_RSH is not."
+    [ -n "$RSYNC_DB_DIR" ] || fail "KTP_OFFSITE_RSYNC_HOSTS is set but no destination dir is."
+fi
 [ -d "$SRC" ]   || fail "source $SRC does not exist"
 
 WORK="$(mktemp -d)"
@@ -63,6 +75,8 @@ if [ "$DRYRUN" = "1" ]; then
     echo "[db-offsite] DRY RUN -- nothing will be copied"
     sed 's/^/    /' "$WORK/files.txt"
     echo "[db-offsite] targets that WOULD be written: $HOSTS -> $DEST"
+    [ -n "$RSYNC_HOSTS" ] && echo "[db-offsite] rsync-only targets: $RSYNC_HOSTS -> ${RSYNC_DB_DIR}"
+    [ -z "$RSYNC_HOSTS" ] && echo "[db-offsite] rsync-only targets: (none configured)"
     exit 0
 fi
 
@@ -87,6 +101,34 @@ for H in $HOSTS; do
         MISSING=$(comm -23 <(sort "$WORK/local.md5") <(sort "$WORK/remote.md5") | wc -l)
         echo "[db-offsite] $H: $MISSING of $COUNT dump(s) missing or corrupt on arrival" >&2
         comm -23 <(sort "$WORK/local.md5") <(sort "$WORK/remote.md5") | head -5 | sed 's/^/    /' >&2
+        RC=1
+    fi
+done
+
+
+# ---------------------------------------------------------------- shell-less
+# A Hetzner Storage Box speaks rsync and SFTP but offers NO general shell, so
+# neither the mkdir nor the far-side md5sum above can run against it. rsync's
+# own dry-run itemize compares both sides through its protocol instead, and
+# with --checksum that is the same CONTENT claim the md5 pass makes -- it just
+# needs rsync on the far end rather than a shell.
+#
+# --mkpath creates the destination directory (rsync >= 3.2.3), replacing the
+# `ssh mkdir -p` that a Storage Box cannot serve.
+for H in $RSYNC_HOSTS; do
+    echo "[db-offsite] --- $H (rsync-only target)"
+    rsync -a --mkpath --partial --human-readable -e "$RSYNC_RSH"           --files-from="$WORK/files.txt" "$SRC/" "$H:$RSYNC_DB_DIR/"         || { echo "[db-offsite] $H: rsync reported failure" >&2; RC=1; continue; }
+
+    # Any itemized FILE line is a mismatch. Directory lines carry 'd' in the
+    # second column and are not content, so they are not failures.
+    DIFFS=$(rsync -ani --checksum -e "$RSYNC_RSH"                   --files-from="$WORK/files.txt" "$SRC/" "$H:$RSYNC_DB_DIR/" 2>/dev/null             | grep -E '^[<>ch.*][fL]' || true)
+    if [ -z "$DIFFS" ]; then
+        echo "[db-offsite] $H: $COUNT/$COUNT verified by rsync --checksum"
+    else
+        echo "[db-offsite] $H: $(printf '%s
+' "$DIFFS" | grep -c .) of $COUNT dump(s) missing or corrupt on arrival" >&2
+        printf '%s
+' "$DIFFS" | head -5 | sed 's/^/    /' >&2
         RC=1
     fi
 done

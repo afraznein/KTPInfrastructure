@@ -1,0 +1,52 @@
+{
+  "schema_version": 3,
+  "match_id": "golden-development-TEST",
+  "match": {
+    "match_id": "golden-development-TEST",
+    "map_name": "dod_anzio",
+    "halves_played": 1,
+    "duration_seconds": 30,
+    "is_test_match": 1,
+    "public_teams": [
+      {"team_key": "team_a", "display_name": "Gold Team", "side_by_half": [{"half": 1, "side": "allies"}]},
+      {"team_key": "team_b", "display_name": "Blue Team", "side_by_half": [{"half": 1, "side": "axis"}]}
+    ]
+  },
+  "quality": {"status": "PASS"},
+  "teams": [
+    {
+      "public_team_key": "team_a", "players": 1,
+      "kills": 5, "deaths": 4, "plus_minus": 1, "assists": 2,
+      "headshots": 1, "team_kills": 0, "suicides": 0,
+      "damage_dealt": 600, "damage_taken": 500, "damage_differential": 100,
+      "capture_credits": 1, "cap_breaks": 0, "shots": 30, "hits": 10,
+      "raw_accuracy": 0.3333333333333333
+    },
+    {
+      "public_team_key": "team_b", "players": 1,
+      "kills": 4, "deaths": 5, "plus_minus": -1, "assists": 0,
+      "headshots": 0, "team_kills": null, "suicides": null,
+      "damage_dealt": null, "damage_taken": null, "damage_differential": null,
+      "capture_credits": 0, "cap_breaks": null, "shots": 0, "hits": 0,
+      "raw_accuracy": null
+    }
+  ],
+  "players": [
+    {
+      "player_name_at_match": "Alpha", "public_team_key": "team_a",
+      "kills": 5, "deaths": 4, "plus_minus": 1, "assists": 2,
+      "headshots": 1, "team_kills": 0, "suicides": 0,
+      "damage_dealt": 600, "damage_taken": 500, "damage_differential": 100,
+      "capture_credits": 1, "cap_breaks": 0, "shots": 30, "hits": 10,
+      "raw_accuracy": 0.3333333333333333
+    },
+    {
+      "player_name_at_match": "Bravo", "public_team_key": "team_b",
+      "kills": 4, "deaths": 5, "plus_minus": -1, "assists": 0,
+      "headshots": 0, "team_kills": null, "suicides": null,
+      "damage_dealt": null, "damage_taken": null, "damage_differential": null,
+      "capture_credits": 0, "cap_breaks": null, "shots": 0, "hits": 0,
+      "raw_accuracy": null
+    }
+  ]
+}

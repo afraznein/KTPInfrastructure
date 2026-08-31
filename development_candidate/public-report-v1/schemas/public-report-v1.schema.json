@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ktp.example/schemas/1.2.0/public-report-v1.json",
+  "title": "KTP public descriptive match report v1 contract 1.2.0",
+  "type": "object",
+  "required": ["schema_version", "contract_version", "match", "status", "quality", "privacy", "teams", "players"],
+  "properties": {
+    "schema_version": {"const": "public-report-v1"},
+    "contract_version": {"const": "1.2.0"},
+    "match": {
+      "type": "object",
+      "required": ["match_id", "map_name", "halves_played", "duration_seconds", "synthetic"],
+      "properties": {
+        "match_id": {"$ref": "#/$defs/publicToken"},
+        "map_name": {"$ref": "#/$defs/publicToken"},
+        "halves_played": {"type": "integer", "minimum": 1, "maximum": 10},
+        "duration_seconds": {"type": ["number", "null"], "minimum": 0, "maximum": 21600},
+        "synthetic": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "status": {"$ref": "#/$defs/publicStatus"},
+    "quality": {
+      "type": "object",
+      "required": ["analytics_status", "readiness_status"],
+      "properties": {
+        "analytics_status": {"$ref": "#/$defs/publicStatus"},
+        "readiness_status": {"$ref": "#/$defs/publicStatus"}
+      },
+      "additionalProperties": false
+    },
+    "privacy": {
+      "type": "object",
+      "required": ["classification", "player_identity", "ratings_and_accumulated_scoring", "individual_positions"],
+      "properties": {
+        "classification": {"const": "public_descriptive"},
+        "player_identity": {"const": "display_name_only"},
+        "ratings_and_accumulated_scoring": {"const": "not_exported"},
+        "individual_positions": {"const": "not_exported"}
+      },
+      "additionalProperties": false
+    },
+    "teams": {
+      "type": "array", "minItems": 2, "maxItems": 2,
+      "prefixItems": [
+        {"allOf": [{"$ref": "#/$defs/team"}, {"properties": {"team_key": {"const": "team_a"}}}]},
+        {"allOf": [{"$ref": "#/$defs/team"}, {"properties": {"team_key": {"const": "team_b"}}}]}
+      ]
+    },
+    "players": {"type": "array", "items": {"$ref": "#/$defs/player"}}
+  },
+  "$defs": {
+    "publicToken": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$"},
+    "publicStatus": {"enum": ["PASS", "WARN", "FAIL", "UNAVAILABLE"]},
+    "teamKey": {"enum": ["team_a", "team_b"]},
+    "displayName": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]+$"},
+    "metricStatus": {
+      "type": "object",
+      "required": ["availability", "confidence", "reason_code"],
+      "properties": {
+        "availability": {"enum": ["available", "low_sample", "unavailable"]},
+        "confidence": {"enum": ["exact", "synthetic", "descriptive", "low_sample", "unavailable"]},
+        "reason_code": {"enum": ["none", "not_supplied", "low_sample", "synthetic_fixture", "undefined_zero_denominator"]}
+      },
+      "additionalProperties": false
+    },
+    "metricStatusMap": {
+      "type": "object",
+      "required": ["kills", "deaths", "plus_minus", "assists", "headshots", "team_kills", "suicides", "damage_dealt", "damage_taken", "damage_differential", "capture_credits", "cap_breaks", "shots", "hits", "raw_accuracy"],
+      "properties": {
+        "kills": {"$ref": "#/$defs/metricStatus"}, "deaths": {"$ref": "#/$defs/metricStatus"},
+        "plus_minus": {"$ref": "#/$defs/metricStatus"}, "assists": {"$ref": "#/$defs/metricStatus"},
+        "headshots": {"$ref": "#/$defs/metricStatus"}, "team_kills": {"$ref": "#/$defs/metricStatus"},
+        "suicides": {"$ref": "#/$defs/metricStatus"}, "damage_dealt": {"$ref": "#/$defs/metricStatus"},
+        "damage_taken": {"$ref": "#/$defs/metricStatus"}, "damage_differential": {"$ref": "#/$defs/metricStatus"},
+        "capture_credits": {"$ref": "#/$defs/metricStatus"}, "cap_breaks": {"$ref": "#/$defs/metricStatus"},
+        "shots": {"$ref": "#/$defs/metricStatus"}, "hits": {"$ref": "#/$defs/metricStatus"},
+        "raw_accuracy": {"$ref": "#/$defs/metricStatus"}
+      },
+      "additionalProperties": false
+    },
+    "boxMetrics": {
+      "type": "object",
+      "required": ["kills", "deaths", "plus_minus", "assists", "headshots", "team_kills", "suicides", "damage_dealt", "damage_taken", "damage_differential", "capture_credits", "cap_breaks", "shots", "hits", "raw_accuracy", "metric_status"],
+      "properties": {
+        "kills": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "deaths": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "plus_minus": {"type": ["number", "null"], "minimum": -1000000, "maximum": 1000000}, "assists": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "headshots": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "team_kills": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "suicides": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "damage_dealt": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "damage_taken": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "damage_differential": {"type": ["number", "null"], "minimum": -1000000, "maximum": 1000000},
+        "capture_credits": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "cap_breaks": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "shots": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000}, "hits": {"type": ["integer", "null"], "minimum": 0, "maximum": 1000000},
+        "raw_accuracy": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "metric_status": {"$ref": "#/$defs/metricStatusMap"}
+      }
+    },
+    "sideMapping": {
+      "type": "object", "required": ["half", "side"],
+      "properties": {"half": {"type": "integer", "minimum": 1, "maximum": 10}, "side": {"enum": ["allies", "axis", "unknown"]}},
+      "additionalProperties": false
+    },
+    "team": {
+      "allOf": [
+        {"$ref": "#/$defs/boxMetrics"},
+        {"type": "object", "required": ["team_key", "display_name", "side_by_half", "players"],
+         "properties": {
+           "team_key": {"$ref": "#/$defs/teamKey"}, "display_name": {"$ref": "#/$defs/displayName"},
+           "side_by_half": {"type": "array", "items": {"$ref": "#/$defs/sideMapping"}},
+           "players": {"type": "integer", "minimum": 0, "maximum": 128}
+         }}
+      ],
+      "unevaluatedProperties": false
+    },
+    "player": {
+      "allOf": [
+        {"$ref": "#/$defs/boxMetrics"},
+        {"type": "object", "required": ["name", "team_key"],
+         "properties": {"name": {"$ref": "#/$defs/displayName"}, "team_key": {"$ref": "#/$defs/teamKey"}}}
+      ],
+      "unevaluatedProperties": false
+    }
+  },
+  "additionalProperties": false
+}

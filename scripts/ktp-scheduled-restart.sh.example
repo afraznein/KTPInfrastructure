@@ -1,13 +1,17 @@
 #!/bin/bash
 #
-# .EXAMPLE PROVENANCE: regenerated verbatim from the deployed fleet canonical
-# (gitignored scripts/ktp-scheduled-restart.sh) on 2026-08-04 with only the
-# relay AUTH_SECRET + channel IDs blanked. The prior .example had structurally
-# REGRESSED from the canonical (static 5-port loops with no .ktp-disabled
-# handling, a fixed sleep-10 stop wait instead of the 30s poll, no CPU-pinning
-# block) — provisioning a host from it re-introduced three fixed production
-# bugs. When the canonical changes, regenerate this file the same way; do not
-# hand-maintain it as a separate lineage.
+# THIS FILE IS THE SOURCE OF TRUTH for the scheduled restart. The gitignored
+# scripts/ktp-scheduled-restart.sh beside it is a local working copy holding the
+# live AUTH_SECRET and channel IDs; regenerate it FROM here, filling only the
+# three placeholders below. Never the other way round, and never hand-maintain
+# the two as separate lineages - that is how a fleet ends up on a third shape.
+#
+# The 2026-08-04 header claimed the opposite direction. Following it left this
+# file structurally AHEAD of both the fleet and the copy it named, and left that
+# copy three weeks stale on a retired relay secret.
+#
+# Which lineage wins, per-host blast radius, and the drift check:
+# docs/runbooks/SCHEDULED_RESTART_LINEAGES.md.
 # KTP Game Server Scheduled Restart Script
 # Restarts all DoD game servers and sends Discord notification
 #
@@ -66,7 +70,7 @@ CHANNEL_EXTERNAL="YOUR_EXTERNAL_CHANNEL_ID"     # 1.3 Discord
 # Detect server location from IP
 SERVER_IP=$(hostname -I | awk '{print $1}')
 case "$SERVER_IP" in
-    74.91.112.182|74.91.121.9) SERVER_NAME="KTP - Atlanta" ;;
+    74.91.121.9) SERVER_NAME="KTP - Atlanta" ;;
     74.91.126.55) SERVER_NAME="KTP - Dallas" ;;
     66.163.114.109) SERVER_NAME="KTP - Denver" ;;
     74.91.123.64) SERVER_NAME="KTPSCRIM - New York" ;;
@@ -270,6 +274,7 @@ log "All servers stopped"
 log "Checking for staged .new files..."
 SWAP_COUNT=0
 SWAP_FAILED=0
+SWAP_FAILED_FILES=()
 SWAP_BASES=()
 for port in "${PORTS[@]}"; do
     SWAP_BASES+=(~/dod-$port/serverfiles)
@@ -300,6 +305,7 @@ for BASE in "${SWAP_BASES[@]}"; do
         else
             log "  [$port] FAILED to swap: $new_file"
             SWAP_FAILED=$((SWAP_FAILED + 1))
+            SWAP_FAILED_FILES+=("[$port] $new_file")
         fi
     done
 done
@@ -307,6 +313,23 @@ if [ "$SWAP_COUNT" -eq 0 ] && [ "$SWAP_FAILED" -eq 0 ]; then
     log "No .new files pending — nothing to swap"
 else
     log "Swap complete: $SWAP_COUNT succeeded, $SWAP_FAILED failed"
+fi
+
+# A non-zero SWAP_FAILED means this host activated a wave PARTIALLY: some
+# targets are now running new binaries, others are still on old ones. For a
+# single-artifact deploy that's a nuisance; for a coupled multi-artifact wave
+# it can mean two halves of the stack that were never meant to run together
+# are now running together. Deliberately NOT escalated to aborting the server
+# start below — refusing to start leaves players on a server that is DOWN,
+# which is worse than one running a mismatched-but-working stack, and the
+# .new file that failed to move is itself left behind as a durable record
+# (see scripts/ktp-verify-post-swap.sh — check the morning after, don't rely
+# on catching this log line live).
+if [ "$SWAP_FAILED" -gt 0 ]; then
+    log "SWAP FAILURE: $SWAP_FAILED file(s) did NOT activate — wave PARTIALLY applied on this host:"
+    for f in "${SWAP_FAILED_FILES[@]}"; do
+        log "  UNSWAPPED: $f"
+    done
 fi
 
 # ============================================================================
@@ -494,6 +517,17 @@ if [ -n "$EXT_FAILED_PORTS" ]; then
     fi
 fi
 
+# Swap failure rides into the embed too, and — unlike the checks above — it
+# must escalate even when every server came up green. "All servers restarted
+# successfully" while a wave sits half-applied is the exact silent outcome
+# this guard exists to close.
+if [ "$SWAP_FAILED" -gt 0 ]; then
+    FINAL_DESC="$FINAL_DESC\\n**SWAP FAILED on $SWAP_FAILED file(s) — wave PARTIALLY applied, see restart log:**${SWAP_FAILED_FILES[*]}"
+    if [ "$FINAL_COLOR" -eq "$COLOR_GREEN" ]; then
+        FINAL_COLOR=$COLOR_ORANGE
+    fi
+fi
+
 log "Updating Discord messages with final status..."
 if [ -n "$MSG_ID_KTP" ]; then
     edit_discord_embed "$CHANNEL_KTP" "$MSG_ID_KTP" "$FINAL_TITLE" "$FINAL_DESC" "$FINAL_COLOR" "$SERVER_NAME - $FOOTER_TIMESTAMP"
@@ -505,3 +539,11 @@ fi
 log "Scheduled restart complete. $RUNNING/$EXPECTED_RUNNING servers running."
 
 # Cron will be restored by trap on EXIT
+
+# Non-zero exit on a swap failure — even when every server ends up running —
+# so cron's own log/mail path and any external wrapper see this run as
+# failed, not just the Discord embed. The trap above still fires on this exit
+# and restores the monitor cron either way.
+if [ "$SWAP_FAILED" -gt 0 ]; then
+    exit 1
+fi

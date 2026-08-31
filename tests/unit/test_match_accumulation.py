@@ -6,6 +6,7 @@ from scripts.match_accumulation import (
     assert_shareable_safe,
     derive_private_positions,
     load_profile,
+    load_position_profile,
     validate_output_separation,
 )
 
@@ -48,6 +49,14 @@ def test_default_shadow_profile_targets_ten_percent_corpus_settings():
     assert profile["scenarios"]["last_flag_defense_max_per_half"] == 60.0
 
 
+def test_v3_profile_can_drive_private_position_engine_without_legacy_events():
+    profile = load_position_profile(
+        DEFAULT_PROFILE.parent / "accumulation_v3_bounded.toml"
+    )
+    assert profile["profile"]["name"] == "accumulation_v3_bounded"
+    assert profile["position"]["unopposed_floor_multiplier"] == 0.25
+
+
 def test_private_heatmap_drives_capped_shareable_points():
     samples = [
         {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
@@ -63,6 +72,42 @@ def test_private_heatmap_drives_capped_shareable_points():
     assert private[0]["awarded_position_points"] == 6.0
     assert private[0]["heatmap_cells"]
     assert private[0]["flag_breakdown"][0]["nearest_flag"] == "mid"
+
+
+def test_consecutive_unopposed_presence_decays_but_active_contest_resets_it():
+    profile = {
+        **PROFILE,
+        "position": {
+            **PROFILE["position"], "max_points_per_half": 100.0,
+            "unopposed_full_value_seconds": 10.0,
+            "unopposed_reduced_value_seconds": 15.0,
+            "unopposed_reduced_multiplier": 0.50,
+            "unopposed_floor_multiplier": 0.25,
+        },
+        "scenarios": {
+            "active_contest_radius_units": 100.0,
+            "active_contest_multiplier": 1.0,
+        },
+    }
+    opponent = player(
+        player_id=8, steam_id="STEAM_1:0:8", player_name_at_match="Opponent",
+        team=2, team_name="Axis",
+    )
+    samples = [
+        {"player_id": 7, "team": 1, "half": 1, "pos_x": 0, "pos_y": 0,
+         "pos_z": 0, "game_time": value}
+        for value in (5, 10, 15, 20)
+    ] + [
+        # The final tick is actively contested, so it returns to full value.
+        {"player_id": 8, "team": 2, "half": 1, "pos_x": 10, "pos_y": 0,
+         "pos_z": 0, "game_time": 20},
+    ]
+    flags = [{"flag_index": 1, "flag_name": "mid", "origin_x": 0, "origin_y": 0}]
+    points, _ = derive_private_positions(
+        [player(), opponent], samples, flags, profile
+    )
+    # 5 + 5 + 2.5, then active contest resets the fourth tick to 5.
+    assert points[7]["position_points"] == 17.5
 
 
 def test_scenarios_reward_enemy_pressure_active_contest_and_last_flag_kill():

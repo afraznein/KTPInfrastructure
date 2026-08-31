@@ -609,7 +609,12 @@ for i in $(seq 1 $NUM_INSTANCES); do
     if [ ! -f "$CONFIGS_DIR/dodx.ini" ]; then
         cat > "$CONFIGS_DIR/dodx.ini" << 'EOF'
 ; DODX Module Configuration
-pdata_offset = 4
+; 5, not 4: PDOFFSET_AMMO_BASE 280 + 5 = int 285 = byte 0x474, and m_rgAmmoLast at
+; 0x4F4 is exactly 32 ints later. 4 computes m_rgAmmo[8] -- the wrong ammo type, and
+; the fleet-wide grenade failure named in KTPAMXX/CHANGELOG.md.
+; dodx 2.7.32 DELETED the runtime auto-detect, so a wrong value here no longer
+; self-corrects: an instance provisioned with 4 is born broken.
+pdata_offset = 5
 EOF
         echo "  -> Created dodx.ini"
     fi
