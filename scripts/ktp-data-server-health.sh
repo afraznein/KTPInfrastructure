@@ -337,7 +337,12 @@ if [ ${#new_down[@]} -eq 0 ] && [ ${#recovered[@]} -eq 0 ]; then
     exit 0
 fi
 
-echo "[$(ts)] TRANSITIONS: new_down=${#new_down[@]} recovered=${#recovered[@]}"
+# Names alongside the counts — without them, a recovered blip is
+# undiagnosable after the fact, since only the Discord embed carries which
+# item transitioned.
+new_down_names=$(printf '%s\n' "${new_down[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
+recovered_names=$(printf '%s\n' "${recovered[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
+echo "[$(ts)] TRANSITIONS: new_down=${#new_down[@]}${new_down_names:+ [${new_down_names}]} recovered=${#recovered[@]}${recovered_names:+ [${recovered_names}]}"
 
 # Build Discord embed body
 desc=""
