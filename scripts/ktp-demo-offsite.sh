@@ -3,10 +3,29 @@
 #
 # WHY A SUBSET. The archive is ~150 GB and grows ~47 GB/month; neither offsite
 # host has room for it twice, and a full copy would fill the larger one within
-# about a month. Operator ruling 2026-08-22: keep league matches (`ktp` /
-# `ktpOT`) and everything recorded during a LAN, regardless of type. Measured at
-# the time of that ruling that is 485 files / ~34.6 GB against 1,953 / ~149.8 GB
-# total -- comfortable on both hosts, with years of headroom.
+# about a month. Operator ruling 2026-08-22: keep league matches and everything
+# recorded during a LAN, regardless of type.
+#
+# WIDENED 2026-08-30: "league matches" was implemented as literally `ktp_` and
+# `ktpOT_` -- which is not what KTPMatchHandler's real match types are. Two
+# defects, not one:
+#   1. `.scrim`/`.draft`/`.12man` are just as real a match as `.ktp`, and were
+#      excluded outright unless a LAN window happened to also cover them.
+#   2. `ktpOT_` (mixed case) never matched anything. The renamer forces every
+#      match type to lowercase before it touches a filename (hltv-demo-renamer.py,
+#      `window.match_type.lower()`) because the organizer's own regex is
+#      `[a-z0-9]+` and rejects mixed case -- so an OT demo is named `ktpot_...`,
+#      never `ktpOT_...`. That clause was dead on arrival.
+# Now matches all six real types: ktp, ktpot, draft, draftot, 12man, scrim.
+#
+# ⚠️ THIS CHANGES THE STORAGE MATH THE 08-22 RULING DEPENDED ON. Measured
+# 2026-08-30 against the live archive: the old selector kept 341 files; every
+# one of the six real-type prefixes together match 1,989 of 1,989 `.dem` files
+# in the tree -- effectively the WHOLE ~150 GB archive, not a comfortable
+# subset of it. There is currently no "auto"/pickup noise left under this path
+# to exclude (it appears to get pruned before organizing), so on today's
+# archive this is no longer "a subset with years of headroom" -- re-check
+# offsite host capacity before relying on that framing again.
 #
 # WHY OFF-PROVIDER, NOT JUST OFF-HOST. Most of the estate -- including the data
 # server the demos live on -- sits with a single provider whose terms state it
@@ -74,8 +93,13 @@ WINDOWS=$(wc -l < "$WORK/windows.txt")
 # backs up, so say it rather than letting the count silently mean "type-only".
 echo "[demo-offsite] LAN windows read from the database: $WINDOWS"
 
-# League matches, always.
-find "$SRC" -type f \( -name 'ktp_*.dem' -o -name 'ktpOT_*.dem' \) -print > "$LIST"
+# Real matches, always -- all six KTPMatchHandler match types. Lowercase only:
+# the renamer forces every type to lowercase before naming a file (organizer
+# regex is `[a-z0-9]+`), so a `ktpOT_`/`draftOT_` clause here would never match.
+find "$SRC" -type f \( -name 'ktp_*.dem' -o -name 'ktpot_*.dem' \
+                        -o -name 'draft_*.dem' -o -name 'draftot_*.dem' \
+                        -o -name '12man_*.dem' -o -name 'scrim_*.dem' \) \
+     -print > "$LIST"
 
 # Everything recorded during a LAN, whatever its type.
 while read -r start end; do
@@ -96,6 +120,19 @@ echo "[demo-offsite] selected $COUNT files ($(( KB / 1024 / 1024 )) GB / $(( KB 
 # rsync wants paths relative to the source root.
 sed "s|^$SRC/||" "$LIST" > "$WORK/rel.txt"
 
+# A manifest shipped BESIDE the demos, not just this run's stdout log. The LAN
+# window that drove part of the selection lives only in the database -- if
+# that table is ever lost or edited, this file is the only surviving record of
+# what was supposed to be here, letting a restore audit by listing instead of
+# trusting a long-gone exit code (docs/BACKUP_SCOPE.md's own principle).
+MANIFEST_NAME="ktp-demo-manifest.txt"
+{
+    echo "# ktp-demo-offsite selection manifest -- $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "# $COUNT files, $(( KB / 1024 / 1024 )) GB / $(( KB / 1024 )) MB"
+    echo "# types: ktp, ktpot, draft, draftot, 12man, scrim -- plus anything recorded during a LAN window"
+    cat "$WORK/rel.txt"
+} > "$WORK/$MANIFEST_NAME"
+
 if [ "$DRYRUN" = "1" ]; then
     echo "[demo-offsite] DRY RUN -- nothing will be copied"
     echo "[demo-offsite] by type:"
@@ -105,6 +142,7 @@ if [ "$DRYRUN" = "1" ]; then
     echo "[demo-offsite] targets that WOULD be written: $HOSTS -> $DEST"
     [ -n "$RSYNC_HOSTS" ] && echo "[demo-offsite] rsync-only targets: $RSYNC_HOSTS -> ${RSYNC_DEMO_DIR}"
     [ -z "$RSYNC_HOSTS" ] && echo "[demo-offsite] rsync-only targets: (none configured)"
+    echo "[demo-offsite] manifest that WOULD ship to each target: $MANIFEST_NAME"
     exit 0
 fi
 
@@ -133,6 +171,8 @@ for H in $HOSTS; do
         RC=1
     else
         echo "[demo-offsite] $H: $REMOTE_COUNT/$COUNT present"
+        rsync -a "$WORK/$MANIFEST_NAME" "$H:$DEST/$MANIFEST_NAME" \
+            || { echo "[demo-offsite] $H: manifest ship failed -- remote copy now has no durable record of what should be there" >&2; RC=1; }
     fi
 done
 
@@ -151,6 +191,8 @@ for H in $RSYNC_HOSTS; do
     DIFFS=$(rsync -ani -e "$RSYNC_RSH"                   --files-from="$WORK/rel.txt" "$SRC/" "$H:$RSYNC_DEMO_DIR/" 2>/dev/null             | grep -E '^[<>ch.*][fL]' || true)
     if [ -z "$DIFFS" ]; then
         echo "[demo-offsite] $H: $COUNT/$COUNT verified by rsync itemize"
+        rsync -a -e "$RSYNC_RSH" "$WORK/$MANIFEST_NAME" "$H:$RSYNC_DEMO_DIR/$MANIFEST_NAME" \
+            || { echo "[demo-offsite] $H: manifest ship failed -- remote copy now has no durable record of what should be there" >&2; RC=1; }
     else
         echo "[demo-offsite] $H: $(printf '%s
 ' "$DIFFS" | grep -c .) of $COUNT file(s) missing or wrong size on arrival" >&2
