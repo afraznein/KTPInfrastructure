@@ -7,13 +7,15 @@ score.
 
 | Metric | Required evidence |
 |---|---|
-| `positional_impact` | Closed match, positions, valid halves, authorized schema-22 cadence, and adequate frag/damage spatial coverage. |
+| `positional_impact` | Closed match, positions, valid halves, authorized schema-22+ cadence, schema-23 explicit alive/non-spectator state, one manifest-matched captured BSP SHA-256, and adequate frag/damage spatial coverage. |
 | `combat_context` | Closed match, frags and damage, valid halves, roster consistency, and adequate frag/damage spatial coverage. |
 | `objective_control` | Closed match, valid halves, authorized schema-22 capture, objective lifecycle reconciliation, and flag ownership coverage. |
 
 Schema-21 capture is a membership-only partial contract. It may support private
 roster-interval diagnostics, but it never satisfies the schema-22 requirements
 for `positional_impact` or `objective_control`.
+Schema 22 may satisfy objective-control evidence, but positional impact remains
+`unavailable` until schema 23 state and captured-revision evidence pass.
 
 States are deterministic:
 
@@ -28,13 +30,16 @@ player identifiers, raw coordinates, routes, or per-player evidence.
 
 Lane B normalized facts also carry a private `analytics_provenance` record.
 Its `build_id` is a deterministic hash of the source-adapter version, scoring
-profile, objective rules, reviewed map catalog revision, map name, and objective
+profile, objective rules, reviewed map catalog revision, captured BSP revision,
+map name, and objective
 geometry source. A different adapter or any of those reviewed inputs therefore
 produces a different identifier. Absolute paths, match IDs, participant IDs,
 raw times, and raw coordinates are deliberately excluded.
 
 `map_revision.status=unavailable` prevents the source from claiming reviewed
-spatial interpretation for an unregistered map. Lane B upgrades lifecycle
+spatial interpretation when either the reviewed catalog entry or captured BSP
+revision is absent. `catalog_sha256` and `captured_bsp_sha256` remain distinct
+provenance facts; equality is not implied. Lane B upgrades lifecycle
 confidence to `authoritative_life_boundary_events` only when retained producer
 start/death boundaries are valid for the roster and observed halves; otherwise
 it remains `inferred_from_frag_and_reset_events`. No consumer may present the

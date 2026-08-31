@@ -18,6 +18,7 @@ from scripts.build_automated_match_report import build_bundle
 from scripts.life_impact_v4 import derive_life_impact
 from scripts.match_analytics import (
     evaluate_capture_authorization,
+    evaluate_position_provenance,
     grenade_entity_summary,
     objective_attempt_summary,
     sql_literal,
@@ -63,6 +64,7 @@ def build_analytics_provenance(
     spatial_catalog_dir: Path | None, flag_position_source: str,
     lifecycle_confidence: str = "inferred_from_frag_and_reset_events",
     adapter_version: str = LANE_B_SOURCE_ADAPTER_VERSION,
+    captured_bsp_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Version the inputs required to reproduce positional derivations.
 
@@ -84,6 +86,7 @@ def build_analytics_provenance(
         "objective_rules_sha256": _content_sha256(objectives_path),
         "map_name": map_name,
         "map_revision_sha256": catalog_revision,
+        "captured_bsp_sha256": captured_bsp_sha256,
         "objective_geometry_source": flag_position_source,
     }
     build_id = hashlib.sha256(json.dumps(
@@ -103,8 +106,14 @@ def build_analytics_provenance(
         },
         "map_revision": {
             "map_name": map_name,
-            "status": "available" if catalog_revision else "unavailable",
+            "status": (
+                "available" if catalog_revision and captured_bsp_sha256
+                else "unavailable"
+            ),
+            "catalog_status": "available" if catalog_revision else "unavailable",
             "catalog_sha256": catalog_revision,
+            "captured_status": "available" if captured_bsp_sha256 else "unavailable",
+            "captured_bsp_sha256": captured_bsp_sha256,
         },
         "position_provenance": "direct_server_position_sample",
         "objective_geometry_source": flag_position_source,
@@ -416,6 +425,7 @@ FROM ktp_matches WHERE match_id={match} GROUP BY match_id
     profile = load_profile(profile_path)
     manifest_rows = _rows(db, "capture_manifests", f"""
 SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
+       cm.map_revision_algorithm, cm.map_revision_sha256,
        cm.event_epoch AS producer_activation_epoch,
        UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
@@ -514,7 +524,7 @@ ORDER BY s.half, game_time, s.id
 
     samples = _rows(db, "positions", f"""
 SELECT p.player_id, p.team, p.half, p.pos_x, p.pos_y, p.pos_z,
-       p.game_time
+       p.is_alive, p.is_spectator, p.map_revision_sha256, p.game_time
 FROM ktp_position_samples p
 WHERE p.match_id={match} AND p.half>0
 ORDER BY p.half, game_time, p.id
@@ -533,6 +543,10 @@ ORDER BY p.half, game_time, p.id
                 row["half"], fallback_baselines[row["half"]]
             )
             row["game_time"] = max(0.0, row["game_time"] - baseline)
+    position_provenance = evaluate_position_provenance(
+        observed_halves, manifest_rows, health_rows, samples,
+        require_activation=True,
+    )
 
     objective_attempt_rows = _rows(db, "objective_attempts", f"""
 SELECT server_id, half, attempt_id, event_kind, stop_reason
@@ -711,6 +725,7 @@ ORDER BY flag_index
             if life_quality["status"] == "available"
             else "inferred_from_frag_and_reset_events"
         ),
+        captured_bsp_sha256=position_provenance["captured_bsp_sha256"],
     )
     state_timeline: dict[tuple[int, str], list[tuple[float, int]]] = defaultdict(list)
     for row in flag_states:
@@ -811,14 +826,20 @@ ORDER BY flag_index
         "momentum_points": {str(pid): value for pid, value in sorted(momentum_points.items())},
         "momentum_summary": momentum_summary,
         "telemetry_lifecycles": telemetry_lifecycles,
-        "private_telemetry_quality": {"life_boundaries": life_quality},
+        "private_telemetry_quality": {
+            "life_boundaries": life_quality,
+            "position_provenance": position_provenance,
+        },
         "reliability": {
             "life_boundaries": life_quality["status"] == "available",
             "damage_events": bool(raw_damage),
             "capture_events": bool(captures), "ownership": ownership_reliable,
             "map_topology": bool(topology), "break_context": break_context,
-            "positions": bool(samples), "flag_positions": bool(flags),
-            "life_impact": bool(samples and flags and topology),
+            "positions": position_provenance["authorized"],
+            "flag_positions": bool(flags),
+            "life_impact": bool(
+                position_provenance["authorized"] and flags and topology
+            ),
             "life_boundaries_inferred": (
                 life_quality["status"] != "available" and bool(frags)
             ),

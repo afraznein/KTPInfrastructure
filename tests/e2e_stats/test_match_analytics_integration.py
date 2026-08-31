@@ -10,6 +10,73 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/e2e_stats/fixtures/analytics-phase-a-contract.sql"
 
 
+def _schema23_position_evidence():
+    revision = "a" * 64
+    capabilities = (
+        "frag_context,damage,position,assist,life,break,flag_state,flag_position,"
+        "objective_attempt,team_membership,grenade_entity,position_state,"
+        "map_revision,sequence,health"
+    )
+    manifests = [{
+        "half": 1, "schema_version": 23, "capabilities": capabilities,
+        "position_interval": 2.0, "map_revision_algorithm": "sha256",
+        "map_revision_sha256": revision,
+    }]
+    health = [{
+        "half": 1, "event_type": event_type,
+        "attempted": 1 if event_type == "position" else 0,
+        "enqueued": 1 if event_type == "position" else 0,
+        "dropped": 0, "emitted": 1 if event_type == "position" else 0,
+        "daemon_received": 1 if event_type == "position" else 0,
+        "daemon_accepted": 1 if event_type == "position" else 0,
+        "daemon_rejected": 0, "correlation_failure_count": 0,
+        "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+    } for event_type in analytics.CAPTURE_EVENT_TYPES]
+    positions = [{
+        "half": 1, "is_alive": 1, "is_spectator": 0,
+        "map_revision_sha256": revision,
+    }]
+    return manifests, health, positions
+
+
+def test_schema23_position_provenance_authorizes_exact_state_and_revision():
+    manifests, health, positions = _schema23_position_evidence()
+    result = analytics.evaluate_position_provenance(
+        {1}, manifests, health, positions
+    )
+    assert result["authorized"] is True
+    assert result["captured_bsp_sha256"] == "a" * 64
+    assert result["health_accepted"] == result["rows"] == 1
+    assert result["invalid_state_rows"] == 0
+    assert result["revision_mismatch_rows"] == 0
+
+
+def test_schema23_position_provenance_fails_closed_on_missing_state_or_mismatch():
+    manifests, health, positions = _schema23_position_evidence()
+    positions[0]["is_spectator"] = None
+    positions[0]["map_revision_sha256"] = "b" * 64
+    result = analytics.evaluate_position_provenance(
+        {1}, manifests, health, positions
+    )
+    assert result["authorized"] is False
+    assert result["invalid_state_rows"] == 1
+    assert result["revision_mismatch_rows"] == 1
+
+
+def test_schema23_position_provenance_reconciles_persistence_to_health():
+    manifests, health, positions = _schema23_position_evidence()
+    health_row = next(row for row in health if row["event_type"] == "position")
+    for field in ("attempted", "enqueued", "emitted", "daemon_received", "daemon_accepted"):
+        health_row[field] = 2
+    result = analytics.evaluate_position_provenance(
+        {1}, manifests, health, positions
+    )
+    assert result["authorized"] is False
+    assert result["health_accepted"] == 2
+    assert result["rows"] == 1
+    assert result["persistence_mismatch_halves"] == [1]
+
+
 def _assert_no_raw_position_payload(value):
     forbidden = {
         "pos_x", "pos_y", "pos_z", "pos_victim_x", "pos_victim_y",

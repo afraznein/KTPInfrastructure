@@ -106,6 +106,8 @@ def daemon_repo(tmp_path):
         (20, "frag_context_certified"),
         (21, "capture_observability"),
         (22, "objective_attempts_grenade_entities"),
+        (23, "team_membership_intervals"),
+        (24, "position_state_map_revision"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -125,12 +127,12 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_inc.is_file()
     assert arts.gamedata_dir.is_dir()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 19
+    assert len(arts.schema_sql) == 21
     assert len(arts.seed_sql) == 2
 
 
-def test_default_schema_sequence_includes_retention_through_telemetry22():
-    assert DEFAULT_SCHEMA_FILES[-9:] == (
+def test_default_schema_sequence_includes_retention_through_telemetry23():
+    assert DEFAULT_SCHEMA_FILES[-11:] == (
         "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
@@ -140,6 +142,8 @@ def test_default_schema_sequence_includes_retention_through_telemetry22():
         "sql/migrate_020_frag_context_certified.sql",
         "sql/migrate_021_capture_observability.sql",
         "sql/migrate_022_objective_attempts_grenade_entities.sql",
+        "sql/migrate_023_team_membership_intervals.sql",
+        "sql/migrate_024_position_state_map_revision.sql",
     )
 
 
@@ -314,7 +318,9 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_019_clear_uncertified_frag_context.sql",
                  "migrate_020_frag_context_certified.sql",
                  "migrate_021_capture_observability.sql",
-                 "migrate_022_objective_attempts_grenade_entities.sql"):
+                 "migrate_022_objective_attempts_grenade_entities.sql",
+                 "migrate_023_team_membership_intervals.sql",
+                 "migrate_024_position_state_map_revision.sql"):
         assert len(m["files"][name]["md5"]) == 32
 
 

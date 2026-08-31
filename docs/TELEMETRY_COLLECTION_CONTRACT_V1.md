@@ -6,8 +6,9 @@ decides metric eligibility after collection.
 
 ## Version and ordering
 
-- Producer schema **22** is the complete current contract. Schema 21 is
-  membership-only and must be marked partial.
+- Producer schema **23** is the complete current contract. Schema 22 remains
+  valid for its objective/grenade/team-transition facts but cannot authorize
+  position provenance; schema 21 is membership-only and must be marked partial.
 - Every captured marker has a producer-global monotonic sequence, a producer
   event_epoch, game_time, matchid, and half. Together, matchid, half, and
   sequence form its stable private source-event key. The daemon validates the
@@ -20,10 +21,10 @@ decides metric eligibility after collection.
 
 | Record | Captured fields | Confidence/provenance rule |
 |---|---|---|
-| Match context | source match key, map, half, producer epoch, schema/capabilities | private only; downstream uses an opaque run identifier. |
+| Match context | source match key, map, half, producer epoch, schema/capabilities, captured BSP SHA-256 | private only; downstream uses an opaque run identifier. |
 | Participant membership | player key, team, old_team, time, sequence | authoritative team_membership; derive intervals from the append-only ledger. |
 | Lifecycle | spawn/death/reset kind, player key, time, sequence | authoritative only when validated life boundaries cover the participant/half; otherwise analysis labels lifecycle inferred. |
-| Position | player/team, X/Y/Z, game time, sequence | producer sample; no interpolation through a gap. |
+| Position | player/team, X/Y/Z, alive, spectator, captured BSP SHA-256, game time, sequence | schema-23 sample; require alive=1, spectator=0, and exact manifest revision; no interpolation through a gap. |
 | Frag context | actor/target, weapon, combat state, actor/target X/Y/Z, time, sequence | event-time origin read; nullable coordinates mean unavailable, never (0,0,0). |
 | Damage | attacker/target, amount, weapon/hit data, positions, time, sequence | standalone canonical ledger; identity/context must resolve before persistence. |
 | Assist | assister/target, actor/target positions, time, sequence | explicit producer assist, not inferred from co-location. |
@@ -34,7 +35,8 @@ decides metric eligibility after collection.
 
 Explicit causal parent/child links (for example, a damage event claimed by a
 frag), fire outcome, stance, velocity, view direction, and a universal
-map-revision registry are **not** present in v1. Consumers must report those
+universal reviewed map-revision registry are **not** present in v1. The exact
+running BSP digest is captured, but catalog review remains separate. Consumers must report those
 properties as unavailable rather than infer them.
 
 ## Required handling
@@ -52,7 +54,7 @@ properties as unavailable rather than infer them.
 ## Current verification
 
 The producer/daemon self-tests cover sequence validation, replay handling,
-lifecycle boundaries, objective state, membership transitions, and schema-22
-capability authorization. The local bot harness additionally proves that a
+lifecycle boundaries, objective state, membership transitions, and schema-23
+position-state/map-revision authorization. The local bot harness additionally proves that a
 6v6 -TEST match reaches MATCH_START with all twelve roster records persisted;
 it is development evidence, not production certification.
