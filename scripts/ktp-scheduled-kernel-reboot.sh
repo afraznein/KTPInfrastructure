@@ -2,7 +2,18 @@
 # One-shot kernel reboot: 6.8.0-31-generic -> 6.8.0-138-generic.
 # Aborts and retries tomorrow if anyone is playing -- a reboot here stops HLTV
 # recording, stats ingest and AC uploads, so "nobody is on" is the precondition.
+#
+# Idle is judged on PLAY, never on recording. The 24 HLTV proxies write .dem
+# files continuously whether or not anyone is connected, so a demo-file count
+# can never reach zero and any gate keyed on it never fires.
+#
+# --force skips the idle check for an operator-directed reboot. It still posts,
+# still disables the timer and still arms the verifier, so the one-shot completes
+# exactly as a natural firing would.
 set -uo pipefail
+
+FORCE=0
+[ "${1:-}" = "--force" ] && FORCE=1
 LOG=/var/log/ktp-kernel-reboot.log
 ts(){ TZ=America/New_York date '+%Y-%m-%d %H:%M:%S %Z'; }
 say(){ echo "[$(ts)] $*" >>"$LOG"; }
@@ -16,21 +27,26 @@ post(){ # $1 title  $2 desc  $3 color
        -H 'Content-Type: application/json' -d "$p" || true; }
 
 FRAGS=$(mysql -N -B -e "select count(*) from hlstatsx.hlstats_Events_Frags where eventTime >= now() - interval 20 minute" 2>/dev/null || echo ERR)
-DEMOS=$(find /home/hltvserver -name '*.dem' -mmin -15 2>/dev/null | wc -l)
-say "activity check: frags_20m=$FRAGS demos_15m=$DEMOS"
+# Bounded to 6h on purpose: 186 rows carry a NULL end_time going back to January,
+# so an unbounded check would block every reboot forever.
+LIVE=$(mysql -N -B -e "select count(*) from hlstatsx.ktp_matches where end_time is null and start_time >= now() - interval 6 hour" 2>/dev/null || echo ERR)
+say "activity check: frags_20m=$FRAGS live_matches_6h=$LIVE force=$FORCE"
 
-if [ "$FRAGS" = "ERR" ]; then
+if [ "$FRAGS" = "ERR" ] || [ "$LIVE" = "ERR" ]; then
   say "ABORT: could not query hlstatsx -- refusing to reboot on an unknown state"
   post "KTP data server reboot ABORTED" "Could not read hlstatsx to check for live play. **Not rebooting.** Will retry tomorrow 02:00 ET." 15548997; exit 0
 fi
-if [ "$FRAGS" -gt 0 ] || [ "$DEMOS" -gt 0 ]; then
-  say "ABORT: activity present (frags=$FRAGS demos=$DEMOS) -- retrying tomorrow"
-  post "KTP data server reboot deferred" "People are playing (frags/20m: **$FRAGS**, demos written/15m: **$DEMOS**). **Not rebooting.** Automatic retry tomorrow 02:00 ET." 16776960; exit 0
+if [ "$FORCE" -eq 0 ] && { [ "$FRAGS" -gt 0 ] || [ "$LIVE" -gt 0 ]; }; then
+  say "ABORT: activity present (frags=$FRAGS live=$LIVE) -- retrying tomorrow"
+  post "KTP data server reboot deferred" "People are playing (frags/20m: **$FRAGS**, live matches: **$LIVE**). **Not rebooting.** Automatic retry tomorrow 02:00 ET." 16776960; exit 0
+fi
+if [ "$FORCE" -eq 1 ]; then
+  say "FORCED by operator -- proceeding despite frags=$FRAGS live=$LIVE"
 fi
 
 say "idle confirmed -- disabling timer and rebooting into $(grep -o 'vmlinuz-[0-9][^ ]*' /boot/grub/grub.cfg | head -1)"
 systemctl disable --now ktp-kernel-reboot.timer >>"$LOG" 2>&1
 systemctl enable ktp-post-reboot-verify.service >>"$LOG" 2>&1
-post "KTP data server rebooting now" "Idle confirmed (0 frags, 0 demos). Rebooting to take **6.8.0-138-generic** (from 6.8.0-31). A verification report follows in ~3 minutes." 5763719
+post "KTP data server rebooting now" "Operator-directed or idle-confirmed (frags/20m: **$FRAGS**, live matches: **$LIVE**). Rebooting to take **6.8.0-138-generic** (from 6.8.0-31). A verification report follows in ~3 minutes." 5763719
 sleep 5
 systemctl reboot

@@ -355,14 +355,13 @@ the outcome either way. Disables its own timer before rebooting, so it is one-sh
 **Units:** [`systemd/ktp-kernel-reboot.service`](systemd/ktp-kernel-reboot.service) +
 [`systemd/ktp-kernel-reboot.timer`](systemd/ktp-kernel-reboot.timer), 02:00 ET.
 
-> 🔴 **Known defect -- the idle gate can never be satisfied, so this has never once rebooted.**
-> The gate requires `frags_20m` **and** `demos_15m` to both be zero. The 24 HLTV proxies write `.dem`
-> files continuously, so `find /home/hltvserver -name '*.dem' -mmin -15` is never zero while HLTV is
-> running -- it counts recording, not play. The log shows a nightly abort with 42-45 demos every time,
-> including nights when frags was genuinely 0.
-> ➡️ **The frags check is the one that measures play; the demo check needs to measure something that
-> actually goes quiet, or come out.** Fixing it arms a real unattended reboot, so it is an operator
-> decision, not a cleanup.
+> ✅ **Fixed 2026-08-31 -- the idle gate is judged on PLAY, not on recording.**
+> It previously required zero `.dem` writes in 15 minutes, but the 24 HLTV proxies record
+> continuously, so that term could never reach zero and the reboot never once fired. The demo
+> term is gone; the second signal is now an unfinished match row, **bounded to 6h** because 186
+> rows carry a NULL `end_time` going back to January and an unbounded check would block forever.
+> `--force` skips the idle check for an operator-directed reboot, but **still fails closed on a
+> database error** -- forcing past a known-busy state is allowed, forcing past an unknown one is not.
 
 ### ktp-post-reboot-verify.sh
 Companion to the above: runs once after the reboot, reports kernel version, HLTV proxy count and any
