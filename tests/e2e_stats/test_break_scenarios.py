@@ -299,14 +299,20 @@ def _match_start(match_id, half="1st half"):
             f'(half "{half}") (type "0")\n')
 
 
-def _manifest(match_id, half=1, epoch=100, producer="stats_logging"):
+def _manifest(match_id, half=1, epoch=100, producer="stats_logging",
+              schema=22):
+    revision = ""
+    if schema == 23:
+        revision = ('(map_revision_algorithm "sha256") '
+                    '(map_revision "0123456789abcdef0123456789abcdef'
+                    '0123456789abcdef0123456789abcdef") ')
     return (f'L 08/28/2026 - 12:00:00: KTP_CAPTURE_MANIFEST '
             f'(matchid "{match_id}") (half "{half}") '
             f'(map "dod_anzio") (producer "{producer}") '
-            f'(producer_version "1.18.1") (schema "22") '
+            f'(producer_version "1.19.0") (schema "{schema}") '
             f'(capabilities "frag_context,damage,position,health") '
             f'(position_interval "2.0") (buffer_entries "128") '
-            f'(life_buffer_entries "64") (sequence "1") '
+            f'(life_buffer_entries "64") {revision}(sequence "1") '
             f'(event_epoch "{epoch}")\n')
 
 
@@ -343,6 +349,17 @@ def test_begin_series_accepts_real_r3_manifest_before_start_order():
 
     assert driver.begin_series() is True
     assert driver.series_manifest == ("diagnostic-TEST", 1, 100)
+    assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_begin_series_accepts_schema23_map_revision_manifest():
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=200, schema=23))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("diagnostic-TEST", 1, 200)
     assert handle.fired == ["ktp_bd_begin_series"]
 
 
