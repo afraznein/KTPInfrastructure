@@ -1209,6 +1209,22 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
     assert "isolated != g_bdSeriesRosterCount" in command
 
 
+def test_pawn_canonical_frag_moves_attacker_off_the_staged_objective_after_death():
+    """The factual kill is complete at the engine callback.  The attacker
+    must not remain in the objective trigger while the victim respawns."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    death = source[source.index("public client_death("):
+                   source.index("// ---------------------------------------------------------------------------",
+                                source.index("public client_death("))]
+    restore = source[source.index("stock bool:bd_restore_canonical_killer_origin"):
+                     source.index("stock bd_canonical_restore_victim_health")]
+    assert "g_bdIsolationOriginSaved[killer]" in restore
+    assert "dodx_set_user_origin(killer, g_bdIsolationOrigin[killer])" in restore
+    assert death.index("bd_canonical_clear_attack()") < death.index(
+        "bd_restore_canonical_killer_origin()"
+    )
+
+
 def test_pawn_canonical_wait_progressively_acquires_dead_pinned_member_and_ignores_prewindow_death():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     arm = source[source.index("public cmd_stage_canonical_frag()"):
