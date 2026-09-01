@@ -434,6 +434,24 @@ stock bd_canonical_clear_attack() {
 	set_entvar(killer, var_oldbuttons, oldbuttons & ~BD_IN_ATTACK)
 }
 
+/** Put the attacker back on its isolation snapshot once the one factual death
+ * has been observed.  The engine callback is the closed evidence boundary;
+ * leaving the attacker at an objective centre while waiting for the victim's
+ * respawn can let a map world trigger create a second, foreign death before
+ * RESULT.  This restores only position, while the isolation hold continues to
+ * own freeze and godmode until the exact roster is proven stable again.
+ */
+stock bool:bd_restore_canonical_killer_origin() {
+	new killer = g_bdCanonicalKiller
+	if (killer < 1 || killer > 32 || !is_user_connected(killer) ||
+			get_user_userid(killer) != g_bdCanonicalKillerUserid ||
+			!g_bdIsolationHeld[killer] ||
+			g_bdIsolationUserid[killer] != g_bdCanonicalKillerUserid ||
+			!g_bdIsolationOriginSaved[killer])
+		return false
+	return bool:dodx_set_user_origin(killer, g_bdIsolationOrigin[killer])
+}
+
 stock bd_canonical_restore_victim_health() {
 	new victim = g_bdCanonicalVictim
 	if (g_bdCanonicalVictimHealthSaved && victim >= 1 && victim <= 32 &&
@@ -894,6 +912,8 @@ public client_death(killer, victim, wpnindex, hitplace, TK) {
 			g_bdCanonicalPhase = BD_CANONICAL_WAIT_POSTFLUSH
 			g_bdCanonicalStablePolls = 0
 			bd_canonical_clear_attack()
+			if (!bd_restore_canonical_killer_origin())
+				g_bdCanonicalContaminated = true
 			} else {
 				g_bdCanonicalContaminated = true
 			}
