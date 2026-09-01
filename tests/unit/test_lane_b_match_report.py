@@ -600,6 +600,34 @@ def test_breakdrive_diagnostics_are_isolated_from_v6_report_authorization(
     assert generated["verification"]["status"] == "PASS"
 
 
+def test_breakdrive_isolation_reconciles_the_actual_staged_diagnostics():
+    """A temporarily unavailable stage must not invent a third death."""
+    report_authorization = {"authorized": True, "errors": []}
+    diagnostic_authorization = {
+        "authorized": False,
+        "errors": ["half 1 frag counters do not reconcile"],
+    }
+    verdict = judge_capture_context_isolation(
+        report_match_id="clean-TEST",
+        diagnostic_match_id="breakdrive-diagnostic-TEST",
+        expected_frag_diagnostics=2,
+        report_frag={"daemon_rejected": 0, "correlation_failure_count": 0},
+        diagnostic_frag={
+            "daemon_accepted": 1,
+            "daemon_rejected": 2,
+            "correlation_failure_count": 2,
+        },
+        report_health={"status": "ok"},
+        diagnostic_health={"status": "ok"},
+        report_authorization=report_authorization,
+        diagnostic_authorization=diagnostic_authorization,
+    )
+
+    assert verdict["status"] == "ok"
+    assert verdict["checks"]["has_intentional_diagnostics"] is True
+    assert verdict["checks"]["diagnostic_frag_exact"] is True
+
+
 @pytest.mark.parametrize("accepted", (0, 2, 6))
 def test_breakdrive_isolation_requires_exactly_one_accepted_diagnostic_frag(
         accepted: int):

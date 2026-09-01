@@ -601,7 +601,11 @@ def judge_capture_context_isolation(
     expected = int(expected_frag_diagnostics)
     diagnostic_errors = diagnostic_authorization.get("errors") or []
     checks = {
-        "exactly_three_diagnostics": expected == 3,
+        # The diagnostic driver derives this count from the closed evidence
+        # window.  A required scenario can be not_staged without fabricating a
+        # synthetic death, so require a real diagnostic set and then
+        # reconcile its actual cardinality exactly below.
+        "has_intentional_diagnostics": expected > 0,
         "report_health_reconciled": report_health.get("status") == "ok",
         "diagnostic_health_reconciled": diagnostic_health.get("status") == "ok",
         "report_authorized": bool(report_authorization.get("authorized")),
