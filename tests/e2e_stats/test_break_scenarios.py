@@ -125,6 +125,17 @@ def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
     assert 'server_print("KTP_BD_KILL_DISARMED")' in disarm
 
 
+def test_near_diagnostics_do_not_require_a_far_away_anchor():
+    """Only the far-kill probe asserts an off-point distance.  Restart and
+    walk-off setup merely need a safe origin outside the capture areas."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    prepare = source[source.index("stock bool:bd_prepare_capture"):
+                     source.index("stock bd_find_prepared_capture")]
+    assert "need_far && !bd_far_anchor(candidate, far_origin)" in prepare
+    assert "!need_far && !bd_safe_anchor(far_origin)" in prepare
+    assert "stock bd_safe_anchor(Float:anchor[3])" in source
+
+
 def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     seconds = float(next(
