@@ -184,6 +184,11 @@ _MANIFEST_RE = re.compile(
     + r'\(position_interval "(?P<position_interval>\d+(?:\.\d+)?)"\) '
     + r'\(buffer_entries "(?P<buffer_entries>\d+)"\) '
     + r'\(life_buffer_entries "(?P<life_buffer_entries>\d+)"\) '
+    # Schema 23 appends immutable map-revision provenance before the
+    # sequence/epoch pair.  Keep the schema-22 shape valid while accepting
+    # the two schema-23 fields only as a complete, ordered pair.
+    + r'(?:\(map_revision_algorithm "sha256"\) '
+    + r'\(map_revision "[0-9a-f]{64}"\) )?'
     + r'\(sequence "(?P<sequence>\d+)"\) '
     + r'\(event_epoch "(?P<event_epoch>\d+)"\)\r?$',
     re.MULTILINE,
