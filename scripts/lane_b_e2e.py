@@ -625,7 +625,13 @@ def judge_capture_context_isolation(
             and diagnostic_frag.get("correlation_failure_count") == expected
         ),
         "diagnostic_frag_accepted": (
-            int(diagnostic_frag.get("daemon_accepted") or 0) == 1
+            # The isolated match contains the canonical factual frag plus
+            # ordinary bot frags.  Its accepted count is therefore not
+            # literally one; require that every emitted frag is accounted for
+            # by either an accepted row or an intentional diagnostic reject.
+            int(diagnostic_frag.get("daemon_accepted") or 0) > 0
+            and int(diagnostic_frag.get("daemon_accepted") or 0)
+            + expected == int(diagnostic_frag.get("daemon_received") or 0)
         ),
     }
     ok = all(checks.values())
@@ -635,8 +641,8 @@ def judge_capture_context_isolation(
         "detail": (
             f"clean report match {report_match_id} is authorized with "
             "frag rejected=0/correlation_failure=0; diagnostic match "
-            f"{diagnostic_match_id} retains exactly one accepted factual "
-            f"frag, reconciles {expected} intentional BreakDrive rejection(s), "
+            f"{diagnostic_match_id} retains factual accepted frag(s), "
+            f"reconciles {expected} intentional BreakDrive rejection(s), "
             "and remains unauthorized"
             if ok else
             "clean/report and contaminated/diagnostic capture contexts were "
