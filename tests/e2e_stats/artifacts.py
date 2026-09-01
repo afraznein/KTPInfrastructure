@@ -46,6 +46,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -93,6 +94,15 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_023_headshot_observed_provenance.sql",
     "sql/migrate_024_team_membership_intervals.sql",
     "sql/migrate_025_position_state_map_revision.sql",
+)
+
+# `hlstats.pl` uses these by relative require.  A lane artifact that contains
+# only the entrypoint starts successfully but cannot ingest a single line.
+REQUIRED_DAEMON_RUNTIME_FILES = (
+    "scripts/ConfigReaderSimple.pm", "scripts/TRcon.pm", "scripts/BASTARDrcon.pm",
+    "scripts/HLstats_Server.pm", "scripts/HLstats_Player.pm", "scripts/HLstats_Game.pm",
+    "scripts/HLstats_GameConstants.plib", "scripts/HLstats.plib",
+    "scripts/HLstats_EventHandlers.plib",
 )
 
 
@@ -493,6 +503,7 @@ class ArtifactSet:
     plugin_inc: Path | None = None
     gamedata_dir: Path | None = None
     hlstats_pl: Path | None = None
+    daemon_runtime: list[Path] = field(default_factory=list)
     schema_sql: list[Path] = field(default_factory=list)
     seed_sql: list[Path] = field(default_factory=list)
     provenance: dict = field(default_factory=dict)
@@ -557,12 +568,19 @@ class ArtifactSet:
                 gamedata_provenance["tree_sha256"]
             )
 
+        daemon_dir = build_dir / "daemon"
         inst.hlstats_pl = extract(
-            daemon_repo, daemon_sha, "scripts/hlstats.pl", build_dir / "hlstats.pl")
+            daemon_repo, daemon_sha, "scripts/hlstats.pl", daemon_dir / "hlstats.pl")
+        for rel in REQUIRED_DAEMON_RUNTIME_FILES:
+            inst.daemon_runtime.append(
+                extract(daemon_repo, daemon_sha, rel, daemon_dir / Path(rel).name))
 
         for rel in schema_files:
             inst.schema_sql.append(
                 extract(daemon_repo, daemon_sha, rel, build_dir / "sql" / Path(rel).name))
+        # The runner's canonical argument is `base-schema.sql`; retain the
+        # SQL copy too so manifests continue to fingerprint every migration.
+        shutil.copyfile(inst.schema_sql[0], build_dir / "base-schema.sql")
         for rel in seed_files:
             inst.seed_sql.append(
                 extract(daemon_repo, daemon_sha, rel, build_dir / "sql" / Path(rel).name))
@@ -625,12 +643,27 @@ class ArtifactSet:
         # build/plugins/Dockerfile does `cd /compiler && ./amxxpc`, and
         # smoke-callable.yml does `cd .../scripting && ./amxxpc /work/<src>`.
         # Hence the absolute source path and the relative `./amxxpc`.
-        argv = [f"./{amxxpc.name}", str(norm),
-                f"-i{include_dir}", f"-i{src_dir}", f"-o{out}", *defines]
-        r = subprocess.run(
-            argv,
-            cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
-        )
+        # The 32-bit compiler cannot reliably open Windows bind-mounted paths.
+        # Stage both relative includes and the fork include tree in its native
+        # Linux filesystem, then copy the produced artifact back to the bundle.
+        with tempfile.TemporaryDirectory(prefix="ktp-amxxpc-") as temp:
+            stage = Path(temp)
+            staged_sma = stage / norm.name
+            staged_inc = stage / "ktp_stats_capture.inc"
+            staged_include = stage / "include"
+            staged_out = stage / out.name
+            shutil.copy2(norm, staged_sma)
+            if inc is not None:
+                shutil.copy2(inc, staged_inc)
+            shutil.copytree(include_dir, staged_include)
+            argv = [f"./{amxxpc.name}", str(staged_sma),
+                    f"-i{staged_include}", f"-i{stage}", f"-o{staged_out}", *defines]
+            r = subprocess.run(
+                argv,
+                cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0 and staged_out.is_file():
+                shutil.copy2(staged_out, out)
         combined = (r.stdout or "") + (r.stderr or "")
         # amxxpc exits 0 on warnings, non-zero on errors — but it has also been
         # known to exit 0 having written nothing, so check the file too.
@@ -684,6 +717,8 @@ class ArtifactSet:
         ):
             if p is not None and p.is_file():
                 files[label] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
+        for p in self.daemon_runtime:
+            files[f"daemon/{p.name}"] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
         for p in self.schema_sql + self.seed_sql:
             files[p.name] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
         return {"provenance": self.provenance, "files": files}

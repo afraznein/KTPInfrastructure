@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -126,7 +127,14 @@ def compile_sma(src: Path, out: Path, *, scripting: Path,
 
     argv = [str(scripting / "amxxpc"), str(work)]
     if include_dir is not None:
-        argv.append(f"-i{include_dir}")
+        # The 32-bit Pawn compiler cannot reliably read Windows bind-mounted
+        # include paths. Stage the exact tree beside the source so its header
+        # resolution is identical on local Docker and Linux CI.
+        staged_include = work_dir / "include"
+        if staged_include.exists():
+            shutil.rmtree(staged_include)
+        shutil.copytree(include_dir, staged_include)
+        argv.append(f"-i{staged_include}")
     argv += [f"-i{scripting}/include", f"-i{work_dir}", f"-o{out}"]
     argv += list(defines)
     r = subprocess.run(argv, cwd=str(scripting), capture_output=True,
