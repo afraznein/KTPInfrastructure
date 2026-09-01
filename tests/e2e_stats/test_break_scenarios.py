@@ -1877,12 +1877,16 @@ def test_missing_disarm_ack_hard_stops_all_remaining_diagnostics(monkeypatch):
 
     results = bs.run_all(object(), object(), attempts=3)
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
     assert [row["name"] for row in results] == calls
     assert results[-1]["kill_disarm_ack"] is False
 
 
-def test_exact_successful_series_runs_the_required_synthetic_three_first(
+def test_exact_successful_series_runs_the_required_synthetic_three_after_readiness(
         monkeypatch):
     calls = []
 
@@ -1922,8 +1926,8 @@ def test_exact_successful_series_runs_the_required_synthetic_three_first(
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls[0] == "canonical_diagnostic_frag"
-    assert tuple(calls[1:4]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
+    assert calls[:2] == ["canonical_diagnostic_frag", "negative_clean_capture"]
+    assert tuple(calls[2:5]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
     required = [row for row in results
                 if row["name"] in bs.REQUIRED_SYNTHETIC_SCENARIOS]
     assert len(required) == 3
@@ -2074,8 +2078,12 @@ def test_lifecycle_abort_hard_stops_every_remaining_command(monkeypatch):
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
-    assert len(results) == 2
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
+    assert len(results) == 3
     assert results[-1]["series_abort"] == "half_end"
 
 
