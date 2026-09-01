@@ -1245,6 +1245,28 @@ stock bd_far_anchor(const Float:center[3], Float:anchor[3]) {
 	return best
 }
 
+/** A known walkable origin outside every objective.  Near diagnostics only
+ * need to clear the selected capture zone; requiring a far-away bot there
+ * makes a perfectly valid capture unstageable while a new round's roster is
+ * still clustered at spawn.  Keep the radius requirement in bd_far_anchor()
+ * for the one probe whose assertion actually depends on off-point distance.
+ */
+stock bd_safe_anchor(Float:anchor[3]) {
+	new players[32], num, Float:origin[3]
+	get_players(players, num)
+	for (new i = 0; i < num; i++) {
+		new id = players[i]
+		if (!is_user_connected(id) || !is_user_alive(id) ||
+				!dodx_get_user_origin(id, origin) ||
+				!bd_anchor_outside_capture_areas(origin))
+			continue
+		for (new axis = 0; axis < 3; axis++)
+			anchor[axis] = origin[axis]
+		return id
+	}
+	return 0
+}
+
 /** Pin the combat roster before the neutralizing restart is issued.
  *
  * A slot is relevant when it is connected and assigned to a combat team at
@@ -1501,8 +1523,10 @@ stock bool:bd_prepare_capture(const mode[], bool:need_far,
 				(owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS))
 			continue
 		new Float:candidate[3], Float:far_origin[3]
-		if (!bd_area_center(f, candidate) ||
-				!bd_far_anchor(candidate, far_origin))
+		if (!bd_area_center(f, candidate))
+			continue
+		if ((need_far && !bd_far_anchor(candidate, far_origin)) ||
+				(!need_far && !bd_safe_anchor(far_origin)))
 			continue
 
 		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
