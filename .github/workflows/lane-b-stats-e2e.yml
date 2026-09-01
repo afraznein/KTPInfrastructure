@@ -368,7 +368,7 @@ jobs:
             --repository hlstatsx "${{ github.repository_owner }}/KTPHLStatsX" "$DAEMON_REF" "$DAEMON_SHA"
           cat build/lane-b-artifacts/bundle-provenance.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate schema-22 telemetry contract and migration
+      - name: Validate schema-23 telemetry contract and migrations
         run: |
           set -euo pipefail
           docker run --rm --network none \
@@ -382,6 +382,9 @@ jobs:
               python3 /repos/KTPHLStatsX/scripts/selftest-migration22.py \
                 --infrastructure-root /work \
                 --migration /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql
+              python3 /repos/KTPHLStatsX/scripts/selftest-migration25.py \
+                --infrastructure-root /work \
+                --migration /work/build/artifacts/sql/migrate_025_position_state_map_revision.sql
             '
 
       - name: Assemble full-match daemon and base schema
@@ -458,6 +461,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
                        /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
                        /work/build/artifacts/sql/migrate_023_headshot_observed_provenance.sql \
+                       /work/build/artifacts/sql/migrate_024_team_membership_intervals.sql \
+                       /work/build/artifacts/sql/migrate_025_position_state_map_revision.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -537,6 +542,8 @@ jobs:
                        /work/build/artifacts/sql/migrate_021_capture_observability.sql \
                        /work/build/artifacts/sql/migrate_022_objective_attempts_grenade_entities.sql \
                        /work/build/artifacts/sql/migrate_023_headshot_observed_provenance.sql \
+                       /work/build/artifacts/sql/migrate_024_team_membership_intervals.sql \
+                       /work/build/artifacts/sql/migrate_025_position_state_map_revision.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \

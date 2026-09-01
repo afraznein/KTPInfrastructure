@@ -14,6 +14,7 @@ from scripts.lane_b_match_report import (
     _ownership_is_reliable,
     _participation_seconds,
     _associate_damage_to_deaths,
+    build_analytics_provenance,
     build_facts,
     generate_lane_b_report,
     summary_for_lane,
@@ -120,11 +121,17 @@ class ExtractorDb:
         if marker == "capture_manifests":
             return _tsv(
                 ["half", "schema_version", "capabilities", "position_interval",
+                 "map_revision_algorithm", "map_revision_sha256",
                  "producer_activation_epoch", "activation_receipt_epoch",
                  "match_start_epoch"],
-                [{"half": 1, "schema_version": 22,
-                  "capabilities": "objective_attempt,grenade_entity",
+                [{"half": 1, "schema_version": 23,
+                  "capabilities": (
+                      "objective_attempt,team_membership,grenade_entity,"
+                      "position_state,map_revision"
+                  ),
                   "position_interval": 2.0,
+                  "map_revision_algorithm": "sha256",
+                  "map_revision_sha256": "a" * 64,
                   "producer_activation_epoch": 1787097599,
                   "activation_receipt_epoch": 1787097601,
                   "match_start_epoch": 1787097600}],
@@ -132,12 +139,15 @@ class ExtractorDb:
         if marker == "capture_health":
             event_types = (
                 "life", "damage", "position", "frag", "assist", "break",
-                "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+                "flag_state", "flag_position", "objective_attempt", "team_membership",
+                "grenade_entity",
             )
             rows = []
             for event_type in event_types:
-                count = 4 if event_type == "objective_attempt" else (
-                    3 if event_type == "grenade_entity" else 0
+                count = (
+                    4 if event_type == "objective_attempt" else
+                    3 if event_type == "grenade_entity" else
+                    2172 if event_type == "position" else 0
                 )
                 rows.append({
                     "half": 1, "event_type": event_type,
@@ -160,6 +170,16 @@ class ExtractorDb:
                 [{"player_id": pid, "player_name": f"Bot {pid}",
                   "team": 1 if pid <= 6 else 2} for pid in range(1, 13)],
             )
+        if marker == "life_boundaries":
+            return _tsv(
+                ["half", "player_id", "boundary_kind", "reason", "team", "game_time"],
+                [
+                    {"half": 1, "player_id": 1, "boundary_kind": "start",
+                     "reason": "context_live", "team": 1, "game_time": 0},
+                    {"half": 1, "player_id": 1, "boundary_kind": "end",
+                     "reason": "death", "team": 1, "game_time": 120},
+                ],
+            )
         if marker == "positions":
             rows = []
             for when in range(0, 361, 2):
@@ -168,9 +188,12 @@ class ExtractorDb:
                     rows.append({"player_id": pid, "team": team, "half": 1,
                                  "pos_x": 500 + when * 5 if team == 1 else 3500 - when * 5,
                                  "pos_y": pid * 5, "pos_z": 0,
+                                 "is_alive": 1, "is_spectator": 0,
+                                 "map_revision_sha256": "a" * 64,
                                  "game_time": 500 + when})
             return _tsv(
-                ["player_id", "team", "half", "pos_x", "pos_y", "pos_z", "game_time"],
+                ["player_id", "team", "half", "pos_x", "pos_y", "pos_z",
+                 "is_alive", "is_spectator", "map_revision_sha256", "game_time"],
                 rows,
             )
         if marker == "frags":
@@ -275,6 +298,19 @@ def test_live_database_extractor_builds_private_derived_public_facts():
     assert by_id[3]["suicides"] == 1
     assert facts["reliability"]["ownership"] is True
     assert facts["reliability"]["momentum"] is True
+    assert facts["reliability"]["life_boundaries"] is True
+    assert facts["reliability"]["life_boundaries_inferred"] is False
+    provenance = facts["match"]["analytics_provenance"]
+    assert provenance["contract_version"] == 1
+    assert provenance["build_id"].startswith("tapv1-")
+    assert provenance["map_revision"]["status"] == "available"
+    assert provenance["lifecycle_confidence"] == "authoritative_life_boundary_events"
+    assert facts["private_telemetry_quality"]["life_boundaries"] == {
+        "status": "available", "rows": 2, "starts": 1,
+        "death_ends": 1, "invalid_rows": 0,
+    }
+    assert facts["private_telemetry_quality"]["position_provenance"]["authorized"] is True
+    assert provenance["map_revision"]["captured_bsp_sha256"] == "a" * 64
     assert facts["momentum_summary"]["curve"]
     assert max(row["time"] for row in facts["momentum_summary"]["curve"]) <= 360
     body = json.dumps(facts).lower()
@@ -293,6 +329,56 @@ def test_live_database_extractor_builds_private_derived_public_facts():
     assert facts["telemetry_lifecycles"]["grenade_entities"]["entities"] == 2
     assert facts["telemetry_lifecycles"]["grenade_entities"]["incomplete_tracked"] == 1
     assert facts["telemetry_lifecycles"]["grenade_entities"]["allowed_weapon_ids_only"] is True
+
+
+def test_live_report_fails_position_reliability_closed_on_state_mismatch():
+    class InvalidPositionStateDb(ExtractorDb):
+        def sql(self, query):
+            result = super().sql(query)
+            if "lane_b_v5_positions" not in query:
+                return result
+            lines = result.splitlines()
+            columns = lines[0].split("\t")
+            spectator_index = columns.index("is_spectator")
+            values = lines[1].split("\t")
+            values[spectator_index] = "1"
+            lines[1] = "\t".join(values)
+            return "\n".join(lines) + "\n"
+
+    facts, _private = build_facts(InvalidPositionStateDb(), "extractor-TEST")
+    quality = facts["private_telemetry_quality"]["position_provenance"]
+    assert quality["authorized"] is False
+    assert quality["invalid_state_rows"] == 1
+    assert facts["reliability"]["positions"] is False
+    assert facts["reliability"]["life_impact"] is False
+
+
+def test_analytics_provenance_build_id_changes_with_contract_inputs(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    profile = root / "config/analytics/accumulation_v6_schema22_2s.toml"
+    objectives = root / "config/analytics/map_objectives.toml"
+    catalog = root / "config/analytics/spatial_maps"
+    baseline = build_analytics_provenance(
+        map_name="dod_anzio", profile_path=profile, objectives_path=objectives,
+        spatial_catalog_dir=catalog, flag_position_source="live_database",
+    )
+    adapter_changed = build_analytics_provenance(
+        map_name="dod_anzio", profile_path=profile, objectives_path=objectives,
+        spatial_catalog_dir=catalog, flag_position_source="live_database",
+        adapter_version="lane_b_ephemeral_mysql_v2",
+    )
+    assert baseline["build_id"] != adapter_changed["build_id"]
+
+    no_catalog = build_analytics_provenance(
+        map_name="dod_anzio", profile_path=profile, objectives_path=objectives,
+        spatial_catalog_dir=tmp_path, flag_position_source="live_database",
+    )
+    assert no_catalog["map_revision"] == {
+        "map_name": "dod_anzio", "status": "unavailable",
+        "catalog_status": "unavailable", "catalog_sha256": None,
+        "captured_status": "unavailable", "captured_bsp_sha256": None,
+    }
+    assert baseline["build_id"] != no_catalog["build_id"]
 
 
 def test_live_report_rejects_crossed_allowed_grenade_id_type_pair():
@@ -440,7 +526,8 @@ def _schema22_health(*, frag_rejections: int = 0) -> list[dict]:
     rows = []
     for event_type in (
         "life", "damage", "position", "frag", "assist", "break",
-        "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+        "flag_state", "flag_position", "objective_attempt", "team_membership",
+        "grenade_entity",
     ):
         attempted = ((4 if frag_rejections else 6)
                      if event_type == "frag" else 0)

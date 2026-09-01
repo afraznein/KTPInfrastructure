@@ -57,7 +57,8 @@ SQL_DIR = REPO / "sql" / "analytics"
 SCHEMA_VERSION = 7
 CAPTURE_EVENT_TYPES = (
     "life", "damage", "position", "frag", "assist", "break",
-    "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+    "flag_state", "flag_position", "objective_attempt", "team_membership",
+    "grenade_entity",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
@@ -256,7 +257,7 @@ def evaluate_capture_authorization(
     *,
     require_activation: bool = False,
 ) -> dict[str, Any]:
-    """Validate per-match schema-22 authorization without vacuous passes."""
+    """Validate schema-22/23 capture authorization without vacuous passes."""
     expected_types = set(CAPTURE_EVENT_TYPES)
     observed = {int(half) for half in observed_halves if int(half) > 0}
     if not manifests and not health:
@@ -278,11 +279,11 @@ def evaluate_capture_authorization(
             if item.strip()
         }
         if (
-            int(row.get("schema_version") or 0) != 22
+            int(row.get("schema_version") or 0) not in {22, 23}
             or abs(float(row.get("position_interval") or 0) - 2.0) > 0.01
             or not {"objective_attempt", "grenade_entity"}.issubset(capabilities)
         ):
-            errors.append(f"half {row.get('half')} manifest is not schema22/2.00 authorized")
+            errors.append(f"half {row.get('half')} manifest is not schema22+/2.00 authorized")
         if require_activation:
             producer_activation = row.get("producer_activation_epoch")
             activation_receipt = row.get("activation_receipt_epoch")
@@ -362,6 +363,114 @@ def evaluate_capture_authorization(
         "manifest_halves": sorted(set(manifest_halves)),
         "health_halves": sorted(health_halves),
         "streams": streams,
+        "errors": errors,
+    }
+
+
+def evaluate_position_provenance(
+    observed_halves: set[int],
+    manifests: list[dict[str, Any]],
+    health: list[dict[str, Any]],
+    positions: list[dict[str, Any]],
+    *,
+    require_activation: bool = False,
+) -> dict[str, Any]:
+    """Fail-closed aggregate evidence for schema-23 position provenance."""
+    capture = evaluate_capture_authorization(
+        observed_halves, manifests, health,
+        require_activation=require_activation,
+    )
+    errors = list(capture.get("errors") or [])
+    observed = {int(half) for half in observed_halves if int(half) > 0}
+    manifest_by_half: dict[int, dict[str, Any]] = {}
+    revisions: set[str] = set()
+    for row in manifests:
+        half = int(row.get("half") or 0)
+        capabilities = {
+            item.strip() for item in str(row.get("capabilities") or "").split(",")
+            if item.strip()
+        }
+        revision = str(row.get("map_revision_sha256") or "")
+        if (
+            int(row.get("schema_version") or 0) != 23
+            or not {"position_state", "map_revision"}.issubset(capabilities)
+            or str(row.get("map_revision_algorithm") or "") != "sha256"
+            or re.fullmatch(r"[0-9a-f]{64}", revision) is None
+        ):
+            errors.append(f"half {half} manifest lacks schema-23 position provenance")
+            continue
+        manifest_by_half[half] = row
+        revisions.add(revision)
+    if set(manifest_by_half) != observed:
+        errors.append("schema-23 position manifest halves do not equal observed halves")
+    if len(revisions) != 1:
+        errors.append("captured BSP revision is not one consistent SHA-256")
+
+    invalid_state = revision_mismatches = invalid_half = 0
+    rows_by_half: dict[int, int] = {half: 0 for half in observed}
+    for row in positions:
+        half = int(row.get("half") or 0)
+        rows_by_half[half] = rows_by_half.get(half, 0) + 1
+        if half not in observed:
+            invalid_half += 1
+        alive, spectator = row.get("is_alive"), row.get("is_spectator")
+        if (
+            alive is None or spectator is None
+            or str(alive) != "1" or str(spectator) != "0"
+        ):
+            invalid_state += 1
+        manifest_revision = str((manifest_by_half.get(half) or {}).get(
+            "map_revision_sha256") or "")
+        if (
+            re.fullmatch(r"[0-9a-f]{64}", str(row.get("map_revision_sha256") or ""))
+            is None
+            or str(row.get("map_revision_sha256") or "") != manifest_revision
+        ):
+            revision_mismatches += 1
+    missing_position_halves = sorted(half for half in observed if not rows_by_half.get(half))
+    health_accepted_by_half = {
+        half: sum(
+            int(row.get("daemon_accepted") or 0) for row in health
+            if int(row.get("half") or 0) == half
+            and str(row.get("event_type") or "") == "position"
+        )
+        for half in observed
+    }
+    persistence_mismatch_halves = sorted(
+        half for half in observed
+        if rows_by_half.get(half, 0) != health_accepted_by_half.get(half, 0)
+    )
+    if not positions:
+        errors.append("no position rows carry schema-23 provenance")
+    if missing_position_halves:
+        errors.append("position provenance is absent for one or more observed halves")
+    if invalid_half:
+        errors.append("position rows include invalid match halves")
+    if invalid_state:
+        errors.append("position rows include non-alive or spectator state")
+    if revision_mismatches:
+        errors.append("position row revision does not match its manifest")
+    if persistence_mismatch_halves:
+        errors.append("persisted position rows do not reconcile with accepted health counters")
+
+    authorized = capture["authorized"] and not errors and bool(observed)
+    return {
+        "status": "authorized" if authorized else "not_captured" if not manifests else "invalid",
+        "authorized": authorized,
+        "schema_version": 23,
+        "observed_halves": sorted(observed),
+        "rows": len(positions),
+        "rows_by_half": {str(key): rows_by_half[key] for key in sorted(rows_by_half)},
+        "health_accepted": sum(health_accepted_by_half.values()),
+        "health_accepted_by_half": {
+            str(key): health_accepted_by_half[key] for key in sorted(health_accepted_by_half)
+        },
+        "persistence_mismatch_halves": persistence_mismatch_halves,
+        "invalid_state_rows": invalid_state,
+        "revision_mismatch_rows": revision_mismatches,
+        "invalid_half_rows": invalid_half,
+        "map_revision_algorithm": "sha256" if len(revisions) == 1 else None,
+        "captured_bsp_sha256": next(iter(revisions)) if len(revisions) == 1 else None,
         "errors": errors,
     }
 

@@ -91,6 +91,8 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_021_capture_observability.sql",
     "sql/migrate_022_objective_attempts_grenade_entities.sql",
     "sql/migrate_023_headshot_observed_provenance.sql",
+    "sql/migrate_024_team_membership_intervals.sql",
+    "sql/migrate_025_position_state_map_revision.sql",
 )
 
 

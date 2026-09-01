@@ -37,6 +37,7 @@ def test_five_match_anzio_readiness_golden(fixture_name):
     assert {
         "roster_source_missing", "position_sampling_interval",
         "statsme_coverage", "statsme2_coverage", "flag_ownership_coverage",
+        "schema23_position_provenance",
     } <= warning_codes
 
 
@@ -51,6 +52,32 @@ def test_readiness_payload_excludes_player_identity_and_coordinates():
         "pos_x", "pos_y", "pos_z",
     ):
         assert forbidden not in serialized
+
+
+def test_metric_eligibility_distinguishes_complete_partial_and_unavailable():
+    checks = [
+        {"code": code, "level": "PASS"}
+        for requirements in match_readiness.METRIC_REQUIREMENTS.values()
+        for code in requirements
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["contract_version"] == 1
+    assert {item["status"] for item in eligibility["metrics"].values()} == {"available"}
+
+    checks = [
+        {**item, "level": "WARN" if item["code"] == "position_sampling_interval" else item["level"]}
+        for item in checks
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["metrics"]["positional_impact"]["status"] == "partial"
+
+    checks = [
+        {**item, "level": "FAIL" if item["code"] == "frags_present" else item["level"]}
+        for item in checks
+    ]
+    eligibility = match_readiness.build_metric_eligibility(checks)
+    assert eligibility["metrics"]["combat_context"]["status"] == "unavailable"
+    assert eligibility["metrics"]["combat_context"]["blocking_checks"] == ["frags_present"]
 
 
 def test_privacy_guard_normalizes_camel_case_and_snake_case_keys():

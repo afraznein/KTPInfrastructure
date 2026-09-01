@@ -71,7 +71,10 @@ CREATE TABLE hlstats_Events_Statsme2 (
 CREATE TABLE ktp_position_samples (
   id int NOT NULL AUTO_INCREMENT PRIMARY KEY, match_id varchar(64),
   half tinyint, player_id int, team tinyint, pos_x mediumint,
-  pos_y mediumint, pos_z mediumint, game_time float, event_time datetime
+  pos_y mediumint, pos_z mediumint, is_alive tinyint unsigned DEFAULT NULL,
+  is_spectator tinyint unsigned DEFAULT NULL,
+  map_revision_sha256 char(64) DEFAULT NULL,
+  game_time float, event_time datetime
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE ktp_flag_positions (
   server_id int, map_name varchar(32), flag_index tinyint,

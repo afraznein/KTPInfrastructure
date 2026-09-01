@@ -76,3 +76,24 @@ B against the exact preprod bundle. The run must prove:
 After those checks pass, review the aggregate report for plausible counts and
 privacy, then prepare the coordinated preprod-to-main PRs. Preserve the normal
 review and branch-protection checks; do not direct-merge around them.
+
+## Schema-23 position provenance addendum (2026-08-30)
+
+Schema 23 is the next preprod prerequisite and does not enable positional
+scoring. The coordinated bundle is `stats_logging` 1.19.0, daemon 0.3.16, and
+HLStatsX migration 025 after migration 024. The producer hashes the running
+`maps/<map>.bsp` with SHA-256, advertises it in each half manifest, and repeats
+it with explicit `alive=1` / `spectator=0` on every alive-only position sample.
+
+The daemon accepts schema 21/22 for their prior capabilities but requires an
+accepted schema-23 manifest before persisting this position shape. State must
+be exact, the row revision must match the manifest, and any rejection remains
+visible in the existing position health reconciliation. Migration 025 is
+idempotent and leaves historical columns NULL as honest legacy evidence.
+
+Infrastructure adds `schema23_position_provenance` as a fail-closed
+`positional_impact` prerequisite. Private provenance reports the captured BSP
+SHA-256 separately from the reviewed spatial-catalog content hash. Promotion
+requires all eleven health rows, including `team_membership`, and clean
+producer/daemon position counts. No scoring profile or score calculation is
+changed by this addendum.

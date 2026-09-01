@@ -33,6 +33,9 @@ def healthy_tables() -> dict[str, list[dict[str, object]]]:
                 "pos_x": str(player_id * 10),
                 "pos_y": str(player_id * 20),
                 "pos_z": "0",
+                "is_alive": "1",
+                "is_spectator": "0",
+                "map_revision_sha256": "a" * 64,
             })
     return {
         "ktp_matches": [{
@@ -103,35 +106,44 @@ def healthy_tables() -> dict[str, list[dict[str, object]]]:
              "weapon_type": "mills_bomb"},
         ],
         "ktp_capture_manifests": [{
-            "id": "1", "match_id": MATCH_ID, "half": "1", "schema_version": "22",
+            "id": "1", "match_id": MATCH_ID, "half": "1", "schema_version": "23",
             "event_epoch": "1787097601",
             "created_at": "2026-08-19 00:00:00",
             "position_interval": "2.00",
             "capabilities": (
                 "life,damage,position,frag,assist,break,flag_state,flag_position,"
-                "objective_attempt,grenade_entity"
+                "objective_attempt,team_membership,grenade_entity,position_state,"
+                "map_revision,sequence,health"
             ),
+            "map_revision_algorithm": "sha256",
+            "map_revision_sha256": "a" * 64,
         }],
         "ktp_capture_health": [
             {
                 "id": str(index), "match_id": MATCH_ID, "half": "1",
                 "event_type": event_type, "attempted": (
-                    "4" if event_type == "objective_attempt" else "3"
+                    "4" if event_type == "objective_attempt" else
+                    "24" if event_type == "position" else "3"
                 ), "enqueued": (
-                    "4" if event_type == "objective_attempt" else "3"
+                    "4" if event_type == "objective_attempt" else
+                    "24" if event_type == "position" else "3"
                 ), "dropped": "0", "emitted": (
-                    "4" if event_type == "objective_attempt" else "3"
+                    "4" if event_type == "objective_attempt" else
+                    "24" if event_type == "position" else "3"
                 ), "daemon_received": (
-                    "4" if event_type == "objective_attempt" else "3"
+                    "4" if event_type == "objective_attempt" else
+                    "24" if event_type == "position" else "3"
                 ), "daemon_accepted": (
-                    "4" if event_type == "objective_attempt" else "3"
+                    "4" if event_type == "objective_attempt" else
+                    "24" if event_type == "position" else "3"
                 ),
                 "daemon_rejected": "0", "correlation_failure_count": "0",
                 "sequence_gap_count": "0", "duplicate_or_reordered_count": "0",
             }
             for index, event_type in enumerate((
                 "life", "damage", "position", "frag", "assist", "break",
-                "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+                "flag_state", "flag_position", "objective_attempt", "team_membership",
+                "grenade_entity",
             ), 1)
         ],
     }
@@ -217,6 +229,27 @@ def test_authorized_schema22_two_second_cadence_passes(monkeypatch, tmp_path):
     assert result["level"] == "PASS"
     assert result["evidence"]["median_seconds"] == 2.0
     assert result["evidence"]["schema22_cadence_authorized"] is True
+
+
+def test_schema23_position_state_and_revision_pass(monkeypatch, tmp_path):
+    result = finding(
+        validate(monkeypatch, tmp_path, healthy_tables()),
+        "schema23_position_provenance",
+    )
+    assert result["level"] == "PASS"
+    assert result["evidence"]["captured_bsp_sha256"] == "a" * 64
+
+
+@pytest.mark.parametrize("field", ("is_alive", "is_spectator", "map_revision_sha256"))
+def test_schema23_position_state_and_revision_fail_closed(
+        monkeypatch, tmp_path, field):
+    tables = healthy_tables()
+    tables["ktp_position_samples"][0][field] = None
+    result = finding(
+        validate(monkeypatch, tmp_path, tables),
+        "schema23_position_provenance",
+    )
+    assert result["level"] == "FAIL"
 
 
 def test_grenade_rocket_or_mortar_entity_is_rejected(monkeypatch, tmp_path):

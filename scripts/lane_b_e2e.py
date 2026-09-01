@@ -371,7 +371,7 @@ def stage_grenade_entity_scenario(handle) -> dict[str, object]:
 
 
 def stage_objective_wire_witness(db, daemon, *, map_name: str) -> dict[str, object]:
-    """Drive exact schema-22 objective wire rows through the real daemon.
+    """Drive exact schema-23 objective wire rows through the real daemon.
 
     This deliberately proves the strict wire parser, authorization, context
     resolution, health accounting, and MySQL ledger. It does not pretend to
@@ -394,15 +394,19 @@ def stage_objective_wire_witness(db, daemon, *, map_name: str) -> dict[str, obje
 
     capabilities = (
         "frag_context,damage,position,assist,life,break,flag_state,"
-        "flag_position,objective_attempt,grenade_entity,sequence,health"
+        "flag_position,objective_attempt,grenade_entity,team_membership,"
+        "position_state,map_revision,sequence,health"
     )
+    witness_map_revision = "0" * 64
     payloads = [
         "KTP_CAPTURE_MANIFEST "
         f'(matchid "{match_id}") (half "1") (map "{map_name}") '
-        '(producer "stats_logging") (producer_version "1.18.0-witness") '
-        f'(schema "22") (capabilities "{capabilities}") '
+        '(producer "stats_logging") (producer_version "1.19.0-witness") '
+        f'(schema "23") (capabilities "{capabilities}") '
         '(position_interval "2.0") (buffer_entries "32") '
-        f'(life_buffer_entries "64") (sequence "1") (event_epoch "{event_epoch}")'
+        '(life_buffer_entries "64") (map_revision_algorithm "sha256") '
+        f'(map_revision "{witness_map_revision}") '
+        f'(sequence "1") (event_epoch "{event_epoch}")'
     ]
     scenarios = (
         ("start", 2, 2, 0, "Bridge", 1, 2, 1, 0, ""),
@@ -432,6 +436,7 @@ def stage_objective_wire_witness(db, daemon, *, map_name: str) -> dict[str, obje
     health_types = (
         "life", "damage", "position", "frag", "assist", "break",
         "flag_state", "flag_position", "objective_attempt", "grenade_entity",
+        "team_membership",
     )
     for sequence, event_type in enumerate(health_types, 9):
         count = 7 if event_type == "objective_attempt" else 0
