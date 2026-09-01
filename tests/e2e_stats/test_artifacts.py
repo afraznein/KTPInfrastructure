@@ -106,6 +106,7 @@ def daemon_repo(tmp_path):
         (20, "frag_context_certified"),
         (21, "capture_observability"),
         (22, "objective_attempts_grenade_entities"),
+        (23, "headshot_observed_provenance"),
         (24, "team_membership_intervals"),
         (25, "position_state_map_revision"),
     ):
@@ -127,12 +128,12 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_inc.is_file()
     assert arts.gamedata_dir.is_dir()
     assert arts.hlstats_pl.is_file()
-    assert len(arts.schema_sql) == 21
+    assert len(arts.schema_sql) == 22
     assert len(arts.seed_sql) == 2
 
 
 def test_default_schema_sequence_includes_retention_through_telemetry23():
-    assert DEFAULT_SCHEMA_FILES[-11:] == (
+    assert DEFAULT_SCHEMA_FILES[-12:] == (
         "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
@@ -142,6 +143,7 @@ def test_default_schema_sequence_includes_retention_through_telemetry23():
         "sql/migrate_020_frag_context_certified.sql",
         "sql/migrate_021_capture_observability.sql",
         "sql/migrate_022_objective_attempts_grenade_entities.sql",
+        "sql/migrate_023_headshot_observed_provenance.sql",
         "sql/migrate_024_team_membership_intervals.sql",
         "sql/migrate_025_position_state_map_revision.sql",
     )
@@ -319,6 +321,7 @@ def test_manifest_records_shas_and_md5s(amxx_repo, daemon_repo, tmp_path):
                  "migrate_020_frag_context_certified.sql",
                  "migrate_021_capture_observability.sql",
                  "migrate_022_objective_attempts_grenade_entities.sql",
+                 "migrate_023_headshot_observed_provenance.sql",
                  "migrate_024_team_membership_intervals.sql",
                  "migrate_025_position_state_map_revision.sql"):
         assert len(m["files"][name]["md5"]) == 32
