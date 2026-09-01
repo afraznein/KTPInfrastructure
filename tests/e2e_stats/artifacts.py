@@ -96,16 +96,6 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_025_position_state_map_revision.sql",
 )
 
-# `hlstats.pl` uses these by relative require.  A lane artifact that contains
-# only the entrypoint starts successfully but cannot ingest a single line.
-REQUIRED_DAEMON_RUNTIME_FILES = (
-    "scripts/ConfigReaderSimple.pm", "scripts/TRcon.pm", "scripts/BASTARDrcon.pm",
-    "scripts/HLstats_Server.pm", "scripts/HLstats_Player.pm", "scripts/HLstats_Game.pm",
-    "scripts/HLstats_GameConstants.plib", "scripts/HLstats.plib",
-    "scripts/HLstats_EventHandlers.plib",
-)
-
-
 def _md5(path: Path) -> str:
     h = hashlib.md5()
     with path.open("rb") as f:
@@ -503,7 +493,6 @@ class ArtifactSet:
     plugin_inc: Path | None = None
     gamedata_dir: Path | None = None
     hlstats_pl: Path | None = None
-    daemon_runtime: list[Path] = field(default_factory=list)
     schema_sql: list[Path] = field(default_factory=list)
     seed_sql: list[Path] = field(default_factory=list)
     provenance: dict = field(default_factory=dict)
@@ -568,12 +557,8 @@ class ArtifactSet:
                 gamedata_provenance["tree_sha256"]
             )
 
-        daemon_dir = build_dir / "daemon"
         inst.hlstats_pl = extract(
-            daemon_repo, daemon_sha, "scripts/hlstats.pl", daemon_dir / "hlstats.pl")
-        for rel in REQUIRED_DAEMON_RUNTIME_FILES:
-            inst.daemon_runtime.append(
-                extract(daemon_repo, daemon_sha, rel, daemon_dir / Path(rel).name))
+            daemon_repo, daemon_sha, "scripts/hlstats.pl", build_dir / "hlstats.pl")
 
         for rel in schema_files:
             inst.schema_sql.append(
@@ -717,8 +702,6 @@ class ArtifactSet:
         ):
             if p is not None and p.is_file():
                 files[label] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
-        for p in self.daemon_runtime:
-            files[f"daemon/{p.name}"] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
         for p in self.schema_sql + self.seed_sql:
             files[p.name] = {"path": str(p), "md5": _md5(p), "bytes": p.stat().st_size}
         return {"provenance": self.provenance, "files": files}
