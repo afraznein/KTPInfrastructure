@@ -823,6 +823,28 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             if impact_cfg and reference_ppm > 0 else "Overall rating not enabled.",
         },
     }
+    metric_eligibility = {
+        "position_impact": {
+            "status": "available" if position_enabled and reliability["life_impact"] else (
+                "partial" if position_enabled else "unavailable"
+            ),
+            "reason": "authoritative lifecycle and positional evidence available"
+            if position_enabled and reliability["life_impact"] else (
+                "position/objective evidence available, but lifecycle was inferred"
+                if position_enabled else "position samples or objective coordinates unavailable"
+            ),
+        },
+        "impact_index": {
+            "status": "available" if explicit_reference > 0 and explicit_log_scale > 0 else (
+                "partial" if impact_cfg and reference_ppm > 0 else "unavailable"
+            ),
+            "reason": "qualified corpus reference and dispersion supplied"
+            if explicit_reference > 0 and explicit_log_scale > 0 else (
+                "provisional match-local reference; not cross-match comparable"
+                if impact_cfg and reference_ppm > 0 else "impact index not enabled"
+            ),
+        },
+    }
     report = {
         "schema_version": 1,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -836,6 +858,7 @@ def score_match(facts: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any
             "shareable_position_field": "derived_position_points_only",
         },
         "quality_gates": quality_gates,
+        "metric_eligibility": metric_eligibility,
         "telemetry_lifecycles": facts.get("telemetry_lifecycles") or {},
         "component_totals": component_totals,
         "component_shares_percent": component_shares,
