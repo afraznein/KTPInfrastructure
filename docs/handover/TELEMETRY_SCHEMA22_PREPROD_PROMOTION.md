@@ -81,14 +81,14 @@ review and branch-protection checks; do not direct-merge around them.
 
 Schema 23 is the next preprod prerequisite and does not enable positional
 scoring. The coordinated bundle is `stats_logging` 1.19.0, daemon 0.3.16, and
-HLStatsX migration 024 after migration 023. The producer hashes the running
+HLStatsX migration 025 after migration 024. The producer hashes the running
 `maps/<map>.bsp` with SHA-256, advertises it in each half manifest, and repeats
 it with explicit `alive=1` / `spectator=0` on every alive-only position sample.
 
 The daemon accepts schema 21/22 for their prior capabilities but requires an
 accepted schema-23 manifest before persisting this position shape. State must
 be exact, the row revision must match the manifest, and any rejection remains
-visible in the existing position health reconciliation. Migration 024 is
+visible in the existing position health reconciliation. Migration 025 is
 idempotent and leaves historical columns NULL as honest legacy evidence.
 
 Infrastructure adds `schema23_position_provenance` as a fail-closed

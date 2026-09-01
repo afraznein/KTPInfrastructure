@@ -337,6 +337,41 @@ cp ktp-backup.sh.example ktp-backup.sh
 0 3 * * 0 /opt/ktp-backup.sh >> /var/log/ktp-backup.log 2>&1
 ```
 
+### ktp-backup-watchdog.sh
+Notices a weekly backup that never ran or finished short. `ktp-backup.sh` logs and alerts on the
+failures it can see; nothing watched for the run that simply did not happen.
+
+**Deployed to:** `/usr/local/bin/ktp-backup-watchdog.sh` (data server)
+
+**Cron:** daily 08:30 ET, after the Sunday 03:00 backup window has closed.
+
+### ktp-scheduled-kernel-reboot.sh
+Reboots the data server into a newer kernel, but only while nobody is playing -- a reboot here stops
+HLTV recording, stats ingest and AC uploads. Aborts and retries the next night otherwise, and posts
+the outcome either way. Disables its own timer before rebooting, so it is one-shot by construction.
+
+**Deployed to:** `/usr/local/bin/ktp-scheduled-kernel-reboot.sh` (data server)
+
+**Units:** [`systemd/ktp-kernel-reboot.service`](systemd/ktp-kernel-reboot.service) +
+[`systemd/ktp-kernel-reboot.timer`](systemd/ktp-kernel-reboot.timer), 02:00 ET.
+
+> ✅ **Fixed 2026-08-31 -- the idle gate is judged on PLAY, not on recording.**
+> It previously required zero `.dem` writes in 15 minutes, but the 24 HLTV proxies record
+> continuously, so that term could never reach zero and the reboot never once fired. The demo
+> term is gone; the second signal is now an unfinished match row, **bounded to 6h** because 186
+> rows carry a NULL `end_time` going back to January and an unbounded check would block forever.
+> `--force` skips the idle check for an operator-directed reboot, but **still fails closed on a
+> database error** -- forcing past a known-busy state is allowed, forcing past an unknown one is not.
+
+### ktp-post-reboot-verify.sh
+Companion to the above: runs once after the reboot, reports kernel version, HLTV proxy count and any
+failed units, then disables itself.
+
+**Deployed to:** `/usr/local/bin/ktp-post-reboot-verify.sh` (data server)
+
+**Unit:** enabled by `ktp-scheduled-kernel-reboot.sh` immediately before it reboots, so it only ever
+runs on a boot that script caused.
+
 ### ktp-log-rotation.sh
 Compresses old logs and deletes archives older than a year.
 

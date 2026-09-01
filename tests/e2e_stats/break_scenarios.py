@@ -184,6 +184,11 @@ _MANIFEST_RE = re.compile(
     + r'\(position_interval "(?P<position_interval>\d+(?:\.\d+)?)"\) '
     + r'\(buffer_entries "(?P<buffer_entries>\d+)"\) '
     + r'\(life_buffer_entries "(?P<life_buffer_entries>\d+)"\) '
+    # Schema 23 appends immutable map-revision provenance before the
+    # sequence/epoch pair.  Keep the schema-22 shape valid while accepting
+    # the two schema-23 fields only as a complete, ordered pair.
+    + r'(?:\(map_revision_algorithm "sha256"\) '
+    + r'\(map_revision "[0-9a-f]{64}"\) )?'
     + r'\(sequence "(?P<sequence>\d+)"\) '
     + r'\(event_epoch "(?P<event_epoch>\d+)"\)\r?$',
     re.MULTILINE,
@@ -1386,14 +1391,18 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
 
     Retries because a fail-closed engine precondition can still be transient.
     A verdict of ok or violation is final and stops the loop immediately —
-    retrying past a violation would be shopping for a green run. The three
-    factual canonical frag runs first, followed by the three unmatched-frag
-    diagnostics that use a real capture created deterministically from the
-    map's capture-area bounds. Every command is also bound to one five-minute
-    series epoch; a half end, changelevel, plugin/manifest activation, userid
-    change, or deadline aborts all remaining commands. The strict downstream
-    contract still requires the one accepted factual frag and exact three
-    synthetic diagnostics to stage and reconcile.
+    retrying past a violation would be shopping for a green run. The factual
+    canonical frag runs first. A clean real capture then acts as the
+    capture-area readiness preflight: unlike the synthetic diagnostics it polls
+    for a stable map target before positioning anyone. This prevents a newly
+    live map from turning the intentional diagnostics into a false coverage
+    failure merely because its objective bounds have not settled yet. The three
+    unmatched-frag diagnostics run immediately after that preflight. Every
+    command is also bound to one five-minute series epoch; a half end,
+    changelevel, plugin/manifest activation, userid change, or deadline aborts
+    all remaining commands. The strict downstream contract still requires the
+    one accepted factual frag and exact three synthetic diagnostics to stage
+    and reconcile.
     """
     d = BreakDriver(handle, log_path)
     if not d.begin_series():
@@ -1419,17 +1428,17 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
                 "detail": canonical.detail,
                 "breaks_seen": canonical.breaks_seen, **canonical.extra})
 
-    # The three scenarios that intentionally dispatch unmatched synthetic
-    # deaths still run before optional capture observations. This guarantees
-    # that exact-three reconciliation is never held hostage by the latter.
-    # The canonical frag above is factual and accepted, so it is not part of
-    # this intentionally rejected diagnostic set.
+    # The clean-capture preflight has its own bounded in-plugin readiness poll.
+    # Run it before the unmatched diagnostics so their deterministic target
+    # selection cannot race a just-live map's objective initialization. The
+    # canonical frag above is factual and accepted, so it is not part of the
+    # intentionally rejected diagnostic set below.
     scenarios = () if canonical.status != "ok" else (
+        (d.negative_clean_capture, attempts),
         (d.negative_off_point_kill, 1),
         (d.positive_kill_on_point, attempts),
         (d.negative_round_restart, attempts),
         (d.negative_voluntary_walkoff, attempts),
-        (d.negative_clean_capture, attempts),
     )
     if canonical.status != "ok":
         print("  diagnostics HARD STOP: canonical factual frag did not "

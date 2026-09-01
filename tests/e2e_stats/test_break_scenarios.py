@@ -125,6 +125,17 @@ def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
     assert 'server_print("KTP_BD_KILL_DISARMED")' in disarm
 
 
+def test_near_diagnostics_do_not_require_a_far_away_anchor():
+    """Only the far-kill probe asserts an off-point distance.  Restart and
+    walk-off setup merely need a safe origin outside the capture areas."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    prepare = source[source.index("stock bool:bd_prepare_capture"):
+                     source.index("stock bd_find_prepared_capture")]
+    assert "need_far && !bd_far_anchor(candidate, far_origin)" in prepare
+    assert "!need_far && !bd_safe_anchor(far_origin)" in prepare
+    assert "stock bd_safe_anchor(Float:anchor[3])" in source
+
+
 def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     seconds = float(next(
@@ -299,14 +310,20 @@ def _match_start(match_id, half="1st half"):
             f'(half "{half}") (type "0")\n')
 
 
-def _manifest(match_id, half=1, epoch=100, producer="stats_logging"):
+def _manifest(match_id, half=1, epoch=100, producer="stats_logging",
+              schema=22):
+    revision = ""
+    if schema == 23:
+        revision = ('(map_revision_algorithm "sha256") '
+                    '(map_revision "0123456789abcdef0123456789abcdef'
+                    '0123456789abcdef0123456789abcdef") ')
     return (f'L 08/28/2026 - 12:00:00: KTP_CAPTURE_MANIFEST '
             f'(matchid "{match_id}") (half "{half}") '
             f'(map "dod_anzio") (producer "{producer}") '
-            f'(producer_version "1.18.1") (schema "22") '
+            f'(producer_version "1.19.0") (schema "{schema}") '
             f'(capabilities "frag_context,damage,position,health") '
             f'(position_interval "2.0") (buffer_entries "128") '
-            f'(life_buffer_entries "64") (sequence "1") '
+            f'(life_buffer_entries "64") {revision}(sequence "1") '
             f'(event_epoch "{epoch}")\n')
 
 
@@ -343,6 +360,17 @@ def test_begin_series_accepts_real_r3_manifest_before_start_order():
 
     assert driver.begin_series() is True
     assert driver.series_manifest == ("diagnostic-TEST", 1, 100)
+    assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_begin_series_accepts_schema23_map_revision_manifest():
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=200, schema=23))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("diagnostic-TEST", 1, 200)
     assert handle.fired == ["ktp_bd_begin_series"]
 
 
@@ -1181,6 +1209,22 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
     assert "isolated != g_bdSeriesRosterCount" in command
 
 
+def test_pawn_canonical_frag_moves_attacker_off_the_staged_objective_after_death():
+    """The factual kill is complete at the engine callback.  The attacker
+    must not remain in the objective trigger while the victim respawns."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    death = source[source.index("public client_death("):
+                   source.index("// ---------------------------------------------------------------------------",
+                                source.index("public client_death("))]
+    restore = source[source.index("stock bool:bd_restore_canonical_killer_origin"):
+                     source.index("stock bd_canonical_restore_victim_health")]
+    assert "g_bdIsolationOriginSaved[killer]" in restore
+    assert "dodx_set_user_origin(killer, g_bdIsolationOrigin[killer])" in restore
+    assert death.index("bd_canonical_clear_attack()") < death.index(
+        "bd_restore_canonical_killer_origin()"
+    )
+
+
 def test_pawn_canonical_wait_progressively_acquires_dead_pinned_member_and_ignores_prewindow_death():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     arm = source[source.index("public cmd_stage_canonical_frag()"):
@@ -1833,12 +1877,16 @@ def test_missing_disarm_ack_hard_stops_all_remaining_diagnostics(monkeypatch):
 
     results = bs.run_all(object(), object(), attempts=3)
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
     assert [row["name"] for row in results] == calls
     assert results[-1]["kill_disarm_ack"] is False
 
 
-def test_exact_successful_series_runs_the_required_synthetic_three_first(
+def test_exact_successful_series_runs_the_required_synthetic_three_after_readiness(
         monkeypatch):
     calls = []
 
@@ -1878,8 +1926,8 @@ def test_exact_successful_series_runs_the_required_synthetic_three_first(
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls[0] == "canonical_diagnostic_frag"
-    assert tuple(calls[1:4]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
+    assert calls[:2] == ["canonical_diagnostic_frag", "negative_clean_capture"]
+    assert tuple(calls[2:5]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
     required = [row for row in results
                 if row["name"] in bs.REQUIRED_SYNTHETIC_SCENARIOS]
     assert len(required) == 3
@@ -2030,8 +2078,12 @@ def test_lifecycle_abort_hard_stops_every_remaining_command(monkeypatch):
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
-    assert len(results) == 2
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
+    assert len(results) == 3
     assert results[-1]["series_abort"] == "half_end"
 
 
