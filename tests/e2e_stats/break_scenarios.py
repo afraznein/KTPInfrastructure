@@ -1135,6 +1135,9 @@ class BreakDriver:
             return self._scenario_abort(s)
         mark = len(self._read())
         self.handle.rcon("ktp_bd_arm_restart")
+        # Arming issues a real normalization restart before it can emit a
+        # restart_queue marker. Never retry that lifecycle mutation.
+        s.extra["restart_issued"] = True
 
         ack_deadline = time.monotonic() + 3.0
         while time.monotonic() < ack_deadline:
@@ -1148,7 +1151,7 @@ class BreakDriver:
                         "plugin is not running")
             return s
 
-        deadline = self._series_deadline_for(22.0)
+        deadline = self._series_deadline_for(35.0)
         tail = ""
         while time.monotonic() < deadline:
             if self.series_started and not self._series_live():
@@ -1167,8 +1170,6 @@ class BreakDriver:
         else:
             s.detail = ("restart probe did not produce a complete queue/result "
                         "evidence pair")
-            if "[BD] restart_queue" in tail:
-                s.extra["restart_issued"] = True
             return s
 
         return self._judge_round_restart(tail)
@@ -1472,6 +1473,11 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
         if s.extra.get("kill_disarm_ack") is False:
             print("  diagnostics HARD STOP: kill poller disarm was not "
                   "acknowledged", flush=True)
+            break
+        if (s.name == "negative_round_restart"
+                and s.status != "ok" and s.extra.get("restart_issued")):
+            print("  diagnostics HARD STOP: normalization restart did not "
+                  "produce a complete closed evidence window", flush=True)
             break
         if s.extra.get("series_abort"):
             print("  diagnostics HARD STOP: lifecycle/deadline boundary "

@@ -79,6 +79,7 @@
 #define BD_TASK_REPORT_BASE 77200
 #define BD_WALKOFF_MAX_POLLS 100
 #define BD_KILL_MAX_POLLS 100
+#define BD_RESTART_ARM_MAX_POLLS 300
 #define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS
 #define BD_RESTART_MAX_POLLS 60
 #define BD_RESTART_TIMER_SECS 1.0
@@ -2086,7 +2087,7 @@ public bd_restart_arm_poll() {
 	g_bdRestartArmPolls++
 	if (!g_bdSeriesActive)
 		return PLUGIN_HANDLED
-	if (g_bdRestartArmPolls >= BD_KILL_MAX_POLLS) {
+	if (g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS) {
 		bd_restart_arm_abort("no stageable capture while armed")
 		return PLUGIN_HANDLED
 	}
