@@ -1549,7 +1549,8 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
 
     poll = source[source.index("public bd_restart_arm_poll()"):
                   source.index("public bd_restart_poll()")]
-    assert poll.index("g_bdRestartArmPolls >= BD_KILL_MAX_POLLS") < (
+    assert "#define BD_RESTART_ARM_MAX_POLLS 300" in source
+    assert poll.index("g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
     )
     assert poll.index("bd_restart_roster_pinned_complete(stable_generation)") < (
