@@ -129,7 +129,6 @@ new g_bdRestartRosterCount = 0
 new bool:g_bdRestartRosterSelected[33]
 new g_bdRestartRosterUserid[33]
 new g_bdRestartRosterTeam[33]
-new g_bdRestartRosterSpawnBaseline[33]
 new g_bdRestartRosterSpawnStable[33]
 new Float:g_bdRestartRosterOrigin[33][3]
 new g_bdSpawnGeneration[33]
@@ -321,7 +320,6 @@ stock bd_reset_restart_arm_state() {
 		g_bdRestartRosterSelected[id] = false
 		g_bdRestartRosterUserid[id] = 0
 		g_bdRestartRosterTeam[id] = 0
-		g_bdRestartRosterSpawnBaseline[id] = 0
 		g_bdRestartRosterSpawnStable[id] = 0
 		for (new axis = 0; axis < 3; axis++)
 			g_bdRestartRosterOrigin[id][axis] = 0.0
@@ -1301,7 +1299,6 @@ stock bd_snapshot_restart_roster() {
 		g_bdRestartRosterSelected[id] = false
 		g_bdRestartRosterUserid[id] = 0
 		g_bdRestartRosterTeam[id] = 0
-		g_bdRestartRosterSpawnBaseline[id] = 0
 		g_bdRestartRosterSpawnStable[id] = 0
 	}
 
@@ -1316,7 +1313,6 @@ stock bd_snapshot_restart_roster() {
 		g_bdRestartRosterSelected[id] = true
 		g_bdRestartRosterUserid[id] = get_user_userid(id)
 		g_bdRestartRosterTeam[id] = team
-		g_bdRestartRosterSpawnBaseline[id] = g_bdSpawnGeneration[id]
 		g_bdRestartRosterCount++
 	}
 	return g_bdRestartRosterCount
@@ -1346,23 +1342,21 @@ stock bool:bd_restart_roster_pinned_complete(bool:stable_generation) {
 				team != g_bdRestartRosterTeam[id])
 			return false
 		if (stable_generation) {
-			if (g_bdRestartRosterSpawnStable[id] <=
-					g_bdRestartRosterSpawnBaseline[id] ||
-					g_bdSpawnGeneration[id] !=
+			if (g_bdSpawnGeneration[id] !=
 						g_bdRestartRosterSpawnStable[id])
 				return false
-		} else if (g_bdSpawnGeneration[id] <
-				g_bdRestartRosterSpawnBaseline[id] ||
-				g_bdSpawnGeneration[id] >
-					g_bdRestartRosterSpawnBaseline[id] + 1) {
-			return false
 		}
 		seen++
 	}
 	return seen == g_bdRestartRosterCount
 }
 
-stock bool:bd_restart_roster_respawned() {
+/** A clan restart does not promise a new spawn callback for every already-live
+ * bot. Once the authoritative round clock has rebased, accept the same exact
+ * alive roster and snapshot the generations actually observed. Any later
+ * generation change remains a hard abort.
+ */
+stock bool:bd_restart_roster_live() {
 	if (g_bdRestartRosterCount < 2 ||
 			!bd_restart_roster_pinned_complete(false))
 		return false
@@ -1372,17 +1366,27 @@ stock bool:bd_restart_roster_respawned() {
 			continue
 		if (!is_user_connected(id) || !is_user_alive(id) ||
 				get_user_userid(id) != g_bdRestartRosterUserid[id] ||
-				get_user_team(id) != g_bdRestartRosterTeam[id] ||
-				g_bdSpawnGeneration[id] !=
-					g_bdRestartRosterSpawnBaseline[id] + 1)
+				get_user_team(id) != g_bdRestartRosterTeam[id])
 			return false
 		seen++
 	}
 	return seen == g_bdRestartRosterCount
 }
 
+stock bd_restart_roster_alive_count() {
+	new seen = 0
+	for (new id = 1; id <= 32; id++) {
+		if (g_bdRestartRosterSelected[id] && is_user_connected(id) &&
+				is_user_alive(id) &&
+				get_user_userid(id) == g_bdRestartRosterUserid[id] &&
+				get_user_team(id) == g_bdRestartRosterTeam[id])
+			seen++
+	}
+	return seen
+}
+
 stock bool:bd_restart_roster_generation_current() {
-	if (!bd_restart_roster_respawned() ||
+	if (!bd_restart_roster_live() ||
 			!bd_restart_roster_pinned_complete(true))
 		return false
 	for (new id = 1; id <= 32; id++) {
@@ -1444,7 +1448,7 @@ stock bool:bd_restart_same_origin(const Float:a[3], const Float:b[3]) {
  * or capture activity invalidate the sample before any player is moved.
  */
 stock bool:bd_restart_begin_stability(flag, team) {
-	if (!bd_restart_roster_respawned())
+	if (!bd_restart_roster_live())
 		return false
 	new isolated = bd_begin_test_isolation()
 	if (isolated < g_bdRestartRosterCount) {
@@ -2070,8 +2074,9 @@ public cmd_arm_restart() {
 	// Normalize the map first. By the time this LAST scenario runs, naturally
 	// neutral points have usually been captured and can never exercise 0 -> 0.
 	// The poll must observe this clock's complete rebase, every selected roster
-	// member's later DODX spawn generation, and a stable frozen world before it
-	// is allowed to prepare the candidate-backed restart.
+	// member's exact live identity/team roster, and a stable frozen world before
+	// it is allowed to prepare the candidate-backed restart. The later stable
+	// snapshot still rejects any post-snapshot spawn generation change.
 	log_amx("[BD] restart ARMED preparing neutral reset timer_before=%.2f timer_used=%.2f",
 		g_bdRestartTimerSaved, g_bdRestartTimerUsed)
 	server_cmd("mp_clan_restartround 1")
@@ -2088,6 +2093,10 @@ public bd_restart_arm_poll() {
 	if (!g_bdSeriesActive)
 		return PLUGIN_HANDLED
 	if (g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS) {
+		log_amx("[BD] restart TIMEOUT phase=%d rebase=%d roster_alive=%d/%d stable_flag=%d",
+			g_bdRestartArmPhase, g_bdRestartNormalizeRebased,
+			bd_restart_roster_alive_count(), g_bdRestartRosterCount,
+			g_bdRestartStableFlag)
 		bd_restart_arm_abort("no stageable capture while armed")
 		return PLUGIN_HANDLED
 	}
@@ -2122,7 +2131,7 @@ public bd_restart_arm_poll() {
 
 	if (g_bdRestartArmPhase == BD_RESTART_ARM_STABILIZING) {
 		if (g_bdRestartStableFlag < 0) {
-			if (!bd_restart_roster_respawned())
+			if (!bd_restart_roster_live())
 				return PLUGIN_HANDLED
 			new flag, team
 			if (!bd_find_restart_plan(flag, team) ||
