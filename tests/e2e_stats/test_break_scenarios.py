@@ -902,8 +902,6 @@ class _RestartArmModel:
             if stable:
                 if row["generation"] != self.stable_generation[player_id]:
                     return False
-            elif not baseline <= row["generation"] <= baseline + 1:
-                return False
         return True
 
     def lifecycle_abort(self):
@@ -926,8 +924,7 @@ class _RestartArmModel:
         if self.phase == "stabilizing":
             if self.stable_generation is None:
                 if (not area_stable or any(
-                        not row["alive"] or
-                        row["generation"] != self.pinned[player_id][2] + 1
+                        not row["alive"]
                         for player_id, row in self.players.items()
                         if player_id in self.pinned)):
                     return
@@ -981,16 +978,17 @@ def test_restart_arm_behavior_waits_for_respawn_and_aborts_membership_changes():
                           "generation": 2, "alive": True}
         return players
 
-    # r5 ordering: the clock normalizes first. No capture is prepared until a
-    # later spawn generation and all five stable post-respawn samples exist.
+    # A clan restart does not promise a fresh spawn callback for every bot.
+    # The post-rebase live roster is snapshotted, then held stable.
     players = roster()
     model = _RestartArmModel(players)
     model.tick(clock_complete=True)
     assert model.phase == "stabilizing"
+    players[2]["alive"] = False
+    players[2]["generation"] += 1
     model.tick()
-    assert model.prepared == model.queues == model.results == 0
-    for row in players.values():
-        row["generation"] += 1
+    assert model.stable_generation is None
+    players[2]["alive"] = True
     model.tick()
     assert model.stable_generation is not None
     for _ in range(model.STABLE_POLLS - 1):
@@ -1002,6 +1000,13 @@ def test_restart_arm_behavior_waits_for_respawn_and_aborts_membership_changes():
     model.tick(finish=True)
     model.tick(capture_active=True, finish=True)
     assert (model.queues, model.results) == (1, 1)
+
+    # A later spawn after the stable snapshot remains a hard lifecycle abort.
+    changed = _restart_model_at_prepared(roster())
+    changed.players[1]["generation"] += 1
+    changed.tick(capture_active=True)
+    assert changed.aborted is True
+    assert changed.queues == changed.results == 0
 
     # An already-connected spectator joining combat never changed the userid
     # epoch in r5. Pinned-roster completeness must still abort immediately.
@@ -1493,7 +1498,7 @@ def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
         "g_bdRestartArmPhase == BD_RESTART_ARM_PREPARED", stabilizing_start
     )
     stabilizing = poll[stabilizing_start:prepared_start]
-    assert stabilizing.index("bd_restart_roster_respawned()") < (
+    assert stabilizing.index("bd_restart_roster_live()") < (
         stabilizing.index("bd_restart_begin_stability(")
     ) < stabilizing.index("bd_restart_stability_current()")
     threshold = stabilizing.index("BD_RESTART_POSTRESPAWN_STABLE_POLLS")
@@ -1533,12 +1538,12 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
     assert bs.BreakDriver.SERIES_TIMEOUT == 300.0
     completeness = source[source.index(
         "stock bool:bd_restart_roster_pinned_complete"
-    ):source.index("stock bool:bd_restart_roster_respawned")]
+    ):source.index("stock bool:bd_restart_roster_live")]
     assert "get_players(players, num)" in completeness
     assert "!g_bdRestartRosterSelected[id]" in completeness
     assert "team != g_bdRestartRosterTeam[id]" in completeness
-    assert "g_bdRestartRosterSpawnBaseline[id] + 1" in completeness
     assert "g_bdRestartRosterSpawnStable[id]" in completeness
+    assert "g_bdRestartRosterSpawnBaseline[id] + 1" not in completeness
     abort = source[source.index("stock bd_restart_arm_abort"):
                    source.index("/** Create a real, bounded capture")]
     assert abort.index("remove_task(BD_TASK_RESTART_ARM_POLL)") < (
@@ -1553,6 +1558,7 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
     assert poll.index("g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
     )
+    assert 'restart TIMEOUT phase=%d rebase=%d roster_alive=%d/%d stable_flag=%d' in poll
     assert poll.index("bd_restart_roster_pinned_complete(stable_generation)") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
     )
