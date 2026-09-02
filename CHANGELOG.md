@@ -4,6 +4,36 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: the nightly restart's cron backup now survives a reboot, and restores itself (2026-09-02)
+
+- `ktp-scheduled-restart.sh` strips the per-minute monitor cron for the duration of the restart and
+  restores it from a `mktemp` backup on an EXIT trap. **An EXIT trap does not fire on power loss, a
+  kernel panic or a hard reboot**, and `/tmp` is cleared on the way back up. A reboot inside that
+  window therefore leaves the crontab stripped with its only backup gone: the instances are down and
+  the mechanism that would have restarted them has been deleted. Nothing alerts, because the thing
+  that would have reported it is what went missing. Measured on a fleet host: cron paused `03:00:01`,
+  restored `03:01:33` — an exposure of roughly a minute and a half, every night.
+- The backup moves to `${KTP_STATE_DIR:-$HOME/.ktp}/monitor-cron.bak` — the script's own user, no
+  provisioning needed, and it outlives a reboot. It is armed by `mv` from a `.partial` sibling, so a
+  half-written backup can never be the thing recovery trusts.
+- **A backup found at startup is the recovery signal**, and the script now acts on it before doing
+  anything else. It appends only the monitor lines back rather than installing the saved file whole,
+  so a crontab edit made between the interrupted run and this one survives.
+- Debris is distinguished from a real unfinished restore by SHAPE, not by age: the pause strips
+  *every* matching line, so a backup holding monitor entries beside a live crontab that has none is
+  the state only an interrupted run leaves. An operator who disables one instance leaves the others,
+  which correctly reads as debris and is cleared without touching the crontab. Recovery is therefore
+  idempotent — once the entries are back, a second pass is a no-op.
+- The trap is unchanged in intent and still handles the normal path. Two adjacent one-way doors are
+  closed alongside it: restoring an *empty* backup (`crontab -l` having failed) would have deleted
+  every entry, and the pause is now skipped entirely if no durable backup could be written — a
+  monitor cron left running is a far cheaper failure than one deleted.
+- **No boot-time start for the game instances is added here.** That has a real double-start hazard
+  against the nightly and is a separate decision.
+- Template only. `.example` is the source of truth per the 2026-08-27 reconciliation; the fleet's
+  copies are unchanged and `ktp-restart-drift.py` will report the difference until an operator
+  reconciles them. **Nothing is deployed and no server is restarted by this change.**
+
 ### `ops`: reconcile the restart scripts' three lineages, and make the next divergence visible (2026-08-27)
 
 - `~/restart-all-servers.sh` had drifted into **two mutually incompatible fleet variants** and neither

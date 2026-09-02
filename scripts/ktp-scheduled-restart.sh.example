@@ -166,22 +166,61 @@ EOF
 # ============================================================================
 # Pause Monitor Cron
 # ============================================================================
-log "Pausing monitor cron to prevent race condition..."
-CRON_BACKUP=$(mktemp)
-crontab -l > "$CRON_BACKUP" 2>/dev/null
+# The backup lives under $HOME, never /tmp: an EXIT trap does not fire on power
+# loss or a hard reboot, and /tmp is cleared on the way back up - so the monitor
+# cron stays stripped with nothing left alive to report that it is missing.
+MONITOR_CRON_MATCH='dodserver.*monitor'
+CRON_STATE_DIR="${KTP_STATE_DIR:-$HOME/.ktp}"
+CRON_BACKUP="$CRON_STATE_DIR/monitor-cron.bak"
+mkdir -p "$CRON_STATE_DIR" 2>/dev/null
 
-# Remove monitor entries temporarily
-crontab -l 2>/dev/null | grep -v 'dodserver.*monitor' | crontab -
-log "Monitor cron paused"
-
-# Ensure we restore cron even if script fails
 restore_cron() {
     log "Restoring monitor cron..."
-    crontab "$CRON_BACKUP"
-    rm -f "$CRON_BACKUP"
-    log "Monitor cron restored"
+    # An empty backup means `crontab -l` failed; installing it would delete every
+    # entry, which is the outcome this whole block exists to prevent.
+    if [ -s "$CRON_BACKUP" ]; then
+        crontab "$CRON_BACKUP"
+        rm -f "$CRON_BACKUP"
+        log "Monitor cron restored"
+    else
+        log "WARNING: cron backup empty or missing - leaving the crontab as-is"
+    fi
 }
-trap restore_cron EXIT
+
+# A backup present at startup means an earlier run stripped the cron and never
+# reached its trap. Append only the monitor lines back, never the whole file, so
+# crontab edits made between that run and this one survive the recovery.
+recover_monitor_cron() {
+    [ -f "$CRON_BACKUP" ] || return 0
+
+    local live saved
+    live=$(crontab -l 2>/dev/null)
+    saved=$(grep "$MONITOR_CRON_MATCH" "$CRON_BACKUP" 2>/dev/null)
+
+    # The pause below strips EVERY matching line, so "backup has monitor entries,
+    # live crontab has none" is a shape only an interrupted run leaves. An operator
+    # disabling one instance leaves the rest, and correctly reads as debris here.
+    if [ -n "$saved" ] && ! printf '%s\n' "$live" | grep -q "$MONITOR_CRON_MATCH"; then
+        log "Interrupted run left the monitor cron stripped - recovering from $CRON_BACKUP"
+        printf '%s\n%s\n' "$live" "$saved" | crontab -
+        log "Monitor cron recovered"
+    fi
+    rm -f "$CRON_BACKUP"
+}
+recover_monitor_cron
+
+log "Pausing monitor cron to prevent race condition..."
+# Arm by rename so a half-written backup is never what recovery trusts, and skip
+# the pause outright if it cannot be written - stripping without one is a one-way
+# door, and a monitor cron left running is the far cheaper failure.
+if crontab -l > "$CRON_BACKUP.partial" 2>/dev/null && mv -f "$CRON_BACKUP.partial" "$CRON_BACKUP"; then
+    crontab -l 2>/dev/null | grep -v "$MONITOR_CRON_MATCH" | crontab -
+    trap restore_cron EXIT
+    log "Monitor cron paused"
+else
+    rm -f "$CRON_BACKUP.partial"
+    log "WARNING: no durable cron backup at $CRON_BACKUP - leaving the monitor cron running"
+fi
 
 # ============================================================================
 # Send Initial "Restarting" Message
