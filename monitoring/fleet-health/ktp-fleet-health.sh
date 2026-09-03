@@ -137,6 +137,34 @@ down_ports() {
     printf '%s' "${out% }"
 }
 
+# Is the per-instance monitor cron still armed?
+#
+# This script alerts when instances are DOWN. It cannot tell whether they will
+# come back: recovery rides on LinuxGSM's per-minute monitor cron, and the
+# nightly restart disables that cron and re-enables it ~90s later. If it ever
+# dies between the two the cron stays off, and a later reboot leaves the host
+# down with nothing to lift it -- silently, because an absent cron looks
+# exactly like a quiet one.
+#
+# grep -c prints "0" AND exits 1 when nothing matches -- the same trap the
+# pgrep comment above documents, and it bites hardest HERE because zero is the
+# condition being alerted on. `|| true` sits outside the substitution so the
+# "0" survives and set -e does not fire.
+#
+# Count, do not just test presence: a host that lost ONE instance's line still
+# greps non-zero, so `-gt 0` would pass while that instance is unprotected.
+MONITOR_CRONS=$(crontab -l 2>/dev/null | grep -c '^[^#]*monitor') || true
+[ -n "$MONITOR_CRONS" ] || MONITOR_CRONS=0
+CRON_STATE=${CRON_STATE:-armed}
+
+if [ "$MONITOR_CRONS" -lt "$NUM_INSTANCES" ] && [ "$CRON_STATE" = "armed" ]; then
+    send_alert "⚠️ ${LOCATION} monitor cron INCOMPLETE — ${MONITOR_CRONS}/${NUM_INSTANCES}" "Auto-restart is not armed for every instance. A reboot now would leave instances down with nothing to bring them back. Check: crontab -l | grep monitor" 16776960
+    CRON_STATE=incomplete
+elif [ "$MONITOR_CRONS" -ge "$NUM_INSTANCES" ] && [ "$CRON_STATE" = "incomplete" ]; then
+    send_alert "✅ ${LOCATION} monitor cron re-armed — ${MONITOR_CRONS}/${NUM_INSTANCES}" "Auto-restart is armed for every instance again." 3066993
+    CRON_STATE=armed
+fi
+
 # State transitions
 if [ "$CONSECUTIVE_BAD" -ge "$THRESHOLD_MINUTES" ] && [ "$ALERT_STATE" = "healthy" ]; then
     PORTS_DOWN=$(down_ports)
@@ -168,4 +196,6 @@ CONSECUTIVE_BAD=$CONSECUTIVE_BAD
 ALERT_STATE=$ALERT_STATE
 LAST_RUN=$(date +%s)
 LAST_RUNNING=$RUNNING
+CRON_STATE=$CRON_STATE
+LAST_MONITOR_CRONS=$MONITOR_CRONS
 EOF
