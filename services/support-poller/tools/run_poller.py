@@ -6,13 +6,17 @@ as a healthy fleet, whereas a timer that stops firing leaves the same stale JSON
 but is visible in `systemctl list-timers`. The page treats an old `generated`
 stamp as unknown either way -- see STALE_AFTER in the status route.
 
-Exit codes: 0 wrote both documents, 1 could not write, 2 wrote them but could
+Exit codes: 0 wrote both documents, 1 could not write, 8 wrote them but could
 not push to the site. A fleet that is entirely down is still a successful poll
 -- that is a real result, not an error.
 
-2 is separate from 1 on purpose: the documents on disk are fine and the next
+8 is separate from 1 on purpose: the documents on disk are fine and the next
 run will overwrite them, but ktpleague.gg is serving an increasingly stale
-fleet and only this exit code says so.
+fleet and only this exit code says so. It is 8 rather than 2 because systemd
+maps low exit codes to LSB names -- 2 renders as ``status=2/INVALIDARGUMENT``
+and sends a reader hunting a bad CLI flag, while codes >= 8 display as bare
+numbers. 2 is also what argparse itself exits with on a usage error, so the
+two failures were indistinguishable in ``systemctl status``.
 """
 
 import argparse
@@ -73,7 +77,7 @@ def main() -> int:
     ok, detail = P.push_public(public, args.push_url, secret)
     if not ok:
         print(f"support-poller: push failed: {detail}", file=sys.stderr)
-        return 2
+        return 8
     return 0
 
 
