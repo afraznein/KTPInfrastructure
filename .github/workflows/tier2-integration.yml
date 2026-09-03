@@ -224,7 +224,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/KTPAMXX
-          ref: dfe1c8959f754e7757e3c443671240a9ef42c8db
+          ref: 2033a0a160a25dd56e8d583bcce43db653499350
           path: .tier2/KTPAMXX
 
       - name: Build + install reviewed KTPMatchHandler test artifact
