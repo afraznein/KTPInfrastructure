@@ -216,7 +216,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/KTPMatchHandler
-          ref: 01de0750b51b20bf0d861365fafa336b81942ecd
+          ref: b891b0e26f21631357149f8a9bc93d06ec904b43
           path: .tier2/KTPMatchHandler
 
       - name: Checkout reviewed KTPAMXX preprod includes
@@ -224,7 +224,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/KTPAMXX
-          ref: dfe1c8959f754e7757e3c443671240a9ef42c8db
+          ref: 2033a0a160a25dd56e8d583bcce43db653499350
           path: .tier2/KTPAMXX
 
       - name: Build + install reviewed KTPMatchHandler test artifact
@@ -290,7 +290,9 @@ jobs:
       # not review or stage, so 'always current' is right. KTPMatchHandler and
       # KTPPracticeMode are the opposite -- the runner must hold the exact reviewed
       # artifact (see stage-runner.py + the stage manifest), so they are staged and
-      # pinned, never rebuilt here. PR #33 rebuilt both; only this half is wanted.
+      # pinned rather than tracked, and rebuilt ONLY from that pin (see the
+      # compile step above) -- never from whatever is on the runner. PR #33
+      # rebuilt both from HEAD; only this half is wanted.
       - name: Refresh + stage KTPHudObserver.amxx from DoD-hud-observer master
         if: steps.changes.outputs.run == '1'
         # Without this, Tier 2 tested whatever KTPHudObserver.amxx was MANUALLY
