@@ -153,15 +153,17 @@ down_ports() {
 #
 # Count, do not just test presence: a host that lost ONE instance's line still
 # greps non-zero, so `-gt 0` would pass while that instance is unprotected.
+# EXPECTED, not NUM_INSTANCES: Chicago runs 4 and sets EXPECTED=4 per-host while
+# NUM_INSTANCES stays at its default 5, so the latter false-alarms there.
 MONITOR_CRONS=$(crontab -l 2>/dev/null | grep -c '^[^#]*monitor') || true
 [ -n "$MONITOR_CRONS" ] || MONITOR_CRONS=0
 CRON_STATE=${CRON_STATE:-armed}
 
-if [ "$MONITOR_CRONS" -lt "$NUM_INSTANCES" ] && [ "$CRON_STATE" = "armed" ]; then
-    send_alert "⚠️ ${LOCATION} monitor cron INCOMPLETE — ${MONITOR_CRONS}/${NUM_INSTANCES}" "Auto-restart is not armed for every instance. A reboot now would leave instances down with nothing to bring them back. Check: crontab -l | grep monitor" 16776960
+if [ "$MONITOR_CRONS" -lt "$EXPECTED" ] && [ "$CRON_STATE" = "armed" ]; then
+    send_alert "⚠️ ${LOCATION} monitor cron INCOMPLETE — ${MONITOR_CRONS}/${EXPECTED}" "Auto-restart is not armed for every instance. A reboot now would leave instances down with nothing to bring them back. Check: crontab -l | grep monitor" 16776960
     CRON_STATE=incomplete
-elif [ "$MONITOR_CRONS" -ge "$NUM_INSTANCES" ] && [ "$CRON_STATE" = "incomplete" ]; then
-    send_alert "✅ ${LOCATION} monitor cron re-armed — ${MONITOR_CRONS}/${NUM_INSTANCES}" "Auto-restart is armed for every instance again." 3066993
+elif [ "$MONITOR_CRONS" -ge "$EXPECTED" ] && [ "$CRON_STATE" = "incomplete" ]; then
+    send_alert "✅ ${LOCATION} monitor cron re-armed — ${MONITOR_CRONS}/${EXPECTED}" "Auto-restart is armed for every instance again." 3066993
     CRON_STATE=armed
 fi
 
