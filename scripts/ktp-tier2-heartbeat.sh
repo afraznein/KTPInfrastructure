@@ -39,6 +39,18 @@
 # a stale module stack makes green runs certify an environment that exists
 # nowhere — caught drifted 06-28→07-10 (.926 engine, never-shipped dev dodx).
 #
+# And counts Runner.Listener processes. `systemctl restart` only reaches the
+# unit's cgroup, so a listener that has been re-parented to PID 1 survives it
+# and answers jobs alongside the new one. On 2026-09-03 that raced two workers
+# onto one job: the systemd one lost on a shared _diag/pages file and exited
+# 102 in two seconds, and every visible symptom pointed elsewhere — the job log
+# ended in `Failed to CreateArtifact: (403) Forbidden` (the token had been
+# invalidated by the duplicate worker) and the suite step read "The operation
+# was canceled", so the innocent PR under it looked like the cause. Nothing
+# about a second listener is visible from the unit's status, the job log, or
+# the run markers above; the count is the only honest signal, and PPID 1 is the
+# tell that names which one is the orphan.
+#
 # Mirrors scripts/ktp-data-server-health.sh: state-file so we alert on
 # transitions only (no chat spam while persistently down), relay creds from
 # /etc/ktp/discord-relay.conf.
@@ -54,6 +66,11 @@ MARKER="${KTP_TIER2_MARKER:-/opt/ktp-tier2-runner/tier2-last-run.json}"
 WATCH_PREPROD="${KTP_TIER2_WATCH_PREPROD:-1}"
 MARKER_PREPROD="${KTP_TIER2_MARKER_PREPROD:-$(dirname "$MARKER")/tier2-last-run-preprod.json}"
 STATE="${KTP_TIER2_HEARTBEAT_STATE:-/var/lib/ktp-tier2-heartbeat.state}"
+# One registered runner on this box today. Raise this if a second is ever
+# registered — the assertion is "the number we expect", not "at most one".
+WATCH_LISTENERS="${KTP_TIER2_WATCH_LISTENERS:-1}"
+EXPECTED_LISTENERS="${KTP_TIER2_EXPECTED_LISTENERS:-1}"
+LISTENER_PATTERN="${KTP_TIER2_LISTENER_PATTERN:-Runner.Listener}"
 # 36h: nightly cadence (24h) + a full skipped day of margin before we cry wolf.
 MAX_AGE_SECONDS="${KTP_TIER2_MAX_AGE:-129600}"
 MAX_AGE_SECONDS_PREPROD="${KTP_TIER2_MAX_AGE_PREPROD:-$MAX_AGE_SECONDS}"
@@ -162,6 +179,38 @@ if [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
     fi
 fi
 
+# ── Runner listener count — the double-dispatch tripwire ─────────────────────
+# Both directions are faults, and neither is visible upstream: MORE than
+# expected means two workers are racing the same job (and the loser's failure
+# gets blamed on whatever PR it was carrying), FEWER means the runner is not
+# listening at all — which the marker checks above only notice 36h later.
+#
+# This overrides the headline rather than joining the body, because a duplicate
+# listener MANUFACTURES the failures the other checks report: reading "a leg
+# failed" first sends you to bisect a PR that was never at fault.
+listener_state="ok"
+listener_n="$EXPECTED_LISTENERS"
+listener_detail="listeners: not watched (KTP_TIER2_WATCH_LISTENERS=0)"
+if [ "$WATCH_LISTENERS" = "1" ]; then
+    listener_ps="$(ps -eo pid,ppid,args 2>/dev/null | grep -F "$LISTENER_PATTERN" | grep -v grep || true)"
+    if [ -z "$listener_ps" ]; then
+        listener_n=0
+    else
+        listener_n="$(printf '%s\n' "$listener_ps" | wc -l | tr -d ' ')"
+    fi
+    if [ "$listener_n" -eq "$EXPECTED_LISTENERS" ]; then
+        listener_detail="listeners: $listener_n (expected $EXPECTED_LISTENERS)."
+    elif [ "$listener_n" -gt "$EXPECTED_LISTENERS" ]; then
+        listener_state="duplicate"
+        listener_detail="listeners: **$listener_n** running, expected $EXPECTED_LISTENERS — two workers can answer the same job."$'\n'"A \`PPID 1\` line below is a re-parented orphan that outlived a \`systemctl restart\`; kill that pid, then restart the unit."$'\n'"\`\`\`"$'\n'"$listener_ps"$'\n'"\`\`\`"
+    else
+        listener_state="absent"
+        listener_detail="listeners: **$listener_n** running, expected $EXPECTED_LISTENERS — nothing is listening for jobs."
+    fi
+fi
+detail="$listener_detail"$'\n'"$detail"
+[ "$listener_state" = "ok" ] || state="listeners"
+
 # State-file key names EVERY input that can change independently: main marker
 # state, preprod marker state, drift flag. A single combined "state" bucket
 # would hide a change that doesn't move the bucket — e.g. main flips ok->stale
@@ -170,6 +219,7 @@ fi
 # class of bug the drift check below already had to be pulled out of.
 key="main=$main_state,preprod=$preprod_state"
 [ "$drifted" = "1" ] && key="$key,drift=1"
+[ "$WATCH_LISTENERS" = "1" ] && key="$key,listeners=$listener_n"
 
 # State file is "<key>|<epoch of last alert>". Older files hold a bare
 # single-value state (pre-two-marker); those never match the new key format,
@@ -204,6 +254,15 @@ fi
 case "$state" in
     ok)     title="✅ KTP Tier 2 — recovered"; desc="Tier 2 integration suite healthy (running + stack in sync)."$'\n\n'"$detail"; color=5763719 ;;
     failed) title="❌ KTP Tier 2 — a leg failed"; desc="$detail"; color=15548997 ;;
+    # Leads the embed even over a failed leg: a second listener is the cause a
+    # failed leg is the symptom of, and the job log blames the innocent PR.
+    listeners)
+            if [ "$listener_state" = "duplicate" ]; then
+                title="🚨 KTP Tier 2 — DUPLICATE runner listener"
+            else
+                title="🚨 KTP Tier 2 — no runner listener"
+            fi
+            desc="$detail"; color=15548997 ;;
     # Say the suite passed. `drift` is only reachable from state=ok, so this is
     # always true here — and after a red spell the state goes failed → drift
     # without passing through ok, so nothing else ever announces the recovery.

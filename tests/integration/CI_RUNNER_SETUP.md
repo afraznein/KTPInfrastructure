@@ -159,6 +159,38 @@ staged tree. Configure via repo `Settings` → `Secrets and variables`
 3. If artifacts are missing, the verification step prints which one and
    exits 1. Re-stage and retry.
 
+## After ANY restart of the runner service — count the listeners
+
+`systemctl restart` reaches only the unit's cgroup. A `Runner.Listener` that
+has been re-parented to **PID 1** sits outside it, survives the restart, and
+goes on answering jobs beside the new one. Assert there is exactly one:
+
+```bash
+ps -eo pid,ppid,cmd | grep Runner.Listener | grep -v grep
+```
+
+**`PPID 1` is the tell.** Under `svc.sh install` the listener's parent is
+`runsvc.sh`, never init, so a listener parented to 1 is an orphan from an
+earlier service generation. Kill that pid, then restart the unit.
+
+Two listeners means two workers race the same job, and **every symptom points
+somewhere else**. On 2026-09-03 an Aug-31 orphan raced the systemd worker; the
+loser lost on a shared `_diag/pages` file and exited **102 in two seconds**.
+The job log ended in `Failed to CreateArtifact: (403) Forbidden` — which means
+"job is completed", not a permissions problem; the token had been invalidated
+by the duplicate. The suite step read `The operation was canceled`, not
+`failed`. The PR under the job was never at fault: its `amxxpc` compile had
+succeeded. Nothing in `systemctl status`, the job log, or the Tier-2 run
+markers distinguishes this from a broken change.
+
+**This is also checked mechanically** — `scripts/ktp-tier2-heartbeat.sh` counts
+listeners on its 6h cron and alerts to Discord on `DUPLICATE runner listener`
+(more than expected) or `no runner listener` (fewer), with the offending `ps`
+lines in the embed. Config, no code edit: `KTP_TIER2_EXPECTED_LISTENERS`
+(default 1) if a second runner is ever registered, `KTP_TIER2_WATCH_LISTENERS=0`
+to stop watching. Covered by `scripts/test-tier2-heartbeat.sh` cases 12–12g;
+run that against the **deployed** copy too, not just the repo one.
+
 ## Maintenance
 
 - **GitHub runner self-update**: auto-updates by default; verify periodically with
@@ -172,6 +204,12 @@ staged tree. Configure via repo `Settings` → `Secrets and variables`
   hash — drift surfaces as test failures.
 
 ## Troubleshooting
+
+**Job fails in seconds with `Failed to CreateArtifact: (403) Forbidden`, or the
+suite step says `The operation was canceled`**
+→ Count the listeners before you look at the PR. See "After ANY restart of the
+runner service" above — both of those are what a duplicate worker looks like
+from inside the losing job, and neither is about the change under test.
 
 **"All required artifacts present" passes but tests skip**
 → The `KTP_HLDS_SERVERFILES` env var isn't being passed into the pytest
