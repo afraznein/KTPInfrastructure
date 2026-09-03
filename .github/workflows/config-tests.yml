@@ -87,3 +87,12 @@ jobs:
       - name: Run config-parse + harness unit tests
         if: steps.changes.outputs.run == '1'
         run: python -m pytest tests/config_parse/ tests/smoke/test_parse.py tests/smoke/test_asserts.py tests/unit/ -v --tb=short
+
+      # Deliberately UNCONDITIONAL, unlike the pytest step above. This harness
+      # sat red on main for weeks -- it predates the two-marker split and no
+      # job ran it, so nothing reported that the thing which reports silence
+      # had gone quiet itself. A path filter here would reintroduce exactly
+      # that: a heartbeat-only change would skip its own suite. Pure bash +
+      # jq, no network, nothing posted.
+      - name: Tier 2 heartbeat state machine
+        run: bash scripts/test-tier2-heartbeat.sh scripts/ktp-tier2-heartbeat.sh
