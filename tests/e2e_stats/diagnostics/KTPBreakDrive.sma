@@ -125,6 +125,11 @@ new Float:g_bdRestartNormalizeRoundLimit = -1.0
 new g_bdRestartStablePolls = 0
 new g_bdRestartStableFlag = -1
 new g_bdRestartStableTeam = 0
+new g_bdRestartWaitRoster = 0
+new g_bdRestartWaitPlan = 0
+new g_bdRestartWaitBegin = 0
+new g_bdRestartDrops = 0
+new g_bdRestartLastDrop = 0
 new g_bdRestartRosterCount = 0
 new bool:g_bdRestartRosterSelected[33]
 new g_bdRestartRosterUserid[33]
@@ -199,6 +204,8 @@ new g_bdCleanCapperUseridList[512]
 new g_bdCleanFlagName[32]
 new bool:g_bdCleanArming = false
 new g_bdCleanArmPolls = 0
+new g_bdCleanWaitPlan = 0
+new g_bdCleanTargetChanges = 0
 new g_bdCleanStablePolls = 0
 new g_bdCleanStableFlag = -1
 new g_bdCleanStableTeam = 0
@@ -315,6 +322,11 @@ stock bd_reset_restart_arm_state() {
 	g_bdRestartStablePolls = 0
 	g_bdRestartStableFlag = -1
 	g_bdRestartStableTeam = 0
+	g_bdRestartWaitRoster = 0
+	g_bdRestartWaitPlan = 0
+	g_bdRestartWaitBegin = 0
+	g_bdRestartDrops = 0
+	g_bdRestartLastDrop = 0
 	g_bdRestartRosterCount = 0
 	for (new id = 1; id <= 32; id++) {
 		g_bdRestartRosterSelected[id] = false
@@ -334,6 +346,8 @@ stock bd_reset_clean_state() {
 	g_bdCleanQuietStarted = 0.0
 	g_bdCleanPolls = 0
 	g_bdCleanArmPolls = 0
+	g_bdCleanWaitPlan = 0
+	g_bdCleanTargetChanges = 0
 	g_bdCleanStablePolls = 0
 	g_bdCleanStableFlag = -1
 	g_bdCleanStableTeam = 0
@@ -414,6 +428,36 @@ stock bool:bd_series_roster_current(bool:require_alive) {
 		seen++
 	}
 	return seen == g_bdSeriesRosterCount
+}
+
+stock bd_series_roster_alive_count() {
+	new seen = 0
+	for (new id = 1; id <= 32; id++) {
+		if (g_bdSeriesRosterSelected[id] && is_user_connected(id) &&
+				is_user_alive(id) &&
+				get_user_userid(id) == g_bdSeriesRosterUserid[id] &&
+				get_user_team(id) == g_bdSeriesRosterTeam[id])
+			seen++
+	}
+	return seen
+}
+
+/** One-line objective survey for timeout diagnostics: owner, capturing state,
+ * and zone occupancy per flag, so a "no plan" timeout names the disqualifier.
+ */
+stock bd_log_flag_survey(const mode[]) {
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	new line[192], cell[32]
+	for (new f = 0; f < n; f++) {
+		formatex(cell, charsmax(cell), " f%d:o%d c%d z%d/%d", f,
+			dodx_area_get_data(f, CA_owning_team),
+			dodx_area_get_data(f, CA_is_capturing) ? 1 : 0,
+			bd_zone_count(f, BD_TEAM_ALLIES),
+			bd_zone_count(f, BD_TEAM_AXIS))
+		add(line, charsmax(line), cell)
+	}
+	log_amx("[BD] %s flag survey:%s", mode, line)
 }
 
 stock bool:bd_canonical_series_player_current(id) {
@@ -1473,15 +1517,18 @@ stock bool:bd_restart_begin_stability(flag, team) {
 	return true
 }
 
-stock bool:bd_restart_stability_current() {
+/** 0 = stable; 1 = roster/generation changed; 2 = flag no longer neutral and
+ * quiet; 3 = a pinned player moved off its snapshot origin.
+ */
+stock bd_restart_stability_blocker() {
 	if (!g_bdIsolationActive || g_bdRestartStableFlag < 0 ||
 			!bd_restart_roster_generation_current())
-		return false
+		return 1
 	if (dodx_area_get_data(g_bdRestartStableFlag, CA_owning_team) != 0 ||
 			dodx_area_get_data(g_bdRestartStableFlag, CA_is_capturing) ||
 			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_ALLIES) != 0 ||
 			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_AXIS) != 0)
-		return false
+		return 2
 
 	new Float:origin[3]
 	for (new id = 1; id <= 32; id++) {
@@ -1490,9 +1537,9 @@ stock bool:bd_restart_stability_current() {
 		if (!dodx_get_user_origin(id, origin) ||
 				!bd_restart_same_origin(origin,
 					g_bdRestartRosterOrigin[id]))
-			return false
+			return 3
 	}
-	return true
+	return 0
 }
 
 stock bd_restart_drop_stability() {
@@ -1523,8 +1570,8 @@ stock bool:bd_prepare_capture(const mode[], bool:need_far,
 		bool:require_neutral, expected_flag = -1, expected_team = 0,
 		bool:defer_cappers = false, expected_owner = BD_OWNER_ANY) {
 	if (!bd_series_roster_current(true)) {
-		log_amx("[BD] %s ABORT flag=-1 exact full live roster unavailable",
-			mode)
+		log_amx("[BD] %s ABORT flag=-1 exact full live roster unavailable alive=%d/%d",
+			mode, bd_series_roster_alive_count(), g_bdSeriesRosterCount)
 		return false
 	}
 	new n = dodx_objectives_get_num()
@@ -2093,10 +2140,13 @@ public bd_restart_arm_poll() {
 	if (!g_bdSeriesActive)
 		return PLUGIN_HANDLED
 	if (g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS) {
-		log_amx("[BD] restart TIMEOUT phase=%d rebase=%d roster_alive=%d/%d stable_flag=%d",
+		log_amx("[BD] restart TIMEOUT phase=%d rebase=%d roster_alive=%d/%d stable_flag=%d wait_roster=%d wait_plan=%d wait_begin=%d drops=%d last_drop=%d",
 			g_bdRestartArmPhase, g_bdRestartNormalizeRebased,
 			bd_restart_roster_alive_count(), g_bdRestartRosterCount,
-			g_bdRestartStableFlag)
+			g_bdRestartStableFlag, g_bdRestartWaitRoster,
+			g_bdRestartWaitPlan, g_bdRestartWaitBegin,
+			g_bdRestartDrops, g_bdRestartLastDrop)
+		bd_log_flag_survey("restart")
 		bd_restart_arm_abort("no stageable capture while armed")
 		return PLUGIN_HANDLED
 	}
@@ -2131,19 +2181,29 @@ public bd_restart_arm_poll() {
 
 	if (g_bdRestartArmPhase == BD_RESTART_ARM_STABILIZING) {
 		if (g_bdRestartStableFlag < 0) {
-			if (!bd_restart_roster_live())
+			if (!bd_restart_roster_live()) {
+				g_bdRestartWaitRoster++
 				return PLUGIN_HANDLED
+			}
 			new flag, team
-			if (!bd_find_restart_plan(flag, team) ||
-					!bd_restart_begin_stability(flag, team))
+			if (!bd_find_restart_plan(flag, team)) {
+				g_bdRestartWaitPlan++
 				return PLUGIN_HANDLED
+			}
+			if (!bd_restart_begin_stability(flag, team)) {
+				g_bdRestartWaitBegin++
+				return PLUGIN_HANDLED
+			}
 			// Never prepare in the first frame that observes the post-respawn
 			// roster. The following polls must independently prove stability.
 			return PLUGIN_HANDLED
 		}
 
 		bd_hold_test_players()
-		if (!bd_restart_stability_current()) {
+		new blocker = bd_restart_stability_blocker()
+		if (blocker != 0) {
+			g_bdRestartDrops++
+			g_bdRestartLastDrop = blocker
 			bd_restart_drop_stability()
 			return PLUGIN_HANDLED
 		}
@@ -2524,12 +2584,17 @@ public bd_clean_capture_poll() {
 			return PLUGIN_HANDLED
 		}
 		if (++g_bdCleanArmPolls >= BD_CLEAN_ARM_MAX_POLLS) {
+			log_amx("[BD] clean_capture TIMEOUT alive=%d/%d wait_plan=%d target_changes=%d",
+				bd_series_roster_alive_count(), g_bdSeriesRosterCount,
+				g_bdCleanWaitPlan, g_bdCleanTargetChanges)
+			bd_log_flag_survey("clean_capture")
 			bd_clean_abort("no stable canonical target with exact full live roster")
 			return PLUGIN_HANDLED
 		}
 
 		new flag, team, owner
 		if (!bd_find_clean_plan(flag, team, owner)) {
+			g_bdCleanWaitPlan++
 			g_bdCleanStablePolls = 0
 			g_bdCleanStableFlag = -1
 			g_bdCleanStableTeam = 0
@@ -2538,6 +2603,8 @@ public bd_clean_capture_poll() {
 		}
 		if (flag != g_bdCleanStableFlag || team != g_bdCleanStableTeam ||
 				owner != g_bdCleanStableOwner) {
+			if (g_bdCleanStableFlag >= 0)
+				g_bdCleanTargetChanges++
 			g_bdCleanStableFlag = flag
 			g_bdCleanStableTeam = team
 			g_bdCleanStableOwner = owner
