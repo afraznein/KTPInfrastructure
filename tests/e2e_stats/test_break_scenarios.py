@@ -1500,7 +1500,7 @@ def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
     stabilizing = poll[stabilizing_start:prepared_start]
     assert stabilizing.index("bd_restart_roster_live()") < (
         stabilizing.index("bd_restart_begin_stability(")
-    ) < stabilizing.index("bd_restart_stability_current()")
+    ) < stabilizing.index("bd_restart_stability_blocker()")
     threshold = stabilizing.index("BD_RESTART_POSTRESPAWN_STABLE_POLLS")
     prepare = stabilizing.index('bd_prepare_capture("restart"')
     assert threshold < prepare
