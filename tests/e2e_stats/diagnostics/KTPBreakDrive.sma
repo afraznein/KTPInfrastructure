@@ -1954,6 +1954,9 @@ public cmd_arm_kill() {
 	g_bdKillAcquiring = true
 	g_bdKillAcquirePolls = 0
 	g_bdKillStablePolls = 0
+	// When reusing a previous scenario's live isolation, its bounded end task
+	// must not fire mid-acquisition and unfreeze the world under this arm.
+	remove_task(BD_TASK_ISOLATION_END)
 	if (!g_bdIsolationActive)
 		bd_begin_test_isolation()
 	log_amx("[BD] kill ARMED mode=%s acquiring exact live roster", arg_mode)
@@ -2183,6 +2186,14 @@ public cmd_arm_restart() {
 	// snapshot still rejects any post-snapshot spawn generation change.
 	log_amx("[BD] restart ARMED preparing neutral reset timer_before=%.2f timer_used=%.2f",
 		g_bdRestartTimerSaved, g_bdRestartTimerUsed)
+	// Take ownership of isolation before the reset. The previous scenario's
+	// isolation can still be live here with its bounded bd_isolation_end task
+	// pending; reusing it let that task fire mid-normalization, restoring and
+	// unfreezing every bot inside the evidence window (observed as restart
+	// TIMEOUT roster_alive=7/12). Restore that older state now, in the same
+	// frame as the reset, so no combat can run between restore and refreeze.
+	remove_task(BD_TASK_ISOLATION_END)
+	bd_end_test_isolation(false)
 	server_cmd("mp_clan_restartround 1")
 	server_exec()
 	// Freeze the world for the whole normalization. Free-running bots recapture
@@ -2190,8 +2201,7 @@ public cmd_arm_restart() {
 	// never saw a neutral quiet target (nightly restart TIMEOUT stable_flag=-1).
 	// The hold task re-freezes every member as the restart respawns it, so the
 	// post-reset neutral ownership and empty zones survive until staging.
-	if (!g_bdIsolationActive)
-		bd_begin_test_isolation()
+	bd_begin_test_isolation()
 	new Float:after_command = dodx_get_round_time()
 	if (after_command > g_bdRestartNormalizeRoundPeak)
 		g_bdRestartNormalizeRoundPeak = after_command
@@ -2942,6 +2952,9 @@ public cmd_arm_walkoff() {
 	g_bdWalkoffAcquiring = true
 	g_bdWalkoffAcquirePolls = 0
 	g_bdWalkoffStablePolls = 0
+	// Same ownership rule as arm_kill: a reused isolation's pending end task
+	// must not unfreeze the world mid-acquisition.
+	remove_task(BD_TASK_ISOLATION_END)
 	if (!g_bdIsolationActive)
 		bd_begin_test_isolation()
 	log_amx("[BD] walkoff ARMED")
