@@ -99,16 +99,24 @@ def test_far_probe_waits_past_production_candidate_ttl():
 
 def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    assert 0 < bs.BreakDriver.FAR_STAGE_TIMEOUT <= 15.0
+    # The stage allowance covers the in-plugin roster-acquisition freeze
+    # (BD_KILL_ACQUIRE_MAX_POLLS at 0.1s) plus the capture wait.
+    assert 0 < bs.BreakDriver.FAR_STAGE_TIMEOUT <= 45.0
     assert bs.BreakDriver.SERIES_TIMEOUT < 20 * 60
     assert "#define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS" in source
+    assert "#define BD_KILL_ACQUIRE_MAX_POLLS 300" in source
     arm = source[source.index("public cmd_arm_kill()"):
                  source.index("public bd_kill_poll()")]
     assert arm.index("remove_task(BD_TASK_KILL_POLL)") < arm.index(
         "g_bdKillPolls = 0"
-    ) < arm.index("bd_prepare_capture(") < arm.index(
+    ) < arm.index("bd_begin_test_isolation()") < arm.index(
         'set_task(0.1, "bd_kill_poll"'
     )
+    poll_acquire = source[source.index("public bd_kill_poll()"):
+                          source.index("public cmd_arm_restart()")]
+    assert poll_acquire.index("bd_hold_test_players()") < poll_acquire.index(
+        "bd_series_roster_current(true)"
+    ) < poll_acquire.index("bd_prepare_capture(")
     prepare = source[source.index("stock bool:bd_prepare_capture"):
                      source.index("stock bd_find_prepared_capture")]
     assert "bd_area_center" in prepare
@@ -144,7 +152,7 @@ def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
         if line.startswith("#define BD_KILL_ISOLATION_SECS ")
     ))
     assert seconds >= bs.BreakDriver.SETTLE + 0.5
-    assert "isolated = bd_begin_test_isolation()" in source
+    assert "bd_isolation_count() : bd_begin_test_isolation()" in source
     assert 'set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end"' in source
     assert "bd_hold_test_players()" in source
     assert bs._ISOLATION_END_RE.search("[BD] isolation END")

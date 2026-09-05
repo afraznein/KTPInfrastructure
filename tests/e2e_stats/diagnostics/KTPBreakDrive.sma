@@ -81,6 +81,8 @@
 #define BD_KILL_MAX_POLLS 100
 #define BD_RESTART_ARM_MAX_POLLS 300
 #define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS
+#define BD_KILL_ACQUIRE_MAX_POLLS 300
+#define BD_KILL_ACQUIRE_STABLE_POLLS 5
 #define BD_RESTART_MAX_POLLS 60
 #define BD_RESTART_TIMER_SECS 1.0
 #define BD_RESTART_ARM_IDLE 0
@@ -113,8 +115,14 @@
 #define BD_CANONICAL_WAIT_RESTORE 4
 
 new g_bdWalkoffPolls = 0
+new bool:g_bdWalkoffAcquiring = false
+new g_bdWalkoffAcquirePolls = 0
+new g_bdWalkoffStablePolls = 0
 new g_bdKillPolls = 0
 new bool:g_bdKillNear = true
+new bool:g_bdKillAcquiring = false
+new g_bdKillAcquirePolls = 0
+new g_bdKillStablePolls = 0
 new Float:g_bdLastTeamDeath[3]
 new g_bdRestartArmPolls = 0
 new g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
@@ -536,7 +544,13 @@ stock bd_cleanup_tasks() {
 	remove_task(BD_TASK_CLEAN_CAPTURE_FINISH)
 	remove_task(BD_TASK_CANONICAL_FRAG_POLL)
 	g_bdKillPolls = 0
+	g_bdKillAcquiring = false
+	g_bdKillAcquirePolls = 0
+	g_bdKillStablePolls = 0
 	g_bdWalkoffPolls = 0
+	g_bdWalkoffAcquiring = false
+	g_bdWalkoffAcquirePolls = 0
+	g_bdWalkoffStablePolls = 0
 	g_bdRestartArmPolls = 0
 	g_bdRestartPolls = 0
 	g_bdRestartActive = false
@@ -1494,7 +1508,10 @@ stock bool:bd_restart_same_origin(const Float:a[3], const Float:b[3]) {
 stock bool:bd_restart_begin_stability(flag, team) {
 	if (!bd_restart_roster_live())
 		return false
-	new isolated = bd_begin_test_isolation()
+	// Normalization already froze the roster; reuse that generation instead of
+	// ending isolation, which would briefly restore movement mid-window.
+	new isolated = g_bdIsolationActive ?
+		bd_isolation_count() : bd_begin_test_isolation()
 	if (isolated < g_bdRestartRosterCount) {
 		bd_end_test_isolation(false)
 		return false
@@ -1930,9 +1947,16 @@ public cmd_arm_kill() {
 	remove_task(BD_TASK_KILL_POLL)
 	g_bdKillNear = bool:equal(arg_mode, "near")
 	g_bdKillPolls = 0
-	if (!bd_prepare_capture(arg_mode, !g_bdKillNear, false))
-		return PLUGIN_HANDLED
-	log_amx("[BD] kill ARMED mode=%s", arg_mode)
+	// Live combat rarely offers an instant when every roster member is alive,
+	// so preparing here aborted almost every nightly attempt. Freeze the world
+	// first and let the hold task acquire dead members as they respawn (the
+	// canonical_frag staging model), then prepare once the exact roster holds.
+	g_bdKillAcquiring = true
+	g_bdKillAcquirePolls = 0
+	g_bdKillStablePolls = 0
+	if (!g_bdIsolationActive)
+		bd_begin_test_isolation()
+	log_amx("[BD] kill ARMED mode=%s acquiring exact live roster", arg_mode)
 	set_task(0.1, "bd_kill_poll", BD_TASK_KILL_POLL, .flags="b")
 	return PLUGIN_HANDLED
 }
@@ -1940,6 +1964,9 @@ public cmd_arm_kill() {
 public cmd_disarm_kill() {
 	remove_task(BD_TASK_KILL_POLL)
 	g_bdKillPolls = 0
+	g_bdKillAcquiring = false
+	g_bdKillAcquirePolls = 0
+	g_bdKillStablePolls = 0
 	bd_end_test_isolation(false)
 	server_print("KTP_BD_KILL_DISARMED")
 	log_amx("[BD] kill DISARMED")
@@ -1947,6 +1974,36 @@ public cmd_disarm_kill() {
 }
 
 public bd_kill_poll() {
+	if (g_bdKillAcquiring) {
+		bd_hold_test_players()
+		if (++g_bdKillAcquirePolls >= BD_KILL_ACQUIRE_MAX_POLLS) {
+			remove_task(BD_TASK_KILL_POLL)
+			g_bdKillAcquiring = false
+			log_amx("[BD] kill ABORT flag=-1 mode=%s exact full live roster unavailable",
+				g_bdKillNear ? "near" : "far")
+			bd_end_test_isolation(false)
+			return PLUGIN_HANDLED
+		}
+		if (!bd_series_roster_current(true) ||
+				bd_isolation_count() != g_bdSeriesRosterCount) {
+			g_bdKillStablePolls = 0
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdKillStablePolls < BD_KILL_ACQUIRE_STABLE_POLLS)
+			return PLUGIN_HANDLED
+		if (!bd_prepare_capture(g_bdKillNear ? "near" : "far",
+				!g_bdKillNear, false)) {
+			remove_task(BD_TASK_KILL_POLL)
+			g_bdKillAcquiring = false
+			bd_end_test_isolation(false)
+			return PLUGIN_HANDLED
+		}
+		g_bdKillAcquiring = false
+		g_bdKillPolls = 0
+		log_amx("[BD] kill STAGED mode=%s", g_bdKillNear ? "near" : "far")
+		return PLUGIN_HANDLED
+	}
+
 	g_bdKillPolls++
 	new f = bd_find_capturing()
 	if (f >= 0 && bd_execute_kill(f, g_bdKillNear, false)) {
@@ -2128,6 +2185,13 @@ public cmd_arm_restart() {
 		g_bdRestartTimerSaved, g_bdRestartTimerUsed)
 	server_cmd("mp_clan_restartround 1")
 	server_exec()
+	// Freeze the world for the whole normalization. Free-running bots recapture
+	// the map's neutral flags within seconds of the reset, so bd_find_restart_plan
+	// never saw a neutral quiet target (nightly restart TIMEOUT stable_flag=-1).
+	// The hold task re-freezes every member as the restart respawns it, so the
+	// post-reset neutral ownership and empty zones survive until staging.
+	if (!g_bdIsolationActive)
+		bd_begin_test_isolation()
 	new Float:after_command = dodx_get_round_time()
 	if (after_command > g_bdRestartNormalizeRoundPeak)
 		g_bdRestartNormalizeRoundPeak = after_command
@@ -2158,6 +2222,8 @@ public bd_restart_arm_poll() {
 		bd_restart_arm_abort("combat roster changed while restart armed")
 		return PLUGIN_HANDLED
 	}
+	if (g_bdIsolationActive)
+		bd_hold_test_players()
 
 	new Float:round_now = dodx_get_round_time()
 	if (g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING) {
@@ -2871,14 +2937,47 @@ public cmd_arm_walkoff() {
 		return PLUGIN_HANDLED
 	remove_task(BD_TASK_WALKOFF_POLL)
 	g_bdWalkoffPolls = 0
-	if (!bd_prepare_capture("walkoff", true, false))
-		return PLUGIN_HANDLED
+	// Same roster race as arm_kill: freeze first, acquire dead members on
+	// respawn, prepare only once the exact live roster is proven stable.
+	g_bdWalkoffAcquiring = true
+	g_bdWalkoffAcquirePolls = 0
+	g_bdWalkoffStablePolls = 0
+	if (!g_bdIsolationActive)
+		bd_begin_test_isolation()
 	log_amx("[BD] walkoff ARMED")
 	set_task(0.1, "bd_walkoff_poll", BD_TASK_WALKOFF_POLL, .flags="b")
 	return PLUGIN_HANDLED
 }
 
 public bd_walkoff_poll() {
+	if (g_bdWalkoffAcquiring) {
+		bd_hold_test_players()
+		if (++g_bdWalkoffAcquirePolls >= BD_KILL_ACQUIRE_MAX_POLLS) {
+			remove_task(BD_TASK_WALKOFF_POLL)
+			g_bdWalkoffAcquiring = false
+			log_amx("[BD] walkoff ABORT flag=-1 exact full live roster unavailable")
+			bd_end_test_isolation(false)
+			return PLUGIN_HANDLED
+		}
+		if (!bd_series_roster_current(true) ||
+				bd_isolation_count() != g_bdSeriesRosterCount) {
+			g_bdWalkoffStablePolls = 0
+			return PLUGIN_HANDLED
+		}
+		if (++g_bdWalkoffStablePolls < BD_KILL_ACQUIRE_STABLE_POLLS)
+			return PLUGIN_HANDLED
+		if (!bd_prepare_capture("walkoff", true, false)) {
+			remove_task(BD_TASK_WALKOFF_POLL)
+			g_bdWalkoffAcquiring = false
+			bd_end_test_isolation(false)
+			return PLUGIN_HANDLED
+		}
+		g_bdWalkoffAcquiring = false
+		g_bdWalkoffPolls = 0
+		log_amx("[BD] walkoff STAGED")
+		return PLUGIN_HANDLED
+	}
+
 	g_bdWalkoffPolls++
 	new f = bd_find_capturing()
 	if (f >= 0) {

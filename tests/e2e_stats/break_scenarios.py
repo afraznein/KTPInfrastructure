@@ -266,8 +266,11 @@ class BreakDriver:
     # the bot world and placing the required cappers inside one live capture
     # area. These waits are only a fail-closed allowance for the engine's area
     # poll; they are not a license to wait for random bot objective play.
-    FAR_STAGE_TIMEOUT = 15.0
-    KILL_STAGE_TIMEOUT = 15.0
+    # Arming now includes an in-plugin roster-acquisition freeze (up to 30s,
+    # BD_KILL_ACQUIRE_MAX_POLLS) before the 10s capture wait, so the harness
+    # allowance must outlast both plus jitter.
+    FAR_STAGE_TIMEOUT = 45.0
+    KILL_STAGE_TIMEOUT = 45.0
     KILL_DISARM_TIMEOUT = 2.0
     MANIFEST_WAIT_TIMEOUT = 10.0
     SERIES_TIMEOUT = 300.0
@@ -929,7 +932,9 @@ class BreakDriver:
             s.detail = ("walkoff arm produced no acknowledgment; diagnostic "
                         "plugin is not running")
             return s
-        deadline = self._series_deadline_for(15.0)
+        # Arming now includes the in-plugin roster-acquisition freeze (up to
+        # 30s) before the capture wait, so the allowance must outlast both.
+        deadline = self._series_deadline_for(45.0)
         while time.monotonic() < deadline:
             if self.series_started and not self._series_live():
                 return self._scenario_abort(s)
@@ -938,7 +943,7 @@ class BreakDriver:
                 break
             time.sleep(0.25)
         else:
-            s.detail = "deterministic walkoff produced no result within 15s"
+            s.detail = "deterministic walkoff produced no result within 45s"
             return s
         if self.series_started and not self._series_sleep(self.SETTLE):
             return self._scenario_abort(s)
