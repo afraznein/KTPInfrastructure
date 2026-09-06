@@ -44,6 +44,10 @@ from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
                                          summary_for_lane)
 from scripts.match_analytics import (match_capture_authorization,  # noqa: E402
                                      sql_literal, tsv_rows)
+from scripts.match_analytics import (  # noqa: E402
+    build_report as build_private_analytics_report,
+    render_markdown as render_private_analytics_markdown,
+)
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
@@ -1912,6 +1916,33 @@ def main() -> int:
                     "detail": detail,
                 }
                 failures.append(f"v5_match_report: {detail}")
+            # Private shadow analytics (box score + shadow explorations,
+            # flag fights included) for the artifact, so every run carries
+            # the evidence the stat-catalog gates read. Advisory only: a
+            # shadow report must never turn a green run red.
+            try:
+                private_dir = args.match_report_dir.parent / "private-analytics"
+                private_dir.mkdir(parents=True, exist_ok=True)
+                private_report = build_private_analytics_report(
+                    db, report["match"]["match_id"],
+                    Path("live-e2e-database"),
+                )
+                (private_dir / "report.json").write_text(
+                    json.dumps(private_report, indent=2, default=str),
+                    encoding="utf-8")
+                (private_dir / "report.md").write_text(
+                    render_private_analytics_markdown(private_report),
+                    encoding="utf-8")
+                report["private_analytics"] = {
+                    "status": private_report.get("quality", {}).get(
+                        "status", "UNKNOWN"),
+                    "bundle_path": "private-analytics",
+                }
+            except Exception as exc:
+                report["private_analytics"] = {
+                    "status": "FAIL",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
         if args.database_dump is not None:
             args.database_dump.parent.mkdir(parents=True, exist_ok=True)
             dump_args = [
