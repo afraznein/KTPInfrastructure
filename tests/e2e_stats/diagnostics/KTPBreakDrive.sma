@@ -1669,10 +1669,16 @@ stock bool:bd_prepare_capture(const mode[], bool:need_far,
 		if (expected_flag >= 0 && f != expected_flag)
 			continue
 		new owner = dodx_area_get_data(f, CA_owning_team)
-		// The restart path (the only require_neutral caller) stages virgin
-		// flags, which report owner -1 until their first capture. Normalize
-		// to neutral there; every other mode keeps the strict canonical gate.
-		if (require_neutral && owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
+		// Virgin flags report owner -1 until first captured, and for capture
+		// purposes virgin and neutralized are the same thing: any team with
+		// numcap >= 1 may cap. Every unpinned mode (restart's require_neutral,
+		// walkoff and the kill arms with expected_owner ANY) normalizes a
+		// non-team owner to neutral — the restart scenario now leaves the map
+		// virgin, and walkoff runs after it. Only the clean path, which pins
+		// the exact expected_owner its stability latch proved, keeps the
+		// strict canonical gate against transient reset readings.
+		if ((require_neutral || expected_owner == BD_OWNER_ANY) &&
+				owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
 			owner = 0
 		if (!bd_owner_canonical(owner) ||
 				(expected_owner != BD_OWNER_ANY && owner != expected_owner))
