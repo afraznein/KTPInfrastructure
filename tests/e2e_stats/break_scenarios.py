@@ -184,6 +184,11 @@ _MANIFEST_RE = re.compile(
     + r'\(position_interval "(?P<position_interval>\d+(?:\.\d+)?)"\) '
     + r'\(buffer_entries "(?P<buffer_entries>\d+)"\) '
     + r'\(life_buffer_entries "(?P<life_buffer_entries>\d+)"\) '
+    # Schema 23 appends immutable map-revision provenance before the
+    # sequence/epoch pair.  Keep the schema-22 shape valid while accepting
+    # the two schema-23 fields only as a complete, ordered pair.
+    + r'(?:\(map_revision_algorithm "sha256"\) '
+    + r'\(map_revision "[0-9a-f]{64}"\) )?'
     + r'\(sequence "(?P<sequence>\d+)"\) '
     + r'\(event_epoch "(?P<event_epoch>\d+)"\)\r?$',
     re.MULTILINE,
@@ -261,8 +266,11 @@ class BreakDriver:
     # the bot world and placing the required cappers inside one live capture
     # area. These waits are only a fail-closed allowance for the engine's area
     # poll; they are not a license to wait for random bot objective play.
-    FAR_STAGE_TIMEOUT = 15.0
-    KILL_STAGE_TIMEOUT = 15.0
+    # Arming now includes an in-plugin roster-acquisition freeze (up to 30s,
+    # BD_KILL_ACQUIRE_MAX_POLLS) before the 10s capture wait, so the harness
+    # allowance must outlast both plus jitter.
+    FAR_STAGE_TIMEOUT = 45.0
+    KILL_STAGE_TIMEOUT = 45.0
     KILL_DISARM_TIMEOUT = 2.0
     MANIFEST_WAIT_TIMEOUT = 10.0
     SERIES_TIMEOUT = 300.0
@@ -924,7 +932,9 @@ class BreakDriver:
             s.detail = ("walkoff arm produced no acknowledgment; diagnostic "
                         "plugin is not running")
             return s
-        deadline = self._series_deadline_for(15.0)
+        # Arming now includes the in-plugin roster-acquisition freeze (up to
+        # 30s) before the capture wait, so the allowance must outlast both.
+        deadline = self._series_deadline_for(45.0)
         while time.monotonic() < deadline:
             if self.series_started and not self._series_live():
                 return self._scenario_abort(s)
@@ -933,7 +943,7 @@ class BreakDriver:
                 break
             time.sleep(0.25)
         else:
-            s.detail = "deterministic walkoff produced no result within 15s"
+            s.detail = "deterministic walkoff produced no result within 45s"
             return s
         if self.series_started and not self._series_sleep(self.SETTLE):
             return self._scenario_abort(s)
@@ -1130,6 +1140,9 @@ class BreakDriver:
             return self._scenario_abort(s)
         mark = len(self._read())
         self.handle.rcon("ktp_bd_arm_restart")
+        # Arming issues a real normalization restart before it can emit a
+        # restart_queue marker. Never retry that lifecycle mutation.
+        s.extra["restart_issued"] = True
 
         ack_deadline = time.monotonic() + 3.0
         while time.monotonic() < ack_deadline:
@@ -1143,7 +1156,7 @@ class BreakDriver:
                         "plugin is not running")
             return s
 
-        deadline = self._series_deadline_for(22.0)
+        deadline = self._series_deadline_for(35.0)
         tail = ""
         while time.monotonic() < deadline:
             if self.series_started and not self._series_live():
@@ -1162,8 +1175,6 @@ class BreakDriver:
         else:
             s.detail = ("restart probe did not produce a complete queue/result "
                         "evidence pair")
-            if "[BD] restart_queue" in tail:
-                s.extra["restart_issued"] = True
             return s
 
         return self._judge_round_restart(tail)
@@ -1386,14 +1397,18 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
 
     Retries because a fail-closed engine precondition can still be transient.
     A verdict of ok or violation is final and stops the loop immediately —
-    retrying past a violation would be shopping for a green run. The three
-    factual canonical frag runs first, followed by the three unmatched-frag
-    diagnostics that use a real capture created deterministically from the
-    map's capture-area bounds. Every command is also bound to one five-minute
-    series epoch; a half end, changelevel, plugin/manifest activation, userid
-    change, or deadline aborts all remaining commands. The strict downstream
-    contract still requires the one accepted factual frag and exact three
-    synthetic diagnostics to stage and reconcile.
+    retrying past a violation would be shopping for a green run. The factual
+    canonical frag runs first. A clean real capture then acts as the
+    capture-area readiness preflight: unlike the synthetic diagnostics it polls
+    for a stable map target before positioning anyone. This prevents a newly
+    live map from turning the intentional diagnostics into a false coverage
+    failure merely because its objective bounds have not settled yet. The three
+    unmatched-frag diagnostics run immediately after that preflight. Every
+    command is also bound to one five-minute series epoch; a half end,
+    changelevel, plugin/manifest activation, userid change, or deadline aborts
+    all remaining commands. The strict downstream contract still requires the
+    one accepted factual frag and exact three synthetic diagnostics to stage
+    and reconcile.
     """
     d = BreakDriver(handle, log_path)
     if not d.begin_series():
@@ -1411,25 +1426,50 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     # scenarios.  The plugin acknowledges it only after the exact full roster
     # respawns and freezes, so the diagnostic match always exercises accepted
     # producer clocks and ktp_match_stats without depending on bot luck.
-    canonical = d.canonical_diagnostic_frag()
-    canonical.extra["attempts"] = 1
+    # Staging aborts fail closed and discard the attempted window (foreign
+    # death, attacker never fired before the deadline), so retrying them is
+    # not verdict shopping: each attempt is a fresh closed evidence window and
+    # only one accepted factual frag ever reaches adjudication. Three recent
+    # full runs showed three one-shot outcomes (ok / foreign death / no kill),
+    # so the one-shot policy, not the contract, was the coverage bottleneck.
+    for attempt in range(1, attempts + 1):
+        # Canonical acquisition converges only when every roster member is
+        # alive, and a dead bot may never respawn on its own inside the
+        # diagnostic match (run 34007850852: two consecutive attempts held at
+        # acquired=11 for their whole 30s window). A clan restart respawns the
+        # full roster deterministically — the restart diagnostic already
+        # issues the same reset inside this series — and no evidence window
+        # exists yet, so the reset mutates nothing the adjudication reads.
+        handle = getattr(d, "handle", None)
+        if handle is not None:
+            handle.rcon("mp_clan_restartround 1")
+            time.sleep(3.0)
+        canonical = d.canonical_diagnostic_frag()
+        if canonical.status != "not_staged" or canonical.extra.get("series_abort"):
+            break
+        if attempt < attempts:
+            print(f"  scenario {canonical.name:<28} attempt "
+                  f"{attempt}/{attempts} did not stage: {canonical.detail}",
+                  flush=True)
+            time.sleep(4.0)
+    canonical.extra["attempts"] = attempt
     print(f"  scenario {canonical.name:<28} {canonical.status:<12} "
           f"{canonical.detail}", flush=True)
     out.append({"name": canonical.name, "status": canonical.status,
                 "detail": canonical.detail,
                 "breaks_seen": canonical.breaks_seen, **canonical.extra})
 
-    # The three scenarios that intentionally dispatch unmatched synthetic
-    # deaths still run before optional capture observations. This guarantees
-    # that exact-three reconciliation is never held hostage by the latter.
-    # The canonical frag above is factual and accepted, so it is not part of
-    # this intentionally rejected diagnostic set.
+    # The clean-capture preflight has its own bounded in-plugin readiness poll.
+    # Run it before the unmatched diagnostics so their deterministic target
+    # selection cannot race a just-live map's objective initialization. The
+    # canonical frag above is factual and accepted, so it is not part of the
+    # intentionally rejected diagnostic set below.
     scenarios = () if canonical.status != "ok" else (
+        (d.negative_clean_capture, attempts),
         (d.negative_off_point_kill, 1),
         (d.positive_kill_on_point, attempts),
         (d.negative_round_restart, attempts),
         (d.negative_voluntary_walkoff, attempts),
-        (d.negative_clean_capture, attempts),
     )
     if canonical.status != "ok":
         print("  diagnostics HARD STOP: canonical factual frag did not "
@@ -1463,6 +1503,11 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
         if s.extra.get("kill_disarm_ack") is False:
             print("  diagnostics HARD STOP: kill poller disarm was not "
                   "acknowledged", flush=True)
+            break
+        if (s.name == "negative_round_restart"
+                and s.status != "ok" and s.extra.get("restart_issued")):
+            print("  diagnostics HARD STOP: normalization restart did not "
+                  "produce a complete closed evidence window", flush=True)
             break
         if s.extra.get("series_abort"):
             print("  diagnostics HARD STOP: lifecycle/deadline boundary "

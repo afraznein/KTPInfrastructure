@@ -99,16 +99,24 @@ def test_far_probe_waits_past_production_candidate_ttl():
 
 def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    assert 0 < bs.BreakDriver.FAR_STAGE_TIMEOUT <= 15.0
+    # The stage allowance covers the in-plugin roster-acquisition freeze
+    # (BD_KILL_ACQUIRE_MAX_POLLS at 0.1s) plus the capture wait.
+    assert 0 < bs.BreakDriver.FAR_STAGE_TIMEOUT <= 45.0
     assert bs.BreakDriver.SERIES_TIMEOUT < 20 * 60
     assert "#define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS" in source
+    assert "#define BD_KILL_ACQUIRE_MAX_POLLS 300" in source
     arm = source[source.index("public cmd_arm_kill()"):
                  source.index("public bd_kill_poll()")]
     assert arm.index("remove_task(BD_TASK_KILL_POLL)") < arm.index(
         "g_bdKillPolls = 0"
-    ) < arm.index("bd_prepare_capture(") < arm.index(
+    ) < arm.index("bd_begin_test_isolation()") < arm.index(
         'set_task(0.1, "bd_kill_poll"'
     )
+    poll_acquire = source[source.index("public bd_kill_poll()"):
+                          source.index("public cmd_arm_restart()")]
+    assert poll_acquire.index("bd_hold_test_players()") < poll_acquire.index(
+        "bd_series_roster_current(true)"
+    ) < poll_acquire.index("bd_prepare_capture(")
     prepare = source[source.index("stock bool:bd_prepare_capture"):
                      source.index("stock bd_find_prepared_capture")]
     assert "bd_area_center" in prepare
@@ -125,6 +133,17 @@ def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
     assert 'server_print("KTP_BD_KILL_DISARMED")' in disarm
 
 
+def test_near_diagnostics_do_not_require_a_far_away_anchor():
+    """Only the far-kill probe asserts an off-point distance.  Restart and
+    walk-off setup merely need a safe origin outside the capture areas."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    prepare = source[source.index("stock bool:bd_prepare_capture"):
+                     source.index("stock bd_find_prepared_capture")]
+    assert "need_far && !bd_far_anchor(candidate, far_origin)" in prepare
+    assert "!need_far && !bd_safe_anchor(far_origin)" in prepare
+    assert "stock bd_safe_anchor(Float:anchor[3])" in source
+
+
 def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     seconds = float(next(
@@ -133,7 +152,7 @@ def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
         if line.startswith("#define BD_KILL_ISOLATION_SECS ")
     ))
     assert seconds >= bs.BreakDriver.SETTLE + 0.5
-    assert "isolated = bd_begin_test_isolation()" in source
+    assert "bd_isolation_count() : bd_begin_test_isolation()" in source
     assert 'set_task(BD_KILL_ISOLATION_SECS, "bd_isolation_end"' in source
     assert "bd_hold_test_players()" in source
     assert bs._ISOLATION_END_RE.search("[BD] isolation END")
@@ -299,14 +318,20 @@ def _match_start(match_id, half="1st half"):
             f'(half "{half}") (type "0")\n')
 
 
-def _manifest(match_id, half=1, epoch=100, producer="stats_logging"):
+def _manifest(match_id, half=1, epoch=100, producer="stats_logging",
+              schema=22):
+    revision = ""
+    if schema == 23:
+        revision = ('(map_revision_algorithm "sha256") '
+                    '(map_revision "0123456789abcdef0123456789abcdef'
+                    '0123456789abcdef0123456789abcdef") ')
     return (f'L 08/28/2026 - 12:00:00: KTP_CAPTURE_MANIFEST '
             f'(matchid "{match_id}") (half "{half}") '
             f'(map "dod_anzio") (producer "{producer}") '
-            f'(producer_version "1.18.1") (schema "22") '
+            f'(producer_version "1.19.0") (schema "{schema}") '
             f'(capabilities "frag_context,damage,position,health") '
             f'(position_interval "2.0") (buffer_entries "128") '
-            f'(life_buffer_entries "64") (sequence "1") '
+            f'(life_buffer_entries "64") {revision}(sequence "1") '
             f'(event_epoch "{epoch}")\n')
 
 
@@ -343,6 +368,17 @@ def test_begin_series_accepts_real_r3_manifest_before_start_order():
 
     assert driver.begin_series() is True
     assert driver.series_manifest == ("diagnostic-TEST", 1, 100)
+    assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_begin_series_accepts_schema23_map_revision_manifest():
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=200, schema=23))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("diagnostic-TEST", 1, 200)
     assert handle.fired == ["ktp_bd_begin_series"]
 
 
@@ -672,6 +708,38 @@ def test_pawn_clean_capture_is_real_closed_world_and_fail_closed():
     assert 'triggered "cap_break"' not in source
 
 
+def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
+    """A clan restart reverts capturable flags to the engine's virgin owner
+    -1 (probe run 34005203795); mid-match neutralization reports 0. Every
+    restart-path neutrality gate must therefore reject only ALLIES/AXIS,
+    never require owner == 0, or the scenario can never stage."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+
+    plan = source[source.index("stock bool:bd_find_restart_plan"):
+                  source.index("stock bool:bd_restart_same_origin")]
+    assert "owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS ||" in plan
+    assert "owner != 0" not in plan
+
+    blocker = source[source.index("stock bd_restart_stability_blocker"):
+                     source.index("stock bd_restart_drop_stability")]
+    assert ("stable_owner == BD_TEAM_ALLIES || "
+            "stable_owner == BD_TEAM_AXIS") in blocker
+    assert "!= 0" not in blocker.split("CA_owning_team")[1].split("||")[0]
+
+    prepare = source[source.index("stock bool:bd_prepare_capture"):
+                     source.index("stock bd_find_prepared_capture")]
+    assert ("if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)\n"
+            "\t\t\towner = 0") in prepare
+    normalize = prepare.index("owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS")
+    canonical = prepare.index("!bd_owner_canonical(owner)")
+    assert normalize < canonical, (
+        "every selector must normalize the virgin owner before the "
+        "canonical gate can reject it")
+    # bd_owner_canonical itself stays narrow; transient readings are held
+    # off by each mode's multi-poll stability latch, not by owner gating.
+    assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
+
+
 def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     select = source[source.index("stock bool:bd_find_clean_plan"):
@@ -679,10 +747,16 @@ def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target(
     poll = source[source.index("public bd_clean_capture_poll()"):
                   source.index("public bd_clean_capture_finish()")]
 
+    # Virgin flags report owner -1 (deterministically since #248 restarts the
+    # map before canonical staging); selection normalizes any non-team owner
+    # to neutral BEFORE using it, and relies on the stability latch — not a
+    # canonical gate — to reject transient reset readings.
     owner_read = select.index("new owner = dodx_area_get_data")
-    owner_gate = select.index("!bd_owner_canonical(owner)", owner_read)
-    selection = select.index("chosen_flag = f", owner_gate)
-    assert owner_read < owner_gate < selection
+    normalize = select.index(
+        "owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS", owner_read)
+    selection = select.index("chosen_flag = f", normalize)
+    assert owner_read < normalize < selection
+    assert "!bd_owner_canonical(owner)" not in select
     assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
     assert "owner != g_bdCleanStableOwner" in poll
     assert "g_bdCleanStablePolls = 1" in poll
@@ -690,7 +764,12 @@ def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target(
     assert poll.index("BD_CLEAN_TARGET_STABLE_POLLS") < poll.index(
         'bd_prepare_capture("clean_capture"'
     )
-    assert "!bd_owner_canonical(g_bdCleanOwnerBefore)" in poll
+    # The recorded before-owner is normalized to neutral before the canonical
+    # precondition, so a virgin -1 read cannot abort a staged clean capture.
+    assert ("g_bdCleanOwnerBefore != BD_TEAM_ALLIES" in poll
+            and "g_bdCleanOwnerBefore = 0" in poll)
+    assert poll.index("g_bdCleanOwnerBefore = 0") < poll.index(
+        "!bd_owner_canonical(g_bdCleanOwnerBefore)")
 
 
 def test_clean_capture_retry_reacquires_exact_full_series_roster():
@@ -874,8 +953,6 @@ class _RestartArmModel:
             if stable:
                 if row["generation"] != self.stable_generation[player_id]:
                     return False
-            elif not baseline <= row["generation"] <= baseline + 1:
-                return False
         return True
 
     def lifecycle_abort(self):
@@ -898,8 +975,7 @@ class _RestartArmModel:
         if self.phase == "stabilizing":
             if self.stable_generation is None:
                 if (not area_stable or any(
-                        not row["alive"] or
-                        row["generation"] != self.pinned[player_id][2] + 1
+                        not row["alive"]
                         for player_id, row in self.players.items()
                         if player_id in self.pinned)):
                     return
@@ -953,16 +1029,17 @@ def test_restart_arm_behavior_waits_for_respawn_and_aborts_membership_changes():
                           "generation": 2, "alive": True}
         return players
 
-    # r5 ordering: the clock normalizes first. No capture is prepared until a
-    # later spawn generation and all five stable post-respawn samples exist.
+    # A clan restart does not promise a fresh spawn callback for every bot.
+    # The post-rebase live roster is snapshotted, then held stable.
     players = roster()
     model = _RestartArmModel(players)
     model.tick(clock_complete=True)
     assert model.phase == "stabilizing"
+    players[2]["alive"] = False
+    players[2]["generation"] += 1
     model.tick()
-    assert model.prepared == model.queues == model.results == 0
-    for row in players.values():
-        row["generation"] += 1
+    assert model.stable_generation is None
+    players[2]["alive"] = True
     model.tick()
     assert model.stable_generation is not None
     for _ in range(model.STABLE_POLLS - 1):
@@ -974,6 +1051,13 @@ def test_restart_arm_behavior_waits_for_respawn_and_aborts_membership_changes():
     model.tick(finish=True)
     model.tick(capture_active=True, finish=True)
     assert (model.queues, model.results) == (1, 1)
+
+    # A later spawn after the stable snapshot remains a hard lifecycle abort.
+    changed = _restart_model_at_prepared(roster())
+    changed.players[1]["generation"] += 1
+    changed.tick(capture_active=True)
+    assert changed.aborted is True
+    assert changed.queues == changed.results == 0
 
     # An already-connected spectator joining combat never changed the userid
     # epoch in r5. Pinned-roster completeness must still abort immediately.
@@ -1179,6 +1263,22 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
     assert "g_bdSpawnGeneration[g_bdCanonicalVictim] <=" in command
     assert "bd_series_roster_current(true)" in command
     assert "isolated != g_bdSeriesRosterCount" in command
+
+
+def test_pawn_canonical_frag_moves_attacker_off_the_staged_objective_after_death():
+    """The factual kill is complete at the engine callback.  The attacker
+    must not remain in the objective trigger while the victim respawns."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    death = source[source.index("public client_death("):
+                   source.index("// ---------------------------------------------------------------------------",
+                                source.index("public client_death("))]
+    restore = source[source.index("stock bool:bd_restore_canonical_killer_origin"):
+                     source.index("stock bd_canonical_restore_victim_health")]
+    assert "g_bdIsolationOriginSaved[killer]" in restore
+    assert "dodx_set_user_origin(killer, g_bdIsolationOrigin[killer])" in restore
+    assert death.index("bd_canonical_clear_attack()") < death.index(
+        "bd_restore_canonical_killer_origin()"
+    )
 
 
 def test_pawn_canonical_wait_progressively_acquires_dead_pinned_member_and_ignores_prewindow_death():
@@ -1449,9 +1549,9 @@ def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
         "g_bdRestartArmPhase == BD_RESTART_ARM_PREPARED", stabilizing_start
     )
     stabilizing = poll[stabilizing_start:prepared_start]
-    assert stabilizing.index("bd_restart_roster_respawned()") < (
+    assert stabilizing.index("bd_restart_roster_live()") < (
         stabilizing.index("bd_restart_begin_stability(")
-    ) < stabilizing.index("bd_restart_stability_current()")
+    ) < stabilizing.index("bd_restart_stability_blocker()")
     threshold = stabilizing.index("BD_RESTART_POSTRESPAWN_STABLE_POLLS")
     prepare = stabilizing.index('bd_prepare_capture("restart"')
     assert threshold < prepare
@@ -1489,12 +1589,12 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
     assert bs.BreakDriver.SERIES_TIMEOUT == 300.0
     completeness = source[source.index(
         "stock bool:bd_restart_roster_pinned_complete"
-    ):source.index("stock bool:bd_restart_roster_respawned")]
+    ):source.index("stock bool:bd_restart_roster_live")]
     assert "get_players(players, num)" in completeness
     assert "!g_bdRestartRosterSelected[id]" in completeness
     assert "team != g_bdRestartRosterTeam[id]" in completeness
-    assert "g_bdRestartRosterSpawnBaseline[id] + 1" in completeness
     assert "g_bdRestartRosterSpawnStable[id]" in completeness
+    assert "g_bdRestartRosterSpawnBaseline[id] + 1" not in completeness
     abort = source[source.index("stock bd_restart_arm_abort"):
                    source.index("/** Create a real, bounded capture")]
     assert abort.index("remove_task(BD_TASK_RESTART_ARM_POLL)") < (
@@ -1505,9 +1605,11 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
 
     poll = source[source.index("public bd_restart_arm_poll()"):
                   source.index("public bd_restart_poll()")]
-    assert poll.index("g_bdRestartArmPolls >= BD_KILL_MAX_POLLS") < (
+    assert "#define BD_RESTART_ARM_MAX_POLLS 300" in source
+    assert poll.index("g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
     )
+    assert 'restart TIMEOUT phase=%d rebase=%d roster_alive=%d/%d stable_flag=%d' in poll
     assert poll.index("bd_restart_roster_pinned_complete(stable_generation)") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
     )
@@ -1833,12 +1935,16 @@ def test_missing_disarm_ack_hard_stops_all_remaining_diagnostics(monkeypatch):
 
     results = bs.run_all(object(), object(), attempts=3)
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
     assert [row["name"] for row in results] == calls
     assert results[-1]["kill_disarm_ack"] is False
 
 
-def test_exact_successful_series_runs_the_required_synthetic_three_first(
+def test_exact_successful_series_runs_the_required_synthetic_three_after_readiness(
         monkeypatch):
     calls = []
 
@@ -1878,8 +1984,8 @@ def test_exact_successful_series_runs_the_required_synthetic_three_first(
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls[0] == "canonical_diagnostic_frag"
-    assert tuple(calls[1:4]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
+    assert calls[:2] == ["canonical_diagnostic_frag", "negative_clean_capture"]
+    assert tuple(calls[2:5]) == bs.REQUIRED_SYNTHETIC_SCENARIOS
     required = [row for row in results
                 if row["name"] in bs.REQUIRED_SYNTHETIC_SCENARIOS]
     assert len(required) == 3
@@ -1890,9 +1996,14 @@ def test_canonical_frag_failure_hard_stops_before_synthetic_mutation(
         monkeypatch):
     calls = []
 
+    class FakeHandle:
+        def rcon(self, command):
+            calls.append(f"rcon:{command}")
+
     class FakeDriver:
         series_abort_reason = None
         series_abort_ack = None
+        handle = FakeHandle()
 
         def __init__(self, *_args):
             pass
@@ -1916,11 +2027,19 @@ def test_canonical_frag_failure_hard_stops_before_synthetic_mutation(
 
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
 
+    monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
     results = bs.run_all(object(), object())
 
-    assert calls == ["canonical_diagnostic_frag", "end_series"]
+    # Staging is retried (each abort discards its closed window), and every
+    # attempt respawns the full roster first — canonical acquisition can only
+    # converge from an all-alive world. A final canonical failure still
+    # hard-stops before any synthetic mutation.
+    assert calls == (
+        ["rcon:mp_clan_restartround 1", "canonical_diagnostic_frag"] * 3
+        + ["end_series"])
     assert [row["name"] for row in results] == ["canonical_diagnostic_frag"]
     assert results[0]["status"] == "not_staged"
+    assert results[0]["attempts"] == 3
 
 
 def test_clean_capture_abort_retries_only_after_exact_full_roster_reacquisition(
@@ -2030,8 +2149,12 @@ def test_lifecycle_abort_hard_stops_every_remaining_command(monkeypatch):
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
     results = bs.run_all(object(), object())
 
-    assert calls == ["canonical_diagnostic_frag", "negative_off_point_kill"]
-    assert len(results) == 2
+    assert calls == [
+        "canonical_diagnostic_frag",
+        "negative_clean_capture",
+        "negative_off_point_kill",
+    ]
+    assert len(results) == 3
     assert results[-1]["series_abort"] == "half_end"
 
 

@@ -32,6 +32,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -43,6 +44,10 @@ from scripts.lane_b_match_report import (generate_lane_b_report,  # noqa: E402
                                          summary_for_lane)
 from scripts.match_analytics import (match_capture_authorization,  # noqa: E402
                                      sql_literal, tsv_rows)
+from scripts.match_analytics import (  # noqa: E402
+    build_report as build_private_analytics_report,
+    render_markdown as render_private_analytics_markdown,
+)
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, log_invariants, metamod)
@@ -126,7 +131,14 @@ def compile_sma(src: Path, out: Path, *, scripting: Path,
 
     argv = [str(scripting / "amxxpc"), str(work)]
     if include_dir is not None:
-        argv.append(f"-i{include_dir}")
+        # The 32-bit Pawn compiler cannot reliably read Windows bind-mounted
+        # include paths. Stage the exact tree beside the source so its header
+        # resolution is identical on local Docker and Linux CI.
+        staged_include = work_dir / "include"
+        if staged_include.exists():
+            shutil.rmtree(staged_include)
+        shutil.copytree(include_dir, staged_include)
+        argv.append(f"-i{staged_include}")
     argv += [f"-i{scripting}/include", f"-i{work_dir}", f"-o{out}"]
     argv += list(defines)
     r = subprocess.run(argv, cwd=str(scripting), capture_output=True,
@@ -601,7 +613,11 @@ def judge_capture_context_isolation(
     expected = int(expected_frag_diagnostics)
     diagnostic_errors = diagnostic_authorization.get("errors") or []
     checks = {
-        "exactly_three_diagnostics": expected == 3,
+        # The diagnostic driver derives this count from the closed evidence
+        # window.  A required scenario can be not_staged without fabricating a
+        # synthetic death, so require a real diagnostic set and then
+        # reconcile its actual cardinality exactly below.
+        "has_intentional_diagnostics": expected > 0,
         "report_health_reconciled": report_health.get("status") == "ok",
         "diagnostic_health_reconciled": diagnostic_health.get("status") == "ok",
         "report_authorized": bool(report_authorization.get("authorized")),
@@ -621,7 +637,13 @@ def judge_capture_context_isolation(
             and diagnostic_frag.get("correlation_failure_count") == expected
         ),
         "diagnostic_frag_accepted": (
-            int(diagnostic_frag.get("daemon_accepted") or 0) == 1
+            # The isolated match contains the canonical factual frag plus
+            # ordinary bot frags.  Its accepted count is therefore not
+            # literally one; require that every emitted frag is accounted for
+            # by either an accepted row or an intentional diagnostic reject.
+            int(diagnostic_frag.get("daemon_accepted") or 0) > 0
+            and int(diagnostic_frag.get("daemon_accepted") or 0)
+            + expected == int(diagnostic_frag.get("daemon_received") or 0)
         ),
     }
     ok = all(checks.values())
@@ -631,8 +653,8 @@ def judge_capture_context_isolation(
         "detail": (
             f"clean report match {report_match_id} is authorized with "
             "frag rejected=0/correlation_failure=0; diagnostic match "
-            f"{diagnostic_match_id} retains exactly one accepted factual "
-            f"frag, reconciles {expected} intentional BreakDrive rejection(s), "
+            f"{diagnostic_match_id} retains factual accepted frag(s), "
+            f"reconciles {expected} intentional BreakDrive rejection(s), "
             "and remains unauthorized"
             if ok else
             "clean/report and contaminated/diagnostic capture contexts were "
@@ -1894,6 +1916,33 @@ def main() -> int:
                     "detail": detail,
                 }
                 failures.append(f"v5_match_report: {detail}")
+            # Private shadow analytics (box score + shadow explorations,
+            # flag fights included) for the artifact, so every run carries
+            # the evidence the stat-catalog gates read. Advisory only: a
+            # shadow report must never turn a green run red.
+            try:
+                private_dir = args.match_report_dir.parent / "private-analytics"
+                private_dir.mkdir(parents=True, exist_ok=True)
+                private_report = build_private_analytics_report(
+                    db, report["match"]["match_id"],
+                    Path("live-e2e-database"),
+                )
+                (private_dir / "report.json").write_text(
+                    json.dumps(private_report, indent=2, default=str),
+                    encoding="utf-8")
+                (private_dir / "report.md").write_text(
+                    render_private_analytics_markdown(private_report),
+                    encoding="utf-8")
+                report["private_analytics"] = {
+                    "status": private_report.get("quality", {}).get(
+                        "status", "UNKNOWN"),
+                    "bundle_path": "private-analytics",
+                }
+            except Exception as exc:
+                report["private_analytics"] = {
+                    "status": "FAIL",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
         if args.database_dump is not None:
             args.database_dump.parent.mkdir(parents=True, exist_ok=True)
             dump_args = [

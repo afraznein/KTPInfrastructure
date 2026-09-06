@@ -3,12 +3,10 @@
 #
 # ## Why this exists
 #
-# KTPHLStatsX is a delta-only fork. It tracks exactly three files —
-# `hlstats.pl`, `HLstats.plib`, `HLstats_EventHandlers.plib` — because those
-# are the only ones KTP modifies, and vendoring the rest would invite someone
-# to "fix" upstream code in a fork that has to stay rebasable. `deploy.ps1`
-# says as much: it stages those three into `/opt/hlstatsx/scripts/` alongside
-# whatever is already there.
+# KTPHLStatsX's KTP delta is exactly three files — `hlstats.pl`,
+# `HLstats.plib`, `HLstats_EventHandlers.plib` — the only ones KTP modifies.
+# `deploy.ps1` says as much: it stages just those three into
+# `/opt/hlstatsx/scripts/` alongside whatever is already there.
 #
 # That is correct for deployment and fatal for a test container, where nothing
 # is already there. `hlstats.pl` requires seven more files by absolute path
@@ -16,8 +14,12 @@
 #
 #     Can't locate .//ConfigReaderSimple.pm at hlstats.pl line 72
 #
-# So Lane B has to reproduce production's composition: upstream libs, with the
-# fork's three files laid over them. That is what this does.
+# Whether a given `daemon_ref` also happens to carry read-only vendored copies
+# of those seven (`afraznein/KTPHLStatsX`#68, for the fork's own bare-checkout
+# CI) is irrelevant here — this script never reads them from `$FORK`. It
+# reproduces production's composition itself: upstream libs from a pinned
+# source, with the fork's three files laid over them. That is what this does,
+# and it is still what Lane B runs on.
 #
 # ## Provenance, and why it is written to disk
 #
