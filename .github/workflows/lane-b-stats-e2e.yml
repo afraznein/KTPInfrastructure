@@ -572,6 +572,7 @@ jobs:
             build/lane-b-artifacts/hlstats-e2e.out
             build/lane-b-artifacts/corpus-replay.out
             build/lane-b-artifacts/match-report/
+            build/lane-b-artifacts/private-analytics/
             build/lane-b-artifacts/bundle-provenance.md
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
