@@ -137,6 +137,39 @@ def _identity(row: Mapping[str, Any], role: str) -> dict[str, Any]:
     }
 
 
+def _liveness_lookup(life_boundaries: Sequence[dict[str, Any]]):
+    """alive_at(half, pid, t) from the physical life-boundary feed.
+
+    Returns True/False when the last boundary at or before t decides it,
+    None when the player has no boundary yet in that half — callers censor
+    on None rather than guess.
+    """
+    by_player: dict[tuple[int, int], list[tuple[float, str]]] = {}
+    for row in life_boundaries:
+        pid = _int_or_none(row.get("player_id"))
+        half = _int_or_none(row.get("half"))
+        at = _game_time(row)
+        kind = str(row.get("boundary_kind") or row.get("kind") or "")
+        if pid is None or half is None or at is None or kind not in ("start", "end"):
+            continue
+        by_player.setdefault((half, pid), []).append((at, kind))
+    for events in by_player.values():
+        events.sort()
+
+    def alive_at(half: int, pid: int, at: float) -> bool | None:
+        events = by_player.get((half, pid))
+        if not events:
+            return None
+        state: bool | None = None
+        for when, kind in events:
+            if when > at:
+                break
+            state = kind == "start"
+        return state
+
+    return alive_at
+
+
 _CLUTCH_MIN_ENEMIES = 2
 
 
@@ -191,28 +224,7 @@ def build_clutch_shadow(
         envelope["caveats"].append("No combat roster supplied.")
         return envelope
 
-    by_player: dict[tuple[int, int], list[tuple[float, str]]] = {}
-    for row in life_boundaries:
-        pid = _int_or_none(row.get("player_id"))
-        half = _int_or_none(row.get("half"))
-        at = _game_time(row)
-        kind = str(row.get("boundary_kind") or row.get("kind") or "")
-        if pid is None or half is None or at is None or kind not in ("start", "end"):
-            continue
-        by_player.setdefault((half, pid), []).append((at, kind))
-    for events in by_player.values():
-        events.sort()
-
-    def alive_at(half: int, pid: int, at: float) -> bool | None:
-        events = by_player.get((half, pid))
-        if not events:
-            return None
-        state: bool | None = None
-        for when, kind in events:
-            if when > at:
-                break
-            state = kind == "start"
-        return state
+    alive_at = _liveness_lookup(life_boundaries)
 
     counts: dict[int, int] = {}
     for window in windows:
@@ -245,6 +257,171 @@ def build_clutch_shadow(
     envelope["players"] = [
         {"player_id": pid, "clutches": total}
         for pid, total in sorted(counts.items())
+    ]
+    return envelope
+
+
+@dataclass
+class EntryConfig:
+    """2D radius around a flag origin that counts as the contested area.
+
+    Matches ObjectivePressureConfig.objective_radius_units; position samples
+    arrive on a fixed cadence, so entry attribution is sample-rate precise.
+    """
+
+    entry_radius_units: float = 512.0
+
+    def validate(self) -> None:
+        if self.entry_radius_units <= 0:
+            raise ValueError("entry radius must be > 0")
+
+
+def build_entries_shadow(
+    windows: Sequence[dict[str, Any]] | None,
+    position_rows: Sequence[dict[str, Any]] | None,
+    flag_positions: Sequence[dict[str, Any]] | None,
+    life_boundaries: Sequence[dict[str, Any]] | None,
+    roster: Sequence[dict[str, Any]] | None,
+    config: EntryConfig | None = None,
+    *,
+    liveness_available: bool = True,
+    source_available: bool = True,
+    temporal_valid: bool = True,
+) -> dict[str, Any]:
+    """First capturing-team member into each fight's area, and its survival.
+
+    An entry is the earliest alive position sample by a capturing-team
+    member within the entry radius of the fight's flag during the padded
+    window. Requires migration 025's per-sample is_alive — without it a
+    death-frozen corpse near the flag would fake an entry, so the whole
+    exploration is suppressed rather than approximated. Survival is the
+    entrant's liveness at window close, censored when unknown.
+    """
+    config = config or EntryConfig()
+    config.validate()
+    envelope: dict[str, Any] = {
+        "definition": "fight_entries_v1",
+        "definition_version": 1,
+        "parameters": {
+            **asdict(config),
+            "clock": "producer_game_time",
+            "entrant": "first_alive_capturing_team_sample_in_radius",
+            "survival": "entrant_alive_at_window_close",
+            "precision": "position_sample_cadence",
+        },
+        "status": "available",
+        "visibility": "private_shadow_only",
+        "writes": False,
+        "rating_effect": False,
+        "caveats": [],
+        "entries": [],
+        "players": [],
+        "windows_with_entry": 0,
+        "windows_without_entry": 0,
+        "survival_censored": 0,
+    }
+    if not temporal_valid:
+        envelope["status"] = "timed_metrics_suppressed"
+        return envelope
+    if (not source_available or windows is None or position_rows is None
+            or flag_positions is None or life_boundaries is None):
+        envelope["status"] = "unavailable"
+        envelope["caveats"].append(
+            "Windows, position samples, flag positions, and life boundaries "
+            "are all required.")
+        return envelope
+    if not liveness_available:
+        envelope["status"] = "unavailable"
+        envelope["caveats"].append(
+            "Per-sample is_alive (migration 025) is required; a corpse near "
+            "the flag must not fake an entry.")
+        return envelope
+
+    teams = {int(p["player_id"]): p.get("team") for p in (roster or [])
+             if p.get("team") in (1, 2)}
+    if not teams:
+        envelope["status"] = "unavailable"
+        envelope["caveats"].append("No combat roster supplied.")
+        return envelope
+
+    origins: dict[int, tuple[float, float]] = {}
+    for row in flag_positions:
+        flag = _int_or_none(row.get("flag_index"))
+        try:
+            origins[flag] = (float(row["origin_x"]), float(row["origin_y"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    samples: dict[int, list[tuple[float, int, float, float]]] = {}
+    for row in position_rows:
+        half = _int_or_none(row.get("half"))
+        pid = _int_or_none(row.get("player_id"))
+        at = _game_time(row)
+        if (half is None or pid is None or at is None or pid not in teams
+                or not row.get("is_alive")):
+            continue
+        try:
+            x, y = float(row["pos_x"]), float(row["pos_y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        samples.setdefault(half, []).append((at, pid, x, y))
+    for rows in samples.values():
+        rows.sort()
+
+    alive_at = _liveness_lookup(life_boundaries)
+    radius2 = config.entry_radius_units ** 2
+    per_player: dict[int, dict[str, int]] = {}
+    for window in windows:
+        capturing = window.get("capturing_team")
+        half = window.get("half")
+        origin = origins.get(window.get("flag_index"))
+        if capturing not in (1, 2) or half is None or origin is None:
+            continue
+        start = window.get("membership_start")
+        end = window.get("membership_end")
+        entrant: tuple[float, int] | None = None
+        for at, pid, x, y in samples.get(int(half), []):
+            if at < start:
+                continue
+            if at > end:
+                break
+            if teams[pid] != capturing:
+                continue
+            if (x - origin[0]) ** 2 + (y - origin[1]) ** 2 <= radius2:
+                entrant = (at, pid)
+                break
+        if entrant is None:
+            envelope["windows_without_entry"] += 1
+            continue
+        envelope["windows_with_entry"] += 1
+        at, pid = entrant
+        survived = alive_at(int(half), pid,
+                            float(window["ended_game_time"]))
+        if survived is None:
+            envelope["survival_censored"] += 1
+        stats = per_player.setdefault(
+            pid, {"entries": 0, "survived": 0, "survival_known": 0})
+        stats["entries"] += 1
+        if survived is not None:
+            stats["survival_known"] += 1
+            if survived:
+                stats["survived"] += 1
+        envelope["entries"].append({
+            "half": half, "attempt_id": window.get("attempt_id"),
+            "flag_name": window.get("flag_name"),
+            "player_id": pid, "team": capturing,
+            "entry_game_time": at,
+            "outcome": window.get("outcome"),
+            "survived": survived,
+        })
+    envelope["players"] = [
+        {
+            "player_id": pid, **stats,
+            "survival_rate": (round(stats["survived"]
+                                    / stats["survival_known"], 4)
+                              if stats["survival_known"] else None),
+        }
+        for pid, stats in sorted(per_player.items())
     ]
     return envelope
 

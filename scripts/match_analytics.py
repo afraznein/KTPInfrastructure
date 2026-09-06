@@ -43,6 +43,7 @@ from scripts.fps_stat_explorations import (  # noqa: E402
 )
 from scripts.flag_fights import (  # noqa: E402
     build_clutch_shadow,
+    build_entries_shadow,
     build_flag_fight_shadow,
 )
 from scripts.flag_swing import (  # noqa: E402
@@ -95,7 +96,7 @@ INTEGER_COLUMNS = {
     "damage_capped", "hitplace", "sample_id", "origin_x", "origin_y",
     "killer_pos_x", "killer_pos_y", "killer_pos_z", "victim_pos_x",
     "victim_pos_y", "victim_pos_z", "killer_prone", "killer_scoped",
-    "killer_clip", "killer_ammo", "is_last_flag_defense",
+    "killer_clip", "killer_ammo", "is_last_flag_defense", "is_alive",
     "frag_context_recorded",
     "player_slot", "engine_userid", "player_class", "round_live",
     "event_epoch", "producer_activation_epoch", "activation_receipt_epoch",
@@ -208,6 +209,10 @@ SELECT
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_position_samples')
     AS positions,
+  EXISTS(SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_position_samples'
+      AND column_name = 'is_alive')
+    AS position_liveness,
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_flag_state_events')
     AS flag_ownership,
@@ -916,6 +921,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     life_shadow = explorations.get("life_kat", {})
     fight_shadow = explorations.get("flag_fights", {})
     clutch_shadow = explorations.get("fight_clutches", {})
+    entries_shadow = explorations.get("fight_entries", {})
     recap_shadow = explorations.get("recap_speed", {})
     swing_shadow = explorations.get("flag_swing", {})
     ktpr_shadow = explorations.get("ktpr_v2", {})
@@ -1083,6 +1089,20 @@ def render_markdown(report: dict[str, Any]) -> str:
         "A clutch is the winning side's lone survivor at window close against "
         "two or more living enemies; windows with unknown liveness are "
         "censored, never guessed.",
+        "", "### Fight entries", "",
+        f"Status: `{entries_shadow.get('status', 'not_collected')}`  ",
+        f"Windows with / without entry: "
+        f"{md(entries_shadow.get('windows_with_entry'))} / "
+        f"{md(entries_shadow.get('windows_without_entry'))}",
+        "",
+        markdown_table(entries_shadow.get("players", []), [
+            ("player_id", "Player id"), ("entries", "Entries"),
+            ("survived", "Survived"), ("survival_rate", "Survival"),
+        ]),
+        "An entry is the first alive capturing-team position sample inside "
+        "the entry radius during the padded window — sample-rate precision. "
+        "Point time lives in the objective-pressure section: near-objective "
+        "seconds split by owner (enemy-owned = attack, friendly = defense).",
         "", "### Recap speed", "",
         f"Status: `{recap_shadow.get('status', 'not_collected')}`  ",
         f"Censored open losses: {md(recap_shadow.get('censored_open_losses'))}",
@@ -1227,8 +1247,17 @@ def build_report(
             and sources.get("frag_event_clock", False)
         ) else None
     )
-    position_timeline = (query_rows(db, "position_sample_fact.sql", match_id)
-                         if sources.get("positions", False) else [])
+    # Archives predating migration 025 lack is_alive; select via the legacy
+    # query there so the canonical one can name the column.
+    position_timeline = (
+        query_rows(
+            db,
+            ("position_sample_fact.sql"
+             if sources.get("position_liveness", False)
+             else "position_sample_fact_legacy.sql"),
+            match_id,
+        )
+        if sources.get("positions", False) else [])
     flag_positions = (query_rows(db, "flag_position_fact.sql", match_id)
                       if sources.get("flag_positions", False) else [])
     flag_states = (query_rows(db, "flag_state_timeline_fact.sql", match_id)
@@ -1375,6 +1404,19 @@ def build_report(
         source_available=bool(sources.get("life_boundaries", False)),
         temporal_valid=source_mode != "replay",
     )
+    fight_entries = build_entries_shadow(
+        flag_fights.get("windows"),
+        position_timeline,
+        flag_positions,
+        life_boundaries,
+        players_public,
+        liveness_available=bool(sources.get("position_liveness", False)),
+        source_available=bool(
+            sources.get("positions", False)
+            and sources.get("flag_positions", False)
+            and sources.get("life_boundaries", False)),
+        temporal_valid=source_mode != "replay",
+    )
     recap_speed = build_recap_speed(
         flag_states if sources.get("flag_ownership", False) else None,
         source_available=bool(sources.get("flag_ownership", False)),
@@ -1471,6 +1513,7 @@ def build_report(
             "objective_pressure": objective_pressure,
             "flag_fights": flag_fights,
             "fight_clutches": fight_clutches,
+            "fight_entries": fight_entries,
             "recap_speed": recap_speed,
             "flag_swing": flag_swing,
             "ktpr_v2": ktpr_v2,

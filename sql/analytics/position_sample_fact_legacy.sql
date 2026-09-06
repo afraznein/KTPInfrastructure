@@ -10,7 +10,6 @@ SELECT
     ps.pos_x,
     ps.pos_y,
     ps.pos_z,
-    ps.is_alive,
     ps.game_time,
     ps.event_time
 FROM ktp_position_samples ps
