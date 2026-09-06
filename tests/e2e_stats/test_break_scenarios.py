@@ -728,15 +728,15 @@ def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
 
     prepare = source[source.index("stock bool:bd_prepare_capture"):
                      source.index("stock bd_find_prepared_capture")]
-    assert ("if (require_neutral && owner != BD_TEAM_ALLIES && "
-            "owner != BD_TEAM_AXIS)") in prepare
-    normalize = prepare.index("require_neutral && owner != BD_TEAM_ALLIES")
+    assert ("if ((require_neutral || expected_owner == BD_OWNER_ANY) &&\n"
+            "\t\t\t\towner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)") in prepare
+    normalize = prepare.index("require_neutral || expected_owner == BD_OWNER_ANY")
     canonical = prepare.index("!bd_owner_canonical(owner)")
     assert normalize < canonical, (
-        "require_neutral must normalize the virgin owner before the "
+        "unpinned modes must normalize the virgin owner before the "
         "canonical gate can reject it")
-    # The strict canonical gate itself stays narrow so non-restart callers
-    # keep failing closed on transient -1 readings.
+    # The strict canonical gate itself stays narrow so the clean path's
+    # pinned expected_owner keeps failing closed on transient -1 readings.
     assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
 
 
