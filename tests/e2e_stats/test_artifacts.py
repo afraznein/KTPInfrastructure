@@ -82,6 +82,8 @@ def daemon_repo(tmp_path):
     _git(repo, "config", "user.email", "t@t")
     _git(repo, "config", "user.name", "t")
     (repo / "scripts" / "hlstats.pl").write_text("#!/usr/bin/perl\n")
+    for name in ("ConfigReaderSimple.pm", "TRcon.pm", "BASTARDrcon.pm", "HLstats_Server.pm", "HLstats_Player.pm", "HLstats_Game.pm", "HLstats_GameConstants.plib", "HLstats.plib", "HLstats_EventHandlers.plib"):
+        (repo / "scripts" / name).write_text(f"# {name}\n")
     (repo / "sql" / "ktp_schema.sql").write_text("CREATE TABLE hlstats_Actions (id INT);\n")
     (repo / "sql" / "migrate_003_assist_action.sql").write_text(
         "INSERT IGNORE INTO hlstats_Actions VALUES (1);\n")
@@ -128,8 +130,29 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.plugin_inc.is_file()
     assert arts.gamedata_dir.is_dir()
     assert arts.hlstats_pl.is_file()
+    assert (arts.build_dir / "base-schema.sql").is_file()
     assert len(arts.schema_sql) == 22
     assert len(arts.seed_sql) == 2
+
+
+def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
+    """The seven upstream libraries are composed later by assemble_daemon_tree."""
+    for name in (
+        "ConfigReaderSimple.pm", "TRcon.pm", "BASTARDrcon.pm",
+        "HLstats_Server.pm", "HLstats_Player.pm", "HLstats_Game.pm",
+        "HLstats_GameConstants.plib", "HLstats.plib", "HLstats_EventHandlers.plib",
+    ):
+        (daemon_repo / "scripts" / name).unlink()
+    _git(daemon_repo, "add", "-A")
+    _git(daemon_repo, "commit", "-qm", "make daemon delta-only")
+
+    artifacts = ArtifactSet.collect(
+        tmp_path / "out",
+        amxx_repo=amxx_repo, amxx_ref="feat/stats-positions",
+        daemon_repo=daemon_repo, daemon_ref="HEAD",
+    )
+
+    assert artifacts.hlstats_pl.is_file()
 
 
 def test_default_schema_sequence_includes_retention_through_telemetry23():

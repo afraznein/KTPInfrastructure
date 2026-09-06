@@ -237,6 +237,7 @@ def test_partial_appearance_is_visible_but_does_not_move_match_reference():
     assert partial["observed_seconds"] == 400
     assert partial["participation_percent"] == pytest.approx(33.33, abs=0.01)
     assert partial["impact_index"] is not None
+    assert report["metric_eligibility"]["impact_index"]["status"] == "partial"
 
 
 def test_ai_checkpoint_is_hash_bound_advisory_and_cannot_change_scores(scored):

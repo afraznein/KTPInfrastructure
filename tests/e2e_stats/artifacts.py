@@ -46,6 +46,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -94,7 +95,6 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_024_team_membership_intervals.sql",
     "sql/migrate_025_position_state_map_revision.sql",
 )
-
 
 def _md5(path: Path) -> str:
     h = hashlib.md5()
@@ -563,6 +563,9 @@ class ArtifactSet:
         for rel in schema_files:
             inst.schema_sql.append(
                 extract(daemon_repo, daemon_sha, rel, build_dir / "sql" / Path(rel).name))
+        # The runner's canonical argument is `base-schema.sql`; retain the
+        # SQL copy too so manifests continue to fingerprint every migration.
+        shutil.copyfile(inst.schema_sql[0], build_dir / "base-schema.sql")
         for rel in seed_files:
             inst.seed_sql.append(
                 extract(daemon_repo, daemon_sha, rel, build_dir / "sql" / Path(rel).name))
@@ -625,12 +628,27 @@ class ArtifactSet:
         # build/plugins/Dockerfile does `cd /compiler && ./amxxpc`, and
         # smoke-callable.yml does `cd .../scripting && ./amxxpc /work/<src>`.
         # Hence the absolute source path and the relative `./amxxpc`.
-        argv = [f"./{amxxpc.name}", str(norm),
-                f"-i{include_dir}", f"-i{src_dir}", f"-o{out}", *defines]
-        r = subprocess.run(
-            argv,
-            cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
-        )
+        # The 32-bit compiler cannot reliably open Windows bind-mounted paths.
+        # Stage both relative includes and the fork include tree in its native
+        # Linux filesystem, then copy the produced artifact back to the bundle.
+        with tempfile.TemporaryDirectory(prefix="ktp-amxxpc-") as temp:
+            stage = Path(temp)
+            staged_sma = stage / norm.name
+            staged_inc = stage / "ktp_stats_capture.inc"
+            staged_include = stage / "include"
+            staged_out = stage / out.name
+            shutil.copy2(norm, staged_sma)
+            if inc is not None:
+                shutil.copy2(inc, staged_inc)
+            shutil.copytree(include_dir, staged_include)
+            argv = [f"./{amxxpc.name}", str(staged_sma),
+                    f"-i{staged_include}", f"-i{stage}", f"-o{staged_out}", *defines]
+            r = subprocess.run(
+                argv,
+                cwd=str(amxxpc.parent), capture_output=True, text=True, timeout=timeout,
+            )
+            if r.returncode == 0 and staged_out.is_file():
+                shutil.copy2(staged_out, out)
         combined = (r.stdout or "") + (r.stderr or "")
         # amxxpc exits 0 on warnings, non-zero on errors — but it has also been
         # known to exit 0 having written nothing, so check the file too.

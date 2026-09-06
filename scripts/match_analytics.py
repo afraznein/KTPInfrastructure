@@ -41,6 +41,19 @@ from scripts.fps_stat_explorations import (  # noqa: E402
     build_objective_pressure_shadow,
     build_weapon_engagement_shadow,
 )
+from scripts.flag_fights import (  # noqa: E402
+    build_clutch_shadow,
+    build_flag_fight_shadow,
+)
+from scripts.flag_swing import (  # noqa: E402
+    build_flag_swing_shadow,
+)
+from scripts.ktpr_v2 import (  # noqa: E402
+    build_ktpr_v2_shadow,
+)
+from scripts.objective_control import (  # noqa: E402
+    build_recap_speed,
+)
 from scripts.life_exploration import (  # noqa: E402
     LifeExplorationConfig,
     build_life_exploration,
@@ -773,6 +786,75 @@ def grenade_entity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_duel_matrix(
+    frag_timeline: list[dict[str, Any]],
+    players: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Player-vs-player kill grid from the stock frag timeline.
+
+    Descriptive only. Rows are ordered by team then name so the rendered
+    grid groups teammates; enemy and team kills are both counted (the cell
+    carries whether the pairing crosses teams) so the grid reconciles with
+    the box score's kills column exactly.
+    """
+    order = sorted(
+        players,
+        key=lambda p: (p.get("team") or 0, str(p.get("player_name_at_match"))),
+    )
+    ids = [int(p["player_id"]) for p in order]
+    names = {int(p["player_id"]): p.get("player_name_at_match") for p in order}
+    teams = {int(p["player_id"]): p.get("team") for p in order}
+    counts: dict[tuple[int, int], int] = {}
+    unmatched = 0
+    for frag in frag_timeline:
+        killer = frag.get("killer_id")
+        victim = frag.get("victim_id")
+        if killer is None or victim is None or int(killer) not in names \
+                or int(victim) not in names:
+            unmatched += 1
+            continue
+        counts[(int(killer), int(victim))] = counts.get(
+            (int(killer), int(victim)), 0) + 1
+    cells = [
+        {
+            "killer_id": killer, "killer_name": names[killer],
+            "victim_id": victim, "victim_name": names[victim],
+            "kills": kills,
+            "cross_team": teams[killer] != teams[victim],
+        }
+        for (killer, victim), kills in sorted(counts.items())
+    ]
+    return {
+        "definition": "duel_matrix_v1",
+        "player_order": ids,
+        "cells": cells,
+        "frags_outside_roster": unmatched,
+    }
+
+
+def duel_matrix_markdown(matrix: dict[str, Any],
+                         players: list[dict[str, Any]]) -> str:
+    """Killer-by-victim grid; rows kill columns."""
+    order = matrix.get("player_order") or []
+    if not order or not matrix.get("cells"):
+        return "_No rows._\n"
+    names = {int(p["player_id"]): str(p.get("player_name_at_match"))
+             for p in players}
+    lookup = {(cell["killer_id"], cell["victim_id"]): cell["kills"]
+              for cell in matrix["cells"]}
+    header = "| Killer \\ Victim | " + " | ".join(
+        names.get(pid, str(pid)) for pid in order) + " |"
+    divider = "|---" * (len(order) + 1) + "|"
+    lines = [header, divider]
+    for killer in order:
+        row = [names.get(killer, str(killer))]
+        for victim in order:
+            kills = lookup.get((killer, victim), 0)
+            row.append(str(kills) if kills else "·")
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def team_summary(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     additive = (
         "kills", "deaths", "assists", "damage_dealt", "damage_taken",
@@ -832,6 +914,11 @@ def render_markdown(report: dict[str, Any]) -> str:
     objective_shadow = explorations.get("objective_pressure", {})
     engagement_shadow = explorations.get("weapon_engagement", {})
     life_shadow = explorations.get("life_kat", {})
+    fight_shadow = explorations.get("flag_fights", {})
+    clutch_shadow = explorations.get("fight_clutches", {})
+    recap_shadow = explorations.get("recap_speed", {})
+    swing_shadow = explorations.get("flag_swing", {})
+    ktpr_shadow = explorations.get("ktpr_v2", {})
     lifecycles = report.get("telemetry_lifecycles", {})
     objective_attempts = lifecycles.get("objective_attempts", {})
     grenade_entities = lifecycles.get("grenade_entities", {})
@@ -872,9 +959,16 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("cap_breaks", "Breaks"), ("raw_accuracy", "Raw acc."),
             ("damage_per_minute", "Dmg/min"),
             ("damage_per_life", "Dmg/life"),
+            ("grenade_kills", "Nade K"),
+            ("grenade_damage", "Nade dmg"),
+            ("fast_2k", "2k"), ("fast_3k", "3k"), ("fast_4k_plus", "4k+"),
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
+        "", "## Duel matrix", "",
+        duel_matrix_markdown(report.get("duel_matrix", {}), report["players"]),
+        "Rows kill columns; team kills are included so the grid reconciles "
+        "with the box score exactly.",
         "", "## Assists", "",
         markdown_table(report["assists"], [
             ("player_name_at_match", "Assister"), ("team_name", "Team"),
@@ -960,6 +1054,74 @@ def render_markdown(report: dict[str, Any]) -> str:
         "KAT means kill, assist, or death traded in a completed physical life. "
         "Disconnect, open, and ambiguous lives are censored; no round-survival "
         "term is invented for continuous-respawn DoD.",
+        "", "### Flag fights", "",
+        f"Status: `{fight_shadow.get('status', 'not_collected')}`  ",
+        f"Fight windows: {md(fight_shadow.get('summary', {}).get('fight_windows'))}  ",
+        f"Captures / stops: {md(fight_shadow.get('summary', {}).get('captures'))} / "
+        f"{md(fight_shadow.get('summary', {}).get('stops'))}  ",
+        f"Openings observed: {md(fight_shadow.get('summary', {}).get('openings_observed'))}",
+        "",
+        markdown_table(fight_shadow.get("players", []), [
+            ("player_id", "Player id"), ("fights", "Fights"),
+            ("kills", "K"), ("deaths", "D"), ("assists", "A-fights"),
+            ("openings_won", "Open +"), ("openings_lost", "Open -"),
+            ("deaths_traded", "Traded"), ("kast_f", "KAST-F"),
+        ]),
+        "A fight is one objective-attempt window (producer clock, padded). "
+        "KAST-F counts fights with a kill, assist, survival, or traded death; "
+        "overlapping windows may count one event in each.",
+        "", "### Fight clutches", "",
+        f"Status: `{clutch_shadow.get('status', 'not_collected')}`  ",
+        f"Evaluated / censored windows: "
+        f"{md(clutch_shadow.get('evaluated_windows'))} / "
+        f"{md(clutch_shadow.get('censored_windows'))}",
+        "",
+        markdown_table(clutch_shadow.get("clutches", []), [
+            ("half", "Half"), ("flag_name", "Flag"), ("player_id", "Player id"),
+            ("against", "1 v"), ("kind", "Converted"),
+        ]),
+        "A clutch is the winning side's lone survivor at window close against "
+        "two or more living enemies; windows with unknown liveness are "
+        "censored, never guessed.",
+        "", "### Recap speed", "",
+        f"Status: `{recap_shadow.get('status', 'not_collected')}`  ",
+        f"Censored open losses: {md(recap_shadow.get('censored_open_losses'))}",
+        "",
+        markdown_table(recap_shadow.get("teams", []), [
+            ("team", "Team"), ("recaps", "Recaps"),
+            ("median_seconds", "Median s"), ("mean_seconds", "Mean s"),
+        ]),
+        "", "### Cap participation", "",
+        markdown_table(report.get("cap_participation", []), [
+            ("player_name_at_match", "Player"), ("team_name", "Team"),
+            ("caps_participated", "Caps in"), ("team_caps", "Team caps"),
+            ("cap_participation", "Share"),
+        ]),
+        "Credited participation only; on-point presence without credit needs "
+        "zone-occupancy telemetry and is not approximated.",
+        "", "### Flag swing (uncalibrated)", "",
+        f"Status: `{swing_shadow.get('status', 'not_collected')}`  ",
+        f"Calibration: `{swing_shadow.get('calibration', 'unavailable')}`  ",
+        f"Timeline points: {len(swing_shadow.get('timeline', []))}",
+        "",
+        markdown_table(swing_shadow.get("players", []), [
+            ("player_id", "Player id"), ("team", "Team"),
+            ("attributed_swing", "Swing"),
+            ("weighted_frags", "Weighted frags"),
+        ]),
+        "Swing prices each flag change and frag as the change in a baseline "
+        "P(win half); coefficients are uncalibrated priors, so magnitudes "
+        "compare within this match only.",
+        "", "### KTPR v2 shadow blend (uncalibrated)", "",
+        f"Status: `{ktpr_shadow.get('status', 'not_collected')}`  ",
+        f"Components: {md(', '.join(ktpr_shadow.get('components_used', [])))}",
+        "",
+        markdown_table(ktpr_shadow.get("players", []), [
+            ("player_name_at_match", "Player"), ("team", "Team"),
+            ("rating", "Rating"),
+        ]),
+        "Per-match z-score blend with prior weights; no ranking consequences "
+        "until the comparison review against historical KTPR signs off.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -1100,6 +1262,7 @@ def build_report(
             player["damage_dealt"] = damage
             player["damage_taken"] = None
             player["damage_differential"] = None
+            player["grenade_damage"] = None
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
@@ -1156,6 +1319,26 @@ def build_report(
     )
     shadow_timelines["revenge_analysis"] = revenge_analysis
     shadow_timelines["revenge_events"] = revenge_events
+    # Surface fast-multikill counts on the box score. The sequences themselves
+    # stay in shadow_timelines; the per-player tally is descriptive.
+    multikill_counts: dict[int, dict[str, int]] = {}
+    for sequence in shadow_timelines.get("fast_multikills", []):
+        killer_id = int((sequence.get("killer") or {}).get("player_id") or 0)
+        tally = multikill_counts.setdefault(
+            killer_id, {"fast_2k": 0, "fast_3k": 0, "fast_4k_plus": 0})
+        count = int(sequence.get("kill_count") or 0)
+        if count == 2:
+            tally["fast_2k"] += 1
+        elif count == 3:
+            tally["fast_3k"] += 1
+        elif count >= 4:
+            tally["fast_4k_plus"] += 1
+    for player in players_public:
+        tally = multikill_counts.get(int(player["player_id"]),
+                                     {"fast_2k": 0, "fast_3k": 0, "fast_4k_plus": 0})
+        player["fast_2k"] = tally["fast_2k"]
+        player["fast_3k"] = tally["fast_3k"]
+        player["fast_4k_plus"] = tally["fast_4k_plus"]
     life_kat = build_life_exploration(
         life_boundaries,
         frag_context,
@@ -1169,6 +1352,54 @@ def build_report(
             "basic_trades": True,
         },
         temporal_valid=source_mode != "replay",
+    )
+    flag_fights = build_flag_fight_shadow(
+        objective_attempts,
+        frag_context,
+        assist_timeline,
+        shadow_timelines.get("trades", []),
+        [p["player_id"] for p in players_public],
+        source_available={
+            "objective_attempts": bool(
+                sources.get("objective_attempts", False)),
+            "frags": enriched_frag_available,
+            "assists": sources.get("assist_context", False),
+            "basic_trades": True,
+        },
+        temporal_valid=source_mode != "replay",
+    )
+    fight_clutches = build_clutch_shadow(
+        flag_fights.get("windows"),
+        life_boundaries,
+        players_public,
+        source_available=bool(sources.get("life_boundaries", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    recap_speed = build_recap_speed(
+        flag_states if sources.get("flag_ownership", False) else None,
+        source_available=bool(sources.get("flag_ownership", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    cap_participation = (
+        query_rows(db, "cap_participation_fact.sql", match_id)
+        if sources.get("capture_credits", True) else [])
+    flag_swing = build_flag_swing_shadow(
+        flag_states if sources.get("flag_ownership", False) else None,
+        frag_context,
+        life_boundaries,
+        events,
+        players_public,
+        None,
+        source_available=bool(
+            sources.get("flag_ownership", False)
+            and enriched_frag_available
+            and sources.get("life_boundaries", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    ktpr_v2 = build_ktpr_v2_shadow(
+        players_public,
+        flag_fights.get("players"),
+        flag_swing.get("players"),
     )
     if source_mode == "replay":
         objective_pressure["status"] = "timed_metrics_suppressed"
@@ -1193,9 +1424,11 @@ def build_report(
         "source_inventory": inventory,
         "teams": team_summary(players_public),
         "players": players_public,
+        "duel_matrix": build_duel_matrix(frag_timeline, players_public),
         "assists": with_team_names(assists),
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
+        "cap_participation": with_team_names(cap_participation),
         "capture_events": events,
         "telemetry_lifecycles": {
             "privacy": "aggregate_public_private_timeline",
@@ -1236,6 +1469,11 @@ def build_report(
                 temporal_valid=source_mode != "replay",
             ),
             "objective_pressure": objective_pressure,
+            "flag_fights": flag_fights,
+            "fight_clutches": fight_clutches,
+            "recap_speed": recap_speed,
+            "flag_swing": flag_swing,
+            "ktpr_v2": ktpr_v2,
             "weapon_engagement": build_weapon_engagement_shadow(
                 frag_context if frag_context is not None else frag_timeline,
                 engagement_config,
