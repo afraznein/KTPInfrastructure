@@ -137,6 +137,118 @@ def _identity(row: Mapping[str, Any], role: str) -> dict[str, Any]:
     }
 
 
+_CLUTCH_MIN_ENEMIES = 2
+
+
+def build_clutch_shadow(
+    windows: Sequence[dict[str, Any]] | None,
+    life_boundaries: Sequence[dict[str, Any]] | None,
+    roster: Sequence[dict[str, Any]] | None,
+    *,
+    source_available: bool = True,
+    temporal_valid: bool = True,
+) -> dict[str, Any]:
+    """1vX conversions at fight-window close (definition v1).
+
+    A clutch is a fight whose winning side (capturing team on a capture,
+    the defenders on a stop) has exactly one member alive at window end
+    against at least ``_CLUTCH_MIN_ENEMIES`` living enemies. Liveness is
+    reconstructed from the physical life-boundary feed; a window where any
+    roster member's state is unknown at close is censored, never guessed.
+    """
+    envelope: dict[str, Any] = {
+        "definition": "fight_clutch_v1",
+        "definition_version": 1,
+        "parameters": {
+            "clock": "producer_game_time",
+            "winner": "capturing_team_on_capture_else_defenders",
+            "min_living_enemies": _CLUTCH_MIN_ENEMIES,
+            "unknown_liveness": "window_censored",
+        },
+        "status": "available",
+        "visibility": "private_shadow_only",
+        "writes": False,
+        "rating_effect": False,
+        "caveats": [],
+        "clutches": [],
+        "players": [],
+        "censored_windows": 0,
+        "evaluated_windows": 0,
+    }
+    if not temporal_valid:
+        envelope["status"] = "timed_metrics_suppressed"
+        return envelope
+    if not source_available or life_boundaries is None or windows is None:
+        envelope["status"] = "unavailable"
+        envelope["caveats"].append(
+            "Fight windows and the life-boundary feed are both required.")
+        return envelope
+
+    teams = {int(p["player_id"]): p.get("team") for p in (roster or [])
+             if p.get("team") in (1, 2)}
+    if not teams:
+        envelope["status"] = "unavailable"
+        envelope["caveats"].append("No combat roster supplied.")
+        return envelope
+
+    by_player: dict[tuple[int, int], list[tuple[float, str]]] = {}
+    for row in life_boundaries:
+        pid = _int_or_none(row.get("player_id"))
+        half = _int_or_none(row.get("half"))
+        at = _game_time(row)
+        kind = str(row.get("boundary_kind") or row.get("kind") or "")
+        if pid is None or half is None or at is None or kind not in ("start", "end"):
+            continue
+        by_player.setdefault((half, pid), []).append((at, kind))
+    for events in by_player.values():
+        events.sort()
+
+    def alive_at(half: int, pid: int, at: float) -> bool | None:
+        events = by_player.get((half, pid))
+        if not events:
+            return None
+        state: bool | None = None
+        for when, kind in events:
+            if when > at:
+                break
+            state = kind == "start"
+        return state
+
+    counts: dict[int, int] = {}
+    for window in windows:
+        capturing = window.get("capturing_team")
+        half = window.get("half")
+        at = window.get("ended_game_time")
+        if capturing not in (1, 2) or half is None or at is None:
+            continue
+        winner = capturing if window.get("outcome") == "capture" else (
+            1 if capturing == 2 else 2)
+        states = {pid: alive_at(int(half), pid, float(at)) for pid in teams}
+        if any(state is None for state in states.values()):
+            envelope["censored_windows"] += 1
+            continue
+        envelope["evaluated_windows"] += 1
+        winner_alive = [pid for pid, state in states.items()
+                        if state and teams[pid] == winner]
+        losers_alive = sum(1 for pid, state in states.items()
+                           if state and teams[pid] != winner)
+        if len(winner_alive) == 1 and losers_alive >= _CLUTCH_MIN_ENEMIES:
+            pid = winner_alive[0]
+            counts[pid] = counts.get(pid, 0) + 1
+            envelope["clutches"].append({
+                "half": half, "attempt_id": window.get("attempt_id"),
+                "flag_name": window.get("flag_name"),
+                "player_id": pid, "team": winner,
+                "against": losers_alive,
+                "kind": window.get("outcome"),
+            })
+    envelope["players"] = [
+        {"player_id": pid, "clutches": total}
+        for pid, total in sorted(counts.items())
+    ]
+    return envelope
+
+
 def build_flag_fight_shadow(
     objective_attempts: Sequence[dict[str, Any]] | None,
     frags: Sequence[dict[str, Any]] | None,

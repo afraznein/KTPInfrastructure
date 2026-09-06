@@ -42,7 +42,11 @@ from scripts.fps_stat_explorations import (  # noqa: E402
     build_weapon_engagement_shadow,
 )
 from scripts.flag_fights import (  # noqa: E402
+    build_clutch_shadow,
     build_flag_fight_shadow,
+)
+from scripts.objective_control import (  # noqa: E402
+    build_recap_speed,
 )
 from scripts.life_exploration import (  # noqa: E402
     LifeExplorationConfig,
@@ -905,6 +909,8 @@ def render_markdown(report: dict[str, Any]) -> str:
     engagement_shadow = explorations.get("weapon_engagement", {})
     life_shadow = explorations.get("life_kat", {})
     fight_shadow = explorations.get("flag_fights", {})
+    clutch_shadow = explorations.get("fight_clutches", {})
+    recap_shadow = explorations.get("recap_speed", {})
     lifecycles = report.get("telemetry_lifecycles", {})
     objective_attempts = lifecycles.get("objective_attempts", {})
     grenade_entities = lifecycles.get("grenade_entities", {})
@@ -1056,6 +1062,35 @@ def render_markdown(report: dict[str, Any]) -> str:
         "A fight is one objective-attempt window (producer clock, padded). "
         "KAST-F counts fights with a kill, assist, survival, or traded death; "
         "overlapping windows may count one event in each.",
+        "", "### Fight clutches", "",
+        f"Status: `{clutch_shadow.get('status', 'not_collected')}`  ",
+        f"Evaluated / censored windows: "
+        f"{md(clutch_shadow.get('evaluated_windows'))} / "
+        f"{md(clutch_shadow.get('censored_windows'))}",
+        "",
+        markdown_table(clutch_shadow.get("clutches", []), [
+            ("half", "Half"), ("flag_name", "Flag"), ("player_id", "Player id"),
+            ("against", "1 v"), ("kind", "Converted"),
+        ]),
+        "A clutch is the winning side's lone survivor at window close against "
+        "two or more living enemies; windows with unknown liveness are "
+        "censored, never guessed.",
+        "", "### Recap speed", "",
+        f"Status: `{recap_shadow.get('status', 'not_collected')}`  ",
+        f"Censored open losses: {md(recap_shadow.get('censored_open_losses'))}",
+        "",
+        markdown_table(recap_shadow.get("teams", []), [
+            ("team", "Team"), ("recaps", "Recaps"),
+            ("median_seconds", "Median s"), ("mean_seconds", "Mean s"),
+        ]),
+        "", "### Cap participation", "",
+        markdown_table(report.get("cap_participation", []), [
+            ("player_name_at_match", "Player"), ("team_name", "Team"),
+            ("caps_participated", "Caps in"), ("team_caps", "Team caps"),
+            ("cap_participation", "Share"),
+        ]),
+        "Credited participation only; on-point presence without credit needs "
+        "zone-occupancy telemetry and is not approximated.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -1287,6 +1322,36 @@ def build_report(
         },
         temporal_valid=source_mode != "replay",
     )
+    flag_fights = build_flag_fight_shadow(
+        objective_attempts,
+        frag_context,
+        assist_timeline,
+        shadow_timelines.get("trades", []),
+        [p["player_id"] for p in players_public],
+        source_available={
+            "objective_attempts": bool(
+                sources.get("objective_attempts", False)),
+            "frags": enriched_frag_available,
+            "assists": sources.get("assist_context", False),
+            "basic_trades": True,
+        },
+        temporal_valid=source_mode != "replay",
+    )
+    fight_clutches = build_clutch_shadow(
+        flag_fights.get("windows"),
+        life_boundaries,
+        players_public,
+        source_available=bool(sources.get("life_boundaries", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    recap_speed = build_recap_speed(
+        flag_states if sources.get("flag_ownership", False) else None,
+        source_available=bool(sources.get("flag_ownership", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    cap_participation = (
+        query_rows(db, "cap_participation_fact.sql", match_id)
+        if sources.get("capture_credits", True) else [])
     if source_mode == "replay":
         objective_pressure["status"] = "timed_metrics_suppressed"
         objective_pressure["players"] = []
@@ -1314,6 +1379,7 @@ def build_report(
         "assists": with_team_names(assists),
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
+        "cap_participation": with_team_names(cap_participation),
         "capture_events": events,
         "telemetry_lifecycles": {
             "privacy": "aggregate_public_private_timeline",
@@ -1354,21 +1420,9 @@ def build_report(
                 temporal_valid=source_mode != "replay",
             ),
             "objective_pressure": objective_pressure,
-            "flag_fights": build_flag_fight_shadow(
-                objective_attempts,
-                frag_context,
-                assist_timeline,
-                shadow_timelines.get("trades", []),
-                [p["player_id"] for p in players_public],
-                source_available={
-                    "objective_attempts": bool(
-                        sources.get("objective_attempts", False)),
-                    "frags": enriched_frag_available,
-                    "assists": sources.get("assist_context", False),
-                    "basic_trades": True,
-                },
-                temporal_valid=source_mode != "replay",
-            ),
+            "flag_fights": flag_fights,
+            "fight_clutches": fight_clutches,
+            "recap_speed": recap_speed,
             "weapon_engagement": build_weapon_engagement_shadow(
                 frag_context if frag_context is not None else frag_timeline,
                 engagement_config,
