@@ -776,6 +776,75 @@ def grenade_entity_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def build_duel_matrix(
+    frag_timeline: list[dict[str, Any]],
+    players: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Player-vs-player kill grid from the stock frag timeline.
+
+    Descriptive only. Rows are ordered by team then name so the rendered
+    grid groups teammates; enemy and team kills are both counted (the cell
+    carries whether the pairing crosses teams) so the grid reconciles with
+    the box score's kills column exactly.
+    """
+    order = sorted(
+        players,
+        key=lambda p: (p.get("team") or 0, str(p.get("player_name_at_match"))),
+    )
+    ids = [int(p["player_id"]) for p in order]
+    names = {int(p["player_id"]): p.get("player_name_at_match") for p in order}
+    teams = {int(p["player_id"]): p.get("team") for p in order}
+    counts: dict[tuple[int, int], int] = {}
+    unmatched = 0
+    for frag in frag_timeline:
+        killer = frag.get("killer_id")
+        victim = frag.get("victim_id")
+        if killer is None or victim is None or int(killer) not in names \
+                or int(victim) not in names:
+            unmatched += 1
+            continue
+        counts[(int(killer), int(victim))] = counts.get(
+            (int(killer), int(victim)), 0) + 1
+    cells = [
+        {
+            "killer_id": killer, "killer_name": names[killer],
+            "victim_id": victim, "victim_name": names[victim],
+            "kills": kills,
+            "cross_team": teams[killer] != teams[victim],
+        }
+        for (killer, victim), kills in sorted(counts.items())
+    ]
+    return {
+        "definition": "duel_matrix_v1",
+        "player_order": ids,
+        "cells": cells,
+        "frags_outside_roster": unmatched,
+    }
+
+
+def duel_matrix_markdown(matrix: dict[str, Any],
+                         players: list[dict[str, Any]]) -> str:
+    """Killer-by-victim grid; rows kill columns."""
+    order = matrix.get("player_order") or []
+    if not order or not matrix.get("cells"):
+        return "_No rows._\n"
+    names = {int(p["player_id"]): str(p.get("player_name_at_match"))
+             for p in players}
+    lookup = {(cell["killer_id"], cell["victim_id"]): cell["kills"]
+              for cell in matrix["cells"]}
+    header = "| Killer \\ Victim | " + " | ".join(
+        names.get(pid, str(pid)) for pid in order) + " |"
+    divider = "|---" * (len(order) + 1) + "|"
+    lines = [header, divider]
+    for killer in order:
+        row = [names.get(killer, str(killer))]
+        for victim in order:
+            kills = lookup.get((killer, victim), 0)
+            row.append(str(kills) if kills else "·")
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def team_summary(players: list[dict[str, Any]]) -> list[dict[str, Any]]:
     additive = (
         "kills", "deaths", "assists", "damage_dealt", "damage_taken",
@@ -882,6 +951,10 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
+        "", "## Duel matrix", "",
+        duel_matrix_markdown(report.get("duel_matrix", {}), report["players"]),
+        "Rows kill columns; team kills are included so the grid reconciles "
+        "with the box score exactly.",
         "", "## Assists", "",
         markdown_table(report["assists"], [
             ("player_name_at_match", "Assister"), ("team_name", "Team"),
@@ -1237,6 +1310,7 @@ def build_report(
         "source_inventory": inventory,
         "teams": team_summary(players_public),
         "players": players_public,
+        "duel_matrix": build_duel_matrix(frag_timeline, players_public),
         "assists": with_team_names(assists),
         "weapons": with_team_names(weapons),
         "capture_credits": with_team_names(credits),
