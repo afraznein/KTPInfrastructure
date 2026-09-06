@@ -80,6 +80,7 @@
 #define BD_WALKOFF_MAX_POLLS 100
 #define BD_KILL_MAX_POLLS 100
 #define BD_RESTART_ARM_MAX_POLLS 300
+#define BD_RESTART_ROSTER_RESET_POLLS 100
 #define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS
 #define BD_KILL_ACQUIRE_MAX_POLLS 300
 #define BD_KILL_ACQUIRE_STABLE_POLLS 5
@@ -128,6 +129,7 @@ new g_bdRestartArmPolls = 0
 new g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
 new Float:g_bdRestartAnchorSaved[3]
 new bool:g_bdRestartAnchorSavedOk = false
+new bool:g_bdRestartRosterReissued = false
 new bool:g_bdRestartNormalizeRebased = false
 new Float:g_bdRestartNormalizeRoundBefore = -1.0
 new Float:g_bdRestartNormalizeRoundPeak = -1.0
@@ -326,6 +328,7 @@ public bd_lifecycle_log_boundary() {
 stock bd_reset_restart_arm_state() {
 	g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
 	g_bdRestartAnchorSavedOk = false
+	g_bdRestartRosterReissued = false
 	g_bdRestartNormalizeRebased = false
 	g_bdRestartNormalizeRoundBefore = -1.0
 	g_bdRestartNormalizeRoundPeak = -1.0
@@ -1125,18 +1128,32 @@ stock bd_hold_test_players() {
 		}
 		set_entvar(id, var_velocity, stopped)
 		new held_flags = flags | FL_FROZEN | FL_GODMODE
+		new bool:driven_killer = false
 		if (g_bdCanonicalActive &&
 				g_bdCanonicalPhase == BD_CANONICAL_WAIT_ENGINE_FRAG &&
 				g_bdSpawnGeneration[id] == g_bdIsolationSpawnGeneration[id]) {
 			if (id == g_bdCanonicalKiller &&
-					userid == g_bdCanonicalKillerUserid)
+					userid == g_bdCanonicalKillerUserid) {
 				held_flags &= ~FL_FROZEN
+				driven_killer = true
+			}
 			else if (id == g_bdCanonicalVictim &&
 					userid == g_bdCanonicalVictimUserid &&
 					g_bdSpawnGeneration[id] == g_bdCanonicalVictimSpawn)
 				held_flags &= ~FL_GODMODE
 		}
 		set_entvar(id, var_flags, held_flags)
+		// FL_FROZEN stops movement, not firing. A held bot with IN_ATTACK
+		// latched can kill a fresh respawn inside the one-tick window before
+		// this task grants it godmode (restart TIMEOUT roster_alive=11/12).
+		// Strip the attack buttons from every held player except the one
+		// killer the canonical scenario is actively driving.
+		if (!driven_killer) {
+			set_entvar(id, var_button,
+				get_entvar(id, var_button) & ~BD_IN_ATTACK)
+			set_entvar(id, var_oldbuttons,
+				get_entvar(id, var_oldbuttons) & ~BD_IN_ATTACK)
+		}
 	}
 }
 
@@ -1554,12 +1571,13 @@ stock bool:bd_restart_begin_stability(flag, team) {
 		return false
 	// Normalization already froze the roster; reuse that generation instead of
 	// ending isolation, which would briefly restore movement mid-window.
+	// Shortfall and origin failures keep the restart-owned freeze: the hold
+	// task acquires respawners on its next tick and the poll retries under
+	// the same isolation. Releasing here restored movement mid-window.
 	new isolated = g_bdIsolationActive ?
 		bd_isolation_count() : bd_begin_test_isolation()
-	if (isolated < g_bdRestartRosterCount) {
-		bd_end_test_isolation(false)
+	if (isolated < g_bdRestartRosterCount)
 		return false
-	}
 
 	g_bdRestartStableFlag = flag
 	g_bdRestartStableTeam = team
@@ -1569,7 +1587,6 @@ stock bool:bd_restart_begin_stability(flag, team) {
 			continue
 		g_bdRestartRosterSpawnStable[id] = g_bdSpawnGeneration[id]
 		if (!dodx_get_user_origin(id, g_bdRestartRosterOrigin[id])) {
-			bd_end_test_isolation(false)
 			g_bdRestartStableFlag = -1
 			g_bdRestartStableTeam = 0
 			return false
@@ -1606,8 +1623,13 @@ stock bd_restart_stability_blocker() {
 	return 0
 }
 
+/** Reset the stability latch WITHOUT releasing isolation. The restart owns
+ * the freeze for the whole normalization (#240); ending isolation here
+ * restored movement mid-window, combat resumed, and a roster death starved
+ * the poll (nightly restart TIMEOUT roster_alive=11/12 wait_roster=285
+ * drops=2). The next poll re-proves stability under the same freeze.
+ */
 stock bd_restart_drop_stability() {
-	bd_end_test_isolation(false)
 	g_bdRestartStablePolls = 0
 	g_bdRestartStableFlag = -1
 	g_bdRestartStableTeam = 0
@@ -2320,6 +2342,21 @@ public bd_restart_arm_poll() {
 		if (g_bdRestartStableFlag < 0) {
 			if (!bd_restart_roster_live()) {
 				g_bdRestartWaitRoster++
+				// A member dead at the reset may never receive a spawn
+				// callback from the clan restart (same pathology the
+				// canonical scenario works around by resetting before
+				// staging). One bounded pre-queue re-reset only; the
+				// tested restart's one-shot contract emits no marker here.
+				if (!g_bdRestartRosterReissued &&
+						g_bdRestartWaitRoster >=
+							BD_RESTART_ROSTER_RESET_POLLS) {
+					g_bdRestartRosterReissued = true
+					log_amx("[BD] restart roster RESET reissued alive=%d/%d after %d polls",
+						bd_restart_roster_alive_count(),
+						g_bdRestartRosterCount, g_bdRestartWaitRoster)
+					server_cmd("mp_clan_restartround 1")
+					server_exec()
+				}
 				return PLUGIN_HANDLED
 			}
 			new flag, team
