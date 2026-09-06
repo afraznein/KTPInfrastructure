@@ -471,6 +471,30 @@ stock bd_log_flag_survey(const mode[]) {
 	log_amx("[BD] %s flag survey:%s", mode, line)
 }
 
+/** Re-evaluate every bd_find_restart_plan condition per flag and log the raw
+ * values, so a plan-starvation timeout names the exact disqualifier instead
+ * of leaving it to inference. anchor is the raw bd_safe_anchor return:
+ * >0 player id, -1 saved-anchor fallback, 0 none.
+ */
+stock bd_log_plan_probe() {
+	new n = dodx_objectives_get_num()
+	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	new Float:center[3], Float:anchor[3]
+	for (new f = 0; f < n; f++) {
+		log_amx("[BD] plan probe f%d owner=%d cap=%d za=%d zx=%d center=%d anchor=%d need_a=%d need_x=%d live_a=%d live_x=%d",
+			f, dodx_area_get_data(f, CA_owning_team),
+			dodx_area_get_data(f, CA_is_capturing) ? 1 : 0,
+			bd_zone_count(f, BD_TEAM_ALLIES),
+			bd_zone_count(f, BD_TEAM_AXIS),
+			bd_area_center(f, center) ? 1 : 0,
+			bd_safe_anchor(anchor),
+			dodx_area_get_data(f, CA_allies_numcap),
+			dodx_area_get_data(f, CA_axis_numcap),
+			bd_live_team_count(BD_TEAM_ALLIES),
+			bd_live_team_count(BD_TEAM_AXIS))
+	}
+}
+
 stock bool:bd_canonical_series_player_current(id) {
 	return g_bdSeriesRosterSelected[id] && is_user_connected(id) &&
 		get_user_userid(id) == g_bdSeriesRosterUserid[id] &&
@@ -2208,6 +2232,7 @@ public cmd_arm_restart() {
 	// (restart TIMEOUT wait_plan=280 roster_alive=12/12 with neutral quiet
 	// empty flags). A saved origin stays walkable across a round reset.
 	g_bdRestartAnchorSavedOk = bool:(bd_safe_anchor(g_bdRestartAnchorSaved) > 0)
+	log_amx("[BD] restart anchor_saved=%d", g_bdRestartAnchorSavedOk ? 1 : 0)
 	// Take ownership of isolation before the reset. The previous scenario's
 	// isolation can still be live here with its bounded bd_isolation_end task
 	// pending; reusing it let that task fire mid-normalization, restoring and
@@ -2243,6 +2268,7 @@ public bd_restart_arm_poll() {
 			g_bdRestartWaitPlan, g_bdRestartWaitBegin,
 			g_bdRestartDrops, g_bdRestartLastDrop)
 		bd_log_flag_survey("restart")
+		bd_log_plan_probe()
 		bd_restart_arm_abort("no stageable capture while armed")
 		return PLUGIN_HANDLED
 	}
