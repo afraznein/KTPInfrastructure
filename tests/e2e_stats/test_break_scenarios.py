@@ -1979,11 +1979,15 @@ def test_canonical_frag_failure_hard_stops_before_synthetic_mutation(
 
     monkeypatch.setattr(bs, "BreakDriver", FakeDriver)
 
+    monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
     results = bs.run_all(object(), object())
 
-    assert calls == ["canonical_diagnostic_frag", "end_series"]
+    # Staging is retried (each abort discards its closed window), but a final
+    # canonical failure still hard-stops before any synthetic mutation.
+    assert calls == ["canonical_diagnostic_frag"] * 3 + ["end_series"]
     assert [row["name"] for row in results] == ["canonical_diagnostic_frag"]
     assert results[0]["status"] == "not_staged"
+    assert results[0]["attempts"] == 3
 
 
 def test_clean_capture_abort_retries_only_after_exact_full_roster_reacquisition(

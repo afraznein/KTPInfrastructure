@@ -1426,8 +1426,22 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     # scenarios.  The plugin acknowledges it only after the exact full roster
     # respawns and freezes, so the diagnostic match always exercises accepted
     # producer clocks and ktp_match_stats without depending on bot luck.
-    canonical = d.canonical_diagnostic_frag()
-    canonical.extra["attempts"] = 1
+    # Staging aborts fail closed and discard the attempted window (foreign
+    # death, attacker never fired before the deadline), so retrying them is
+    # not verdict shopping: each attempt is a fresh closed evidence window and
+    # only one accepted factual frag ever reaches adjudication. Three recent
+    # full runs showed three one-shot outcomes (ok / foreign death / no kill),
+    # so the one-shot policy, not the contract, was the coverage bottleneck.
+    for attempt in range(1, attempts + 1):
+        canonical = d.canonical_diagnostic_frag()
+        if canonical.status != "not_staged" or canonical.extra.get("series_abort"):
+            break
+        if attempt < attempts:
+            print(f"  scenario {canonical.name:<28} attempt "
+                  f"{attempt}/{attempts} did not stage: {canonical.detail}",
+                  flush=True)
+            time.sleep(4.0)
+    canonical.extra["attempts"] = attempt
     print(f"  scenario {canonical.name:<28} {canonical.status:<12} "
           f"{canonical.detail}", flush=True)
     out.append({"name": canonical.name, "status": canonical.status,
