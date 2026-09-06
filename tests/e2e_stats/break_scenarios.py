@@ -1433,6 +1433,17 @@ def run_all(handle, log_path, *, attempts: int = 3) -> list[dict]:
     # full runs showed three one-shot outcomes (ok / foreign death / no kill),
     # so the one-shot policy, not the contract, was the coverage bottleneck.
     for attempt in range(1, attempts + 1):
+        # Canonical acquisition converges only when every roster member is
+        # alive, and a dead bot may never respawn on its own inside the
+        # diagnostic match (run 34007850852: two consecutive attempts held at
+        # acquired=11 for their whole 30s window). A clan restart respawns the
+        # full roster deterministically — the restart diagnostic already
+        # issues the same reset inside this series — and no evidence window
+        # exists yet, so the reset mutates nothing the adjudication reads.
+        handle = getattr(d, "handle", None)
+        if handle is not None:
+            handle.rcon("mp_clan_restartround 1")
+            time.sleep(3.0)
         canonical = d.canonical_diagnostic_frag()
         if canonical.status != "not_staged" or canonical.extra.get("series_abort"):
             break

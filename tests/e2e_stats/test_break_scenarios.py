@@ -1985,9 +1985,14 @@ def test_canonical_frag_failure_hard_stops_before_synthetic_mutation(
         monkeypatch):
     calls = []
 
+    class FakeHandle:
+        def rcon(self, command):
+            calls.append(f"rcon:{command}")
+
     class FakeDriver:
         series_abort_reason = None
         series_abort_ack = None
+        handle = FakeHandle()
 
         def __init__(self, *_args):
             pass
@@ -2014,9 +2019,13 @@ def test_canonical_frag_failure_hard_stops_before_synthetic_mutation(
     monkeypatch.setattr(bs.time, "sleep", lambda _s: None)
     results = bs.run_all(object(), object())
 
-    # Staging is retried (each abort discards its closed window), but a final
-    # canonical failure still hard-stops before any synthetic mutation.
-    assert calls == ["canonical_diagnostic_frag"] * 3 + ["end_series"]
+    # Staging is retried (each abort discards its closed window), and every
+    # attempt respawns the full roster first — canonical acquisition can only
+    # converge from an all-alive world. A final canonical failure still
+    # hard-stops before any synthetic mutation.
+    assert calls == (
+        ["rcon:mp_clan_restartround 1", "canonical_diagnostic_frag"] * 3
+        + ["end_series"])
     assert [row["name"] for row in results] == ["canonical_diagnostic_frag"]
     assert results[0]["status"] == "not_staged"
     assert results[0]["attempts"] == 3
