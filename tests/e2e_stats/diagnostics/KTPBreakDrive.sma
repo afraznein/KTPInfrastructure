@@ -126,6 +126,8 @@ new g_bdKillStablePolls = 0
 new Float:g_bdLastTeamDeath[3]
 new g_bdRestartArmPolls = 0
 new g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
+new Float:g_bdRestartAnchorSaved[3]
+new bool:g_bdRestartAnchorSavedOk = false
 new bool:g_bdRestartNormalizeRebased = false
 new Float:g_bdRestartNormalizeRoundBefore = -1.0
 new Float:g_bdRestartNormalizeRoundPeak = -1.0
@@ -323,6 +325,7 @@ public bd_lifecycle_log_boundary() {
 
 stock bd_reset_restart_arm_state() {
 	g_bdRestartArmPhase = BD_RESTART_ARM_IDLE
+	g_bdRestartAnchorSavedOk = false
 	g_bdRestartNormalizeRebased = false
 	g_bdRestartNormalizeRoundBefore = -1.0
 	g_bdRestartNormalizeRoundPeak = -1.0
@@ -1341,6 +1344,14 @@ stock bd_safe_anchor(Float:anchor[3]) {
 			anchor[axis] = origin[axis]
 		return id
 	}
+	// A whole roster frozen at spawn can stand inside a base area's margin,
+	// leaving no qualifying player. Fall back to the anchor recorded at
+	// restart arm time; -1 marks a position-only anchor, still truthy.
+	if (g_bdRestartAnchorSavedOk) {
+		for (new axis = 0; axis < 3; axis++)
+			anchor[axis] = g_bdRestartAnchorSaved[axis]
+		return -1
+	}
 	return 0
 }
 
@@ -2190,6 +2201,13 @@ public cmd_arm_restart() {
 	// snapshot still rejects any post-snapshot spawn generation change.
 	log_amx("[BD] restart ARMED preparing neutral reset timer_before=%.2f timer_used=%.2f",
 		g_bdRestartTimerSaved, g_bdRestartTimerUsed)
+	// Capture a placement anchor NOW, while the roster still stands at its
+	// combat positions. After the reset every bot is frozen at spawn, and
+	// spawns can sit inside a base area's 128 anchor margin, leaving
+	// bd_safe_anchor with no qualifying player for the whole armed window
+	// (restart TIMEOUT wait_plan=280 roster_alive=12/12 with neutral quiet
+	// empty flags). A saved origin stays walkable across a round reset.
+	g_bdRestartAnchorSavedOk = bool:(bd_safe_anchor(g_bdRestartAnchorSaved) > 0)
 	// Take ownership of isolation before the reset. The previous scenario's
 	// isolation can still be live here with its bounded bd_isolation_end task
 	// pending; reusing it let that task fire mid-normalization, restoring and
