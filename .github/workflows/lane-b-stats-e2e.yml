@@ -475,6 +475,7 @@ jobs:
               --out /work/build/lane-b-e2e.json \
               --summary-out /work/build/lane-b-summary.md \
               --match-report-dir /work/build/match-report \
+              --database-dump /work/build/database-dump.sql \
               --report-profile /work/config/analytics/accumulation_v6_schema22_2s.toml \
               --map-objectives /work/config/analytics/map_objectives.toml \
               --objective-score-fixture-template \
@@ -573,6 +574,7 @@ jobs:
             build/lane-b-artifacts/corpus-replay.out
             build/lane-b-artifacts/match-report/
             build/lane-b-artifacts/private-analytics/
+            build/lane-b-artifacts/database-dump.sql
             build/lane-b-artifacts/bundle-provenance.md
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
