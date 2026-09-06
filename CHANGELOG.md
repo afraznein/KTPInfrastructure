@@ -4,6 +4,61 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ops`: the post-activation version-row flip is a gate, not a follow-up step (2026-09-03)
+
+- The bump checklist puts the root `CLAUDE.md` version-row flip AFTER the 03:00 ET swap, so it
+  depended on someone coming back the next morning and **nothing failed when they did not**. The
+  2026-09-01 wave left two rows stale at once — KTPCvarChecker read 7.36 against a fleet on 7.37,
+  KTPMatchHandler read 0.10.168 against a fleet on 0.10.170 — and only an md5 sweep a day later
+  found it. Both artifacts were correct; only the record was wrong, while the table read as
+  authoritative. Two rows out of one wave is a process defect, not two mistakes.
+- New `scripts/ktp-wave-ledger.py`. `stage-wave.py` records `(basename, md5, version)` at STAGE
+  time — the md5 is already known there, from `--expect NAME=MD5` — and computes when that wave
+  activates. `reconcile` re-reads the fleet and **fails if `CLAUDE.md` does not carry the md5 the
+  fleet is running**.
+- **The half that does not rely on memory:** `stage-wave.py` refuses to stage the NEXT wave while an
+  earlier one has activated and its row still names the build it replaced. The gate sits on the
+  action the operator was going to take anyway, and editing the row clears it — there is no second
+  command to remember. `--allow-unreconciled` overrides, for a deliberate stack.
+- Assertions chosen so they cannot rot into vacuity: the md5 must appear **on that component's table
+  row**, not merely somewhere in the file (the 7.37 hash was in a paragraph while its row still said
+  7.36); a superseded md5 named in the same row does not satisfy it; an unmapped basename degrades to
+  a file-wide search and **says so**; a mapped component with no row is reported as a table rename
+  rather than passed. An unreadable `CLAUDE.md` exits **2**, never 0 — "I could not look" and "the
+  row is fine" stay distinct verdicts.
+- Read-only with respect to the fleet (`md5sum` only) and never restarts anything. The ledger lives
+  at `$KTP_WAVE_LEDGER_DIR` (default `~/.ktp/waves`), outside this public repo.
+
+### `ops`: the nightly restart's cron backup now survives a reboot, and restores itself (2026-09-02)
+
+- `ktp-scheduled-restart.sh` strips the per-minute monitor cron for the duration of the restart and
+  restores it from a `mktemp` backup on an EXIT trap. **An EXIT trap does not fire on power loss, a
+  kernel panic or a hard reboot**, and `/tmp` is cleared on the way back up. A reboot inside that
+  window therefore leaves the crontab stripped with its only backup gone: the instances are down and
+  the mechanism that would have restarted them has been deleted. Nothing alerts, because the thing
+  that would have reported it is what went missing. Measured on a fleet host: cron paused `03:00:01`,
+  restored `03:01:33` — an exposure of roughly a minute and a half, every night.
+- The backup moves to `${KTP_STATE_DIR:-$HOME/.ktp}/monitor-cron.bak` — the script's own user, no
+  provisioning needed, and it outlives a reboot. It is armed by `mv` from a `.partial` sibling, so a
+  half-written backup can never be the thing recovery trusts.
+- **A backup found at startup is the recovery signal**, and the script now acts on it before doing
+  anything else. It appends only the monitor lines back rather than installing the saved file whole,
+  so a crontab edit made between the interrupted run and this one survives.
+- Debris is distinguished from a real unfinished restore by SHAPE, not by age: the pause strips
+  *every* matching line, so a backup holding monitor entries beside a live crontab that has none is
+  the state only an interrupted run leaves. An operator who disables one instance leaves the others,
+  which correctly reads as debris and is cleared without touching the crontab. Recovery is therefore
+  idempotent — once the entries are back, a second pass is a no-op.
+- The trap is unchanged in intent and still handles the normal path. Two adjacent one-way doors are
+  closed alongside it: restoring an *empty* backup (`crontab -l` having failed) would have deleted
+  every entry, and the pause is now skipped entirely if no durable backup could be written — a
+  monitor cron left running is a far cheaper failure than one deleted.
+- **No boot-time start for the game instances is added here.** That has a real double-start hazard
+  against the nightly and is a separate decision.
+- Template only. `.example` is the source of truth per the 2026-08-27 reconciliation; the fleet's
+  copies are unchanged and `ktp-restart-drift.py` will report the difference until an operator
+  reconciles them. **Nothing is deployed and no server is restarted by this change.**
+
 ### `ops`: reconcile the restart scripts' three lineages, and make the next divergence visible (2026-08-27)
 
 - `~/restart-all-servers.sh` had drifted into **two mutually incompatible fleet variants** and neither

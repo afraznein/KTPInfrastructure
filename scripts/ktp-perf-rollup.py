@@ -739,8 +739,11 @@ def main() -> int:
             logging.warning("no telemetry rows for %s — aggregator down?", target_day)
             if relay_url and auth_secret and channel and not args.dry_run:
                 empty_embed = {
-                    "title": "<:KTP:1002382703020212245> KTP Perf Rollup — NO DATA",
+                    # Emoji lives in description, not title -- Discord renders custom
+                    # emoji as raw text in an embed title.
+                    "title": "KTP Perf Rollup — NO DATA",
                     "description": (
+                        "<:KTP:1002382703020212245> "
                         f"Zero telemetry rows for **{target_day}** — the perf-alert "
                         "tier is blind. Check `ktp-profile-aggregator.service` on "
                         "the data server."

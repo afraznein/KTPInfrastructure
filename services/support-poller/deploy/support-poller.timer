@@ -1,0 +1,16 @@
+[Unit]
+Description=Poll the KTP fleet for support.ktpdod.com every 60s
+# A stopped timer is visible in `systemctl list-timers`; a dead daemon writing
+# nothing is not. That visibility is why this is a timer and not a service loop.
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+# Without this, 24 hosts get probed on the same second every minute forever.
+RandomizedDelaySec=5s
+Persistent=false
+Unit=support-poller.service
+
+[Install]
+WantedBy=timers.target
