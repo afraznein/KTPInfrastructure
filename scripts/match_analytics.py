@@ -45,6 +45,12 @@ from scripts.flag_fights import (  # noqa: E402
     build_clutch_shadow,
     build_flag_fight_shadow,
 )
+from scripts.flag_swing import (  # noqa: E402
+    build_flag_swing_shadow,
+)
+from scripts.ktpr_v2 import (  # noqa: E402
+    build_ktpr_v2_shadow,
+)
 from scripts.objective_control import (  # noqa: E402
     build_recap_speed,
 )
@@ -911,6 +917,8 @@ def render_markdown(report: dict[str, Any]) -> str:
     fight_shadow = explorations.get("flag_fights", {})
     clutch_shadow = explorations.get("fight_clutches", {})
     recap_shadow = explorations.get("recap_speed", {})
+    swing_shadow = explorations.get("flag_swing", {})
+    ktpr_shadow = explorations.get("ktpr_v2", {})
     lifecycles = report.get("telemetry_lifecycles", {})
     objective_attempts = lifecycles.get("objective_attempts", {})
     grenade_entities = lifecycles.get("grenade_entities", {})
@@ -1091,6 +1099,29 @@ def render_markdown(report: dict[str, Any]) -> str:
         ]),
         "Credited participation only; on-point presence without credit needs "
         "zone-occupancy telemetry and is not approximated.",
+        "", "### Flag swing (uncalibrated)", "",
+        f"Status: `{swing_shadow.get('status', 'not_collected')}`  ",
+        f"Calibration: `{swing_shadow.get('calibration', 'unavailable')}`  ",
+        f"Timeline points: {len(swing_shadow.get('timeline', []))}",
+        "",
+        markdown_table(swing_shadow.get("players", []), [
+            ("player_id", "Player id"), ("team", "Team"),
+            ("attributed_swing", "Swing"),
+            ("weighted_frags", "Weighted frags"),
+        ]),
+        "Swing prices each flag change and frag as the change in a baseline "
+        "P(win half); coefficients are uncalibrated priors, so magnitudes "
+        "compare within this match only.",
+        "", "### KTPR v2 shadow blend (uncalibrated)", "",
+        f"Status: `{ktpr_shadow.get('status', 'not_collected')}`  ",
+        f"Components: {md(', '.join(ktpr_shadow.get('components_used', [])))}",
+        "",
+        markdown_table(ktpr_shadow.get("players", []), [
+            ("player_name_at_match", "Player"), ("team", "Team"),
+            ("rating", "Rating"),
+        ]),
+        "Per-match z-score blend with prior weights; no ranking consequences "
+        "until the comparison review against historical KTPR signs off.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -1352,6 +1383,24 @@ def build_report(
     cap_participation = (
         query_rows(db, "cap_participation_fact.sql", match_id)
         if sources.get("capture_credits", True) else [])
+    flag_swing = build_flag_swing_shadow(
+        flag_states if sources.get("flag_ownership", False) else None,
+        frag_context,
+        life_boundaries,
+        events,
+        players_public,
+        None,
+        source_available=bool(
+            sources.get("flag_ownership", False)
+            and enriched_frag_available
+            and sources.get("life_boundaries", False)),
+        temporal_valid=source_mode != "replay",
+    )
+    ktpr_v2 = build_ktpr_v2_shadow(
+        players_public,
+        flag_fights.get("players"),
+        flag_swing.get("players"),
+    )
     if source_mode == "replay":
         objective_pressure["status"] = "timed_metrics_suppressed"
         objective_pressure["players"] = []
@@ -1423,6 +1472,8 @@ def build_report(
             "flag_fights": flag_fights,
             "fight_clutches": fight_clutches,
             "recap_speed": recap_speed,
+            "flag_swing": flag_swing,
+            "ktpr_v2": ktpr_v2,
             "weapon_engagement": build_weapon_engagement_shadow(
                 frag_context if frag_context is not None else frag_timeline,
                 engagement_config,
