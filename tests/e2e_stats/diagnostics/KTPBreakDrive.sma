@@ -1671,14 +1671,14 @@ stock bool:bd_prepare_capture(const mode[], bool:need_far,
 		new owner = dodx_area_get_data(f, CA_owning_team)
 		// Virgin flags report owner -1 until first captured, and for capture
 		// purposes virgin and neutralized are the same thing: any team with
-		// numcap >= 1 may cap. Every unpinned mode (restart's require_neutral,
-		// walkoff and the kill arms with expected_owner ANY) normalizes a
-		// non-team owner to neutral — the restart scenario now leaves the map
-		// virgin, and walkoff runs after it. Only the clean path, which pins
-		// the exact expected_owner its stability latch proved, keeps the
-		// strict canonical gate against transient reset readings.
-		if ((require_neutral || expected_owner == BD_OWNER_ANY) &&
-				owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
+		// numcap >= 1 may cap. Every selector normalizes a non-team owner to
+		// neutral — clean_capture arms at match start when the whole map is
+		// still naturally virgin (nightly clean TIMEOUT alive=12/12
+		// wait_plan=299 with f1/f3 owner=-1), so the strict gate starved it
+		// exactly like restart and walkoff before it. Transient reset
+		// readings stay safe: every mode's multi-poll stability latch must
+		// see the same flag/team/owner tuple repeatedly before placement.
+		if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
 			owner = 0
 		if (!bd_owner_canonical(owner) ||
 				(expected_owner != BD_OWNER_ANY && owner != expected_owner))
@@ -2557,11 +2557,17 @@ stock bool:bd_find_clean_plan(&chosen_flag, &chosen_team, &chosen_owner) {
 	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
 	new Float:center[3], Float:anchor[3]
 	for (new f = 0; f < n; f++) {
+		// Since the canonical scenario clan-restarts the map before staging
+		// (#248), clean arms into a deterministically virgin world where
+		// capturable flags report owner -1. Normalize like every other
+		// selector; the BD_CLEAN_TARGET_STABLE_POLLS latch still rejects
+		// transient reset readings (five consecutive polls of -1 is a
+		// genuinely virgin flag). Gate on the safe anchor the need_far=false
+		// staging actually uses, same rule as bd_find_restart_plan.
 		new owner = dodx_area_get_data(f, CA_owning_team)
-		// Same rule as bd_find_restart_plan: clean_capture prepares with
-		// need_far=false, so gate on the safe anchor its staging actually uses.
-		if (!bd_owner_canonical(owner) ||
-				dodx_area_get_data(f, CA_is_capturing) ||
+		if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
+			owner = 0
+		if (dodx_area_get_data(f, CA_is_capturing) ||
 				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
 				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
 				!bd_area_center(f, center) || !bd_safe_anchor(anchor))
@@ -2805,6 +2811,11 @@ public bd_clean_capture_poll() {
 		g_bdCleanTeam = g_bdPreparedTeam
 		g_bdCleanOwnerBefore = dodx_area_get_data(
 			g_bdCleanFlag, CA_owning_team)
+		// Virgin flags read -1; the recorded before-owner is neutral so the
+		// completion transition and the python parser see 0 -> N.
+		if (g_bdCleanOwnerBefore != BD_TEAM_ALLIES &&
+				g_bdCleanOwnerBefore != BD_TEAM_AXIS)
+			g_bdCleanOwnerBefore = 0
 		g_bdCleanRequired = dodx_area_get_data(
 			g_bdCleanFlag, (g_bdCleanTeam == BD_TEAM_ALLIES) ?
 			CA_allies_numcap : CA_axis_numcap)
@@ -2839,10 +2850,10 @@ public bd_clean_capture_poll() {
 	}
 
 	new owner = dodx_area_get_data(g_bdCleanFlag, CA_owning_team)
-	if (!bd_owner_canonical(owner)) {
-		bd_clean_abort("capture owner became noncanonical")
-		return PLUGIN_HANDLED
-	}
+	// Virgin -1 stays neutral here for the same reason as at selection;
+	// only a team owner is a real ownership change.
+	if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
+		owner = 0
 	if (!g_bdCleanCappersPlaced) {
 		if (owner != g_bdCleanOwnerBefore) {
 			bd_clean_abort("ownership changed during quiet quarantine")

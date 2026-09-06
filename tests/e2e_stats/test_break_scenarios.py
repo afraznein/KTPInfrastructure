@@ -728,15 +728,15 @@ def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
 
     prepare = source[source.index("stock bool:bd_prepare_capture"):
                      source.index("stock bd_find_prepared_capture")]
-    assert ("if ((require_neutral || expected_owner == BD_OWNER_ANY) &&\n"
-            "\t\t\t\towner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)") in prepare
-    normalize = prepare.index("require_neutral || expected_owner == BD_OWNER_ANY")
+    assert ("if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)\n"
+            "\t\t\towner = 0") in prepare
+    normalize = prepare.index("owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS")
     canonical = prepare.index("!bd_owner_canonical(owner)")
     assert normalize < canonical, (
-        "unpinned modes must normalize the virgin owner before the "
+        "every selector must normalize the virgin owner before the "
         "canonical gate can reject it")
-    # The strict canonical gate itself stays narrow so the clean path's
-    # pinned expected_owner keeps failing closed on transient -1 readings.
+    # bd_owner_canonical itself stays narrow; transient readings are held
+    # off by each mode's multi-poll stability latch, not by owner gating.
     assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
 
 
@@ -747,10 +747,16 @@ def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target(
     poll = source[source.index("public bd_clean_capture_poll()"):
                   source.index("public bd_clean_capture_finish()")]
 
+    # Virgin flags report owner -1 (deterministically since #248 restarts the
+    # map before canonical staging); selection normalizes any non-team owner
+    # to neutral BEFORE using it, and relies on the stability latch — not a
+    # canonical gate — to reject transient reset readings.
     owner_read = select.index("new owner = dodx_area_get_data")
-    owner_gate = select.index("!bd_owner_canonical(owner)", owner_read)
-    selection = select.index("chosen_flag = f", owner_gate)
-    assert owner_read < owner_gate < selection
+    normalize = select.index(
+        "owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS", owner_read)
+    selection = select.index("chosen_flag = f", normalize)
+    assert owner_read < normalize < selection
+    assert "!bd_owner_canonical(owner)" not in select
     assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
     assert "owner != g_bdCleanStableOwner" in poll
     assert "g_bdCleanStablePolls = 1" in poll
@@ -758,7 +764,12 @@ def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target(
     assert poll.index("BD_CLEAN_TARGET_STABLE_POLLS") < poll.index(
         'bd_prepare_capture("clean_capture"'
     )
-    assert "!bd_owner_canonical(g_bdCleanOwnerBefore)" in poll
+    # The recorded before-owner is normalized to neutral before the canonical
+    # precondition, so a virgin -1 read cannot abort a staged clean capture.
+    assert ("g_bdCleanOwnerBefore != BD_TEAM_ALLIES" in poll
+            and "g_bdCleanOwnerBefore = 0" in poll)
+    assert poll.index("g_bdCleanOwnerBefore = 0") < poll.index(
+        "!bd_owner_canonical(g_bdCleanOwnerBefore)")
 
 
 def test_clean_capture_retry_reacquires_exact_full_series_roster():
