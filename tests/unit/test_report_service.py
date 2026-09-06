@@ -52,7 +52,7 @@ class SqlStr(unittest.TestCase):
 
 
 class AggregatesSynthetic(unittest.TestCase):
-    def _report(self, mapname, cells):
+    def _report(self, mapname, cells, ktpr_players=None):
         return {
             "schema_version": 7,
             "match": {"map_name": mapname},
@@ -68,38 +68,56 @@ class AggregatesSynthetic(unittest.TestCase):
             "shadow_explorations": {
                 "recap_speed": {"teams": [
                     {"team": 1, "recaps": 4, "median_seconds": 60.0}]},
-                "ktpr_v2": {"players": [
-                    {"player_id": 1, "rating": 1.0,
-                     "components": {"swing": 1, "output": 1, "multikill": 1},
-                     "player_name_at_match": "a"}]},
+                "ktpr_v2": {"definition_version": 1,
+                            "players": ktpr_players or []},
             },
         }
 
-    def test_p1_only_default_excludes_ktpr(self):
-        aggs = build_aggregates([self._report("dod_anzio", [])],
-                                include_p2=False)
-        self.assertNotIn("leaderboard_ktpr_v2", aggs)
-        self.assertEqual(aggs["map_profiles"]["maps"][0]["map"], "dod_anzio")
-        self.assertEqual(
-            aggs["map_profiles"]["maps"][0]["kills_per_match"], 15.0)
+    def test_map_profiles(self):
+        aggs = build_aggregates([self._report("dod_anzio", [])])
+        m = aggs["map_profiles"]["maps"][0]
+        self.assertEqual(m["map"], "dod_anzio")
+        self.assertEqual(m["kills_per_match"], 15.0)
+        self.assertEqual(aggs["map_profiles"]["source_report_count"], 1)
+        self.assertEqual(aggs["map_profiles"]["report_schema_version"], 7)
 
-    def test_head_to_head_pairs_symmetric_and_thresholded(self):
-        cell = {"killer_id": 2, "victim_id": 1, "kills": 25,
-                "cross_team": True}
-        rev = {"killer_id": 1, "victim_id": 2, "kills": 20,
-               "cross_team": True}
-        same_team = {"killer_id": 3, "victim_id": 4, "kills": 99,
-                     "cross_team": False}
+    def test_head_to_head_named_symmetric_thresholded(self):
+        cell = {"killer_id": 2, "killer_name": "Bee", "victim_id": 1,
+                "victim_name": "Ay", "kills": 25, "cross_team": True}
+        rev = {"killer_id": 1, "killer_name": "Ay", "victim_id": 2,
+               "victim_name": "Bee", "kills": 20, "cross_team": True}
+        same_team = {"killer_id": 3, "killer_name": "C", "victim_id": 4,
+                     "victim_name": "D", "kills": 99, "cross_team": False}
         aggs = build_aggregates(
-            [self._report("dod_anzio", [cell, rev, same_team])],
-            include_p2=False)
+            [self._report("dod_anzio", [cell, rev, same_team])])
         pairs = aggs["head_to_head"]["pairs"]
         self.assertEqual(len(pairs), 1)  # same-team excluded, >=40 met
         p = pairs[0]
-        self.assertEqual((p["player_id_a"], p["player_id_b"]), (1, 2))
+        self.assertEqual((p["player_a"], p["player_b"]), ("Ay", "Bee"))
         self.assertEqual(p["kills_a_over_b"], 20)
         self.assertEqual(p["kills_b_over_a"], 25)
         self.assertEqual(p["matches"], 1)
+        self.assertNotIn("player_id_a", p)
+
+    def test_leaderboard_provisional_named_min_matches(self):
+        rows = [{"player_id": 1, "team": 1, "rating": 1.0,
+                 "player_name_at_match": "One"},
+                {"player_id": 2, "team": 2, "rating": -1.0,
+                 "player_name_at_match": "Two"}]
+        reps = [self._report("dod_anzio", [], rows) for _ in range(3)]
+        reps.append(self._report("dod_anzio", [], [
+            {"player_id": 3, "team": 1, "rating": 0.5,
+             "player_name_at_match": "Three"},
+            {"player_id": 4, "team": 2, "rating": -0.5,
+             "player_name_at_match": "Four"}]))
+        lb = build_aggregates(reps)["leaderboard_ktpr_v22"]
+        self.assertTrue(lb["provisional"])
+        self.assertEqual(lb["method_version"], "ktpr_v2.2")
+        self.assertEqual(lb["definition_versions"], [1])
+        names = [p["name"] for p in lb["players"]]
+        self.assertEqual(names, ["One", "Two"])  # 3-match players only
+        self.assertTrue(all("player_id" not in p for p in lb["players"]))
+        self.assertTrue(all(p["se"] >= 0 for p in lb["players"]))
 
 
 @unittest.skipUnless(SPECIMENS and Path(SPECIMENS).is_dir(),
@@ -110,7 +128,7 @@ class AggregatesCorpus(unittest.TestCase):
                    for p in sorted(Path(SPECIMENS).glob("report-*.json"))]
         self.assertTrue(reports)
         self.assertTrue(all(is_publishable(r) for r in reports))
-        aggs = build_aggregates(reports, include_p2=False)
+        aggs = build_aggregates(reports)
         rates = [m["trade_response_rate_mean"]
                  for m in aggs["map_profiles"]["maps"]
                  if m["trade_response_rate_mean"] is not None
@@ -119,8 +137,10 @@ class AggregatesCorpus(unittest.TestCase):
         self.assertTrue(all(0.10 < x < 0.40 for x in rates), rates)
         pairs = aggs["head_to_head"]["pairs"]
         self.assertTrue(pairs and pairs[0]["total_kills"] >= 40)
-        self.assertNotIn("player_name", pairs[0])
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertTrue(pairs[0]["player_a"] and pairs[0]["player_b"])
+        lb = aggs["leaderboard_ktpr_v22"]
+        self.assertEqual(len(lb["players"]), 102)
+        self.assertTrue(all(p["name"] for p in lb["players"]))
+        body = json.dumps(aggs)
+        self.assertNotIn("player_id", body)
+        self.assertNotIn("Â¬", body)

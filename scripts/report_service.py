@@ -1,8 +1,8 @@
 """Scheduled match-report + season-aggregate job for the KTP data server.
 
-Runs ON the data server (local-socket mysql, no SSH hop):
-  python3 report_service.py --repo /path/to/KTPInfrastructure generate
-  python3 report_service.py --repo /path/to/KTPInfrastructure aggregate
+Runs ON the data server (local-socket mysql, no SSH hop), from the repo root:
+  python3 -m scripts.report_service --repo . generate
+  python3 -m scripts.report_service --repo . aggregate
 
 `generate` discovers matches that have flag-state producer rows and no
 persisted report at the current schema version, runs
@@ -11,9 +11,10 @@ ktp_match_reports (migration 026). Append-only: regeneration writes the next
 revision, never mutates.
 
 `aggregate` reads the latest publishable report per match from the table,
-recomputes season aggregates (Tier P1 only by default; --include-p2 adds the
-beta KTPR v2 leaderboard once that ship decision is made), and appends a new
-ktp_web_season_aggregates revision only when the payload hash changed.
+recomputes season aggregates (map profiles, name-keyed head-to-head, and the
+PROVISIONAL KTPR v2.2 leaderboard — P2 ships per the 2026-09-06 decision),
+and appends a new ktp_web_season_aggregates revision only when the payload
+hash changed.
 
 Production drifts absorbed (ported from the reference runner in
 artifacts/real-match-tier2-20260906/run_production_report.py):
@@ -31,6 +32,9 @@ import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+from scripts.ktpr_season import build_ktpr_v22
+from scripts.analytics_report_dto import PROVISIONAL_NOTICE, _name
 
 DATABASE = "hlstatsx"
 # Hard-check gate: FAIL on this code is cosmetic/expected for legacy '1.3-'
@@ -132,11 +136,42 @@ def persist_report(db: LocalMysql, report: dict) -> None:
     )
 
 
+ACCUMULATION_PROFILE = "accumulation_v5_momentum"
+
+
+def load_accumulation_scorer(repo: Path):
+    """The accumulation scorer (build_facts + score_match) ships from the
+    scoring lane; until it lands on main this returns None and reports carry
+    ratings.accumulation.status = unavailable."""
+    try:
+        from scripts.accumulation_v3 import load_profile, score_match
+        from scripts.lane_b_match_report import build_facts
+    except ImportError:
+        return None
+    profile_path = repo / "config" / "analytics" / f"{ACCUMULATION_PROFILE}.toml"
+    if not profile_path.exists():
+        return None
+
+    def score(db, match_id: str) -> dict:
+        facts, _private = build_facts(db, match_id, profile_path=profile_path)
+        scored = score_match(facts, load_profile(profile_path))
+        keep = ("schema_version", "generated_at", "status",
+                "publication_state", "profile", "profile_status",
+                "impact_index", "quality_gates", "players")
+        return {k: scored.get(k) for k in keep} | {
+            "profile_sha256": hashlib.sha256(
+                profile_path.read_bytes()).hexdigest()}
+
+    return score
+
+
 def cmd_generate(args: argparse.Namespace) -> int:
     ma = load_match_analytics(args.repo)
     db = LocalMysql()
     schema_version = int(getattr(ma, "REPORT_SCHEMA_VERSION", 7))
     sources = ma.source_capabilities(db)
+    scorer = load_accumulation_scorer(args.repo)
+    print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
     ids = args.match_ids or pending_match_ids(db, schema_version)
     print(f"pending: {len(ids)} matches (schema v{schema_version})")
     failures = 0
@@ -144,6 +179,12 @@ def cmd_generate(args: argparse.Namespace) -> int:
         try:
             report = ma.build_report(db, match_id, Path("production"),
                                      sources=sources)
+            if scorer:
+                try:
+                    report["accumulation"] = scorer(db, match_id)
+                except Exception as exc:  # scoring is best-effort per match
+                    print(f"  {match_id}: accumulation FAILED "
+                          f"{type(exc).__name__}: {exc}")
             persist_report(db, report)
             print(f"  {match_id}: persisted, publishable={is_publishable(report)}")
         except Exception as exc:
@@ -164,13 +205,12 @@ def latest_publishable_reports(db: LocalMysql) -> list[dict]:
     return [json.loads(ln) for ln in lines[1:] if ln.strip()]
 
 
-def build_aggregates(reports: list[dict], include_p2: bool,
-                     min_matches: int = 5) -> dict[str, dict]:
+def build_aggregates(reports: list[dict]) -> dict[str, dict]:
     per_map = defaultdict(lambda: {"matches": 0, "kills": 0, "trades": 0,
                                    "multikills": 0, "trade_rates": [],
                                    "recap_medians": []})
     duels = defaultdict(lambda: {"a_over_b": 0, "b_over_a": 0, "matches": 0})
-    per_player = defaultdict(list)
+    names: dict[int, str] = {}
     schema_versions = set()
     for r in reports:
         schema_versions.add(int(r["schema_version"]))
@@ -193,16 +233,13 @@ def build_aggregates(reports: list[dict], include_p2: bool,
             if not c.get("cross_team"):
                 continue
             a, b = sorted((c["killer_id"], c["victim_id"]))
+            names[c["killer_id"]] = _name(c.get("killer_name"))
+            names[c["victim_id"]] = _name(c.get("victim_name"))
             d = duels[(a, b)]
             d["a_over_b" if c["killer_id"] == a else "b_over_a"] += c["kills"]
             if (a, b) not in seen_pairs:
                 d["matches"] += 1
                 seen_pairs.add((a, b))
-        if include_p2:
-            for pl in (se["ktpr_v2"].get("players") or []):
-                per_player[pl["player_id"]].append(
-                    (pl["rating"], pl.get("components") or {},
-                     pl.get("player_name_at_match")))
 
     out: dict[str, dict] = {}
     out["map_profiles"] = {"maps": [
@@ -216,36 +253,32 @@ def build_aggregates(reports: list[dict], include_p2: bool,
          if pm["recap_medians"] else None}
         for m, pm in sorted(per_map.items(), key=lambda kv: -kv[1]["matches"])]}
     out["head_to_head"] = {"pairs": [
-        {"player_id_a": a, "player_id_b": b,
+        {"player_a": names.get(a), "player_b": names.get(b),
          "kills_a_over_b": d["a_over_b"], "kills_b_over_a": d["b_over_a"],
          "total_kills": d["a_over_b"] + d["b_over_a"], "matches": d["matches"]}
         for (a, b), d in sorted(duels.items(),
                                 key=lambda kv: -(kv[1]["a_over_b"]
                                                  + kv[1]["b_over_a"]))
         if d["a_over_b"] + d["b_over_a"] >= 40]}
-    if include_p2:
-        rows = []
-        for pid, entries in per_player.items():
-            if len(entries) < min_matches:
-                continue
-            ratings = [e[0] for e in entries]
-            rows.append({
-                "player_id": pid,
-                "player_name": next((e[2] for e in reversed(entries) if e[2]),
-                                    None),
-                "matches": len(entries),
-                "rating_mean": round(statistics.mean(ratings), 4),
-                "rating_stdev": round(statistics.stdev(ratings), 4)
-                if len(ratings) > 1 else 0.0,
-                "components_mean": {
-                    k: round(statistics.mean(e[1].get(k) or 0
-                                             for e in entries), 4)
-                    for k in ("swing", "output", "multikill")},
-                "status": "beta_shadow_uncalibrated",
-            })
-        rows.sort(key=lambda r: -r["rating_mean"])
-        out["leaderboard_ktpr_v2"] = {"min_matches": min_matches,
-                                      "players": rows}
+
+    ktpr = build_ktpr_v22(reports)
+    out["leaderboard_ktpr_v22"] = {
+        "provisional": True,
+        "notice": PROVISIONAL_NOTICE,
+        "method_version": ktpr["method_version"],
+        "definition_versions": ktpr["definition_versions"],
+        "beta": ktpr["beta"],
+        "shrinkage_k": ktpr["shrinkage_k"],
+        "within_var": ktpr["within_var"],
+        "min_matches": ktpr["min_matches"],
+        # database ids stay server-side; the website gets names only
+        "players": [
+            {"name": _name(p["name"]), "matches": p["matches"],
+             "rating": p["rating"], "sos_rating": p["sos_rating"],
+             "se": p["se"]}
+            for p in ktpr["players"] if p["matches"] >= ktpr["min_matches"]
+        ],
+    }
     for payload in out.values():
         payload["source_report_count"] = len(reports)
         payload["report_schema_version"] = max(schema_versions)
@@ -260,7 +293,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
         return 0
     from datetime import datetime, timezone
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    for kind, payload in build_aggregates(reports, args.include_p2).items():
+    for kind, payload in build_aggregates(reports).items():
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
         out = db.sql(
@@ -296,10 +329,7 @@ def main() -> int:
     gen = sub.add_parser("generate")
     gen.add_argument("match_ids", nargs="*",
                      help="explicit match ids; default: discover pending")
-    agg = sub.add_parser("aggregate")
-    agg.add_argument("--include-p2", action="store_true",
-                     help="also aggregate beta KTPR v2 leaderboard "
-                          "(requires the P2 ship decision)")
+    sub.add_parser("aggregate")
     args = ap.parse_args()
     return cmd_generate(args) if args.cmd == "generate" else cmd_aggregate(args)
 
