@@ -1465,6 +1465,10 @@ stock bool:bd_find_restart_plan(&chosen_flag, &chosen_team) {
 	chosen_team = 0
 	new n = dodx_objectives_get_num()
 	if (n > BD_MAX_FLAGS) n = BD_MAX_FLAGS
+	// Match the staging it gates: bd_prepare_capture("restart", need_far=false)
+	// places cappers from bd_safe_anchor. Requiring a far anchor here rejects
+	// every flag while the whole restart roster is frozen at spawn (nightly
+	// restart TIMEOUT wait_plan>0 with all-neutral quiet flags).
 	new Float:center[3], Float:anchor[3]
 	for (new f = 0; f < n; f++) {
 		new owner = dodx_area_get_data(f, CA_owning_team)
@@ -1472,7 +1476,7 @@ stock bool:bd_find_restart_plan(&chosen_flag, &chosen_team) {
 				dodx_area_get_data(f, CA_is_capturing) ||
 				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
 				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
-				!bd_area_center(f, center) || !bd_far_anchor(center, anchor))
+				!bd_area_center(f, center) || !bd_safe_anchor(anchor))
 			continue
 
 		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
@@ -2454,11 +2458,13 @@ stock bool:bd_find_clean_plan(&chosen_flag, &chosen_team, &chosen_owner) {
 	new Float:center[3], Float:anchor[3]
 	for (new f = 0; f < n; f++) {
 		new owner = dodx_area_get_data(f, CA_owning_team)
+		// Same rule as bd_find_restart_plan: clean_capture prepares with
+		// need_far=false, so gate on the safe anchor its staging actually uses.
 		if (!bd_owner_canonical(owner) ||
 				dodx_area_get_data(f, CA_is_capturing) ||
 				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
 				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
-				!bd_area_center(f, center) || !bd_far_anchor(center, anchor))
+				!bd_area_center(f, center) || !bd_safe_anchor(anchor))
 			continue
 
 		for (new team = BD_TEAM_ALLIES; team <= BD_TEAM_AXIS; team++) {
