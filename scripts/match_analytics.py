@@ -41,6 +41,9 @@ from scripts.fps_stat_explorations import (  # noqa: E402
     build_objective_pressure_shadow,
     build_weapon_engagement_shadow,
 )
+from scripts.flag_fights import (  # noqa: E402
+    build_flag_fight_shadow,
+)
 from scripts.life_exploration import (  # noqa: E402
     LifeExplorationConfig,
     build_life_exploration,
@@ -832,6 +835,7 @@ def render_markdown(report: dict[str, Any]) -> str:
     objective_shadow = explorations.get("objective_pressure", {})
     engagement_shadow = explorations.get("weapon_engagement", {})
     life_shadow = explorations.get("life_kat", {})
+    fight_shadow = explorations.get("flag_fights", {})
     lifecycles = report.get("telemetry_lifecycles", {})
     objective_attempts = lifecycles.get("objective_attempts", {})
     grenade_entities = lifecycles.get("grenade_entities", {})
@@ -963,6 +967,22 @@ def render_markdown(report: dict[str, Any]) -> str:
         "KAT means kill, assist, or death traded in a completed physical life. "
         "Disconnect, open, and ambiguous lives are censored; no round-survival "
         "term is invented for continuous-respawn DoD.",
+        "", "### Flag fights", "",
+        f"Status: `{fight_shadow.get('status', 'not_collected')}`  ",
+        f"Fight windows: {md(fight_shadow.get('summary', {}).get('fight_windows'))}  ",
+        f"Captures / stops: {md(fight_shadow.get('summary', {}).get('captures'))} / "
+        f"{md(fight_shadow.get('summary', {}).get('stops'))}  ",
+        f"Openings observed: {md(fight_shadow.get('summary', {}).get('openings_observed'))}",
+        "",
+        markdown_table(fight_shadow.get("players", []), [
+            ("player_id", "Player id"), ("fights", "Fights"),
+            ("kills", "K"), ("deaths", "D"), ("assists", "A-fights"),
+            ("openings_won", "Open +"), ("openings_lost", "Open -"),
+            ("deaths_traded", "Traded"), ("kast_f", "KAST-F"),
+        ]),
+        "A fight is one objective-attempt window (producer clock, padded). "
+        "KAST-F counts fights with a kill, assist, survival, or traded death; "
+        "overlapping windows may count one event in each.",
         "", "## Weapon facts", "",
         markdown_table(report["weapons"], [
             ("player_name_at_match", "Player"), ("weapon", "Weapon"),
@@ -1260,6 +1280,21 @@ def build_report(
                 temporal_valid=source_mode != "replay",
             ),
             "objective_pressure": objective_pressure,
+            "flag_fights": build_flag_fight_shadow(
+                objective_attempts,
+                frag_context,
+                assist_timeline,
+                shadow_timelines.get("trades", []),
+                [p["player_id"] for p in players_public],
+                source_available={
+                    "objective_attempts": bool(
+                        sources.get("objective_attempts", False)),
+                    "frags": enriched_frag_available,
+                    "assists": sources.get("assist_context", False),
+                    "basic_trades": True,
+                },
+                temporal_valid=source_mode != "replay",
+            ),
             "weapon_engagement": build_weapon_engagement_shadow(
                 frag_context if frag_context is not None else frag_timeline,
                 engagement_config,
