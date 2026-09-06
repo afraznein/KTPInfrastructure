@@ -24,7 +24,14 @@ player_events AS (
 SELECT
     p.player_id,
     r.player_name AS player_name_at_match,
-    p.team,
+    -- ktp_flag_captures.team is the team NAME; the analytics TSV layer
+    -- int-coerces a column called `team`, so map like the objective
+    -- timeline does.
+    CASE LOWER(p.team)
+      WHEN 'allies' THEN 1
+      WHEN 'axis' THEN 2
+      ELSE NULL
+    END AS team,
     p.caps_participated,
     t.team_caps,
     ROUND(p.caps_participated / t.team_caps, 4) AS cap_participation
