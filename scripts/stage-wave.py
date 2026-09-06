@@ -3,8 +3,9 @@
 manual process relies on but no tool enforced.
 
 It wraps the proven `deploy-to-fleet.py` push (per-instance isolation + the
-FS-01 coverage backstop) and adds the two gates that made the ad-hoc wave
-staging safe:
+FS-01 coverage backstop) and adds the gates that made the ad-hoc wave staging
+safe (it said "the two gates" while listing five; a count in prose has no test
+holding it true):
 
   1. PRE-STAGE ATTRIBUTION GATE. Refuses to stage if ANY `.new` already exists
      in the fleet swap globs (serverfiles + ktpamx dlls/modules/plugins). The
@@ -50,6 +51,16 @@ staging safe:
      nothing stages: "nothing to back up" and "the probe looked in the wrong
      place" must not be indistinguishable.
 
+  6. ROW-FLIP GATE. Refuses to stage while an EARLIER wave has already activated
+     and the root `CLAUDE.md` version row still names the build it replaced. The
+     bump checklist puts that flip after activation, so it depended on someone
+     coming back the next morning -- on 2026-09-01 two rows were skipped out of
+     one wave and nothing noticed for a day, with the table reading as
+     authoritative the whole time. The intent is recorded here at stage time
+     (see ktp-wave-ledger.py) and checked on the next stage, which is the action
+     that was going to happen anyway; flipping the row clears the gate by
+     itself. --allow-unreconciled overrides.
+
 Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
 permissions are correct), re-verifies md5 24/24, and prints the exact
@@ -82,6 +93,7 @@ Env: KTP_FLEET_SSH_PASSWORD (or ~/.ktp_fleet_ssh_password), same as deploy-to-fl
      KTP_TIER2_SSH_HOST / _USER / _PASSWORD / KTP_TIER2_TREE for --expect-runner.
      No default host: an --expect-runner that cannot reach the runner is FATAL,
      never skipped -- an unverifiable gate is not a passed gate.
+     KTP_CLAUDE_MD / KTP_WAVE_LEDGER_DIR for the row-flip gate (ktp-wave-ledger.py).
 """
 
 import argparse
@@ -101,9 +113,20 @@ except ImportError:
 # password helper -- so this tool holds no IPs, no creds, and no fleet list of
 # its own to drift.
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_spec = importlib.util.spec_from_file_location("deploy_to_fleet", os.path.join(_HERE, "deploy-to-fleet.py"))
-d2f = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(d2f)
+
+
+def _load_sibling(mod_name, filename):
+    spec = importlib.util.spec_from_file_location(mod_name, os.path.join(_HERE, filename))
+    mod = importlib.util.module_from_spec(spec)
+    # Registered before exec: dataclasses resolve annotations through
+    # sys.modules, and a module missing from it raises during class creation.
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+d2f = _load_sibling("deploy_to_fleet", "deploy-to-fleet.py")
+ledger = _load_sibling("ktp_wave_ledger", "ktp-wave-ledger.py")
 
 # The four swap globs the nightly restart script activates (explicit, not
 # recursive -- mirrors ktp-scheduled-restart.sh). Any .new here activates.
@@ -349,6 +372,13 @@ def main():
     ap.add_argument("--no-runner-check", action="store_true",
                     help="Silence the missing --expect-runner warning (you have decided the runner "
                          "does not need to match this wave).")
+    ap.add_argument("--row-version", action="append", default=[], metavar="BASENAME=VERSION",
+                    help="The version this artifact's CLAUDE.md row should read after activation. "
+                         "Recorded in the wave ledger and quoted back if the row goes stale. "
+                         "Repeatable; optional (the md5 is the identity either way).")
+    ap.add_argument("--allow-unreconciled", action="store_true",
+                    help="Skip the row-flip gate (a previous wave activated and its CLAUDE.md row "
+                         "is still stale). Fix the row instead -- that clears the gate by itself.")
     ap.add_argument("--preflight-only", action="store_true", help="Run the attribution gate and exit.")
     ap.add_argument("--dry-run", action="store_true", help="Print intent, do not connect to stage.")
     ap.add_argument("--parallel", type=int, default=5)
@@ -375,6 +405,26 @@ def main():
         if unmatched:
             sys.exit(f"FATAL: --ports names {unmatched}, which is not an active instance on "
                      f"{','.join(host_keys)}. Nothing staged.")
+
+    # ---- Row-flip gate (before anything touches the fleet) ----
+    # The bump checklist's row flip runs AFTER activation, so it depends on
+    # someone returning the next morning; on 2026-09-01 two rows were skipped in
+    # one wave and nothing noticed for a day. Sitting the gate on the next stage
+    # is what removes the dependency on remembering: the wave you are about to
+    # push cannot go out until the last one's row agrees, and flipping the row
+    # clears it with no second command to run.
+    if not args.allow_unreconciled:
+        gate = ledger.gate()
+        stream = sys.stderr if gate.status != "clear" else sys.stdout
+        for ln in gate.lines:
+            print(ln, file=stream)
+        if gate.status == "inconclusive":
+            sys.exit("FATAL: cannot verify the previous wave's row flip. (Nothing staged.)")
+        if gate.status == "blocked":
+            for ln in ledger.format_block(gate):
+                print(ln, file=sys.stderr)
+            sys.exit("Aborting -- nothing staged.")
+        print()
 
     # ---- Attribution gate (always runs; the whole point of the tool) ----
     if not args.allow_existing_new:
@@ -426,6 +476,12 @@ def main():
         for name, got, want in mismatches:
             print(f"  {name}: got {got}  expected {want}", file=sys.stderr)
         sys.exit("Aborting (nothing staged). Rebuild churns md5 -- ship the reviewed artifact.")
+    row_versions = {}
+    for e in args.row_version:
+        if "=" not in e:
+            sys.exit(f"FATAL: --row-version must be BASENAME=VERSION, got '{e}'")
+        k, v = e.split("=", 1)
+        row_versions[k.strip()] = v.strip()
     unpinned = [a.basename for a in artifacts if a.basename not in expect]
     if unpinned:
         print(f"WARNING: not md5-pinned (no --expect): {', '.join(unpinned)}")
@@ -533,6 +589,23 @@ def main():
     else:
         print("  done.")
 
+    # ---- Record the intent, so the row flip has something to be gated against ----
+    # Written after the stage succeeds: a wave that did not land has no row to
+    # flip, and a ledger entry for it would block the next stage over nothing.
+    try:
+        ledger_path = ledger.record_wave(
+            [{"basename": a.basename, "md5": a.md5, "remote_dir": a.remote_dir,
+              "version": row_versions.get(a.basename)} for a in artifacts],
+            hosts=host_keys, targets=len(targets), narrowed=port_filter is not None)
+        print(f"\nWave recorded: {ledger_path}")
+    except Exception as ex:
+        print(f"\nWARNING: could not record the wave for the row-flip gate: {ex!r}", file=sys.stderr)
+        print("  The stage is fine; only the morning-after gate is unarmed. Record it by hand:",
+              file=sys.stderr)
+        pairs = " ".join(f"-a {a.basename}={a.md5}:{a.remote_dir}" for a in artifacts)
+        print(f"  ktp-wave-ledger.py record {pairs} --hosts {','.join(host_keys)} "
+              f"--targets {len(targets)}", file=sys.stderr)
+
     # ---- Next-step hint ----
     is_module = any(a.remote_dir.endswith(("dlls", "modules")) for a in artifacts)
     is_engine = any(a.remote_dir == "serverfiles" for a in artifacts)
@@ -546,6 +619,9 @@ def main():
     if is_engine:
         vc += " --include-engine"
     print(vc)
+    print("  ktp-wave-ledger.py reconcile   <- re-reads the fleet, then FAILS if the")
+    print("                                    CLAUDE.md version row still disagrees.")
+    print("    Not optional in practice: until that row agrees, the next stage-wave is blocked.")
     if is_module or is_engine:
         print("  + re-sync the tier-2 runner STACK (module/engine changed) -- see the runner note in CLAUDE.md.")
     if is_plugin:

@@ -25,7 +25,17 @@ Moved out of the stack-root `CLAUDE.md` on 2026-07-27. The **plugin** bump check
 
 **5. Post-activation verify** (fleet is **24** instances):
 - md5 matches on 24/24, no leftover `.new`.
-- **Flip the root `CLAUDE.md` version-table row STAGED→LIVE** with the md5 you just verified — the fleet md5 is the source of truth, not the row's prior claim. Skipping this is how the ReAPI (364→365) + AmxxCurl (1.3.14→1.3.15) rows drifted a full version behind while the fleet was correct (caught + reconciled 2026-07-22).
+- **Flip the root `CLAUDE.md` version-table row STAGED→LIVE** with the md5 you just verified — the fleet md5 is the source of truth, not the row's prior claim. Skipping this is how the ReAPI (364→365) + AmxxCurl (1.3.14→1.3.15) rows drifted a full version behind while the fleet was correct (caught + reconciled 2026-07-22), and how KTPCvarChecker (7.36 vs a fleet on 7.37) and KTPMatchHandler (0.10.168 vs 0.10.170) were *both* stale out of the single 2026-09-01 wave, unnoticed for a day.
+  🔑 **This step is now GATED, not remembered.** `stage-wave.py` records `(basename, md5, version)` at stage time and refuses to stage the NEXT wave while an earlier one has activated and its row still names the build it replaced. Two rows skipped in one wave is a process defect, not two mistakes — the control that failed was "someone comes back in the morning", so the check sits on the action that was going to happen anyway. Editing the row is what clears it; there is no second command to remember.
+
+  ```bash
+  python3 scripts/ktp-wave-ledger.py reconcile   # re-reads the fleet, then gates on CLAUDE.md
+  python3 scripts/ktp-wave-ledger.py status      # what is pending, and what has activated
+  ```
+
+  Exit **1** means the row is stale (the fleet moved, the record did not). Exit **2** means it could not check — an unreadable `CLAUDE.md` or an unreachable fleet is never reported as a pass. `--no-fleet` checks the row against the recorded md5 alone and says so in its output; `--allow-unreconciled` on `stage-wave.py` overrides the gate, for a deliberate stack only.
+  ⚠️ **If the wave did NOT activate cleanly, do not flip the row to clear the gate** — find the leftover `.new` first (`ktp-verify-post-swap.sh`). A gate satisfied by a wrong edit is worse than one that blocked.
+  📌 The ledger lives at `$KTP_WAVE_LEDGER_DIR` (default `~/.ktp/waves`), outside this public repo; `$KTP_CLAUDE_MD` points at the root `CLAUDE.md` if it is not one level above the checkout.
 - Cores: `find /tmp -maxdepth 1 -name 'core.*' -mtime -1` — **not** the game trees. `core_pattern` is `/tmp/core.%e.%p.%t`, so a game-tree search matches only `core.so`/`core.ini`/`core.wav` and looks clean whether or not anything crashed.
 - `ktp_extension_loaded` — proves extension mode actually initialized. A missing or misplaced `dod/addons/extensions.ini` returns silently (`sys_dll.cpp:1077`) and degrades the server to vanilla HLDS: no wall-penetration fix, no cvar enforcement, no match handler.
 - **Re-sync the Tier-2 runner stack** — see the section below. This is the step that keeps a Tier-2 green meaning anything.

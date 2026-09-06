@@ -66,7 +66,7 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           if git diff --name-only "$base" "$head" \
-              | grep -qE '^(config/|tests/config_parse/|tests/smoke/|tests/unit/|scripts/spike_signatures\.py$|scripts/ktp-lan-web-drift\.py$|scripts/audit-fleet-drift\.py$|provision/lan-web-sync\.exclude$|provision/deploy-lan-web\.sh$|provision/install-linuxgsm\.sh$|\.github/workflows/config-tests\.yml$|\.github/workflows/lane-b-stats-e2e\.yml$|tests/e2e_stats/artifacts\.py$)'; then
+              | grep -qE '^(config/|tests/config_parse/|tests/smoke/|tests/unit/|scripts/spike_signatures\.py$|scripts/ktp-lan-web-drift\.py$|scripts/audit-fleet-drift\.py$|scripts/ktp-wave-ledger\.py$|scripts/stage-wave\.py$|provision/lan-web-sync\.exclude$|provision/deploy-lan-web\.sh$|provision/install-linuxgsm\.sh$|\.github/workflows/config-tests\.yml$|\.github/workflows/lane-b-stats-e2e\.yml$|tests/e2e_stats/artifacts\.py$)'; then
             echo "run=1" >> "$GITHUB_OUTPUT"
             echo "Relevant files changed; will run pytest."
           else
@@ -87,3 +87,12 @@ jobs:
       - name: Run config-parse + harness unit tests
         if: steps.changes.outputs.run == '1'
         run: python -m pytest tests/config_parse/ tests/smoke/test_parse.py tests/smoke/test_asserts.py tests/unit/ -v --tb=short
+
+      # Deliberately UNCONDITIONAL, unlike the pytest step above. This harness
+      # sat red on main for weeks -- it predates the two-marker split and no
+      # job ran it, so nothing reported that the thing which reports silence
+      # had gone quiet itself. A path filter here would reintroduce exactly
+      # that: a heartbeat-only change would skip its own suite. Pure bash +
+      # jq, no network, nothing posted.
+      - name: Tier 2 heartbeat state machine
+        run: bash scripts/test-tier2-heartbeat.sh scripts/ktp-tier2-heartbeat.sh
