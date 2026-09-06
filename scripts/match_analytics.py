@@ -872,6 +872,9 @@ def render_markdown(report: dict[str, Any]) -> str:
             ("cap_breaks", "Breaks"), ("raw_accuracy", "Raw acc."),
             ("damage_per_minute", "Dmg/min"),
             ("damage_per_life", "Dmg/life"),
+            ("grenade_kills", "Nade K"),
+            ("grenade_damage", "Nade dmg"),
+            ("fast_2k", "2k"), ("fast_3k", "3k"), ("fast_4k_plus", "4k+"),
         ]),
         "Raw accuracy is descriptive by weapon and is not suitable for player "
         "ranking; Garand chamber-clearing shots are not distinguishable from misses.",
@@ -1100,6 +1103,7 @@ def build_report(
             player["damage_dealt"] = damage
             player["damage_taken"] = None
             player["damage_differential"] = None
+            player["grenade_damage"] = None
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
@@ -1156,6 +1160,26 @@ def build_report(
     )
     shadow_timelines["revenge_analysis"] = revenge_analysis
     shadow_timelines["revenge_events"] = revenge_events
+    # Surface fast-multikill counts on the box score. The sequences themselves
+    # stay in shadow_timelines; the per-player tally is descriptive.
+    multikill_counts: dict[int, dict[str, int]] = {}
+    for sequence in shadow_timelines.get("fast_multikills", []):
+        killer_id = int((sequence.get("killer") or {}).get("player_id") or 0)
+        tally = multikill_counts.setdefault(
+            killer_id, {"fast_2k": 0, "fast_3k": 0, "fast_4k_plus": 0})
+        count = int(sequence.get("kill_count") or 0)
+        if count == 2:
+            tally["fast_2k"] += 1
+        elif count == 3:
+            tally["fast_3k"] += 1
+        elif count >= 4:
+            tally["fast_4k_plus"] += 1
+    for player in players_public:
+        tally = multikill_counts.get(int(player["player_id"]),
+                                     {"fast_2k": 0, "fast_3k": 0, "fast_4k_plus": 0})
+        player["fast_2k"] = tally["fast_2k"]
+        player["fast_3k"] = tally["fast_3k"]
+        player["fast_4k_plus"] = tally["fast_4k_plus"]
     life_kat = build_life_exploration(
         life_boundaries,
         frag_context,

@@ -24,7 +24,9 @@ roster AS (
 ),
 kills AS (
     SELECT killerId AS player_id, COUNT(*) AS kills,
-           COALESCE(SUM(headshot), 0) AS headshots
+           COALESCE(SUM(headshot), 0) AS headshots,
+           SUM(CASE WHEN weapon IN ('grenade', 'grenade2', 'mills_bomb')
+                    THEN 1 ELSE 0 END) AS grenade_kills
     FROM hlstats_Events_Frags
     WHERE match_id = {{MATCH_ID}}
     GROUP BY killerId
@@ -78,7 +80,12 @@ damage AS (
             AS team_damage,
         COALESCE(SUM(CASE
             WHEN d.attacker_id = r.player_id AND d.victim_id = r.player_id
-                THEN d.damage_capped ELSE 0 END), 0) AS self_damage
+                THEN d.damage_capped ELSE 0 END), 0) AS self_damage,
+        COALESCE(SUM(CASE
+            WHEN d.attacker_id = r.player_id AND d.victim_id <> r.player_id
+                 AND victim.team <> r.team
+                 AND d.weapon IN ('grenade', 'grenade2', 'mills_bomb')
+                THEN d.damage_capped ELSE 0 END), 0) AS grenade_damage
     FROM roster r
     LEFT JOIN ktp_damage_events d
       ON d.match_id = r.match_id
@@ -122,6 +129,8 @@ SELECT
     COALESCE(dth.deaths, 0) AS deaths,
     COALESCE(a.assists, 0) AS assists,
     COALESCE(k.headshots, 0) AS headshots,
+    COALESCE(k.grenade_kills, 0) AS grenade_kills,
+    COALESCE(dmg.grenade_damage, 0) AS grenade_damage,
     COALESCE(tk.team_kills, 0) AS team_kills,
     COALESCE(s.suicides, 0) AS suicides,
     COALESCE(dmg.damage_dealt, 0) AS damage_dealt,
@@ -143,6 +152,9 @@ SELECT
     CASE WHEN mc.duration_seconds = 0 THEN NULL
          ELSE ROUND(COALESCE(dmg.damage_dealt, 0) * 60.0 / mc.duration_seconds, 2)
          END AS damage_per_minute,
+    CASE WHEN mc.duration_seconds = 0 THEN NULL
+         ELSE ROUND(COALESCE(k.kills, 0) * 60.0 / mc.duration_seconds, 3)
+         END AS kills_per_minute,
     CASE WHEN COALESCE(dth.deaths, 0) = 0 THEN NULL
          ELSE ROUND(COALESCE(dmg.damage_dealt, 0) / dth.deaths, 2)
          END AS damage_per_life,
