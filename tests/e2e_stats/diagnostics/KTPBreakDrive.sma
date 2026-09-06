@@ -1506,8 +1506,13 @@ stock bool:bd_find_restart_plan(&chosen_flag, &chosen_team) {
 	// restart TIMEOUT wait_plan>0 with all-neutral quiet flags).
 	new Float:center[3], Float:anchor[3]
 	for (new f = 0; f < n; f++) {
+		// Virgin (never-captured) flags report CA_owning_team=-1, and after a
+		// clan restart the capturable neutrals are exactly those virgin flags —
+		// the owner==0 readings on this map belong to zero-numcap dead ends
+		// (probe run 34005203795). Any non-team owner is neutral here; the
+		// multi-poll stability latch still rejects transient reset readings.
 		new owner = dodx_area_get_data(f, CA_owning_team)
-		if (owner != 0 ||
+		if (owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS ||
 				dodx_area_get_data(f, CA_is_capturing) ||
 				bd_zone_count(f, BD_TEAM_ALLIES) != 0 ||
 				bd_zone_count(f, BD_TEAM_AXIS) != 0 ||
@@ -1580,7 +1585,10 @@ stock bd_restart_stability_blocker() {
 	if (!g_bdIsolationActive || g_bdRestartStableFlag < 0 ||
 			!bd_restart_roster_generation_current())
 		return 1
-	if (dodx_area_get_data(g_bdRestartStableFlag, CA_owning_team) != 0 ||
+	new stable_owner = dodx_area_get_data(g_bdRestartStableFlag, CA_owning_team)
+	// Virgin flags stay at owner -1 until first capture; only a team
+	// ownership means the flag is no longer neutral.
+	if (stable_owner == BD_TEAM_ALLIES || stable_owner == BD_TEAM_AXIS ||
 			dodx_area_get_data(g_bdRestartStableFlag, CA_is_capturing) ||
 			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_ALLIES) != 0 ||
 			bd_zone_count(g_bdRestartStableFlag, BD_TEAM_AXIS) != 0)
@@ -1639,6 +1647,11 @@ stock bool:bd_prepare_capture(const mode[], bool:need_far,
 		if (expected_flag >= 0 && f != expected_flag)
 			continue
 		new owner = dodx_area_get_data(f, CA_owning_team)
+		// The restart path (the only require_neutral caller) stages virgin
+		// flags, which report owner -1 until their first capture. Normalize
+		// to neutral there; every other mode keeps the strict canonical gate.
+		if (require_neutral && owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)
+			owner = 0
 		if (!bd_owner_canonical(owner) ||
 				(expected_owner != BD_OWNER_ANY && owner != expected_owner))
 			continue
