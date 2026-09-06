@@ -708,6 +708,38 @@ def test_pawn_clean_capture_is_real_closed_world_and_fail_closed():
     assert 'triggered "cap_break"' not in source
 
 
+def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
+    """A clan restart reverts capturable flags to the engine's virgin owner
+    -1 (probe run 34005203795); mid-match neutralization reports 0. Every
+    restart-path neutrality gate must therefore reject only ALLIES/AXIS,
+    never require owner == 0, or the scenario can never stage."""
+    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+
+    plan = source[source.index("stock bool:bd_find_restart_plan"):
+                  source.index("stock bool:bd_restart_same_origin")]
+    assert "owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS ||" in plan
+    assert "owner != 0" not in plan
+
+    blocker = source[source.index("stock bd_restart_stability_blocker"):
+                     source.index("stock bd_restart_drop_stability")]
+    assert ("stable_owner == BD_TEAM_ALLIES || "
+            "stable_owner == BD_TEAM_AXIS") in blocker
+    assert "!= 0" not in blocker.split("CA_owning_team")[1].split("||")[0]
+
+    prepare = source[source.index("stock bool:bd_prepare_capture"):
+                     source.index("stock bd_find_prepared_capture")]
+    assert ("if (require_neutral && owner != BD_TEAM_ALLIES && "
+            "owner != BD_TEAM_AXIS)") in prepare
+    normalize = prepare.index("require_neutral && owner != BD_TEAM_ALLIES")
+    canonical = prepare.index("!bd_owner_canonical(owner)")
+    assert normalize < canonical, (
+        "require_neutral must normalize the virgin owner before the "
+        "canonical gate can reject it")
+    # The strict canonical gate itself stays narrow so non-restart callers
+    # keep failing closed on transient -1 readings.
+    assert "return owner == 0 || owner == BD_TEAM_ALLIES" in source
+
+
 def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target():
     source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
     select = source[source.index("stock bool:bd_find_clean_plan"):
