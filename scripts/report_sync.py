@@ -34,7 +34,7 @@ DATABASE = "hlstatsx"
 # Every kind here is name-keyed; database ids never cross to the website
 # (2026-08-29 handover). Add a kind only after its builder emits names.
 SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "head_to_head",
-                            "leaderboard_ktpr_v22"}
+                            "leaderboard_ktpr_v22", "season_positional"}
 
 
 def mysql(query: str) -> str:

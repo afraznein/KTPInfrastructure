@@ -56,9 +56,27 @@ class ArchivedReproduction(unittest.TestCase):
         ref_path = spec.parent / "ktpr_v22_final.json"
         if not ref_path.exists():
             self.skipTest("ktpr_v22_final.json not beside specimens")
-        reports = [json.loads(p.read_text(encoding="utf-8"))
-                   for p in sorted(spec.glob("report-*.json"))]
         ref = json.loads(ref_path.read_text(encoding="utf-8"))
+        # The archive (ktpr_v22_final.json) was produced 2026-09-06 from the
+        # 71 matches with a "1.3-NNNN-..." id, NNNN <= 6740 (2026-08-31..
+        # 09-05); the corpus grows nightly in place (new matches, some with
+        # a different unix-timestamp id scheme), so filter on that id shape
+        # rather than directory membership, which no longer isolates the set.
+        def in_archived_corpus(match_id: str) -> bool:
+            if not match_id.startswith("1.3-"):
+                return False
+            try:
+                return int(match_id.split("-")[1]) <= 6740
+            except ValueError:
+                return False
+
+        reports = []
+        for p in sorted(spec.glob("report-*.json")):
+            r = json.loads(p.read_text(encoding="utf-8"))
+            if in_archived_corpus(r["match_id"]):
+                reports.append(r)
+        if len(reports) != 71:
+            self.skipTest(f"archived corpus not reconstructible ({len(reports)} != 71)")
         out = build_ktpr_v22(reports, beta=ref["beta"], k=ref["shrinkage_k"])
         mine = {p["player_id"]: p for p in out["players"]}
         self.assertAlmostEqual(out["within_var"], ref["within_var"], 3)
