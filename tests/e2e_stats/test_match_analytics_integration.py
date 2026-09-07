@@ -182,7 +182,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             )
         else:
             assert player["damage_per_life"] is None
-    assert report["schema_version"] == 7
+    assert report["schema_version"] == 8
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []
