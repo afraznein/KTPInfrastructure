@@ -52,6 +52,10 @@ from scripts.flag_swing import (  # noqa: E402
 from scripts.ktpr_v2 import (  # noqa: E402
     build_ktpr_v2_shadow,
 )
+from scripts.positional_shadow import (  # noqa: E402
+    PositionalConfig,
+    build_positional_shadow,
+)
 from scripts.objective_control import (  # noqa: E402
     build_recap_speed,
 )
@@ -68,7 +72,7 @@ from scripts.match_timelines import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8  # 8: positional shadow blocks (map_control, depth_profiles, overextension)
 CAPTURE_EVENT_TYPES = (
     "life", "damage", "position", "frag", "assist", "break",
     "flag_state", "flag_position", "objective_attempt", "team_membership",
@@ -1205,6 +1209,7 @@ def build_report(
     objective_config: ObjectivePressureConfig | None = None,
     engagement_config: EngagementDistanceConfig | None = None,
     life_config: LifeExplorationConfig | None = None,
+    positional_config: PositionalConfig | None = None,
 ) -> dict[str, Any]:
     sources = sources or source_capabilities(db)
     capture_authorization = match_capture_authorization(
@@ -1452,6 +1457,16 @@ def build_report(
             0,
             "Replay timing is compressed; sampled objective time is unavailable.",
         )
+    positional_shadow = build_positional_shadow(
+        position_timeline if sources.get("positions", False) else None,
+        flag_positions if sources.get("flag_positions", False) else None,
+        frag_context,
+        players_public,
+        positional_config or PositionalConfig(),
+        source_available=bool(
+            sources.get("positions", False) and sources.get("flag_positions", False)),
+        temporal_valid=source_mode != "replay",
+    )
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1522,6 +1537,9 @@ def build_report(
                 engagement_config,
             ),
             "life_kat": life_kat,
+            "map_control": positional_shadow["map_control"],
+            "depth_profiles": positional_shadow["depth_profiles"],
+            "overextension": positional_shadow["overextension"],
         },
         "positional": {
             "privacy": "aggregate_only",
