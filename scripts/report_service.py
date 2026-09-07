@@ -205,6 +205,93 @@ def latest_publishable_reports(db: LocalMysql) -> list[dict]:
     return [json.loads(ln) for ln in lines[1:] if ln.strip()]
 
 
+MIN_LOCATED_DEATHS = 30      # overextension table row threshold (prototype)
+MIN_PROFILE_SAMPLES = 200    # per (map, player) depth profile threshold
+
+
+def build_season_positional(reports: list[dict]) -> dict:
+    """Pool the per-match positional shadow blocks: overextension table
+    (rates over pooled located frags), depth profiles per (map, player)
+    (exact pooled mean/sd from the per-match sums), and per-map mean control.
+    Names only; database ids stay server-side."""
+    over: dict[int, dict] = defaultdict(lambda: {
+        "name": None, "kills_located": 0, "kills_ahead": 0,
+        "deaths_located": 0, "deaths_ahead": 0, "matches": 0})
+    prof: dict[tuple[str, int], dict] = defaultdict(lambda: {
+        "name": None, "n": 0, "sum": 0.0, "sum_sq": 0.0, "lat_sum": 0.0,
+        "matches": 0})
+    control: dict[str, list[float]] = defaultdict(list)
+    versions = set()
+    matches_with_positions = 0
+    for r in reports:
+        se = r.get("shadow_explorations") or {}
+        mc, dp, ov = (se.get("map_control") or {}, se.get("depth_profiles") or {},
+                      se.get("overextension") or {})
+        mapname = (r.get("match") or {}).get("map_name") or "?"
+        if mc.get("status") == "available" and mc.get("mean_control_team1") is not None:
+            control[mapname].append(mc["mean_control_team1"])
+            matches_with_positions += 1
+            versions.add(mc.get("definition_version"))
+        if dp.get("status") == "available":
+            for p in dp.get("players") or []:
+                row = prof[(mapname, p["player_id"])]
+                row["name"] = _name(p.get("player_name_at_match")) or row["name"]
+                row["n"] += p["samples"]
+                row["sum"] += p.get("depth_sum", p["mean_depth"] * p["samples"])
+                row["sum_sq"] += p.get("depth_sum_sq",
+                                       (p["depth_sd"] ** 2 + p["mean_depth"] ** 2) * p["samples"])
+                row["lat_sum"] += p.get("lateral_sum", p["lateral_mean"] * p["samples"])
+                row["matches"] += 1
+        if ov.get("status") == "available":
+            for p in ov.get("players") or []:
+                row = over[p["player_id"]]
+                row["name"] = _name(p.get("player_name_at_match")) or row["name"]
+                for k in ("kills_located", "kills_ahead", "deaths_located", "deaths_ahead"):
+                    row[k] += p.get(k) or 0
+                row["matches"] += 1
+
+    table = []
+    for row in over.values():
+        if row["deaths_located"] < MIN_LOCATED_DEATHS:
+            continue
+        ka = (row["kills_ahead"] / row["kills_located"]) if row["kills_located"] else None
+        da = row["deaths_ahead"] / row["deaths_located"]
+        table.append({
+            "name": row["name"], "matches": row["matches"],
+            "kills_located": row["kills_located"], "deaths_located": row["deaths_located"],
+            "kill_ahead_rate": round(ka, 3) if ka is not None else None,
+            "death_ahead_rate": round(da, 3),
+            "net_ahead": round(ka - da, 3) if ka is not None else None,
+        })
+    table.sort(key=lambda x: -(x["net_ahead"] if x["net_ahead"] is not None else -9))
+
+    profiles = []
+    for (mapname, _pid), row in prof.items():
+        if row["n"] < MIN_PROFILE_SAMPLES:
+            continue
+        mean = row["sum"] / row["n"]
+        var = max(row["sum_sq"] / row["n"] - mean * mean, 0.0)
+        profiles.append({"map": mapname, "name": row["name"], "matches": row["matches"],
+                         "samples": row["n"], "mean_depth": round(mean, 4),
+                         "depth_sd": round(var ** 0.5, 4),
+                         "lateral_mean": round(row["lat_sum"] / row["n"], 1)})
+    profiles.sort(key=lambda x: (x["map"], -x["mean_depth"]))
+
+    return {
+        "provisional": True,
+        "notice": PROVISIONAL_NOTICE,
+        "definition_versions": sorted(v for v in versions if v is not None),
+        "matches_with_positions": matches_with_positions,
+        "min_located_deaths": MIN_LOCATED_DEATHS,
+        "min_profile_samples": MIN_PROFILE_SAMPLES,
+        "overextension": table,
+        "depth_profiles": profiles,
+        "map_control": [
+            {"map": m, "matches": len(v), "mean_control_team1": round(statistics.mean(v), 4)}
+            for m, v in sorted(control.items(), key=lambda kv: -len(kv[1]))],
+    }
+
+
 def build_aggregates(reports: list[dict]) -> dict[str, dict]:
     per_map = defaultdict(lambda: {"matches": 0, "kills": 0, "trades": 0,
                                    "multikills": 0, "trade_rates": [],
@@ -260,6 +347,8 @@ def build_aggregates(reports: list[dict]) -> dict[str, dict]:
                                 key=lambda kv: -(kv[1]["a_over_b"]
                                                  + kv[1]["b_over_a"]))
         if d["a_over_b"] + d["b_over_a"] >= 40]}
+
+    out["season_positional"] = build_season_positional(reports)
 
     ktpr = build_ktpr_v22(reports)
     out["leaderboard_ktpr_v22"] = {

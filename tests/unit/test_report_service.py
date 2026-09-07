@@ -99,6 +99,53 @@ class AggregatesSynthetic(unittest.TestCase):
         self.assertEqual(p["matches"], 1)
         self.assertNotIn("player_id_a", p)
 
+    def test_season_positional_pools_exactly(self):
+        def rep(mapname, n, mean, sd, ka, kl, da, dl):
+            r = self._report(mapname, [])
+            r["shadow_explorations"]["map_control"] = {
+                "status": "available", "definition_version": 1, "mean_control_team1": 0.6}
+            r["shadow_explorations"]["depth_profiles"] = {
+                "status": "available", "players": [{
+                    "player_id": 1, "player_name_at_match": "One", "team": 1, "samples": n,
+                    "mean_depth": mean, "depth_sd": sd, "lateral_mean": 100.0,
+                    "depth_sum": mean * n, "depth_sum_sq": (sd * sd + mean * mean) * n,
+                    "lateral_sum": 100.0 * n}]}
+            r["shadow_explorations"]["overextension"] = {
+                "status": "available", "players": [{
+                    "player_id": 1, "player_name_at_match": "One", "team": 1,
+                    "kills_located": kl, "kills_ahead": ka,
+                    "deaths_located": dl, "deaths_ahead": da}]}
+            return r
+        reps = [rep("dod_anzio", 150, 0.4, 0.1, 5, 10, 8, 20),
+                rep("dod_anzio", 150, 0.6, 0.1, 5, 10, 2, 20)]
+        sp = build_aggregates(reps)["season_positional"]
+        self.assertTrue(sp["provisional"])
+        self.assertEqual(sp["matches_with_positions"], 2)
+        self.assertEqual(sp["map_control"], [{"map": "dod_anzio", "matches": 2,
+                                              "mean_control_team1": 0.6}])
+        prof = sp["depth_profiles"][0]
+        self.assertEqual((prof["map"], prof["name"], prof["samples"]), ("dod_anzio", "One", 300))
+        self.assertAlmostEqual(prof["mean_depth"], 0.5, 4)
+        # pooled sd: within .1 plus between-match spread .1 -> sqrt(.01+.01)
+        self.assertAlmostEqual(prof["depth_sd"], (0.02) ** 0.5, 3)
+        ov = sp["overextension"][0]
+        self.assertEqual(ov["name"], "One")
+        self.assertEqual(ov["kill_ahead_rate"], 0.5)
+        self.assertEqual(ov["death_ahead_rate"], 0.25)
+        self.assertEqual(ov["net_ahead"], 0.25)
+        self.assertNotIn("player_id", json.dumps(sp))
+
+    def test_season_positional_thresholds(self):
+        r = self._report("dod_anzio", [])
+        r["shadow_explorations"]["overextension"] = {"status": "available", "players": [{
+            "player_id": 1, "player_name_at_match": "One", "team": 1,
+            "kills_located": 3, "kills_ahead": 1, "deaths_located": 5, "deaths_ahead": 1}]}
+        r["shadow_explorations"]["depth_profiles"] = {"status": "unavailable", "players": []}
+        sp = build_aggregates([r])["season_positional"]
+        self.assertEqual(sp["overextension"], [])   # < 30 located deaths
+        self.assertEqual(sp["depth_profiles"], [])
+        self.assertEqual(sp["matches_with_positions"], 0)
+
     def test_leaderboard_provisional_named_min_matches(self):
         rows = [{"player_id": 1, "team": 1, "rating": 1.0,
                  "player_name_at_match": "One"},
@@ -139,7 +186,14 @@ class AggregatesCorpus(unittest.TestCase):
         self.assertTrue(pairs and pairs[0]["total_kills"] >= 40)
         self.assertTrue(pairs[0]["player_a"] and pairs[0]["player_b"])
         lb = aggs["leaderboard_ktpr_v22"]
-        self.assertEqual(len(lb["players"]), 102)
+        # The corpus grows nightly; the board is everyone with >= min matches.
+        counts = {}
+        for r in reports:
+            for p in r["shadow_explorations"]["ktpr_v2"]["players"]:
+                counts[p["player_id"]] = counts.get(p["player_id"], 0) + 1
+        expected = sum(1 for n in counts.values() if n >= lb["min_matches"])
+        self.assertEqual(len(lb["players"]), expected)
+        self.assertGreaterEqual(len(lb["players"]), 100)
         self.assertTrue(all(p["name"] for p in lb["players"]))
         body = json.dumps(aggs)
         self.assertNotIn("player_id", body)

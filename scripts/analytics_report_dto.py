@@ -7,7 +7,7 @@ any shadow/private block outside Tier P1 (see
 WEBSITE_SHADOW_STATS_PROMOTION_HANDOVER_20260906.md §2-3; pid-only rule
 applies to review artifacts, not the website).
 
-CLI: python -m scripts.analytics_report_dto report.json [...] --out DIR
+CLI: python analytics_report_dto.py report.json [...] --out DIR
        [--accumulation accumulation-report.json]  (attach a scorer output)
 Library: sanitize_report(report_dict) -> dict, assert_sanitized(dto).
 
@@ -30,7 +30,7 @@ CONTRACT_VERSION = "analytics-report-dto-v1.0.0"
 # since the 2026-09-06 P2 decision, labeled provisional.
 FORBIDDEN_KEY_PARTS = (
     "player_id", "steam_id", "steamid", "event_id", "unix", "pos_",
-    "position", "private", "life_", "timeline", "break_reel",
+    "private", "life_", "timeline", "break_reel",
 )
 
 PROVISIONAL_NOTICE = (
@@ -273,9 +273,61 @@ def sanitize_report(report: dict) -> dict:
             },
             "accumulation": _accumulation_block(report, team_by_name),
         },
+        "lane_analytics": _positional_block(se, names_by_id),
     }
     assert_sanitized(dto)
     return dto
+
+
+def _positional_block(se: dict, names_by_id: dict) -> dict:
+    """Positional shadow (WEBSITE_POSITIONAL_ANALYTICS_PLAN_20260906 §2):
+    team-level control curve (GREEN), per-player overextension scalars
+    (GREEN), per-player depth profile scalars (aggregate, identity-attached —
+    user sign-off recorded in the plan). No coordinates cross: depth is a
+    0..1 lane position, lateral is a mean distance."""
+    mc = se.get("map_control") or {}
+    dp = se.get("depth_profiles") or {}
+    ov = se.get("overextension") or {}
+
+    def envelope(block: dict) -> dict:
+        return {"status": block.get("status", "unavailable"),
+                "definition": block.get("definition"),
+                "definition_version": block.get("definition_version"),
+                "caveats": list(block.get("caveats") or [])}
+
+    params = mc.get("parameters") or {}
+    return {
+        "provisional": True,
+        "notice": PROVISIONAL_NOTICE,
+        "parameters": {k: params.get(k) for k in (
+            "bin_seconds", "frontline_quantile", "ahead_margin",
+            "min_side_samples_per_bin")},
+        "map_control": envelope(mc) | {
+            "orientation_by_half": dict(mc.get("orientation_by_half") or {}),
+            "halves": {h: [[_num(t), _num(f)] for t, f in curve]
+                       for h, curve in (mc.get("halves") or {}).items()},
+            "mean_control_team1": _num(mc.get("mean_control_team1")),
+            "bins": dict(mc.get("bins") or {}),
+        },
+        "depth_profiles": envelope(dp) | {"players": [
+            {"name": _name(p.get("player_name_at_match"))
+             or names_by_id.get(p.get("player_id")),
+             "team": p.get("team"), "samples": _num(p.get("samples")),
+             "mean_depth": _num(p.get("mean_depth")),
+             "depth_sd": _num(p.get("depth_sd")),
+             "lateral_mean": _num(p.get("lateral_mean"))}
+            for p in dp.get("players") or []]},
+        "overextension": envelope(ov) | {
+            "frags": dict(ov.get("frags") or {}),
+            "players": [
+                {"name": _name(p.get("player_name_at_match"))
+                 or names_by_id.get(p.get("player_id")),
+                 "team": p.get("team")}
+                | {k: _num(p.get(k)) for k in (
+                    "kills_located", "kills_ahead", "deaths_located",
+                    "deaths_ahead", "kill_ahead_rate", "death_ahead_rate")}
+                for p in ov.get("players") or []]},
+    }
 
 
 def _walk_keys(node, path=""):

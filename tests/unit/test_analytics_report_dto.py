@@ -76,6 +76,29 @@ def internal_report():
                                         "weighted_frags": 3}],
                            "break_reel": []},
             "life_kat": {"private": True},
+            "map_control": {"status": "available", "definition": "map_control_frontline_v1",
+                            "definition_version": 1, "caveats": [],
+                            "parameters": {"bin_seconds": 4.0, "frontline_quantile": 0.75,
+                                           "ahead_margin": 0.05, "min_side_samples_per_bin": 4,
+                                           "clock": "producer_game_time"},
+                            "orientation_by_half": {"1": "team1_at_arc0"},
+                            "halves": {"1": [[0.0, 0.5], [4.0, 0.61]]},
+                            "mean_control_team1": 0.555,
+                            "bins": {"resolved": 2, "censored": 0}},
+            "depth_profiles": {"status": "available", "definition": "depth_profile_v1",
+                               "definition_version": 1, "caveats": [],
+                               "players": [{"player_id": 7, "player_name_at_match": "A",
+                                            "team": 1, "samples": 300, "mean_depth": 0.41,
+                                            "depth_sd": 0.3, "lateral_mean": 210.5,
+                                            "depth_sum": 123.0, "depth_sum_sq": 77.4,
+                                            "lateral_sum": 63150.0}]},
+            "overextension": {"status": "available", "definition": "overextension_frontline_v1",
+                              "definition_version": 1, "caveats": [],
+                              "frags": {"total": 10, "with_context": 8, "in_resolved_bins": 7},
+                              "players": [{"player_id": 7, "player_name_at_match": "A",
+                                           "team": 1, "kills_located": 4, "kills_ahead": 2,
+                                           "deaths_located": 3, "deaths_ahead": 1,
+                                           "kill_ahead_rate": 0.5, "death_ahead_rate": 0.333}]},
         },
         "telemetry_lifecycles": {"private_facts": {}},
     }
@@ -148,6 +171,30 @@ class Sanitize(unittest.TestCase):
         self.assertNotIn("quality_gates", acc)
         self.assertNotIn("secret detail", json.dumps(dto))
         assert_sanitized(dto)
+
+    def test_positional_block_is_scalar_and_named(self):
+        pos = sanitize_report(internal_report())["lane_analytics"]
+        self.assertTrue(pos["provisional"])
+        self.assertEqual(pos["map_control"]["status"], "available")
+        self.assertEqual(pos["map_control"]["halves"]["1"], [[0.0, 0.5], [4.0, 0.61]])
+        self.assertEqual(pos["map_control"]["mean_control_team1"], 0.555)
+        self.assertEqual(pos["parameters"]["bin_seconds"], 4.0)
+        d = pos["depth_profiles"]["players"][0]
+        self.assertEqual(d, {"name": "A", "team": 1, "samples": 300, "mean_depth": 0.41,
+                             "depth_sd": 0.3, "lateral_mean": 210.5})
+        o = pos["overextension"]["players"][0]
+        self.assertEqual(o["name"], "A")
+        self.assertEqual(o["kill_ahead_rate"], 0.5)
+        self.assertNotIn("player_id", json.dumps(pos))
+        self.assertNotIn("depth_sum", json.dumps(pos))
+
+    def test_positional_unavailable_when_blocks_missing(self):
+        rep = internal_report()
+        for k in ("map_control", "depth_profiles", "overextension"):
+            rep["shadow_explorations"].pop(k)
+        pos = sanitize_report(rep)["lane_analytics"]
+        self.assertEqual(pos["map_control"]["status"], "unavailable")
+        self.assertEqual(pos["overextension"]["players"], [])
 
     def test_duels_cross_team_only(self):
         d = sanitize_report(internal_report())["duels"]
