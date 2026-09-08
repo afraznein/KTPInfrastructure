@@ -29,6 +29,14 @@
 #     protection on `main` (flipped from warn-only after 2 weeks green-on-main,
 #     original design decision 2026-04-24, applied 2026-05-18) and, since the
 #     preprod/prod gate was introduced, on `preprod` too.
+#   - On every push to main — the post-merge signal. A PR run self-skips pytest
+#     whenever the diff misses the relevance filter, so a change that breaks the
+#     suite indirectly merges green and nothing re-checks it until the nightly.
+#     Push is a non-PR event, so it skips that filter and always runs pytest
+#     (see "Detect relevant changes"); that is deliberate and load-bearing —
+#     a push run that cancels the nightly's main leg via the shared concurrency
+#     group must also write the last-run marker the heartbeat watches, or
+#     silencing the nightly would look like a dead runner.
 #   - Nightly via schedule (09:00 UTC), targeting preprod only while the staged
 #     stack is being proven. The main leg remains paused until production
 #     enablement; paired
@@ -74,6 +82,13 @@ on:
     - cron: '0 9 * * *'
   pull_request:
     branches: [main, preprod]
+  push:
+    # Post-merge only. No `paths:` filter, for the same reason `pull_request:`
+    # has none — the job decides whether to run, so the decision stays in one
+    # place. preprod is deliberately absent: its coverage is the nightly's
+    # preprod leg, and doubling it here would put a second series of runs on a
+    # runner that shares the production data server.
+    branches: [main]
 
 jobs:
   integration:
