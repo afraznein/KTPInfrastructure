@@ -1579,9 +1579,18 @@ def main() -> int:
             "frag_context_diagnostic_match": diagnostic_frag_context_emitted,
             "damage": log_text.count('triggered "damage"'),
             "damage_match": damage_match_emitted,
+            # DoD 1.3 completes a capture with one of two log lines, and
+            # ktp_flag_captures now carries both: `dod_capture_area` for the
+            # timed/breakable multi-capper areas and `dod_control_point` for
+            # the instant single-capper points (the same two the capture-type
+            # ratio note above counts). Counting only the former made this an
+            # undercount the moment the daemon started recording the latter,
+            # which read as a 2x row inflation rather than as recovered
+            # captures on flags that had never produced a row at all.
             "flag_capture": sum(
                 1 for line in log_text.splitlines()
-                if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a "dod_capture_area"', line)
+                if re.search(r'^L .*"[^<]+<\d+><[^>]*><[^>]*>" triggered a '
+                             r'"(?:dod_capture_area|dod_control_point)"', line)
             ),
             "flag_position": log_text.count("KTP_FLAG_POSITION "),
             # The ownership poll can observe a final control-point change just
