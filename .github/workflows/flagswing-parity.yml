@@ -1,0 +1,57 @@
+name: flagswing JS/Python parity
+
+# scripts/flagswing/flagswing.js exists so the broadcast overlay can draw the
+# same momentum curve as this repo's scripts/flag_swing.py, live in the
+# browser. The whole value of that claim is that golden.json is regenerated
+# FROM flag_swing.py, not hand-typed -- so a coefficient or convention change
+# in the Python that isn't mirrored in the JS must fail CI, not go unnoticed
+# until the overlay silently diverges from the reports.
+#
+# This job regenerates golden.json from the Python on every run and diffs it
+# against the committed file: any difference means someone changed
+# flag_swing.py without re-running scripts/flagswing/make_golden.py. It then
+# runs the JS test suite against that (freshly regenerated) golden file.
+
+on:
+  push:
+    paths:
+      - 'scripts/flag_swing.py'
+      - 'scripts/flagswing/**'
+      - '.github/workflows/flagswing-parity.yml'
+  pull_request:
+    paths:
+      - 'scripts/flag_swing.py'
+      - 'scripts/flagswing/**'
+      - '.github/workflows/flagswing-parity.yml'
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts/flagswing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Regenerate golden.json from flag_swing.py
+        run: python make_golden.py
+
+      - name: Fail if golden.json drifted from the committed fixture
+        run: |
+          if ! git diff --exit-code golden.json; then
+            echo "::error::golden.json is stale. flag_swing.py changed without" \
+                 "re-running 'python make_golden.py' in scripts/flagswing/." \
+                 "Commit the regenerated golden.json."
+            exit 1
+          fi
+
+      - name: node --test
+        run: node --test
