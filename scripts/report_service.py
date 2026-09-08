@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import statistics
 import subprocess
 import sys
@@ -95,15 +96,25 @@ def load_match_analytics(repo: Path):
     return ma
 
 
-def pending_match_ids(db: LocalMysql, schema_version: int) -> list[str]:
+def pending_match_ids(db: LocalMysql, schema_version: int,
+                      since: str | None = None) -> list[str]:
     # Flag-state producer rows are the corpus criterion; verify the join
     # column names on the server before first run.
+    # `since` (e.g. "2026-09-13") excludes everything before it by
+    # ktp_matches.start_time — there is no official/scrim flag on a match,
+    # so a date floor is the only way to keep pre-season pracc traffic out
+    # of the first cron run without hand-filtering match ids.
+    if since is not None and not re.fullmatch(
+            r"\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?", since):
+        raise ValueError(f"--since must be 'YYYY-MM-DD' or "
+                         f"'YYYY-MM-DD HH:MM:SS', got {since!r}")
+    since_clause = f"AND m.start_time >= '{since}' " if since else ""
     out = db.sql(
         "SELECT DISTINCT m.match_id FROM ktp_matches m "
         "JOIN ktp_flag_state_events f ON BINARY f.match_id = BINARY m.match_id "
         "LEFT JOIN ktp_match_reports r ON BINARY r.match_id = BINARY m.match_id "
         f"AND r.schema_version = {schema_version} "
-        "WHERE m.match_id IS NOT NULL AND r.id IS NULL "
+        f"WHERE m.match_id IS NOT NULL AND r.id IS NULL {since_clause}"
         "ORDER BY m.match_id"
     )
     lines = out.strip().splitlines()
@@ -172,7 +183,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     sources = ma.source_capabilities(db)
     scorer = load_accumulation_scorer(args.repo)
     print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
-    ids = args.match_ids or pending_match_ids(db, schema_version)
+    ids = args.match_ids or pending_match_ids(db, schema_version, args.since)
     print(f"pending: {len(ids)} matches (schema v{schema_version})")
     failures = 0
     for match_id in ids:
@@ -418,6 +429,10 @@ def main() -> int:
     gen = sub.add_parser("generate")
     gen.add_argument("match_ids", nargs="*",
                      help="explicit match ids; default: discover pending")
+    gen.add_argument("--since", default=None,
+                     help="only auto-discover matches with start_time >= "
+                          "this ('YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'); "
+                          "ignored when match_ids are given explicitly")
     sub.add_parser("aggregate")
     args = ap.parse_args()
     return cmd_generate(args) if args.cmd == "generate" else cmd_aggregate(args)

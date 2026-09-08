@@ -32,7 +32,10 @@
 #              bot, no AI. It is required on KTPAMXX `main` and `preprod` as
 #              `corpus-regression / Lane B (corpus, preprod, run 1)`, and it has
 #              caught a real regression (a migrate_022 failure that reproduced
-#              on two PRs and cleared on the fix).
+#              on two PRs and cleared on the fix). It also runs post-merge on
+#              this repo's `main`, via lane-b-corpus-main.yml — nothing in this
+#              file's own `on:` block fires on a merge, which is why that
+#              caller exists rather than another trigger here.
 #
 # ⚠️ This paragraph used to forbid BOTH lanes from gating. It was written when
 # this workflow was bots-only — the title above still says so — and the corpus
@@ -402,8 +405,12 @@ jobs:
           test "$(grep -c '^INSERT' build/lane-b-artifacts/base-schema.sql || true)" -eq 0
           test "$(grep -c '^CREATE TABLE' build/lane-b-artifacts/base-schema.sql)" -gt 0
 
+      # Deliberately ungated. `--network none` over committed sources only —
+      # no bot, no match, no artifact from a full-gated step — so this belongs
+      # to `corpus`'s determinism claim rather than `full`'s. It was full-only,
+      # which is how `assert report["schema_version"] == 8` sat red on main for
+      # a day with nothing that fires on a merge able to see it.
       - name: Lane B harness unit tests
-        if: ${{ env.LANE == 'full' }}
         run: |
           docker run --rm --network none \
             -v "${PWD}/.github:/work/.github:ro" \
