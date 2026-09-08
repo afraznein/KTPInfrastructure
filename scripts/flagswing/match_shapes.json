@@ -1,0 +1,70 @@
+{
+ "note": "Small (roster, flag) shapes extracted from real matches, used only to drive a deterministic synthetic event sequence in make_golden.py -- no player identity, no positions, no match content beyond team split and distinct flag indices. Committed so golden.json is reproducible from a clean checkout with no dependency on a local prod-reports directory.",
+ "shapes": [
+  {
+   "match_id": "1.3-6672-NY1",
+   "map_name": "dod_lennon5_b1",
+   "teams": {
+    "27": 2,
+    "41": 1,
+    "50": 2,
+    "75": 2,
+    "103": 2,
+    "136": 2,
+    "142": 1,
+    "150": 1,
+    "151": 1,
+    "251": 1,
+    "258": 2,
+    "263": 1
+   },
+   "flag_ids": [
+    1,
+    3
+   ]
+  },
+  {
+   "match_id": "1.3-6673-NY1",
+   "map_name": "dod_armory_b6",
+   "teams": {
+    "6": 2,
+    "7": 1,
+    "49": 1,
+    "75": 1,
+    "100": 2,
+    "103": 1,
+    "114": 2,
+    "142": 2,
+    "153": 2,
+    "223": 1,
+    "258": 2,
+    "263": 1
+   },
+   "flag_ids": [
+    1,
+    2
+   ]
+  },
+  {
+   "match_id": "1.3-6674-NY1",
+   "map_name": "dod_saints2_b3e",
+   "teams": {
+    "6": 1,
+    "41": 2,
+    "126": 1,
+    "136": 2,
+    "150": 1,
+    "153": 1,
+    "159": 2,
+    "223": 2,
+    "263": 1,
+    "284": 2,
+    "306": 2,
+    "307": 1
+   },
+   "flag_ids": [
+    0
+   ]
+  }
+ ]
+}

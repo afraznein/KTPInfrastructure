@@ -9,13 +9,50 @@ import os
 import unittest
 from pathlib import Path
 
-from scripts.report_service import build_aggregates, is_publishable, sql_str
+from scripts.report_service import (
+    build_aggregates, is_publishable, pending_match_ids, sql_str)
 
 SPECIMENS = os.environ.get("KTP_REPORT_SPECIMENS")
 
 
 def check(level, code):
     return {"level": level, "code": code, "message": "", "evidence": {}}
+
+
+class FakeDb:
+    """Duck-types LocalMysql.sql() to capture the query without a server."""
+
+    def __init__(self, response="match_id\n1.3-1-X\n"):
+        self.queries = []
+        self.response = response
+
+    def sql(self, query):
+        self.queries.append(query)
+        return self.response
+
+
+class PendingMatchIdsSince(unittest.TestCase):
+    def test_no_since_omits_clause(self):
+        db = FakeDb()
+        pending_match_ids(db, 8)
+        self.assertNotIn("start_time", db.queries[0])
+
+    def test_since_date_only(self):
+        db = FakeDb()
+        pending_match_ids(db, 8, "2026-09-13")
+        self.assertIn("m.start_time >= '2026-09-13'", db.queries[0])
+
+    def test_since_datetime(self):
+        db = FakeDb()
+        pending_match_ids(db, 8, "2026-09-13 00:00:00")
+        self.assertIn("m.start_time >= '2026-09-13 00:00:00'", db.queries[0])
+
+    def test_since_rejects_non_date_shape(self):
+        db = FakeDb()
+        for bad in ("2026-09-13'; DROP TABLE ktp_matches; --",
+                   "not-a-date", "2026/09/13", ""):
+            with self.assertRaises(ValueError):
+                pending_match_ids(db, 8, bad)
 
 
 class PublishableGate(unittest.TestCase):

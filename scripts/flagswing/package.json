@@ -1,0 +1,11 @@
+{
+  "name": "flagswing-js",
+  "version": "1.0.0",
+  "description": "Dependency-free JS reference implementation of the KTP flag_swing_v1 momentum baseline.",
+  "type": "module",
+  "main": "flagswing.js",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "UNLICENSED"
+}
