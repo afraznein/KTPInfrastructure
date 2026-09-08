@@ -64,8 +64,9 @@ class _HalfState:
     """Mutable half state: flag owners and alive sets, allies-perspective."""
 
     def __init__(self, flag_count: int, roster_size: int,
-                 config: FlagSwingConfig) -> None:
-        self.owners: dict[int, int] = {}
+                 config: FlagSwingConfig,
+                 initial_owners: dict[int, int] | None = None) -> None:
+        self.owners: dict[int, int] = dict(initial_owners or {})
         self.alive: dict[int, bool] = {}
         self.teams: dict[int, int] = {}
         self.flag_count = max(flag_count, 1)
@@ -100,6 +101,7 @@ def build_flag_swing_shadow(
     *,
     source_available: bool = True,
     temporal_valid: bool = True,
+    spawn_ownership: dict[int, int] | None = None,
 ) -> dict[str, Any]:
     """Per-event swing timeline, per-player attributed swing, break ranking.
 
@@ -109,6 +111,17 @@ def build_flag_swing_shadow(
     player_id, flag_index) are priced counterfactually.  Duel difficulty:
     each frag's swing is also reported with the killer's man-advantage at
     the kill, the Tier 3 economy analog.
+
+    ``spawn_ownership`` (flag_index -> 1/2) seeds each half's starting
+    ownership for flags whose authored spawn owner was reconstructed from
+    HUD recordings -- see
+    handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md. Collection
+    records these flags' initial state as neutral (engine ownership is not
+    yet readable at match-context-available), and an uncontested flag then
+    never emits a correcting transition, so without this seed the flag
+    silently undercounts its holder for the whole half. Real transitions
+    from ``flag_states`` still override the seed the moment they arrive;
+    this only fills the gap before the first one.
     """
     config = config or FlagSwingConfig()
     config.validate()
@@ -146,8 +159,18 @@ def build_flag_swing_shadow(
     if not teams:
         envelope["status"] = "unavailable"
         return envelope
-    flag_ids = { _int_or_none(r.get("flag_index"))
-                 for r in flag_states } - {None}
+    spawn_ownership = spawn_ownership or {}
+    flag_ids = ({ _int_or_none(r.get("flag_index"))
+                 for r in flag_states } | set(spawn_ownership)) - {None}
+    if spawn_ownership:
+        envelope["caveats"].append(
+            "Initial ownership for flag_index "
+            f"{sorted(spawn_ownership)} is reconstructed from HUD "
+            "recordings (authored spawn owner), not observed from "
+            "collection -- see "
+            "handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md. "
+            "Real transitions still override it as soon as one arrives.")
+        envelope["reconstructed_initial_flags"] = sorted(spawn_ownership)
 
     events: list[tuple[float, int, int, str, dict[str, Any]]] = []
     for order, row in enumerate(flag_states):
@@ -181,7 +204,8 @@ def build_flag_swing_shadow(
     for at, _order, half, kind, row in events:
         if half != current_half:
             current_half = half
-            state = _HalfState(len(flag_ids) or 5, len(teams), config)
+            state = _HalfState(len(flag_ids) or 5, len(teams), config,
+                                initial_owners=spawn_ownership)
             for pid in teams:
                 state.teams[pid] = teams[pid]
                 state.alive[pid] = True
@@ -190,7 +214,15 @@ def build_flag_swing_shadow(
         if kind == "flag":
             flag = _int_or_none(row.get("flag_index"))
             owner = _int_or_none(row.get("owner_team"))
-            state.owners[flag] = owner if owner in (1, 2) else 0
+            is_initial_row = bool(row.get("is_initial"))
+            reconstructed = flag in spawn_ownership
+            if not (is_initial_row and reconstructed):
+                # Collection's own is_initial=1 row is near-always a wrong
+                # "neutral" for a flag we have a trusted reconstructed
+                # spawn owner for (that wrong reading is the defect this
+                # seed corrects) -- keep the seed until a REAL transition
+                # (is_initial=0) arrives.
+                state.owners[flag] = owner if owner in (1, 2) else 0
             delta = state.p_allies() - before
             credited = caps_by_key.get(
                 (half, row.get("flag_name"), row.get("event_time")), [])

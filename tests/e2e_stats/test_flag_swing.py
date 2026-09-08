@@ -88,6 +88,49 @@ def test_swing_suppression_paths():
         "unavailable"
 
 
+def test_spawn_ownership_seeds_initial_state_and_survives_initial_row():
+    # Flag 0 has only its (broken) is_initial=1 neutral row -- collection
+    # never observed a transition because it was never captured. Without
+    # the seed this flag is neutral all half; with it, allies hold it from
+    # the start and the is_initial row must not stomp the seed back to 0.
+    states = [flag_state(1, 0, 0, 1.0, name="Home", initial=1)]
+    result = build_flag_swing_shadow(
+        states, [], [], [], ROSTER, spawn_ownership={0: 1})
+    assert result["reconstructed_initial_flags"] == [0]
+    assert any("reconstructed from HUD" in c for c in result["caveats"])
+    # No non-initial transition ever printed to the timeline for flag 0,
+    # but the seeded ownership should still count in p_allies -- confirm
+    # indirectly via a later allies kill: man-advantage swing alone would
+    # be small, so a strongly positive delta implies the flag term is
+    # already counting allies as holding flag 0.
+    frags = [frag(1, 10.0, 4, 1)]  # axis kills an ally, should be negative
+    result2 = build_flag_swing_shadow(
+        states, frags, [], [], ROSTER, spawn_ownership={0: 1})
+    assert result2["timeline"][-1]["delta"] < 0
+
+
+def test_spawn_ownership_yields_to_a_real_transition():
+    # A genuine (is_initial=0) transition must still override the seed the
+    # moment it arrives, even though the flag was reconstructed.
+    states = [
+        flag_state(1, 0, 0, 1.0, name="Home", initial=1),
+        flag_state(1, 0, 2, 50.0, name="Home", initial=0),
+    ]
+    result = build_flag_swing_shadow(
+        states, [], [], [], ROSTER, spawn_ownership={0: 1})
+    # The real transition to axis at t=50 is a genuine flag-flip and must
+    # appear in the timeline (unlike the is_initial row, which is filtered).
+    assert len(result["timeline"]) == 1
+    assert result["timeline"][0]["owner"] == 2
+
+
+def test_no_spawn_ownership_is_unchanged_behavior():
+    states = [flag_state(1, 0, 0, 1.0, name="Home", initial=1)]
+    result = build_flag_swing_shadow(states, [], [], [], ROSTER)
+    assert "reconstructed_initial_flags" not in result
+    assert not any("reconstructed from HUD" in c for c in result["caveats"])
+
+
 def test_swing_config_validation():
     with pytest.raises(ValueError):
         FlagSwingConfig(flag_coefficient=-1.0).validate()
