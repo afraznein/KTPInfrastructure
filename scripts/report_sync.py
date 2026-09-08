@@ -4,9 +4,9 @@ Runs on the data server after report_service.py (cron, same box). Reads the
 latest publishable row per match from ktp_match_reports (migration 026),
 sanitizes it with analytics_report_dto.sanitize_report (whitelist DTO, names only,
 no ids), and inserts missing rows into the website's Supabase `ktp` schema via
-PostgREST. Latest season aggregates sync as-is (they are already name/pid-lean;
-the aggregate builder emits no steam ids — pid-based head_to_head pairs are
-replaced by the sanitized name-keyed payload before insert).
+PostgREST. Latest season aggregates run through the same forbidden-key
+assertion before insert; a kind whose builder still emits ids fails the run
+rather than publishing.
 
 Stateless and idempotent: asks Supabase which (match_id, schema, revision)
 rows exist, inserts only the missing ones. Nothing is updated or deleted.
@@ -28,13 +28,19 @@ import subprocess
 import sys
 import urllib.request
 
-from scripts.analytics_report_dto import sanitize_report
+from scripts.analytics_report_dto import assert_sanitized, sanitize_report
 
 DATABASE = "hlstatsx"
 # Every kind here is name-keyed; database ids never cross to the website
 # (2026-08-29 handover). Add a kind only after its builder emits names.
-SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "head_to_head",
-                            "leaderboard_ktpr_v22", "season_positional"}
+# head_to_head is deliberately absent: its pairs are still pid-keyed.
+SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "leaderboard_ktpr_v22",
+                            "season_positional"}
+
+# Kept under PostgREST's default max-rows so a page is never server-truncated.
+PAGE_SIZE = 500
+# A server that ignores `offset` would otherwise page forever on one result.
+MAX_PAGES = 4000
 
 
 def mysql(query: str) -> str:
@@ -67,6 +73,27 @@ def supabase(path: str, method: str = "GET", body=None):
         return json.loads(raw) if raw else None
 
 
+def supabase_all(path: str) -> list[dict]:
+    """Every row at `path`, walked page by page.
+
+    PostgREST truncates a response at its own max-rows and says so only in
+    Content-Range, so an unpaged read silently returns a prefix — and a short
+    prefix of the already-synced set re-POSTs rows that violate a unique key.
+    Stop on an empty page, never on a short one: the cap is the server's, not
+    ours, and a short page is what truncation looks like.
+    """
+    joiner = "&" if "?" in path else "?"
+    rows: list[dict] = []
+    offset = 0
+    for _ in range(MAX_PAGES):
+        page = supabase(f"{path}{joiner}offset={offset}&limit={PAGE_SIZE}")
+        if not page:
+            return rows
+        rows.extend(page)
+        offset += len(page)
+    raise RuntimeError(f"{path}: still returning rows after {MAX_PAGES} pages")
+
+
 def pending_reports() -> list[tuple[str, int, int]]:
     """Latest publishable (match_id, schema_version, revision) per match,
     minus rows Supabase already has."""
@@ -80,7 +107,7 @@ def pending_reports() -> list[tuple[str, int, int]]:
              for ln in out.strip().splitlines()[1:]
              if (f := ln.split("\t")) and len(f) == 3}
     have = {(row["match_id"], row["report_schema_version"], row["revision"])
-            for row in supabase(
+            for row in supabase_all(
                 "/rest/v1/match_report"
                 "?select=match_id,report_schema_version,revision")}
     return sorted(local - have)
@@ -134,7 +161,7 @@ def sync_aggregates(dry_run: bool) -> int:
     )
     lines = out.strip().splitlines()[1:]
     have = {(row["kind"], row["revision"])
-            for row in supabase(
+            for row in supabase_all(
                 "/rest/v1/season_aggregate?select=kind,revision")}
     synced = 0
     for ln in lines:
@@ -144,6 +171,14 @@ def sync_aggregates(dry_run: bool) -> int:
             continue
         if (kind, int(revision)) in have:
             continue
+        # Reports get this inside sanitize_report; aggregates are inserted as
+        # built, so this is their only gate. Runs before the dry-run branch so
+        # --dry-run cannot report an unpublishable aggregate as ready.
+        body = json.loads(payload)
+        try:
+            assert_sanitized(body)
+        except ValueError as exc:
+            raise ValueError(f"aggregate {kind} r{revision}: {exc}") from exc
         if dry_run:
             print(f"  DRY aggregate {kind} r{revision}")
             synced += 1
@@ -154,7 +189,7 @@ def sync_aggregates(dry_run: bool) -> int:
             "source_report_count": int(source_count),
             "report_schema_version": int(schema_version),
             "payload_sha256": sha,
-            "payload": json.loads(payload),
+            "payload": body,
         })
         print(f"  synced aggregate {kind} r{revision}")
         synced += 1
