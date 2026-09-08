@@ -23,12 +23,18 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+DEFAULT_SPAWN_OWNERSHIP = (
+    Path(__file__).resolve().parents[1] / "config" / "analytics"
+    / "spawn_ownership.toml"
+)
 
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql  # noqa: E402
 from scripts.damage_conversion import (  # noqa: E402
@@ -186,6 +192,23 @@ def load_fixture(db: EphemeralMysql, fixture: Path) -> None:
             f"fixture load failed ({fixture.name}): "
             f"{stderr.decode(errors='replace')[-1500:]}"
         )
+
+
+def load_spawn_ownership(path: Path, map_name: str) -> dict[int, int]:
+    """(flag_index -> 1/2) reconstructed spawn owners for one map.
+
+    Auto-derived, not hand-reviewed -- see config/analytics/spawn_ownership.toml
+    and handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md. A flag absent
+    here is unresolved, not neutral; callers must not fill in a default.
+    """
+    if not path.exists():
+        return {}
+    with path.open("rb") as source:
+        maps = tomllib.load(source).get("maps", {})
+    flags = maps.get(map_name, {}).get("flags", {})
+    return {int(flag_index): int(entry["owner"])
+            for flag_index, entry in flags.items()
+            if entry.get("owner") in (1, 2)}
 
 
 def discover_match_ids(db: EphemeralMysql) -> list[str]:
@@ -1442,6 +1465,9 @@ def build_report(
             and enriched_frag_available
             and sources.get("life_boundaries", False)),
         temporal_valid=source_mode != "replay",
+        spawn_ownership=load_spawn_ownership(
+            DEFAULT_SPAWN_OWNERSHIP, str(match.get("map_name") or "")
+        ) if match else None,
     )
     ktpr_v2 = build_ktpr_v2_shadow(
         players_public,
