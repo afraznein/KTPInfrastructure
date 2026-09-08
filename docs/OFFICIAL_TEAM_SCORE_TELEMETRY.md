@@ -47,6 +47,12 @@ python3 scripts/import_team_score_events.py \
   /srv/hud-observer/matches/MATCH_ID/events.jsonl
 ```
 
+The example above is the Denver-4 LAN deployment. **On the production data
+server the observer writes to `/opt/hud-observer/matches/MATCH_ID/`**, against
+database `hlstatsx`. The roots are per-deployment and the allowlist is exact, so
+use the path that deployment actually writes rather than assuming either
+example generalizes.
+
 Use `--validate-only` to perform the full source/schema/settlement validation
 without a database write. `--migrate` applies the repository migration first,
 but production rollout should normally keep schema deployment as its own
