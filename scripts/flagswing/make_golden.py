@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import hashlib
 import importlib.util
 import json
 import random
@@ -38,6 +39,12 @@ DEFAULT_SHAPES = HERE / "match_shapes.json"
 DEFAULT_REPORTS = (
     r"G:\GIT\ktp_stats\artifacts\real-match-tier2-20260906\prod-reports\*.json"
 )
+# scripts/flagswing -> scripts -> repo root. Used only to render `source` as a
+# checkout-independent relative path in golden.json -- an absolute path bakes
+# in the machine that generated it (Windows backslashes, a different prefix on
+# every CI runner) and made the CI parity diff fail against ANY committed
+# fixture, on every run, regardless of whether flag_swing.py itself matched.
+REPO_ROOT = HERE.parent.parent
 MATCH_COUNT = 3
 HALVES = 2
 EVENTS_PER_HALF = 90
@@ -187,11 +194,22 @@ def main() -> None:
         # still moves the numerator.
         build_case(module, shapes[2], seed=3, null_flags=True, force_no_flags=True),
     ]
+    # A repo-relative posix path plus a content hash, NOT the absolute path
+    # make_golden.py was run from -- see the REPO_ROOT comment above. The hash
+    # is the actual integrity signal: it lets a reader confirm this fixture
+    # still matches the flag_swing.py in the tree without re-running Python.
+    try:
+        source_display = args.source.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
+    except ValueError:
+        source_display = args.source.name  # outside the repo (--source override)
+    source_sha256 = hashlib.sha256(args.source.read_bytes()).hexdigest()
+
     payload = {
         "definition": "flag_swing_v1",
         "definition_version": 1,
         "generator": "make_golden.py",
-        "source": str(args.source),
+        "source": source_display,
+        "source_sha256": source_sha256,
         "note": "p values produced by _HalfState.p_allies from the pipeline source.",
         "cases": cases,
     }

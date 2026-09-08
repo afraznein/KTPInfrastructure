@@ -2,7 +2,8 @@
  "definition": "flag_swing_v1",
  "definition_version": 1,
  "generator": "make_golden.py",
- "source": "G:\\GIT\\ktp_stats\\branches\\KTPInfrastructure-flagswing-js\\scripts\\flag_swing.py",
+ "source": "scripts/flag_swing.py",
+ "source_sha256": "bc22c496ca07ebfadcee3e19664a8be7b94b8732ff82c9b499c4b53261f05cc8",
  "note": "p values produced by _HalfState.p_allies from the pipeline source.",
  "cases": [
   {
