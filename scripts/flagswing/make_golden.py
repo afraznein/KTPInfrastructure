@@ -28,10 +28,13 @@ HERE = Path(__file__).resolve().parent
 # Co-located with the pipeline's own flag_swing.py in this repo -- resolved
 # relative to this file, not hardcoded to one machine's checkout path.
 DEFAULT_SOURCE = HERE.parent / "flag_swing.py"
-# Match reports are a local analytics artifact, not part of this repo. Only
-# needed to pick 3 realistic (roster, flag) *shapes* to drive synthetic replay
-# with -- see match_shapes() -- so re-running this against a different machine
-# means passing --reports to wherever that machine keeps its prod-reports.
+# The 3 (roster, flag) *shapes* used to drive synthetic replay -- see
+# match_shapes_from_file() -- committed to this repo so golden.json is
+# reproducible from a clean checkout with no dependency on a local analytics
+# directory. CI regenerates from this file. To pick a fresh set of shapes from
+# real matches instead (e.g. after a schema change), pass --reports pointing
+# at a local Tier-2 prod-reports glob and --refresh-shapes.
+DEFAULT_SHAPES = HERE / "match_shapes.json"
 DEFAULT_REPORTS = (
     r"G:\GIT\ktp_stats\artifacts\real-match-tier2-20260906\prod-reports\*.json"
 )
@@ -48,6 +51,20 @@ def load_flag_swing(path: Path):
     sys.modules[spec.name] = module  # @dataclass resolves annotations via sys.modules
     spec.loader.exec_module(module)
     return module
+
+
+def match_shapes_from_file(path: Path) -> list[dict]:
+    """Load the committed (roster, flag) shapes -- no local reports needed."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    shapes = []
+    for s in payload["shapes"]:
+        shapes.append({
+            "match_id": s["match_id"],
+            "map_name": s["map_name"],
+            "teams": {int(pid): team for pid, team in s["teams"].items()},
+            "flag_ids": list(s["flag_ids"]),
+        })
+    return shapes
 
 
 def match_shapes(pattern: str, limit: int) -> list[dict]:
@@ -133,12 +150,34 @@ def build_case(module, shape: dict, seed: int, *, null_flags: bool,
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
-    parser.add_argument("--reports", default=DEFAULT_REPORTS)
+    parser.add_argument("--shapes", type=Path, default=DEFAULT_SHAPES,
+                         help="Committed (roster, flag) shapes -- the default, "
+                              "and what CI uses. No local reports needed.")
+    parser.add_argument("--reports", default=DEFAULT_REPORTS,
+                         help="Pick a FRESH set of shapes from a local Tier-2 "
+                              "prod-reports glob instead of --shapes. Requires "
+                              "--refresh-shapes.")
+    parser.add_argument("--refresh-shapes", action="store_true",
+                         help="With --reports: overwrite match_shapes.json with "
+                              "a newly picked set of shapes before generating.")
     parser.add_argument("--out", type=Path, default=HERE / "golden.json")
     args = parser.parse_args()
 
     module = load_flag_swing(args.source)
-    shapes = match_shapes(args.reports, MATCH_COUNT)
+    if args.refresh_shapes:
+        shapes = match_shapes(args.reports, MATCH_COUNT)
+        args.shapes.write_text(json.dumps({
+            "note": "Small (roster, flag) shapes extracted from real matches, used "
+                    "only to drive a deterministic synthetic event sequence in "
+                    "make_golden.py -- no player identity, no positions, no match "
+                    "content beyond team split and distinct flag indices. Committed "
+                    "so golden.json is reproducible from a clean checkout with no "
+                    "dependency on a local prod-reports directory.",
+            "shapes": shapes,
+        }, indent=1), encoding="utf-8")
+        print(f"refreshed {args.shapes} from {args.reports}")
+    else:
+        shapes = match_shapes_from_file(args.shapes)
     cases = [
         build_case(module, shapes[0], seed=1, null_flags=False, force_no_flags=False),
         # Second case exercises the owners[None] quirk...

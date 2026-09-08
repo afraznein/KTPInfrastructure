@@ -107,12 +107,25 @@ its denominator is the 5 fallback. Corrupting the roster convention
 python make_golden.py
 ```
 
-Standard library only. It imports the co-located `../flag_swing.py` by path
-(override with `--source` to point at a different checkout) and reads the
-Tier-2 prod reports (`--reports`, a local analytics artifact, not part of this
-repo — pass your own path) for realistic match shapes. Re-run it whenever the
-Python definition or its coefficients change; if the JS then fails, the JS is
-the thing that is wrong.
+Standard library only, and needs nothing outside this repo. It imports the
+co-located `../flag_swing.py` by path (override with `--source`) and drives
+synthetic replay from `match_shapes.json` — 3 small (roster, flag) shapes
+committed alongside it, so this is fully reproducible from a clean checkout
+and is exactly what CI runs. Re-run whenever the Python definition or its
+coefficients change; if the JS then fails, the JS is the thing that is wrong.
+
+To pick a *different* set of shapes from real matches (e.g. after a schema
+change makes the current three stale), pass a local Tier-2 prod-reports glob
+and `--refresh-shapes`:
+
+```
+python make_golden.py --reports "G:\path\to\prod-reports\*.json" --refresh-shapes
+```
+
+That overwrites `match_shapes.json` (commit the result) and regenerates
+`golden.json` from it. `--reports` is a local analytics artifact, never part
+of this repo, and is ignored unless `--refresh-shapes` is also passed —
+plain `make_golden.py` never touches it.
 
 ## Consuming this from another repo
 
@@ -127,4 +140,5 @@ noting the `flag_swing_v1` `definition_version` it was copied at.
 - `flagswing.js` — the implementation (ES module, ~90 lines, browser + Node).
 - `flagswing.test.js` — `node --test` suite, both layers.
 - `golden.json` — 546 state/expectation steps produced by the Python.
-- `make_golden.py` — regenerates `golden.json`.
+- `match_shapes.json` — the 3 (roster, flag) shapes `golden.json` is built from.
+- `make_golden.py` — regenerates `golden.json` from `match_shapes.json` + the Python.
