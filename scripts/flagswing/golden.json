@@ -1,0 +1,3454 @@
+{
+ "definition": "flag_swing_v1",
+ "definition_version": 1,
+ "generator": "make_golden.py",
+ "source": "scripts/flag_swing.py",
+ "source_sha256": "bc22c496ca07ebfadcee3e19664a8be7b94b8732ff82c9b499c4b53261f05cc8",
+ "note": "p values produced by _HalfState.p_allies from the pipeline source.",
+ "cases": [
+  {
+   "match_id": "1.3-6672-NY1",
+   "map_name": "dod_lennon5_b1",
+   "flagCoefficient": 2.0,
+   "aliveCoefficient": 1.0,
+   "flagCount": 2,
+   "rosterSize": 12,
+   "teams": [
+    [
+     27,
+     2
+    ],
+    [
+     41,
+     1
+    ],
+    [
+     50,
+     2
+    ],
+    [
+     75,
+     2
+    ],
+    [
+     103,
+     2
+    ],
+    [
+     136,
+     2
+    ],
+    [
+     142,
+     1
+    ],
+    [
+     150,
+     1
+    ],
+    [
+     151,
+     1
+    ],
+    [
+     251,
+     1
+    ],
+    [
+     258,
+     2
+    ],
+    [
+     263,
+     1
+    ]
+   ],
+   "steps": [
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.7471242672706695
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.8972159750827483
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.9046505351008906
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.9046505351008906
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.8972159750827483
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.8717662624074807
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.8717662624074807
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": true,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.8972159750827483
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.9046505351008906
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.6026853379784917
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 50,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 50,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": true,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 50,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": true,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.12823373759251927
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": true,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.12823373759251927
+    },
+    {
+     "op": "alive",
+     "player": 50,
+     "up": true,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 0,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "alive",
+     "player": 27,
+     "up": false,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 0,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": true,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 50,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 1,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.7471242672706695
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 251,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.12823373759251927
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": true,
+     "p": 0.12823373759251927
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.13784165696493572
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.13784165696493572
+    },
+    {
+     "op": "flag",
+     "flag": 3,
+     "owner": 2,
+     "p": 0.13784165696493572
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.3029407160345927
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 151,
+     "up": false,
+     "p": 0.2689414213699951
+    }
+   ]
+  },
+  {
+   "match_id": "1.3-6673-NY1",
+   "map_name": "dod_armory_b6",
+   "flagCoefficient": 2.0,
+   "aliveCoefficient": 1.0,
+   "flagCount": 2,
+   "rosterSize": 12,
+   "teams": [
+    [
+     6,
+     2
+    ],
+    [
+     7,
+     1
+    ],
+    [
+     49,
+     1
+    ],
+    [
+     75,
+     1
+    ],
+    [
+     100,
+     2
+    ],
+    [
+     103,
+     1
+    ],
+    [
+     114,
+     2
+    ],
+    [
+     142,
+     2
+    ],
+    [
+     153,
+     2
+    ],
+    [
+     223,
+     1
+    ],
+    [
+     258,
+     2
+    ],
+    [
+     263,
+     1
+    ]
+   ],
+   "steps": [
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 2,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": true,
+     "p": 0.2856375705089441
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": true,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.03732688734412946
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.09534946489910949
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.09534946489910949
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.09534946489910949
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.09534946489910949
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.11920292202211755
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.4174297935376853
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 2,
+     "p": 0.10278402491725178
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": true,
+     "p": 0.11072731797236822
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 0,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": false,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": true,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8717662624074807
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": true,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 0,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 2,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.7471242672706695
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": false,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 0,
+     "p": 0.8717662624074807
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.2689414213699951
+    },
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.8807970779778823
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": false,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.9655548043337889
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.9655548043337889
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 0,
+     "p": 0.8892726820276319
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.8972159750827483
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 2,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.9595604351819967
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.9562000022835389
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": true,
+     "p": 0.9525741268224334
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": true,
+     "p": 0.9486642068846837
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.6970592839654074
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.6970592839654074
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.6970592839654074
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": true,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": false,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": false,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 2,
+     "p": 0.22270013882530884
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": true,
+     "p": 0.2374580283439025
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": true,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": 2,
+     "owner": 1,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "alive",
+     "player": 100,
+     "up": false,
+     "p": 0.25287573272933045
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 1,
+     "p": 0.7143624294910559
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": false,
+     "p": 0.7310585786300049
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": true,
+     "p": 0.7471242672706695
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": true,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "alive",
+     "player": 49,
+     "up": true,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.7625419716560975
+    },
+    {
+     "op": "alive",
+     "player": 114,
+     "up": false,
+     "p": 0.7772998611746911
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.9626731126558706
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.9655548043337889
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.791391472673955
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.8048153229861598
+    },
+    {
+     "op": "alive",
+     "player": 258,
+     "up": false,
+     "p": 0.8048153229861598
+    },
+    {
+     "op": "alive",
+     "player": 103,
+     "up": true,
+     "p": 0.8175744761936437
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.8048153229861598
+    },
+    {
+     "op": "alive",
+     "player": 142,
+     "up": true,
+     "p": 0.791391472673955
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": false,
+     "p": 0.7772998611746911
+    },
+    {
+     "op": "flag",
+     "flag": 1,
+     "owner": 2,
+     "p": 0.320821300824607
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": false,
+     "p": 0.3029407160345927
+    },
+    {
+     "op": "alive",
+     "player": 7,
+     "up": true,
+     "p": 0.320821300824607
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.320821300824607
+    },
+    {
+     "op": "alive",
+     "player": 75,
+     "up": true,
+     "p": 0.33924363123418283
+    }
+   ]
+  },
+  {
+   "match_id": "1.3-6674-NY1",
+   "map_name": "dod_saints2_b3e",
+   "flagCoefficient": 2.0,
+   "aliveCoefficient": 1.0,
+   "flagCount": 5,
+   "rosterSize": 12,
+   "teams": [
+    [
+     6,
+     1
+    ],
+    [
+     41,
+     2
+    ],
+    [
+     126,
+     1
+    ],
+    [
+     136,
+     2
+    ],
+    [
+     150,
+     1
+    ],
+    [
+     153,
+     1
+    ],
+    [
+     159,
+     2
+    ],
+    [
+     223,
+     2
+    ],
+    [
+     263,
+     1
+    ],
+    [
+     284,
+     2
+    ],
+    [
+     306,
+     2
+    ],
+    [
+     307,
+     1
+    ]
+   ],
+   "steps": [
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.5415704832167999
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4419298941260467
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": true,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.3620063293390162
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": false,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.43782349911420193
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": false,
+     "p": 0.5374298453437496
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.45842951678320015
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "resetHalf",
+     "p": 0.5
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.4419298941260467
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.5
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.520821285372743
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.4419298941260467
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.46257015465625045
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.46257015465625045
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": true,
+     "p": 0.4419298941260467
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6379936706609839
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": true,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": false,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.598687660112452
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": true,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.5580701058739532
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.5785116791685817
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 307,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.47917871462725703
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": false,
+     "p": 0.3814653166494473
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.401312339887548
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 223,
+     "up": false,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 153,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": true,
+     "p": 0.4214883208314183
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 150,
+     "up": true,
+     "p": 0.6185346833505527
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.6379936706609839
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6379936706609839
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.6379936706609839
+    },
+    {
+     "op": "alive",
+     "player": 6,
+     "up": true,
+     "p": 0.6570104626734988
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.6570104626734988
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 2,
+     "p": 0.46257015465625045
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.46257015465625045
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 0,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": false,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 263,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 41,
+     "up": false,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 136,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 159,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 284,
+     "up": false,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": true,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "alive",
+     "player": 306,
+     "up": false,
+     "p": 0.5825702064623147
+    },
+    {
+     "op": "alive",
+     "player": 126,
+     "up": false,
+     "p": 0.5621765008857981
+    },
+    {
+     "op": "flag",
+     "flag": null,
+     "owner": 1,
+     "p": 0.6570104626734988
+    }
+   ]
+  }
+ ]
+}

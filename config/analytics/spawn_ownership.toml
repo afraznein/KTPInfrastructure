@@ -1,0 +1,152 @@
+# Auto-derived spawn ownership per (map, flag_index). NOT hand-reviewed --
+# do not hand-edit; regenerate via the derivation script referenced in
+# handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md section 4.
+#
+# Derived 2026-09-08 from 886 HUD recordings under /opt/hud-observer/matches, flags_init readings, majority vote after skipping the first 3 readings per half (transient neutral window).
+# confidence_threshold=0.7 min_sample_match_halves=10.
+#
+# Only flags that cleared the threshold are listed here -- a flag's
+# ABSENCE from this file means "unresolved", not "neutral". Do not
+# infer neutral for a missing entry; flag_swing.py must leave it
+# unseeded (current behavior) rather than guess.
+#
+# owner: 1 = allies, 2 = axis (never 0 here -- seeding neutral changes
+# nothing vs. the existing default, so neutral entries are omitted).
+
+[maps.dod_armory_b6.flags.0]
+flag_name = "Allied First"
+owner = 1
+confidence = 0.8691
+sample_match_halves = 346
+
+[maps.dod_armory_b6.flags.3]
+flag_name = "Axis First"
+owner = 2
+confidence = 0.8674
+sample_match_halves = 346
+
+[maps.dod_halle.flags.0]
+flag_name = "The Church"
+owner = 1
+confidence = 0.8482
+sample_match_halves = 31
+
+[maps.dod_halle.flags.3]
+flag_name = "The Crossroads"
+owner = 2
+confidence = 0.8438
+sample_match_halves = 31
+
+[maps.dod_lennon5_b1.flags.0]
+flag_name = "the cliffs"
+owner = 1
+confidence = 0.7829
+sample_match_halves = 339
+
+[maps.dod_lennon5_b1.flags.4]
+flag_name = "the street"
+owner = 2
+confidence = 0.7951
+sample_match_halves = 339
+
+[maps.dod_railroad2_s9a.flags.0]
+flag_name = "backalley"
+owner = 1
+confidence = 0.7984
+sample_match_halves = 108
+
+[maps.dod_railroad2_s9a.flags.1]
+flag_name = "railroad"
+owner = 1
+confidence = 0.8007
+sample_match_halves = 108
+
+[maps.dod_railroad2_s9a.flags.4]
+flag_name = "platform"
+owner = 2
+confidence = 0.7985
+sample_match_halves = 108
+
+[maps.dod_railyard_s9d.flags.0]
+flag_name = "Allied 1st"
+owner = 1
+confidence = 0.8216
+sample_match_halves = 24
+
+[maps.dod_railyard_s9d.flags.1]
+flag_name = "Allied 2nd"
+owner = 1
+confidence = 0.791
+sample_match_halves = 24
+
+[maps.dod_railyard_s9d.flags.3]
+flag_name = "Axis 2nd"
+owner = 2
+confidence = 0.7829
+sample_match_halves = 24
+
+[maps.dod_railyard_s9d.flags.4]
+flag_name = "Axis 1st"
+owner = 2
+confidence = 0.8135
+sample_match_halves = 24
+
+[maps.dod_saints2_b3e.flags.0]
+flag_name = "The Bridge"
+owner = 1
+confidence = 0.9397
+sample_match_halves = 232
+
+[maps.dod_saints2_b3e.flags.1]
+flag_name = "Allied 1st"
+owner = 1
+confidence = 0.7187
+sample_match_halves = 232
+
+[maps.dod_saints2_b3e.flags.3]
+flag_name = "Axis 2nd"
+owner = 2
+confidence = 0.8814
+sample_match_halves = 232
+
+[maps.dod_saints2_b3e.flags.4]
+flag_name = "Axis 1st"
+owner = 2
+confidence = 0.9601
+sample_match_halves = 232
+
+[maps.dod_solitude2.flags.0]
+flag_name = "Allied First"
+owner = 1
+confidence = 0.7502
+sample_match_halves = 23
+
+[maps.dod_solitude2.flags.3]
+flag_name = "Axis First"
+owner = 2
+confidence = 0.7549
+sample_match_halves = 23
+
+[maps.dod_thunder2.flags.0]
+flag_name = "POINT_DONNER_ALLIEDHQ"
+owner = 1
+confidence = 0.9094
+sample_match_halves = 114
+
+[maps.dod_thunder2.flags.1]
+flag_name = "POINT_ALLIEDSTREET"
+owner = 1
+confidence = 0.8804
+sample_match_halves = 114
+
+[maps.dod_thunder2.flags.3]
+flag_name = "POINT_AXISSTREET"
+owner = 2
+confidence = 0.8772
+sample_match_halves = 114
+
+[maps.dod_thunder2.flags.4]
+flag_name = "POINT_DONNER_AXISHQ"
+owner = 2
+confidence = 0.907
+sample_match_halves = 114
