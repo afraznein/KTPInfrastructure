@@ -1,0 +1,84 @@
+# Runs Lane B's DETERMINISTIC lane against every merge to `main`.
+#
+# ## Why this file exists
+#
+# On 2026-09-07 `main` sat red for most of a day on one hardcoded assertion
+# (`assert report["schema_version"] == 8`, missed when #265 bumped 7 -> 8). It
+# was found by a hand-dispatched run, not by CI. #272 then added
+# `push: branches: [main]` to tier2-integration.yml, which does not reach it:
+# Tier 2 runs `pytest tests/integration/`, and that assertion lives in
+# `tests/e2e_stats/`. Disjoint suites — 5 files under `tests/e2e_stats/` carry
+# `schema_version`, 0 under `tests/integration/`.
+#
+# lane-b-stats-e2e.yml owns the suite that does cover it, but nothing there
+# fires on a merge: its triggers are workflow_call, workflow_dispatch, a
+# `lane-b-preprod-*` tag push, and a 06:00 UTC nightly whose matrix pins the
+# checked-out ref to `preprod`. So no push to `main` has ever run it, and the
+# nightly never tests `main` at all. This file is the missing edge.
+#
+# ## Why `corpus` and not `full`
+#
+# Read the lane, not the workflow. `full` is 12 bots with non-deterministic AI
+# and must never gate a merge — no `pull_request` trigger, not a required
+# check. `corpus` is deterministic by construction (committed fixtures, no bot,
+# no AI) and is already a required check on KTPAMXX. This file calls `corpus`
+# only, and post-merge at that, so it gates nothing on this repo either — it
+# makes a broken `main` VISIBLE, which is the whole gap.
+#
+# ⚠️ Green here means "no regression against the committed fixtures", NOT "the
+# stats are correct". A bug the fixtures do not exercise passes cleanly; that
+# has happened (KTP_FLAG_POSITION). Widen the fixtures to widen the claim.
+#
+# ## Why this costs the production data server nothing
+#
+# Lane B runs on `ubuntu-latest`, deliberately — the Tier 2 self-hosted runner
+# lives on the production data server beside HLStatsX, MySQL and 24 HLTV
+# proxies, is Docker-free by design, and keeps a serverfiles tree that must
+# match the live fleet. Unlike #272, nothing here touches that box.
+#
+# ## Why the trigger has to live on `main`
+#
+# `push:` triggers are read from the workflow file in the ref being pushed to.
+# A copy of this file on `preprod` alone would never fire for a merge to
+# `main`, exactly as `workflow_dispatch` registration only comes from the
+# default branch. It targets `main` for that reason; the `preprod` superset
+# invariant is restored by the usual main -> preprod reconcile.
+#
+# ## Ref lineage
+#
+# Every ref below is one lineage — `main` — and that is load-bearing, not
+# tidiness. KTPAMXX's caller records the failure mode: mixing a preprod harness
+# with a main daemon left its lane failing while assembling artifacts, for a
+# reason no PR had caused and no PR could fix. `infrastructure_ref` is the
+# merged SHA rather than the branch name so a later merge cannot move what this
+# run reports on.
+
+name: Lane B Corpus (main)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  # Only the tip of `main` is worth a verdict. A superseded run is cancelled
+  # rather than queued: any red it would have reported is contained in the
+  # commit that superseded it, so nothing is lost and merges never pile up
+  # behind a 60-minute job.
+  group: lane-b-corpus-main
+  cancel-in-progress: true
+
+jobs:
+  corpus:
+    uses: ./.github/workflows/lane-b-stats-e2e.yml
+    with:
+      lane: corpus
+      infrastructure_ref: ${{ github.sha }}
+      amxx_ref: main
+      daemon_ref: main
+      matchhandler_ref: main
+    secrets: inherit
