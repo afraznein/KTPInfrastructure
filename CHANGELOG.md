@@ -4,6 +4,47 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ci`: Lane B can boot a candidate engine instead of the image's baked one (2026-09-09)
+
+- Lane B took refs for AMXX, the daemon, MatchHandler and this repo, but never for the engine.
+  `engine_i486.so` is baked into `ktp-runtime-test-base`, so every lane measured a fixed engine —
+  and the engine is the one fleet artifact the nightly `mv -f` keeps no rollback for.
+- New `workflow_dispatch`/`workflow_call` input `engine_ref`. Empty means the baked engine and is
+  the default, so a scheduled run behaves exactly as before. `ENGINE_REF` deliberately has **no**
+  matrix fallback: `amxx_ref` and its siblings fall back to the matrix ref, and copying that here
+  would start injecting an engine on every nightly.
+- It is a download-and-overlay, not a source ref. The other refs are checkouts compiled in-image;
+  the engine is not built here at all. `KTP-ReHLDS`#16 added the `upload-artifact` step this
+  consumes — before that there was nothing to fetch.
+- `scripts/fetch_engine_artifact.py` resolves the ref to a commit, finds `rehlds-engine-<sha>`,
+  and refuses to continue on anything unexpected. **There is no fallback to the baked engine**: a
+  silent one would smoke the old engine and report green, which is worse than not having the
+  feature at all. Missing, expired, wrong-architecture and rejected-credential are four distinct
+  exit codes — expired is its own outcome because the engine is not byte-reproducible, so
+  rebuilding that commit cannot recreate the artifact.
+- **The cross-repo download needs a token carrying `actions:read` on `KTP-ReHLDS`.** Listing
+  artifacts on a public repo works unauthenticated; downloading one answers 401. A workflow's own
+  `GITHUB_TOKEN` is scoped to its repository, so the step uses `KTP_CHECKOUT_TOKEN` and fails with
+  a named error when it is unset rather than surfacing an opaque HTTP code.
+- `lane_b_e2e.py` gains `--engine-so`/`--engine-provenance`, overlays the engine at the tree root
+  where `hlds_linux` dlopens it, and re-hashes it after staging: an overlay that quietly did not
+  land leaves the baked engine in place, and every downstream result then describes an engine
+  nobody meant to test.
+- `tests/e2e_stats/engine_telemetry.py` asserts the `[KTP_PROFILE] net:` and `rewind:` records are
+  emitted carrying the field set `scripts/ktp-net-profile.py` reads off production, and that
+  `maxunlag=` echoes the configured ceiling — without that last one a record of frozen constants
+  would pass. Profiling cvars are written only on the engine lane, so a run without `engine_ref`
+  keeps today's exact console stream and the log invariants stay calibrated.
+- ⚠️ **The clamp and rewind counters cannot be exercised by bots, and are recorded rather than
+  asserted.** `SV_ParseMove` calls `SV_SetupMove` only for a non-fakeclient, and the per-packet
+  sampler skips fakeclients outright, so the bots reach neither `maxunlag_hits` nor rewind
+  `attempts` nor `clients`. An all-zero record is the correct result there. Anyone adding a
+  nonzero assertion will get a test that cannot pass.
+- No new trigger, and still no `pull_request`: the `full` lane stays non-required. It runs on
+  GitHub-hosted `ubuntu-latest`, not the self-hosted Tier 2 runner, so this adds no load to the
+  data server. `tests/unit/test_lane_b_engine_injection.py` holds those decisions in place — they
+  are choices nothing in the harness would otherwise notice being undone.
+
 ### `ops`: the post-activation version-row flip is a gate, not a follow-up step (2026-09-03)
 
 - The bump checklist puts the root `CLAUDE.md` version-row flip AFTER the 03:00 ET swap, so it

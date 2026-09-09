@@ -60,6 +60,26 @@ If the secret is missing, the smoke workflow falls back to `${{ github.token }}`
 and will fail to clone the first private sibling. Error looks like:
 `fatal: could not read Username for 'https://github.com/...'`.
 
+### The token also carries Lane B's cross-repo artifact download
+
+Lane B's `engine_ref` input downloads the `rehlds-engine-<sha>` artifact from
+`afraznein/KTP-ReHLDS`, and that endpoint needs a token with **`actions:read` on
+the source repository**. A classic PAT with `repo` covers it; the workflow's own
+`GITHUB_TOKEN` does not, because it is scoped to the repository it runs in.
+
+Two things about this are easy to get backwards:
+
+- **Public does not mean anonymous.** Listing a public repo's artifacts is
+  unauthenticated and returns 200; downloading one returns 401. Verifying the
+  listing works therefore proves nothing about the download.
+- **A fine-grained PAT needs "Actions: read" added explicitly.** If
+  `KTP_CHECKOUT_TOKEN` is ever rotated to a fine-grained token for the checkout
+  path, that permission is a separate box and the engine lane is where it breaks.
+
+`scripts/fetch_engine_artifact.py` exits 5 and names the missing scope rather
+than reporting a generic HTTP failure, and the workflow step refuses to start
+when the secret is unset.
+
 ---
 
 ## 3. Per-repo: branch protection

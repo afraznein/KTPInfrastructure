@@ -57,6 +57,14 @@
 # It does NOT mean "works against what is currently deployed". That question
 # still belongs to the Tier 2 runner's fleet-matching tree.
 #
+# The engine is the exception, and `engine_ref` is how it stops being one: it is
+# baked into the base image rather than built from a ref, so without that input
+# every lane measures whatever engine the last base-image build happened to
+# carry. Given a ref, the KTP-ReHLDS CI artifact for that commit replaces it and
+# the whole suite runs against the candidate. Empty keeps the baked engine, and
+# nothing falls back — smoking the old engine under a green badge is the one
+# outcome worse than not running at all.
+#
 # A workflow that exists only on preprod cannot be dispatched through GitHub's
 # UI/API because workflow_dispatch registration comes from the default branch.
 # The lane-b-preprod-* tag trigger is the preprod-safe manual run mechanism:
@@ -91,6 +99,13 @@ on:
         required: false
         type: string
         default: preprod
+      engine_ref:
+        description: >-
+          KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
+          engine. Empty keeps the baked engine. 'full' lane only.
+        required: false
+        type: string
+        default: ''
       map_name:
         description: Map to run bots on
         required: false
@@ -131,6 +146,13 @@ on:
         type: choice
         options: [full, corpus]
         default: full
+      engine_ref:
+        description: >-
+          KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
+          engine (e.g. main, or a commit). Empty keeps the baked engine.
+        required: false
+        type: string
+        default: ''
       map_name:
         description: 'Map to run bots on'
         required: false
@@ -187,6 +209,11 @@ jobs:
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
       DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
       LANE: ${{ inputs.lane || 'full' }}
+      # No matrix fallback: an unset engine_ref must mean the baked engine, and
+      # defaulting it to the infrastructure ref would silently inject on every
+      # scheduled run.
+      ENGINE_REF: ${{ inputs.engine_ref || '' }}
+      ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
@@ -287,6 +314,26 @@ jobs:
             echo "::error::Lane B core came from $CORE_AMXX_SHA, but the exact bundle uses $BUNDLE_AMXX_SHA"
             exit 1
           fi
+
+      # Cross-repo, so not actions/download-artifact: the download endpoint
+      # needs actions:read on KTP-ReHLDS, which this workflow's GITHUB_TOKEN
+      # does not carry. Missing or expired is fatal here rather than downstream
+      # -- falling through would smoke the baked engine and report it green.
+      - name: Fetch the candidate engine from KTP-ReHLDS
+        if: ${{ env.LANE == 'full' && env.ENGINE_REF != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.KTP_CHECKOUT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::engine_ref was given but KTP_CHECKOUT_TOKEN is unset; the artifact download needs a token with actions:read on $ENGINE_REPO"
+            exit 1
+          fi
+          python3 scripts/fetch_engine_artifact.py \
+            --repo "$ENGINE_REPO" \
+            --ref "$ENGINE_REF" \
+            --out build/lane-b-artifacts/engine \
+            --provenance build/lane-b-artifacts/engine/provenance.json
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -432,6 +479,11 @@ jobs:
         if: ${{ env.LANE == 'full' }}
         run: |
           set -euo pipefail
+          ENGINE_ARGS=""
+          if [ -n "$ENGINE_REF" ]; then
+            test -f build/lane-b-artifacts/engine/engine_i486.so
+            ENGINE_ARGS="--engine-so /work/build/engine/engine_i486.so --engine-provenance /work/build/engine/provenance.json"
+          fi
           docker run --rm --network none \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
@@ -442,6 +494,7 @@ jobs:
             -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
             -w /work ktp-lane-b:ci \
             python3 -u scripts/lane_b_e2e.py \
+              ${ENGINE_ARGS} \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
               --amxx-gamedata /work/build/artifacts/gamedata \
@@ -585,6 +638,7 @@ jobs:
             build/lane-b-artifacts/bundle-provenance.md
             build/lane-b-artifacts/artifacts/artifact-manifest.json
             build/lane-b-artifacts/daemon/PROVENANCE
+            build/lane-b-artifacts/engine/provenance.json
           if-no-files-found: warn
           retention-days: 30
 
