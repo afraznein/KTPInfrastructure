@@ -1,0 +1,81 @@
+# Keeps `preprod` a superset of `main` without anyone hand-rolling a reconcile PR.
+#
+# CONTRIBUTING makes `main` the default target and `preprod` the integration
+# branch for test/CI-lane work, so `preprod` falls behind by design every time a
+# feature lands on `main`. That produced five hand-made reconcile/main-into-preprod
+# PRs in three days -- the cost of the model working as intended, not indiscipline.
+#
+# Fast-forwards when it can. When `preprod` carries its own commits it opens a PR
+# instead: `preprod` is somebody's live testing branch, so this never force-pushes
+# and never rewrites it.
+name: Reconcile main into preprod
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  # Two pushes in quick succession must not race each other onto the same branch.
+  group: reconcile-preprod
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconcile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git show-ref --verify --quiet refs/remotes/origin/preprod; then
+            echo "::notice::No preprod branch; nothing to reconcile."
+            exit 0
+          fi
+
+          behind=$(git rev-list --count origin/preprod..origin/main)
+          ahead=$(git rev-list --count origin/main..origin/preprod)
+          echo "preprod is $behind behind and $ahead ahead of main."
+
+          if [ "$behind" = "0" ]; then
+            echo "::notice::preprod already contains main; nothing to do."
+            exit 0
+          fi
+
+          # Fast-forward only. If preprod has commits of its own a merge is
+          # required, and a merge on somebody's testing branch is their call.
+          if [ "$ahead" = "0" ]; then
+            git push origin "origin/main:refs/heads/preprod"
+            echo "::notice::Fast-forwarded preprod to main ($behind commits)."
+            exit 0
+          fi
+
+          # preprod has diverged: open a PR and stop. Never force, never rewrite.
+          branch="reconcile/main-into-preprod-$(date -u +%Y%m%d%H%M%S)"
+          git checkout -b "$branch" origin/preprod
+          if git merge --no-edit origin/main; then
+            git push origin "$branch"
+            gh pr create --base preprod --head "$branch" \
+              --title "reconcile: main into preprod ($behind commits)" \
+              --body "Opened automatically because preprod is $behind behind and $ahead ahead of main, so a fast-forward is not possible. The merge applied cleanly here; merging keeps preprod a superset of main without anyone hand-rolling it."
+            echo "::notice::Opened $branch for review."
+          else
+            # A conflict is a real disagreement between the branches. Leave it
+            # to a human rather than resolving it unattended.
+            git merge --abort
+            echo "::error::main and preprod conflict; reconcile by hand."
+            exit 1
+          fi
