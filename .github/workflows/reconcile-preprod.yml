@@ -4,13 +4,23 @@
 # branch for test/CI-lane work, so `preprod` falls behind by design every time a
 # feature lands on `main`. That produced five hand-made reconcile PRs in three days.
 #
-# ALWAYS goes through a PR. The first version tried to fast-forward `preprod`
-# directly and was rejected on its very first run:
-#   GH006: Protected branch update failed for refs/heads/preprod
-#   - 2 of 2 required status checks are in progress
-# `preprod` is protected and requires two checks, so a direct push can never be
-# the happy path -- not even a fast-forward. Auto-merge lands the PR unattended
-# once those checks pass, which is the same outcome by a supported route.
+# Three attempts, each one hiding the next, so all three are recorded here:
+#   1. Fast-forward push, immediately: rejected, "2 of 2 required status checks
+#      are in progress". Read at the time as "a protected branch refuses a direct
+#      push". It does not -- the checks simply had not finished yet.
+#   2. Open a PR + auto-merge: `gh pr create` refused outright with "GitHub
+#      Actions is not permitted to create or approve pull requests", and repo
+#      auto-merge is disabled besides, so the PR would have sat open anyway.
+#   3. This one. Wait for the checks, then fast-forward. Measured, not assumed:
+#      preprod requires NO approving review, has no push restrictions, and its
+#      two required contexts are both green on main's tip by the time main's own
+#      workflows finish. A push of that exact sha is therefore permitted.
+#
+# Why this cannot be generalised to a merge commit -- the asymmetry is the whole
+# design. `integration` (tier2-integration.yml) fires on a push to main and on a
+# pull_request, and on NOTHING else. A fresh merge commit pushed to a topic
+# branch can never earn it, so it could never be pushed to preprod either. A
+# fast-forward sidesteps that by reusing main's own already-green sha.
 name: Reconcile main into preprod
 
 on:
@@ -20,15 +30,17 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: reconcile-preprod
-  cancel-in-progress: false
+  # A newer main tip supersedes an older one: reconciling to the newest sha also
+  # carries the older commits, so cancelling a waiting run loses nothing.
+  cancel-in-progress: true
 
 jobs:
   reconcile:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,36 +60,63 @@ jobs:
             exit 0
           fi
 
+          target=$(git rev-parse origin/main)
           behind=$(git rev-list --count origin/preprod..origin/main)
           ahead=$(git rev-list --count origin/main..origin/preprod)
-          echo "preprod is $behind behind and $ahead ahead of main."
+          echo "preprod is $behind behind and $ahead ahead of main (target $target)."
 
           if [ "$behind" = "0" ]; then
             echo "::notice::preprod already contains main; nothing to do."
             exit 0
           fi
 
-          # One open reconcile PR is enough; a second would just conflict with it.
-          existing=$(gh pr list --base preprod --state open \
-            --search "head:reconcile/main-into-preprod" --json number \
-            --jq '.[0].number // empty')
-          if [ -n "$existing" ]; then
-            echo "::notice::PR #$existing is already reconciling preprod; leaving it."
+          # The property, not the commit count: a fast-forward is possible iff
+          # preprod is an ancestor of the target.
+          if ! git merge-base --is-ancestor origin/preprod "$target"; then
+            echo "::warning::preprod has $ahead commit(s) of its own, so this cannot be a fast-forward, and a merge commit can never satisfy preprod's 'integration' check (that job runs only on a push to main or on a pull_request). Reconcile by hand: gh pr create --base preprod --head main. Exiting 0 rather than painting an ordinary main push red."
             exit 0
           fi
 
-          branch="reconcile/main-into-preprod-$(date -u +%Y%m%d%H%M%S)"
-          git checkout -b "$branch" origin/preprod
-          if ! git merge --no-edit origin/main; then
-            # A conflict is a real disagreement between the branches; a bot must
-            # not pick a side in somebody's testing branch.
-            git merge --abort
-            echo "::error::main and preprod conflict; reconcile by hand."
-            exit 1
+          # Read the gate from the branch itself so a newly-added required check
+          # is waited on rather than silently skipped.
+          if ! gh api "repos/$GITHUB_REPOSITORY/branches/preprod/protection/required_status_checks" \
+                 --jq '.contexts[]' > required.txt 2>/dev/null; then
+            echo "::warning::Could not read preprod's required checks (the token lacks admin read). Falling back to the two known contexts; if protection has since gained another, the push below is rejected loudly rather than skipped silently."
+            printf '%s\n' 'Config parse + assertions' 'integration' > required.txt
           fi
-          git push origin "$branch"
-          gh pr create --base preprod --head "$branch" --title "reconcile: main into preprod ($behind commits)" --body "Opened automatically: preprod is $behind behind and $ahead ahead of main. Auto-merge is enabled, so this lands on its own once preprod's required checks pass. preprod is protected and cannot be pushed directly, which is why this is a PR rather than a fast-forward."
-          # Land it unattended once the two required checks go green.
-          gh pr merge --auto --merge "$branch" || \
-            echo "::warning::Could not enable auto-merge; the PR is open and needs a human."
-          echo "::notice::Opened $branch."
+          echo "Waiting on:"; sed 's/^/  /' required.txt
+
+          deadline=$(( $(date +%s) + 40 * 60 ))
+          while : ; do
+            gh api "repos/$GITHUB_REPOSITORY/commits/$target/check-runs" --paginate \
+              --jq '.check_runs[] | [.name, (.conclusion // .status), .started_at] | @tsv' > runs.tsv
+
+            pending=0
+            failed=0
+            while IFS= read -r ctx; do
+              [ -n "$ctx" ] || continue
+              # Latest run wins: a context can have several, from re-runs and
+              # from separate suites on the same sha.
+              state=$(awk -F'\t' -v c="$ctx" '$1==c && $3>b {b=$3; s=$2} END {print (s==""?"absent":s)}' runs.tsv)
+              printf '  %-34s %s\n' "$ctx" "$state"
+              case "$state" in
+                success)                   ;;
+                queued|in_progress|absent) pending=$((pending + 1)) ;;
+                *)                         failed=$((failed + 1)) ;;
+              esac
+            done < required.txt
+
+            if [ "$failed" -gt 0 ]; then
+              echo "::error::A required check failed on main@$target. Not reconciling a broken main onto preprod."
+              exit 1
+            fi
+            [ "$pending" -eq 0 ] && break
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Timed out after 40m waiting for main's required checks on $target."
+              exit 1
+            fi
+            sleep 30
+          done
+
+          git push origin "$target:refs/heads/preprod"
+          echo "::notice::Fast-forwarded preprod to $target ($behind commits)."
