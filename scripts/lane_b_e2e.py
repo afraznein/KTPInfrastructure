@@ -28,6 +28,7 @@ it. Those assertions are exact.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -50,7 +51,8 @@ from scripts.match_analytics import (  # noqa: E402
 )
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
-                             containment, log_invariants, metamod)
+                             containment, engine_telemetry, log_invariants,
+                             metamod)
 from tests.e2e_stats.artifacts import (BuildError,  # noqa: E402
                                        REQUIRED_AMXX_GAMEDATA,
                                        directory_tree_provenance,
@@ -216,12 +218,45 @@ def stage_amxx_gamedata(tree: EphemeralTree, source: Path) -> dict:
     }
 
 
+def engine_identity(staged: Path, provenance_path: Path | None) -> dict:
+    """Prove the engine under the server is the one that was fetched.
+
+    An overlay that quietly did not land leaves the image's baked engine in
+    place, and every downstream result then describes an engine nobody meant to
+    test while reporting green.
+    """
+    if not staged.is_file():
+        return {"status": "failed", "detail": f"no engine at {staged}"}
+    digest = hashlib.sha256(staged.read_bytes()).hexdigest()
+    evidence = {"status": "ok", "staged_sha256": digest,
+                "bytes": staged.stat().st_size}
+    if provenance_path is None:
+        evidence["detail"] = f"engine staged, sha256 {digest}"
+        return evidence
+
+    provenance = json.loads(provenance_path.read_text())
+    evidence["provenance"] = provenance
+    if provenance.get("sha256") != digest:
+        evidence["status"] = "failed"
+        evidence["detail"] = (
+            f"staged engine is {digest}, but the fetched artifact was "
+            f"{provenance.get('sha256')}")
+        return evidence
+    evidence["detail"] = (
+        f"engine {digest[:12]} from {provenance.get('repository')}@"
+        f"{str(provenance.get('commit'))[:12]} is the one under the server")
+    return evidence
+
+
 def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
                amxx_gamedata: Path, plugin: Path, config_dir: Path,
                server_cfg_fixture: Path, break_drive: Path | None = None,
                assist_drive: Path | None = None,
                telemetry_drive: Path | None = None,
-               matchhandler: Path | None = None
+               matchhandler: Path | None = None,
+               engine_so: Path | None = None,
+               maxunlag: float = 0.3,
+               profile_interval: int = 5
                ) -> tuple[EphemeralTree, list[str], dict]:
     """Lay the branch's artifacts over the image's server tree.
 
@@ -231,6 +266,10 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
     Returns the tree and the list of plugins removed for containment.
     """
     tree = EphemeralTree.in_place(hlds)
+    if engine_so is not None:
+        # The base image bakes an engine, so without this every lane measures a
+        # fixed one. hlds_linux dlopens it from its own cwd, hence the tree root.
+        tree.overlay_file(engine_so, "engine_i486.so")
     dll = "dod/addons/ktpamx/dlls/ktpamx_i386.so"
     tree.overlay_file(ktpamx_so, dll)
     tree.overlay_file(dodx_so, "dod/addons/ktpamx/modules/dodx_ktp_i386.so")
@@ -291,11 +330,20 @@ def stage_tree(hlds: Path, *, ktpamx_so: Path, dodx_so: Path,
 
     tree.write_text(plugins_rel, plugins_txt)
 
-    tree.write_text(
-        "dod/lane_b_server.cfg",
+    server_cfg = (
         server_cfg_fixture.read_text()
         + "\nmp_timelimit 0\nmp_limitteams 0\nktp_stats_capture 1\n"
         + "ktp_testmatch_enabled 1\n")
+    if engine_so is not None:
+        # Confined to the engine lane so a run without one keeps today's exact
+        # console stream, which the log invariants are calibrated against.
+        # ktp_profile_frame defaults off; the interval floors at one second.
+        server_cfg += (
+            f"sv_maxunlag {maxunlag}\n"
+            "ktp_profile_frame 1\nktp_profile_net 1\n"
+            f"ktp_profile_interval {profile_interval}\n"
+            "mp_logecho 1\nmp_logfile 1\n")
+    tree.write_text("dod/lane_b_server.cfg", server_cfg)
     return tree, dropped, gamedata_provenance
 
 
@@ -1008,6 +1056,17 @@ def main() -> int:
                     help="compiled stats_logging.amxx from the branch under test")
     ap.add_argument("--config-dir", type=Path, required=True,
                     help="config/local — local .ini files plus dod-configs/*.cfg")
+    ap.add_argument("--engine-so", type=Path,
+                    help="candidate engine_i486.so to boot instead of the image's. "
+                         "Omit to keep the baked engine; there is no fallback if "
+                         "this is given and unreadable")
+    ap.add_argument("--engine-provenance", type=Path,
+                    help="JSON from fetch_engine_artifact.py, recorded in the report "
+                         "and checked against the staged engine's own hash")
+    ap.add_argument("--maxunlag", type=float, default=0.3,
+                    help="sv_maxunlag for the engine lane; fleet-canonical is 0.3")
+    ap.add_argument("--profile-interval", type=int, default=5,
+                    help="ktp_profile_interval seconds for the engine lane")
     ap.add_argument("--server-cfg", type=Path,
                     default=Path("/work/tests/smoke/fixtures/test_server.cfg"))
     ap.add_argument("--hlstats", type=Path, required=True)
@@ -1187,7 +1246,15 @@ def main() -> int:
             plugin=args.plugin, config_dir=args.config_dir,
             server_cfg_fixture=args.server_cfg, break_drive=drive_amxx,
             assist_drive=assist_drive_amxx,
-            telemetry_drive=telemetry_drive_amxx, matchhandler=mh_amxx)
+            telemetry_drive=telemetry_drive_amxx, matchhandler=mh_amxx,
+            engine_so=args.engine_so, maxunlag=args.maxunlag,
+            profile_interval=args.profile_interval)
+        if args.engine_so is not None:
+            report["engine"] = engine_identity(
+                tree.path / "engine_i486.so", args.engine_provenance)
+            print("  " + report["engine"]["detail"], flush=True)
+            if report["engine"]["status"] != "ok":
+                raise SystemExit(report["engine"]["detail"])
         if expected_gamedata_provenance is not None:
             identity_fields = (
                 "tree_sha256", "file_count", "directory_count", "bytes",
@@ -1376,6 +1443,19 @@ def main() -> int:
 
         log_text = args.log.read_text(errors="replace")
         daemon_text = daemon.stdout_path.read_text(errors="replace")
+
+        if args.engine_so is not None:
+            # Both sinks: Log_Printf reaches the console only while mp_logecho
+            # is on, and the fleet's own reader takes these off dod/logs.
+            telemetry_text = "\n".join(
+                [log_text]
+                + [p.read_text(errors="replace")
+                   for p in sorted((args.serverfiles / "dod/logs").glob("*.log"))])
+            report["engine_telemetry"] = engine_telemetry.summarise(
+                telemetry_text, expect_maxunlag_ms=args.maxunlag * 1000.0)
+            if report["engine_telemetry"]["status"] != "ok":
+                failures.append("engine telemetry: "
+                                + report["engine_telemetry"]["detail"])
         report_match_log = (
             match_log_segment(log_text, report["match"]["match_id"])
             if report.get("match") else ""
