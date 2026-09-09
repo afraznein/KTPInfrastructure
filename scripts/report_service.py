@@ -179,7 +179,10 @@ def load_accumulation_scorer(repo: Path):
 def cmd_generate(args: argparse.Namespace) -> int:
     ma = load_match_analytics(args.repo)
     db = LocalMysql()
-    schema_version = int(getattr(ma, "REPORT_SCHEMA_VERSION", 7))
+    # No fallback on purpose: REPORT_SCHEMA_VERSION never existed, so the old
+    # getattr default silently pinned the pending filter at 7 while writes
+    # stamped 8, and every match regenerated on every run.
+    schema_version = int(ma.SCHEMA_VERSION)
     sources = ma.source_capabilities(db)
     scorer = load_accumulation_scorer(args.repo)
     print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
