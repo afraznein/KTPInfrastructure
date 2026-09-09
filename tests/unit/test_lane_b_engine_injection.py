@@ -3,13 +3,15 @@
 Two of them are decisions rather than mechanics -- `full` stays off
 `pull_request`, and the lane stays on a GitHub-hosted runner -- so nothing in
 the harness would notice them being undone.
+
+Text assertions rather than a YAML parse: the Tier 1 gate is stdlib + pytest,
+and PyYAML is not there.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/lane-b-stats-e2e.yml"
@@ -19,53 +21,68 @@ def _text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def _parsed() -> dict:
-    # `on` is parsed as the boolean True by YAML 1.1, which is why this reads
-    # the key back rather than indexing "on".
-    return yaml.safe_load(_text())
+def _triggers() -> set[str]:
+    lines = _text().splitlines()
+    start = lines.index("on:") + 1
+    found = set()
+    for line in lines[start:]:
+        if line and not line.startswith((" ", "#")):
+            break
+        match = re.match(r"^  (\w+):", line)
+        if match:
+            found.add(match.group(1))
+    return found
 
 
-def _triggers() -> set:
-    document = _parsed()
-    return set(document[True] if True in document else document["on"])
+def _input_block(name: str) -> list[str]:
+    """Every rendering of one input, sliced to the next sibling key."""
+    lines = _text().splitlines()
+    blocks = []
+    for index, line in enumerate(lines):
+        if line != f"      {name}:":
+            continue
+        block = []
+        for following in lines[index + 1:]:
+            if re.match(r"^      \w+:", following):
+                break
+            block.append(following)
+        blocks.append(block)
+    return blocks
 
 
 def test_the_full_lane_stays_off_pull_request_and_adds_no_new_trigger():
     assert _triggers() == {"workflow_call", "workflow_dispatch", "push", "schedule"}
-    assert "pull_request" not in _triggers()
 
 
 def test_the_push_trigger_is_still_the_preprod_tag_only():
-    document = _parsed()
-    push = (document[True] if True in document else document["on"])["push"]
-    assert push == {"tags": ["lane-b-preprod-*"]}
+    assert "    tags: ['lane-b-preprod-*']" in _text()
+    # Control: the parser above finds real keys, so an empty trigger set could
+    # not have satisfied the assertion in the previous test.
+    assert len(_triggers()) == 4
 
 
 def test_the_lane_stays_github_hosted():
     # The self-hosted runner is the production data server; this lane must not
     # migrate onto it, and a string swap here would be the whole change.
-    jobs = _parsed()["jobs"]
-    assert jobs
-    for job in jobs.values():
-        assert job["runs-on"] == "ubuntu-latest"
+    runners = re.findall(r"^\s*runs-on:\s*(.+)$", _text(), re.M)
+    assert runners and set(runners) == {"ubuntu-latest"}
 
 
 def test_engine_ref_is_offered_on_both_entry_points_and_defaults_to_empty():
-    document = _parsed()
-    triggers = document[True] if True in document else document["on"]
-    for entry in ("workflow_call", "workflow_dispatch"):
-        engine_ref = triggers[entry]["inputs"]["engine_ref"]
-        assert engine_ref["default"] == ""
-        assert engine_ref["required"] is False
+    blocks = _input_block("engine_ref")
+    assert len(blocks) == 2
+    for block in blocks:
+        assert "        required: false" in block
+        assert "        default: ''" in block
 
 
 def test_engine_ref_has_no_matrix_fallback():
-    # AMXX_REF and friends fall back to the matrix ref. If ENGINE_REF did too,
-    # every scheduled run would start injecting an engine nobody asked for.
+    # AMXX_REF and its siblings fall back to the matrix ref. If ENGINE_REF did
+    # too, every scheduled run would inject an engine nobody asked for.
     assert "ENGINE_REF: ${{ inputs.engine_ref || '' }}" in _text()
     assert "inputs.engine_ref || matrix.target_ref" not in _text()
-    # Control: the fallback this asserts the absence of is genuinely the house
-    # pattern, so the assertion above is discriminating rather than trivially true.
+    # Control: that fallback really is the house pattern here, so the assertion
+    # above discriminates rather than passing on a spelling nobody uses.
     assert "${{ inputs.amxx_ref || matrix.target_ref }}" in _text()
 
 
