@@ -35,7 +35,7 @@ DATABASE = "hlstatsx"
 # (2026-08-29 handover). Add a kind only after its builder emits names.
 # head_to_head is deliberately absent: its pairs are still pid-keyed.
 SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "leaderboard_ktpr_v22",
-                            "season_positional"}
+                            "season_positional", "season_spatial"}
 
 # Kept under PostgREST's default max-rows so a page is never server-truncated.
 PAGE_SIZE = 500

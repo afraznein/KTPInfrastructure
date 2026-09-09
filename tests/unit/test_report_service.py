@@ -183,6 +183,47 @@ class AggregatesSynthetic(unittest.TestCase):
         self.assertEqual(sp["depth_profiles"], [])
         self.assertEqual(sp["matches_with_positions"], 0)
 
+    def test_season_spatial_pools_and_rethresholds(self):
+        def cell(col, row, t1, t2):
+            return {"col": col, "row": row, "samples": t1 + t2, "seconds": 2.0 * (t1 + t2),
+                    "team1_samples": t1, "team2_samples": t2,
+                    "control": (t1 - t2) / (t1 + t2)}
+
+        def rep(t1, t2, lane_count):
+            r = self._report("dod_anzio", [])
+            r["spatial_layers"] = {
+                "status": "available", "definition_version": 1,
+                "parameters": {"sample_seconds": 2.0, "grid_size": 256.0},
+                "flags": [{"flag_index": 0, "flag_name": "L", "x": 0.0, "y": 0.0, "col": 0, "row": 0}],
+                "layers": {
+                    "occupancy": {"cells": [cell(0, 0, t1, t2), cell(5, 5, 8, 0)]},
+                    "kill_hotspots": {"cells": [{"col": 0, "row": 0, "kills": 2}]},
+                    "death_hotspots": {"cells": []},
+                    "recurring_lanes": {"vectors": [{
+                        "origin": {"col": 0, "row": 0, "x": 128.0, "y": 128.0},
+                        "destination": {"col": 1, "row": 0, "x": 384.0, "y": 128.0},
+                        "count": lane_count, "mean_distance": 256.0,
+                        "mean_angle_degrees": 0.0, "headshot_rate": 0.5}]},
+                }}
+            return r
+
+        # cell (0,0): 20 + 12 = 32 samples = 64 s >= 60 s corpus floor -> kept;
+        # cell (5,5): 8 + 8 = 16 samples = 32 s -> dropped at season level.
+        ss = build_aggregates([rep(12, 8, 3), rep(8, 4, 4)])["season_spatial"]
+        self.assertTrue(ss["provisional"])
+        self.assertEqual(ss["corpus_cell_minimum_seconds"], 60.0)
+        m = ss["maps"][0]
+        self.assertEqual((m["map"], m["matches"]), ("dod_anzio", 2))
+        self.assertEqual(m["occupancy"], [{"col": 0, "row": 0, "samples": 32, "seconds": 64.0,
+                                           "team1_samples": 20, "team2_samples": 12,
+                                           "control": 0.25}])
+        self.assertEqual(m["kill_hotspots"], [{"col": 0, "row": 0, "kills": 4}])
+        lane = m["recurring_lanes"][0]
+        self.assertEqual((lane["count"], lane["mean_distance"], lane["headshot_rate"]), (7, 256.0, 0.5))
+        self.assertEqual(m["lattice"]["columns"], 2)
+        self.assertEqual(m["flags"][0]["flag_name"], "L")
+        self.assertNotIn("player", json.dumps(ss))
+
     def test_leaderboard_provisional_named_min_matches(self):
         rows = [{"player_id": 1, "team": 1, "rating": 1.0,
                  "player_name_at_match": "One"},

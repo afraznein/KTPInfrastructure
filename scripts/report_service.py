@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import re
+import math
 import statistics
 import subprocess
 import sys
@@ -306,6 +307,90 @@ def build_season_positional(reports: list[dict]) -> dict:
     }
 
 
+CORPUS_CELL_MINIMUM_SECONDS = 60.0   # season-level occupancy floor (atlas config)
+
+
+def build_season_spatial(reports: list[dict]) -> dict:
+    """Pool per-match spatial_layers per map: cells and lanes are additive
+    counts, so the season layer is a sum re-thresholded at the corpus floor.
+    Per-match contributor floors already applied before emission; pooling
+    only adds evidence. Unattributed throughout — no ids ever enter."""
+    per_map: dict[str, dict] = defaultdict(lambda: {
+        "matches": 0, "occ": defaultdict(lambda: [0, 0]), "kills": defaultdict(int),
+        "deaths": defaultdict(int), "lanes": defaultdict(lambda: [0, 0.0, 0.0]),
+        "flags": {}, "sample_seconds": 2.0, "grid": 256.0})
+    versions = set()
+    for r in reports:
+        sp = r.get("spatial_layers") or {}
+        if sp.get("status") != "available":
+            continue
+        m = per_map[(r.get("match") or {}).get("map_name") or "?"]
+        m["matches"] += 1
+        versions.add(sp.get("definition_version"))
+        params = sp.get("parameters") or {}
+        m["sample_seconds"] = float(params.get("sample_seconds") or m["sample_seconds"])
+        m["grid"] = float(params.get("grid_size") or m["grid"])
+        layers = sp.get("layers") or {}
+        for c in (layers.get("occupancy") or {}).get("cells") or []:
+            t = m["occ"][(c["col"], c["row"])]
+            t[0] += c["team1_samples"]
+            t[1] += c["team2_samples"]
+        for c in (layers.get("kill_hotspots") or {}).get("cells") or []:
+            m["kills"][(c["col"], c["row"])] += c["kills"]
+        for c in (layers.get("death_hotspots") or {}).get("cells") or []:
+            m["deaths"][(c["col"], c["row"])] += c["deaths"]
+        for v in (layers.get("recurring_lanes") or {}).get("vectors") or []:
+            key = (v["origin"]["col"], v["origin"]["row"],
+                   v["destination"]["col"], v["destination"]["row"])
+            lane = m["lanes"][key]
+            lane[0] += v["count"]
+            lane[1] += v["count"] * v["mean_distance"]
+            lane[2] += v["count"] * v["headshot_rate"]
+        for f in sp.get("flags") or []:
+            m["flags"].setdefault(f["flag_index"], f)
+
+    maps = []
+    for mapname, m in sorted(per_map.items(), key=lambda kv: -kv[1]["matches"]):
+        floor = math.ceil(CORPUS_CELL_MINIMUM_SECONDS / m["sample_seconds"])
+        occupancy = [
+            {"col": c, "row": r, "samples": t[0] + t[1],
+             "seconds": round((t[0] + t[1]) * m["sample_seconds"], 1),
+             "team1_samples": t[0], "team2_samples": t[1],
+             "control": round((t[0] - t[1]) / (t[0] + t[1]), 4)}
+            for (c, r), t in sorted(m["occ"].items()) if t[0] + t[1] >= floor]
+        kills = [{"col": c, "row": r, "kills": n} for (c, r), n in sorted(m["kills"].items())]
+        deaths = [{"col": c, "row": r, "deaths": n} for (c, r), n in sorted(m["deaths"].items())]
+        grid = m["grid"]
+        lanes = sorted((
+            {"origin": {"col": oc, "row": orow, "x": (oc + 0.5) * grid, "y": (orow + 0.5) * grid},
+             "destination": {"col": dc, "row": drow, "x": (dc + 0.5) * grid, "y": (drow + 0.5) * grid},
+             "count": n, "mean_distance": round(dist / n, 1), "headshot_rate": round(hs / n, 3)}
+            for (oc, orow, dc, drow), (n, dist, hs) in m["lanes"].items()),
+            key=lambda v: -v["count"])
+        flags = sorted(m["flags"].values(), key=lambda f: f["flag_index"])
+        keys = ({(c["col"], c["row"]) for c in occupancy + kills + deaths}
+                | {(f["col"], f["row"]) for f in flags}
+                | {(v["origin"]["col"], v["origin"]["row"]) for v in lanes}
+                | {(v["destination"]["col"], v["destination"]["row"]) for v in lanes})
+        lattice = None
+        if keys:
+            cmin, rmin = min(c for c, _ in keys), min(r for _, r in keys)
+            lattice = {"scheme": "world_256_v1", "grid_size": grid,
+                       "column_index_min": cmin, "row_index_min": rmin,
+                       "columns": max(c for c, _ in keys) - cmin + 1,
+                       "rows": max(r for _, r in keys) - rmin + 1}
+        maps.append({"map": mapname, "matches": m["matches"], "lattice": lattice,
+                     "flags": flags, "occupancy": occupancy, "kill_hotspots": kills,
+                     "death_hotspots": deaths, "recurring_lanes": lanes})
+    return {
+        "provisional": True,
+        "notice": PROVISIONAL_NOTICE,
+        "definition_versions": sorted(v for v in versions if v is not None),
+        "corpus_cell_minimum_seconds": CORPUS_CELL_MINIMUM_SECONDS,
+        "maps": maps,
+    }
+
+
 def build_aggregates(reports: list[dict]) -> dict[str, dict]:
     per_map = defaultdict(lambda: {"matches": 0, "kills": 0, "trades": 0,
                                    "multikills": 0, "trade_rates": [],
@@ -363,6 +448,7 @@ def build_aggregates(reports: list[dict]) -> dict[str, dict]:
         if d["a_over_b"] + d["b_over_a"] >= 40]}
 
     out["season_positional"] = build_season_positional(reports)
+    out["season_spatial"] = build_season_spatial(reports)
 
     ktpr = build_ktpr_v22(reports)
     out["leaderboard_ktpr_v22"] = {
