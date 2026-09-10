@@ -55,22 +55,44 @@ RUN mkdir -p /output/plugins
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
+# Plugins that did not produce a usable .amxx. Collected rather than exited on,\n\
+# so one build reports EVERY broken plugin instead of stopping at the first.\n\
+# Checked at the end; a non-empty list fails the build.\n\
+#\n\
+# It used to be neither. The compile was `|| echo "WARNING: ... may have had\n\
+# errors"`, which also neutralised the `set -e` above, and the missing-artifact\n\
+# branch printed FAILED and returned 0. So a plugin that failed to compile\n\
+# produced a SUCCESSFUL build whose image simply lacked that .amxx -- and a\n\
+# server that loads no stats_logging.amxx collects nothing at all, silently,\n\
+# with every build and deploy step reporting success.\n\
+FAILED_PLUGINS=""\n\
+\n\
 compile_plugin() {\n\
     local dir="$1"\n\
     local name="$2"\n\
     local source="$3"\n\
+    local ok=1\n\
     \n\
     if [ -f "/build/plugins/$dir/$source" ]; then\n\
         echo "Compiling $name from $source..."\n\
         cd /compiler\n\
         # Convert line endings\n\
         sed "s/\\r$//" "/build/plugins/$dir/$source" > "$source"\n\
-        ./amxxpc "$source" -i./include -i"/build/plugins/$dir" -o"/output/plugins/$name.amxx" 2>&1 || echo "  WARNING: $name may have had errors"\n\
+        if ! ./amxxpc "$source" -i./include -i"/build/plugins/$dir" -o"/output/plugins/$name.amxx" 2>&1; then\n\
+            ok=0\n\
+            echo "  -> $name: amxxpc reported errors"\n\
+        fi\n\
         rm -f "$source"\n\
-        if [ -f "/output/plugins/$name.amxx" ]; then\n\
+        # Checked separately from the exit status: a cached or stale artifact can\n\
+        # outlive a failed compile, and an absent one is unambiguous either way.\n\
+        if [ ! -f "/output/plugins/$name.amxx" ]; then\n\
+            ok=0\n\
+            echo "  -> $name: no .amxx produced"\n\
+        fi\n\
+        if [ "$ok" = "1" ]; then\n\
             echo "  -> $name.amxx OK"\n\
         else\n\
-            echo "  -> $name.amxx FAILED"\n\
+            FAILED_PLUGINS="$FAILED_PLUGINS $name"\n\
         fi\n\
     else\n\
         echo "SKIP: /build/plugins/$dir/$source not found"\n\
@@ -99,6 +121,12 @@ compile_plugin "amxx-stock" "stats_logging" "stats_logging.sma"\n\
 \n\
 echo ""\n\
 echo "========================================"\n\
+if [ -n "$FAILED_PLUGINS" ]; then\n\
+    echo "PLUGIN BUILD FAILED:$FAILED_PLUGINS"\n\
+    echo "========================================"\n\
+    ls -la /output/plugins/\n\
+    exit 1\n\
+fi\n\
 echo "Compilation Complete"\n\
 echo "========================================"\n\
 ls -la /output/plugins/\n\

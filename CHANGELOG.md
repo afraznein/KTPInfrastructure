@@ -4,6 +4,72 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed - the report pipeline's first run would have published 213 pracc matches as league data (2026-09-10)
+
+`pending_match_ids()` selected every match with flag-state producer rows,
+gated only by the `--since` date floor. Its comment said no official/scrim
+flag exists on a match. One does: `ktp_matches.match_type`, whose own column
+COMMENT on the server reads *"KTPMatchHandler enum: 0=official, 1=scrim,
+2=12man, 3=draft, 4=KTP OT, 5=draft OT"*.
+
+Measured on the production `hlstatsx` before the fix: **213 pending matches,
+68 scrim and 145 12man, zero official**. Every one of them would have been
+generated, persisted and synced to ktpleague.gg on the first cron run, and
+nothing would have errored.
+
+The filter is now `match_type IN (0, 4)` — the same set KTPMatchHandler's own
+`is_official_match_type()` spells, `.ktp` and `.ktpOT`, the two password-gated
+results-bearing types. A NULL `match_type` is dropped deliberately (`IN`
+excludes NULL): an untyped match is not a provably official one, so the filter
+fails closed. `generate` now prints what the filter dropped, by type, so the
+exclusion is never silent.
+
+### Added - `scripts/verify_report_pipeline.py`, a post-cron check that can fail (2026-09-10)
+
+The pipeline handover's sanity check was `SELECT ... FROM ktp_match_reports
+ORDER BY id DESC LIMIT 5` plus "look at `/stats/matches`". Both are blind:
+the query returns 0 rows when cron never ran, when cron ran and correctly
+found nothing, and when cron ran and failed; the page answers 200 in all
+three (so does a nonsense match id -- only the `<title>` differs).
+
+The replacement asserts the log's mtime, that a `generate` block reached its
+own terminator line (a truncated run fails instead of passing), that
+`failures:` is present and zero, that no match which ended before the run is
+still pending, that no report is `publishable=0` at `quality_status=PASS`,
+and that the page's empty-state marker agrees with the report count in both
+directions. Exits non-zero on any of them. A healthy pipeline with nothing to
+do reports `IDLE` rather than success.
+
+`quality_status=FAIL` at `publishable=1` is expected, not a defect: the
+cosmetic `match_id_shape` check fails on every legacy `1.3-` match id.
+
+### Fixed - a plugin that failed to compile produced a SUCCESSFUL build (2026-09-10)
+
+`build/plugins/Dockerfile` ran the Pawn compiler as
+`./amxxpc ... || echo "WARNING: $name may have had errors"`. That `||` also
+neutralised the script's own `set -e`, and the missing-artifact branch printed
+`FAILED` and returned 0. So a plugin that failed to compile produced a
+**successful** image whose `/output/plugins/` simply lacked that `.amxx`.
+
+A server that loads no `stats_logging.amxx` collects **nothing at all** --
+silently, with every build and deploy step reporting success. This is not
+hypothetical: KTPAMXX `main` did not compile for several hours today
+(`undefined symbol "dod_is_deployed"`, KTPAMXX #106) and nothing anywhere
+reported it. KTPAMXX CI skips plugin compilation by design and defers to this
+build, so this swallow was the only thing standing between a broken plugin and
+a deploy, two days before the season opener.
+
+The script now collects failures and fails the build at the end, naming every
+broken plugin rather than stopping at the first. A plugin counts as failed if
+`amxxpc` exits non-zero **or** no `.amxx` is produced -- checked separately,
+because a cached or stale artifact can outlive a failed compile.
+
+Verified against the real toolchain (`amxxpc 2.7.33.5799`) by running the
+shipped script over both cases: a plugin that compiles exits 0 and reports
+`Compilation Complete`; a plugin that does not exits 1 and reports
+`PLUGIN BUILD FAILED: <names>`.
+
+
 ### `scripts`: capture-health type checks no longer break on a newer producer (2026-09-10)
 
 Two places compared the set of per-half health streams against
