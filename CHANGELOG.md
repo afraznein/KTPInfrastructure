@@ -4,6 +4,36 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `build`: verify the plugin set an image ships against the manifest that loads it (2026-09-10)
+
+The compile guard added the same day makes a plugin that fails to compile fail
+the build. It does not cover the two ways a plugin goes missing without any
+compile failing:
+
+- `runtime/Dockerfile` copies `artifacts/$(VERSION)/plugins/`, not the builder
+  image, and `extract-artifacts` downgrades a failed `docker cp` to
+  `|| echo "Warning"`. A short or stale artifact directory reaches a published
+  base image with every step reporting success.
+- `build/plugins/Dockerfile` prints `SKIP: <path> not found` and returns 0 when
+  a plugin's `.sma` is absent, so an un-checked-out plugin repo builds green and
+  ships one plugin short.
+
+Either way the first symptom is at boot, where KTPAMXX reports the plugin as
+`bad load` under a truncated name — `stats_loggi` for `stats_logging.amxx`. On
+the shared Tier 1 gate that reads as "the change under test is broken" to every
+consumer, including repos we do not own.
+
+- `scripts/verify-plugin-manifest.sh` asserts every `.amxx` in
+  `config/{local,online,lan}/plugins.ini` exists in a given plugins directory,
+  and with `--sources <root>` that each also has a `.sma` under that root. A
+  manifest parsing to zero entries is an error, so the check cannot pass
+  vacuously.
+- The `Makefile` runs it as `verify-plugin-artifacts` against
+  `artifacts/$(VERSION)/plugins/` — after `extract-artifacts`, before
+  `publish-latest`.
+- `tests/unit/test_verify_plugin_manifest.py` covers both directions, including
+  the empty-manifest control and the missing-source case.
+
 ### Fixed - the report pipeline's first run would have published 213 pracc matches as league data (2026-09-10)
 
 `pending_match_ids()` selected every match with flag-state producer rows,

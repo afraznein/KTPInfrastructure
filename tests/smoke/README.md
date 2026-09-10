@@ -190,12 +190,13 @@ either organization-level (preferred) or per-repo secret.
 
 `config/local/plugins.ini` references `KTPHudObserver.amxx`, which is in
 [`JimmyLockhart65616/DoD-hud-observer`](https://github.com/JimmyLockhart65616/DoD-hud-observer)
-not under our org. The smoke workflow strips it from `plugins.ini` before
-build (else the runtime image has the line referencing a missing file →
-KTPAMXX reports "bad load" → smoke fails). To re-include it, add a
-checkout step + adjust `config/local/plugins.ini` handling. Currently
-disabled fleet-wide post the 2026-04-26 NY1 SEGV, so leaving it out of
-smoke is also defensible on safety grounds.
+not under our org. It is a first-class member of the smoke runtime:
+`publish-base-image.yml` and the slow path both check that repo out to
+`KTPHudObserver/`, `build/plugins/Dockerfile` compiles it, and the booted
+container loads it like every other plugin. **Nothing strips it from
+`plugins.ini`** — this section claimed otherwise until 2026-09-10, and a
+reader debugging a `bad load` would have gone looking for a strip step that
+does not exist.
 
 ### Debugging a red CI run
 
@@ -209,6 +210,16 @@ When the workflow fails:
 3. **`make build` failure** is usually a missing sibling repo (look for
    "no such file or directory" in the docker context) or a real compile
    error in the change under test.
+
+**A plugin that is not the change under test failing is a base-image fault,
+not yours.** `assert-no-failed` reports every non-running plugin, and AMXX
+truncates the name in `amx plugins` (`stats_loggi` is `stats_logging.amxx`),
+so the row that fails the run can name something the caller never touched.
+The builder fails on a plugin that does not compile, and
+`make verify-plugin-artifacts` fails on one that `plugins.ini` loads but the
+artifact directory does not carry, so this should surface as a red
+`Publish runtime test-base image` run naming the plugin — check that workflow
+before suspecting your own change.
 
 ### Adding a smoke workflow to another KTP repo
 

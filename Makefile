@@ -44,7 +44,7 @@ PYTHON := python3
 # Build Targets
 # ============================================
 
-.PHONY: all build build-base build-engine build-amxx build-reapi build-curl build-plugins clean seed-from-latest publish-latest lint-configs
+.PHONY: all build build-base build-engine build-amxx build-reapi build-curl build-plugins clean seed-from-latest publish-latest lint-configs verify-plugin-artifacts
 
 all: build
 
@@ -105,6 +105,7 @@ build: lint-configs build-base
 	@echo ""
 	@echo "Step 3: Extracting artifacts..."
 	@$(MAKE) extract-artifacts
+	@$(MAKE) verify-plugin-artifacts
 	@$(MAKE) publish-latest
 	@echo ""
 	@echo "========================================"
@@ -202,9 +203,24 @@ build-plugins: build-base build-amxx seed-from-latest
 	@docker create --name ktp-extract-plugins ktp-plugins:$(VERSION) 2>/dev/null || true
 	@docker cp ktp-extract-plugins:/output/plugins/. $(ARTIFACTS_DIR)/plugins/
 	@docker rm ktp-extract-plugins 2>/dev/null || true
+	@$(MAKE) verify-plugin-artifacts
 	@$(MAKE) publish-latest
 	@echo "Plugin artifacts:"
 	@ls -la $(ARTIFACTS_DIR)/plugins/
+
+# runtime/Dockerfile copies artifacts/$(VERSION)/plugins/ into the image, so
+# that directory — not the builder image — decides what the container ships.
+# extract-artifacts downgrades a failed `docker cp` to a warning, which is how
+# a stale or short plugin set reaches a published base image unnoticed.
+#
+# --sources covers the other direction: build/plugins/Dockerfile prints
+# `SKIP: ... not found` and exits 0 when a plugin's .sma is absent, so an
+# un-checked-out plugin repo would otherwise publish a green image one plugin
+# short. Named here rather than in the Dockerfile so the failure survives.
+verify-plugin-artifacts:
+	@bash scripts/verify-plugin-manifest.sh --sources "$(KTP_PROJECT_ROOT)" \
+		$(ARTIFACTS_DIR)/plugins \
+		config/local/plugins.ini config/online/plugins.ini config/lan/plugins.ini
 
 # ============================================
 # Deployment Targets
