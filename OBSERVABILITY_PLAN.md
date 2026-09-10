@@ -84,108 +84,120 @@ the urgent part of this document.
 
 ---
 
-## URGENT — capture loss on the daemon leg, unalerted
+## Capture loss — mostly fixed on 2026-09-08, frag alone still failing
 
-Fleet totals from `ktp_capture_health`, 2026-08-31 → 2026-09-09:
+**This section was revised after the operator proposed a daemon-restart
+explanation. They were substantially right, and the first version of this
+document mis-attributed the cause.** What follows is the corrected reading.
 
-| Day | attempted | emitted | dropped | daemon_received | daemon_rejected | reject rate |
-|---|---|---|---|---|---|---|
-| 08-31 | 175,266 | 175,266 | 0 | **0** | 0 | — |
-| 09-01 | 250,026 | 250,026 | 0 | **0** | 0 | — |
-| 09-02 | 144,031 | 144,019 | 0 | 143,851 | 14,411 | **10.0%** |
-| 09-03 | 170,037 | 170,017 | 0 | 169,767 | 1,888 | 1.1% |
-| 09-04 | 198,671 | 198,654 | 0 | 192,426 | 2,187 | 1.1% |
-| 09-05 | 136,738 | 136,712 | 0 | 136,619 | 1,869 | 1.4% |
-| 09-06 | 347,833 | 347,797 | 0 | 347,002 | 2,972 | 0.9% |
-| 09-07 | 187,744 | 187,722 | 0 | 187,562 | 7,849 | **4.2%** |
-| 09-08 | 268,459 | 268,456 | 0 | 267,916 | 117 | 0.04% |
-| 09-09 | 182,224 | 182,224 | 0 | 181,524 | 338 | 0.2% |
+### The fix is real and it is dated
 
-Three separate findings sit in that table.
+`hlstatsx.service` last started **2026-09-08 16:34:28 EDT**, `NRestarts=0`.
+Everything after that timestamp:
 
-**1. The producer side is clean; the loss is at the daemon.** `dropped` is 0
-every day and `emitted` tracks `attempted` to within ~20 events. Every event the
-game server tried to send, it sent. The gap opens between `daemon_received` and
-`daemon_accepted`.
-
-**2. `frag` is the worst-hit event type, by an order of magnitude.**
-
-| event_type | daemon_received | daemon_rejected | reject rate |
+| event_type | daemon_received | daemon_rejected | rate |
 |---|---|---|---|
-| **frag** | 63,959 | **11,575** | **18.10%** |
-| assist | 9,390 | 152 | 1.62% |
-| life | 140,542 | 2,135 | 1.52% |
-| position | 1,188,005 | 17,093 | 1.44% |
-| objective_attempt | 7,563 | 75 | 0.99% |
-| grenade_entity | 90,826 | 600 | 0.66% |
-| team_membership | 164 | 1 | 0.61% |
-| damage | 119,286 | 0 | 0.00% |
-| break / flag_state / flag_position | 6,932 | 0 | 0.00% |
+| life | 33,634 | **0** | 0.00% |
+| damage | 28,576 | **0** | 0.00% |
+| position | 290,024 | **0** | 0.00% |
+| assist | 2,311 | **0** | 0.00% |
+| objective_attempt | 1,674 | **0** | 0.00% |
+| break | 374 | **0** | 0.00% |
+| flag_state | 986 | **0** | 0.00% |
+| flag_position | 253 | **0** | 0.00% |
+| team_membership | 27 | **0** | 0.00% |
+| **frag** | **15,444** | **405** | **2.62%** |
 
-Nearly one frag in five is rejected fleet-wide, while `damage`, `break`,
-`flag_state` and `flag_position` are perfectly clean. A uniform transport fault
-would not select for one event type and spare four others.
+Nine of ten event types are at exactly zero across 357,859 events. The restart
+fixed the broad loss completely. Frag is the sole survivor.
 
-Frags are the input to player rating. The KTPR and MMR workstreams are built on
-this table's downstream products.
+### What the broad loss was
 
-**3. One production server lost most of a real match.**
+Fleet-wide frag rejection ran 22-34% from 09-02 through 09-06, then 9.7% on
+09-07, 1.1% on 09-08 and 4.8% on 09-09. The single worst case,
+**Dallas 1 at 87.01% on 2026-09-07** (7,128 of 8,192) during match
+`1.3-6755-DAL1`, belongs to this era.
 
-| Day | server | daemon_received | daemon_rejected | rate |
-|---|---|---|---|---|
-| 09-07 | **6 — KTP - Dallas 1** | 8,192 | 7,128 | **87.01%** |
-| 09-02 | **6 — KTP - Dallas 1** | 45,232 | 13,304 | **29.41%** |
-| 09-05 | 16 — KTPSCRIM New York 1 | 130,151 | 1,804 | 1.39% |
-| 09-03 | 17 — KTPSCRIM New York 2 | 14,982 | 207 | 1.38% |
+The first version of this document read that 87% as part of the frag story. It
+was not: Dallas 1's loss was spread across every event type it produced
+(`team_membership` 25.0%, `assist` 18.7%, `life` 17.2%, `position` 16.0%,
+`frag` 14.4%, `objective_attempt` 10.3%, `grenade_entity` 9.0%). It was a broad
+daemon-side failure, and it is gone — Dallas 1 has run at 0.18% and 0.20% on
+09-08 and 09-09.
 
-Dallas 1 is a production match server. The 09-07 window contains one match,
-`1.3-6755-DAL1` on `dod_solitude2`, starting 21:56:06. It is intermittent rather
-than ongoing — 09-08 and 09-09 are back at 0.04% and 0.2% fleet-wide — which is
-worse for detection, not better: an intermittent fault with no alert is found by
-noticing a number is wrong months later.
+Two problems were being read as one. The restart killed the larger one.
 
-### Why this is a fault and not normal operation
+### What is left, and why it still matters
 
-By the repository's own definitions, not by inference:
+Frag rejection post-restart is **2.62%, and it is bursty rather than uniform**.
+On 09-09, two matches account for 285 of the 405 post-restart rejections:
 
-- `scripts/canary_evidence.py:324-327` builds `acceptance_mismatches` from rows
-  where `emitted != daemon_accepted`. Any such gap is a reportable mismatch.
-- `scripts/lane_b_e2e.py:679-682` marks a frag row `report_frag_clean` only when
-  `daemon_rejected == 0` **and** `correlation_failure_count == 0`. Nonzero
-  rejections fail the Lane B suite.
-- Rejections are expected only in the deliberately constructed diagnostic case,
-  which the same file comments as "an intentional diagnostic reject".
-- `duplicate_or_reordered_count` is **0 on every row**, which rules out the
-  benign reading that the daemon is correctly discarding duplicates.
+| Window | Match | server | frag received | rejected | rate |
+|---|---|---|---|---|---|
+| 16:41-17:22 | `1.3-6770-NY1` | 16 | 692 | 148 | **21.39%** |
+| 17:30-18:12 | `1788989435-NY2` | 17 | 555 | 137 | **24.68%** |
+
+Every other post-restart match sits between 0.00% and 0.85%. The match
+immediately before that pair (`1.3-ready-NY1`, 15:41-16:24) was 0.18%, and the
+one after (`1788994384-NY1`, 18:53-19:36) was 0.48%.
+
+**A concurrency explanation was tested and rejected.** The two bad matches ran
+sequentially, not simultaneously — NY2 started 17:30:41, after NY1 ended
+17:22:52. Meanwhile `1.3-6774-ATL1` (20:54-21:14) and `1789002669-ATL2`
+(21:11-21:31) genuinely overlapped on one host, 74.91.121.9, and came in at
+0.55% and 0.37%. Two concurrent matches on one host is not the trigger.
+
+What is left is a roughly 90-minute window, 16:41 to 18:12 on 2026-09-09, in
+which whichever match was running lost about a quarter of its frags. Both
+affected servers sit on 74.91.123.64, but no other host ran a match in that
+window, so host-scoped and fleet-scoped cannot be distinguished from this data.
+
+### Why frag, and why it matters more than the percentage suggests
+
+Frags are the input to player rating; KTPR and MMR are built downstream. A 2.62%
+average that arrives as a quarter of one match's frags is worse than a flat
+2.62%: it corrupts specific matches badly rather than adding uniform noise that
+averages out.
+
+By the repository's own definitions this is still a fault, not tolerable noise:
+`scripts/lane_b_e2e.py:679-682` marks a frag row clean only at
+`daemon_rejected == 0` **and** `correlation_failure_count == 0`, and
+`scripts/canary_evidence.py:324-327` treats any `emitted != daemon_accepted` gap
+as a reportable mismatch. `duplicate_or_reordered_count` is 0 on every row, so
+this is not the daemon correctly discarding duplicates.
+
+### Does this hold for Season 10
+
+For nine event types, yes — zero rejections across 357,859 post-restart events
+is strong evidence. For frag, the honest answer is **not yet demonstrated**: the
+post-restart record is two days long and contains one ~90-minute window that lost
+a quarter of its frags.
+
+The cheap way to know is to look again rather than to argue about it. The
+proposed check below answers it per match, automatically, from a table that
+already exists.
 
 ### What this says about coverage
 
 `ktp_capture_health` is written on every match and read by nothing on a
-schedule. No row in `ALERT_COVERAGE.md` covers it, because nothing watches it.
-It is the sixth entry for that document's table of things that were detected,
-recorded, and never reported — and unlike the other five, it is open right now,
-three days before Season 10.
+schedule. No row in `ALERT_COVERAGE.md` covers it. A daemon-side fault ran for
+at least six days, cost one match 87% of its events, was recorded in full
+detail, and was found only because someone went looking for a trends dataset.
 
-**Proposed first action** — investigation only, no fleet change:
+**Proposed check.** Per-match capture success rate, as a producer for
+`ktp-data-server-health.sh` rather than a sixth alerting implementation. Alert
+when any match's per-event-type rejection rate crosses a threshold. It is one
+query against a table that already exists, and it would have caught both the
+broad loss and the residual frag bursts on the day.
 
-1. Ask the operator what changed on 09-02. `daemon_received` is 0 on 08-31 and
-   09-01 and non-zero from 09-02 onward: either the daemon leg started recording
-   then, or it started running then. Which one decides whether 09-02's 10% is a
-   regression or the first measurement.
-2. Read the daemon's own log for `1.3-6755-DAL1` around 2026-09-07 21:56. A
-   rejection reason at 87% will not be subtle.
-3. Establish whether frag rejection correlates with `sequence_gap_count`, which
-   ran 8,745 on 09-06 and 7,700 on 09-09 without a matching rejection spike —
-   suggesting the two have different causes and both are unwatched.
-4. Only then decide whether this is a capture bug, a daemon bug, or a schema
-   mismatch rejecting valid frags.
+**Proposed investigation**, read-only, no fleet change:
 
-**Then** add the alert. A capture success rate below a threshold, per match, is
-one query against a table that already exists. It belongs in
-`ktp-data-server-health.sh` as another state-transition check rather than as a
-sixth independent alerting implementation — see §2.1.
-
----
+1. Read the daemon log for 2026-09-09 16:41-18:12 and for match
+   `1.3-6770-NY1`. A 21% rejection rate will name its own reason.
+2. Establish what the daemon rejects a frag *for*, and whether that reason is
+   reachable when the other ten event types are not being rejected at all.
+3. Confirm whether the 09-08 16:34 restart picked up new code or simply cleared
+   accumulated state. That decides whether the broad loss can return.
 
 ## §2.2 — incident view
 
@@ -243,7 +255,7 @@ Conservative, and shaped by what is live rather than by what is elegant.
 
 | # | Item | Why here |
 |---|---|---|
-| 1 | Investigate the capture loss | Open now, affects rating data, three days from Season 10. Investigation is read-only |
+| 1 | Investigate the residual frag loss | Nine event types fixed by the 09-08 daemon restart; frag alone still bursting to ~22-25% on some matches. Read-only |
 | 2 | Run `ktp-monitor-patch-check.sh` against the fleet | Built, unrun. One read-only sweep answers handover §3 Q3 |
 | 3 | Capture success-rate alert | After 1 explains the cause. As a producer for the existing health check |
 | 4 | Trends page in `support-web` | Data is ready and complete; this is rendering |
@@ -255,9 +267,12 @@ Items 1 and 2 need the operator. Items 3 and 4 are ordinary repo work.
 
 ## Open questions
 
-1. What changed on 2026-09-02 that made `daemon_received` non-zero?
-2. Is the 18% frag rejection rate known, and is anything downstream already
-   compensating for it?
-3. Does anything read `ktp_capture_health` today other than the Lane B suite and
+1. Did the 2026-09-08 16:34 restart of `hlstatsx.service` pick up new code, or
+   just clear accumulated state? That decides whether the broad loss can return.
+2. What does the daemon reject a frag *for*? Nine other event types are now at
+   exactly zero, so whatever the reason is, it is frag-specific.
+3. Are the matches from 09-02 to 09-08 that lost 22-34% of their frags going to
+   be re-ingested, corrected, or accepted as degraded?
+4. Does anything read `ktp_capture_health` today other than the Lane B suite and
    `canary_evidence.py`?
-4. Should the trends page be public, admin-tier, or split like the status page?
+5. Should the trends page be public, admin-tier, or split like the status page?
