@@ -1,0 +1,12 @@
+# Derived data and pulls -- may carry player identifiers, regenerate locally.
+data/*
+!data/identity_merges.json
+data/website/
+__pycache__/
+*.pyc
+
+# Weekly job outputs are committed by the workflow, not by hand; but the
+# research byproducts are not.
+backtest.json
+prep_scrim12man.json
+ratings_*full_history*.json
