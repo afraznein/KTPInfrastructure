@@ -370,7 +370,16 @@ jobs:
             # so do not make an unrelated plugin extraction a prerequisite.
             PLUGIN_ARGS="--no-plugin"
           else
-            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /opt/hlds/dod/addons/ktpamx/scripting/include --define KTP_LANE_B_BOT_WEAPONSTATS=1"
+            # Compile against the KTPAMXX ref under test's own include tree
+            # (mounted below at /repos/KTPAMXX), not the image's baked copy.
+            # The baked copy is only as new as the image; a plugin that calls
+            # a native first declared on the ref under test fails there with
+            # "undefined symbol" even though the ref compiles fine everywhere
+            # else. The MatchHandler compile already does this
+            # (--matchhandler-includes) for the same reason, and
+            # build_stats_lane_artifacts.py's own usage says to pass the
+            # fork's plugins/include here.
+            PLUGIN_ARGS="--amxxpc /opt/hlds/dod/addons/ktpamx/scripting/amxxpc --includes /repos/KTPAMXX/plugins/include --define KTP_LANE_B_BOT_WEAPONSTATS=1"
           fi
           docker run --rm \
             -v "${PWD}/KTPAMXX:/repos/KTPAMXX:ro" \
