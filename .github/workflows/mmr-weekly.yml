@@ -1,0 +1,84 @@
+# Weekly MMR update -- proposed GitHub Actions workflow.
+#
+# NOT INSTALLED YET. This file lives in the MMR artifacts folder; to activate
+# it, the MMR code needs a permanent home in a real repo (see
+# AUTOMATION_PLAN.md) and this file moves to .github/workflows/mmr-weekly.yml
+# there. Installing it is a repo change that needs explicit sign-off.
+#
+# Runs Monday morning after Sunday-night matches, updates ratings from the
+# league's own reported results, commits the new numbers so every week's
+# change is diffable in git history, and opens an issue when there is
+# something a human should actually look at.
+#
+# Credentials: only the website publishable/anon key, which is public by
+# design (it is inlined in the shipped site bundle). No game-server access,
+# no database passwords, no SSH key. That is deliberate -- it is what makes
+# this safe to run on a hosted runner.
+
+name: MMR weekly update
+
+on:
+  schedule:
+    # 14:00 UTC Monday (10am ET) -- after Sunday matches and any result-
+    # reporting lag. Cron is UTC; this drifts an hour across DST, which is
+    # fine for a weekly job.
+    - cron: "0 14 * * 1"
+  workflow_dispatch:
+    inputs:
+      holdout:
+        description: "Matches held out for the champion/challenger check"
+        required: false
+        default: "10"
+
+permissions:
+  contents: write   # commit updated ratings + digest
+  issues: write     # open the weekly findings issue
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --quiet openskill==6.2.0
+
+      - name: Run weekly MMR update
+        env:
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.KTP_SUPABASE_PUBLISHABLE_KEY }}
+        working-directory: scripts/mmr
+        run: python run_weekly.py --holdout "${{ github.event.inputs.holdout || '10' }}"
+
+      - name: Commit updated ratings
+        run: |
+          cd scripts/mmr
+          if git diff --quiet -- ratings_current.json weekly_digest.md weekly_summary.json; then
+            echo "no rating changes this week"
+            exit 0
+          fi
+          git config user.name "ktp-mmr-bot"
+          git config user.email "noreply@github.com"
+          git add ratings_current.json weekly_digest.md weekly_summary.json
+          git commit -m "MMR weekly update $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Open findings issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd scripts/mmr
+          HAS_FINDINGS=$(python -c "import json;print(json.load(open('weekly_summary.json'))['has_findings'])")
+          HEADLINE=$(python -c "import json;print(json.load(open('weekly_summary.json'))['headline'])")
+          if [ "$HAS_FINDINGS" != "True" ]; then
+            echo "nothing worth an issue this week: $HEADLINE"
+            exit 0
+          fi
+          gh issue create \
+            --title "MMR weekly: $HEADLINE" \
+            --body-file weekly_digest.md \
+            --label "mmr,automated" \
+            --repo "${{ github.repository }}"

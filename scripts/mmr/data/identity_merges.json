@@ -1,0 +1,13 @@
+{
+ "_comment": "player_id -> canonical player_id, sourced from ktp_ac_identity_links (operator-confirmed pairs only; see identity_merges_from_ac.py). Weaker/heuristic-only links are in IDENTITY_MERGE_CANDIDATES.md, not applied here.",
+ "244": "3",
+ "275": "53",
+ "253": "83",
+ "252": "115",
+ "254": "166",
+ "268": "9",
+ "91": "266",
+ "17": "65",
+ "292": "158",
+ "271": "152"
+}
