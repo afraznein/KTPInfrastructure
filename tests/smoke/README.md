@@ -123,7 +123,6 @@ overlays only the change-under-test:
 
 ```
 checkout caller repo + KTPInfrastructure (+ KTPAMXX/KTPhlsdk if cpp_module)
-  → strip KTPHudObserver from plugins.ini
   → log in to GHCR + pull ghcr.io/<owner>/ktp-runtime-test-base:latest
   → build under-test only:
       amx_plugin: docker run base amxxpc src.sma -o output.amxx (~5 sec)
@@ -138,7 +137,7 @@ checkout caller repo + KTPInfrastructure (+ KTPAMXX/KTPhlsdk if cpp_module)
 
 ```
 checkout 14 KTP repos as siblings (skip the caller — already checked out)
-  → strip KTPHudObserver from plugins.ini
+  → checkout KTPHudObserver from DoD-hud-observer (external, compiled like the rest)
   → make build (full stack — engine + amxx + reapi + curl + plugins)
   → docker compose build ktp-game-1
   → docker compose up ktp-game-1
