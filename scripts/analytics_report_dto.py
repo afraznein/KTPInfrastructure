@@ -274,6 +274,7 @@ def sanitize_report(report: dict) -> dict:
             "accumulation": _accumulation_block(report, team_by_name),
         },
         "lane_analytics": _positional_block(se, names_by_id),
+        "spatial": _spatial_block(report),
     }
     assert_sanitized(dto)
     return dto
@@ -327,6 +328,62 @@ def _positional_block(se: dict, names_by_id: dict) -> dict:
                     "kills_located", "kills_ahead", "deaths_located",
                     "deaths_ahead", "kill_ahead_rate", "death_ahead_rate")}
                 for p in ov.get("players") or []]},
+    }
+
+
+SPATIAL_PARAMETERS = (
+    "grid_size", "sample_seconds", "cell_minimum_seconds",
+    "hotspot_minimum_events", "hotspot_minimum_contributors",
+    "lane_minimum_occurrences", "lane_minimum_contributors", "lattice",
+)
+
+
+def _spatial_block(report: dict) -> dict:
+    """Aggregate map layers on the world_256_v1 lattice (spatial_layers_v1):
+    occupancy/control cells, unattributed kill/death hotspot cells, thresholded
+    recurring lanes, flag origins. Coordinates are world units. The producer's
+    `private_frag_vectors` (per-frag kill angles with names) is never copied —
+    per-frag angles stay private until the suppression ruling lands."""
+    sp = report.get("spatial_layers") or {}
+    layers = sp.get("layers") or {}
+    params = sp.get("parameters") or {}
+
+    def cells(name: str, fields: tuple) -> list:
+        return [{k: _num(c.get(k)) for k in fields}
+                for c in (layers.get(name) or {}).get("cells") or []]
+
+    def endpoint(e: dict) -> dict:
+        return {k: _num(e.get(k)) for k in ("col", "row", "x", "y")}
+
+    return {
+        "status": sp.get("status", "unavailable"),
+        "definition": sp.get("definition"),
+        "definition_version": sp.get("definition_version"),
+        "caveats": list(sp.get("caveats") or []),
+        "provisional": True,
+        "notice": PROVISIONAL_NOTICE,
+        "parameters": {k: params.get(k) for k in SPATIAL_PARAMETERS},
+        "lattice": (dict(sp.get("lattice")) if sp.get("lattice") else None),
+        "flags": [
+            {"flag_index": _num(f.get("flag_index")), "flag_name": f.get("flag_name"),
+             "x": _num(f.get("x")), "y": _num(f.get("y")),
+             "col": _num(f.get("col")), "row": _num(f.get("row"))}
+            for f in sp.get("flags") or []
+        ],
+        "coverage": {k: _num(v) for k, v in (sp.get("coverage") or {}).items()},
+        "occupancy": cells("occupancy", ("col", "row", "samples", "seconds",
+                                         "team1_samples", "team2_samples", "control")),
+        "kill_hotspots": cells("kill_hotspots", ("col", "row", "kills")),
+        "death_hotspots": cells("death_hotspots", ("col", "row", "deaths")),
+        "recurring_lanes": [
+            {"origin": endpoint(v.get("origin") or {}),
+             "destination": endpoint(v.get("destination") or {}),
+             "count": _num(v.get("count")),
+             "mean_distance": _num(v.get("mean_distance")),
+             "mean_angle_degrees": _num(v.get("mean_angle_degrees")),
+             "headshot_rate": _num(v.get("headshot_rate"))}
+            for v in (layers.get("recurring_lanes") or {}).get("vectors") or []
+        ],
     }
 
 

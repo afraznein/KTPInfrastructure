@@ -101,6 +101,43 @@ def internal_report():
                                            "kill_ahead_rate": 0.5, "death_ahead_rate": 0.333}]},
         },
         "telemetry_lifecycles": {"private_facts": {}},
+        "spatial_layers": {
+            "status": "available", "definition": "spatial_layers_v1",
+            "definition_version": 1, "caveats": [],
+            "parameters": {"grid_size": 256.0, "sample_seconds": 2.0,
+                           "cell_minimum_seconds": 15.0, "hotspot_minimum_events": 2,
+                           "hotspot_minimum_contributors": 2, "lane_minimum_occurrences": 3,
+                           "lane_minimum_contributors": 2, "publish_frag_vectors": False,
+                           "lattice": "world_256_v1", "clock": "producer_game_time"},
+            "lattice": {"scheme": "world_256_v1", "grid_size": 256.0,
+                        "column_index_min": -6, "row_index_min": -2,
+                        "columns": 15, "rows": 11},
+            "flags": [{"flag_index": 0, "flag_name": "Laundry", "x": -1495.0,
+                       "y": -326.0, "col": -6, "row": -2}],
+            "coverage": {"samples_total": 20, "samples_used": 20, "frags_total": 5,
+                         "frags_with_endpoints": 5, "frags_used": 4,
+                         "cells_total": 2, "cells_censored": 1},
+            "layers": {
+                "occupancy": {"cells": [{"col": 0, "row": 0, "samples": 8, "seconds": 16.0,
+                                         "team1_samples": 6, "team2_samples": 2,
+                                         "control": 0.5}]},
+                "kill_hotspots": {"cells": [{"col": 0, "row": 0, "kills": 3}]},
+                "death_hotspots": {"cells": [{"col": 2, "row": 0, "deaths": 3}]},
+                "recurring_lanes": {"vectors": [{
+                    "origin": {"col": 0, "row": 0, "x": 128.0, "y": 128.0},
+                    "destination": {"col": 2, "row": 0, "x": 640.0, "y": 128.0},
+                    "count": 3, "mean_distance": 590.1, "mean_angle_degrees": 1.2,
+                    "headshot_rate": 0.333}]},
+            },
+            "private_frag_vectors": {"visibility": "private_shadow_only", "published": False,
+                                     "vectors": [{"half": 1, "game_time": 10.0,
+                                                  "attacker": {"name": "A", "team": 1},
+                                                  "victim": {"name": "B", "team": 2},
+                                                  "origin": {"x": 10.0, "y": 10.0},
+                                                  "destination": {"x": 600.0, "y": 20.0},
+                                                  "weapon": "kar", "headshot": False,
+                                                  "distance": 590.1, "angle_degrees": 1.0}]},
+        },
     }
 
 
@@ -187,6 +224,32 @@ class Sanitize(unittest.TestCase):
         self.assertEqual(o["kill_ahead_rate"], 0.5)
         self.assertNotIn("player_id", json.dumps(pos))
         self.assertNotIn("depth_sum", json.dumps(pos))
+
+    def test_spatial_block_copies_aggregates_never_private_vectors(self):
+        dto = sanitize_report(internal_report())
+        sp = dto["spatial"]
+        self.assertEqual(sp["status"], "available")
+        self.assertTrue(sp["provisional"])
+        self.assertEqual(sp["lattice"]["column_index_min"], -6)
+        self.assertEqual(sp["flags"][0]["flag_name"], "Laundry")
+        self.assertEqual(sp["occupancy"][0]["control"], 0.5)
+        self.assertEqual(sp["kill_hotspots"], [{"col": 0, "row": 0, "kills": 3}])
+        self.assertEqual(sp["recurring_lanes"][0]["destination"]["x"], 640.0)
+        self.assertEqual(sp["parameters"]["lane_minimum_occurrences"], 3)
+        self.assertNotIn("publish_frag_vectors", sp["parameters"])
+        body = json.dumps(dto)
+        for leak in ("private_frag_vectors", "\"attacker\"", "\"published\"",
+                     "\"x\": 10.0", "angle_degrees\": 1.0"):
+            self.assertNotIn(leak, body, leak)
+        assert_sanitized(dto)
+
+    def test_spatial_unavailable_when_block_missing(self):
+        rep = internal_report()
+        rep.pop("spatial_layers")
+        sp = sanitize_report(rep)["spatial"]
+        self.assertEqual(sp["status"], "unavailable")
+        self.assertIsNone(sp["lattice"])
+        self.assertEqual(sp["occupancy"], [])
 
     def test_positional_unavailable_when_blocks_missing(self):
         rep = internal_report()
