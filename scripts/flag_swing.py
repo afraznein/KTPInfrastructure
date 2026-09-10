@@ -165,10 +165,9 @@ def build_flag_swing_shadow(
     if spawn_ownership:
         envelope["caveats"].append(
             "Initial ownership for flag_index "
-            f"{sorted(spawn_ownership)} is reconstructed from HUD "
-            "recordings (authored spawn owner), not observed from "
-            "collection -- see "
-            "handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md. "
+            f"{sorted(spawn_ownership)} is the map's AUTHORED spawn owner, "
+            "read from its BSP (point_default_owner) rather than observed "
+            "from collection -- see config/analytics/spawn_ownership.toml. "
             "Real transitions still override it as soon as one arrives.")
         envelope["reconstructed_initial_flags"] = sorted(spawn_ownership)
 

@@ -1,0 +1,17 @@
+# Derived data and pulls -- may carry player identifiers, regenerate locally.
+data/*
+!data/identity_merges.json
+data/website/
+__pycache__/
+*.pyc
+
+# Weekly job outputs are committed by the workflow, not by hand; but the
+# research byproducts are not.
+backtest.json
+prep_scrim12man.json
+ratings_*full_history*.json
+
+# Weekly run outputs: the digest goes into the issue, the summary drives the
+# workflow's next step. Only ratings_current.json is versioned state.
+weekly_digest.md
+weekly_summary.json
