@@ -1,0 +1,345 @@
+# Weekly fleet audit, triaged by Claude, handed to a human as a GitHub issue.
+#
+# WHY THIS EXISTS
+# The audit itself has run every Monday since April, as a root cron on the data
+# server against /opt/ktp-infra. That checkout is 135 commits behind origin/main
+# and by design never pulls, so a check merged to main is not a check that runs:
+# ktp-monitor-patch-check.sh is in main and is not on the box. The wrapper prints
+# its own staleness every week into /var/log/ktp-fleet-audit.log, which nothing
+# reads. See docs/runbooks/FLEET_AUDIT_ACCESS.md.
+#
+# A workflow checks out the reviewed commit on every run, so that whole class of
+# problem disappears: baselines are always what main says, and merged means
+# running.
+#
+# THE CREDENTIAL SPLIT, WHICH IS THE POINT
+# The `collect` job runs on the self-hosted runner that already lives on the data
+# server. It reads /etc/ktp/audit-fleet.json, which is already there. No fleet
+# credential is stored in GitHub, and none needs to be.
+#
+# The `triage` job runs on a GitHub-hosted runner and has no fleet access at all.
+# Claude is given Read and Write and nothing else -- no Bash, no network, no
+# GitHub token. It reads a report and writes a markdown file. The workflow, not
+# the model, decides whether to open an issue and does the opening.
+#
+# So: the job with fleet credentials runs no model, and the job that runs a model
+# has no credentials. Neither half can do the other's damage.
+#
+# TRIGGERS ARE DELIBERATELY NARROW
+# The self-hosted runner executes as root on the data server and can reach all
+# five game hosts. `pull_request` must never appear in this file -- a fork PR
+# would run attacker-controlled code there. Schedule and manual dispatch only.
+#
+# RELATIONSHIP TO THE EXISTING CRON
+# Both run for now. This workflow uses its own state file so the two do not eat
+# each other's "new since last run" delta, and does NOT pass --alert-discord, so
+# it does not double-post: the cron keeps that job, and this workflow's only
+# Discord output is a one-line notice pointing at the issue. Retire the cron once
+# this has proven itself, then drop the -ci suffix below.
+#
+# SETUP, BEFORE THE FIRST RUN
+#   1. `claude setup-token` locally, then store the result as the repository
+#      secret CLAUDE_CODE_OAUTH_TOKEN. This is a subscription token, not an API
+#      key: runs bill against the Claude subscription rather than API credit.
+#      It is tied to the person who generated it.
+#   2. Create the `fleet-audit` label. Without it the issue step fails, which is
+#      better than opening an unlabelled issue the dedup can never find again.
+#   3. Install the Claude GitHub App on the repository.
+#   4. Run it once by hand from the Actions tab with `dry_run` left at true. That
+#      collects, triages, and uploads both artifacts while posting nothing --
+#      read the triage before letting it open anything.
+#
+# The first scheduled run against a fresh state file reports no NEW repo drift by
+# construction, so it will usually decline to triage. That is the intended shape;
+# see the gate step.
+
+name: Fleet Audit
+
+on:
+  schedule:
+    # Monday 09:00 UTC. The cron on the box runs 05:00 ET, which is the same
+    # clock time in summer and an hour off in winter -- GitHub cron is UTC only
+    # and does not observe DST. An hour of drift does not matter for a weekly
+    # drift audit; do not "fix" it by adding a second schedule entry.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Collect and triage, but open no issue and post nothing"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  # Never two fleet sweeps at once. Queue rather than cancel: a half-finished
+  # sweep still consumed SSH sessions on five live game hosts.
+  group: fleet-audit
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: Collect fleet state
+    runs-on: [self-hosted, ktp-tier2]
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      needs_triage: ${{ steps.gate.outputs.needs_triage }}
+      reason: ${{ steps.gate.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Fleet drift audit
+        id: audit
+        env:
+          # Its own state file. The Monday cron owns /var/lib/ktp-audit-state.json,
+          # and sharing it would mean whichever ran first consumed the delta and
+          # the other reported a clean fleet.
+          STATE_FILE: /var/lib/ktp-audit-state-ci.json
+        run: |
+          set -uo pipefail
+          # The audit exits 2 when it FINDS drift, which is its normal reportable
+          # outcome, and nonzero-other when the audit itself broke. Under `set -e`
+          # the first would abort the run -- the same trap that kept the wrapper's
+          # last line from ever executing.
+          # 2>&1: the "+N new, -M resolved" delta the gate reads is printed to
+          # STDERR, so capturing stdout alone would leave the gate blind and
+          # every week would read as "nothing new".
+          python3 scripts/audit-fleet-drift.py \
+            --out audit-report.md \
+            --state "$STATE_FILE" 2>&1 | tee audit-stdout.txt
+          rc="${PIPESTATUS[0]}"
+          case "$rc" in
+            0) echo "Audit clean." ;;
+            2) echo "Audit found drift." ;;
+            *) echo "FATAL: audit exited $rc -- the audit failed, this is not drift." >&2
+               exit "$rc" ;;
+          esac
+
+      - name: Restart-script drift
+        id: restart_drift
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          python3 scripts/ktp-restart-drift.py | tee restart-drift.txt
+
+      - name: Decide whether a human needs to look
+        id: gate
+        env:
+          RESTART_DRIFT: ${{ steps.restart_drift.outcome }}
+        run: |
+          set -euo pipefail
+          reasons=""
+
+          # Repo-vs-fleet drift that is NEW since the last run. Steady-state drift
+          # is not news -- the fleet carries 22 known baremetal items every week,
+          # and triaging those every Monday is how an alert becomes wallpaper.
+          #
+          # The audit prints no delta at all on the very first run against a
+          # fresh state file, so new_count is 0 and this leg stays quiet. That
+          # is deliberate: the alternative is a first run that triages every
+          # long-standing item at once. The monitor-fault check below does not
+          # depend on state and still fires on run one.
+          new_count="$(sed -n 's/.*Repo-drift delta vs last run: +\([0-9]\+\) new.*/\1/p' audit-stdout.txt | head -1)"
+          new_count="${new_count:-0}"
+          # An `if`, not `cond && assign`: the AND-list returns 1 when the
+          # condition is false, and under `set -e` that ends the step here --
+          # scoring a clean fleet as a pass. Same shape as the two set -e bugs
+          # in docs/runbooks/FLEET_MANAGEMENT_SCRIPTS.md.
+          if [ "$new_count" -gt 0 ]; then
+            reasons="${reasons}${new_count} new repo-drift item(s). "
+          fi
+
+          # The LinuxGSM monitor patch. These three states are the ones that cost a
+          # match window before: a monitor that kills live servers, and a monitor
+          # that cannot parse and therefore does nothing at all, silently.
+          if grep -qE 'parse=BROKEN|parse=MISSING|oldtype=armed' audit-report.md; then
+            reasons="${reasons}LinuxGSM monitor patch fault. "
+          fi
+
+          # A host that could not be reached is a failure, not a skip.
+          if [ "$RESTART_DRIFT" != "success" ]; then
+            reasons="${reasons}Restart-script drift or an unreachable host. "
+          fi
+
+          if [ -n "$reasons" ]; then
+            echo "needs_triage=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_triage=false" >> "$GITHUB_OUTPUT"
+            reasons="Nothing new."
+          fi
+          echo "reason=$reasons" >> "$GITHUB_OUTPUT"
+          echo "$reasons"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-audit-${{ github.run_id }}
+          path: |
+            audit-report.md
+            audit-stdout.txt
+            restart-drift.txt
+          retention-days: 90
+
+  triage:
+    name: Triage
+    needs: collect
+    if: needs.collect.outputs.needs_triage == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      issue_url: ${{ steps.publish.outputs.issue_url }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: fleet-audit-${{ github.run_id }}
+
+      - name: Claude triage
+        uses: anthropics/claude-code-action@v1
+        with:
+          # A subscription OAuth token from `claude setup-token`, NOT an API key:
+          # runs bill against the Claude subscription rather than API credit.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          claude_args: |
+            --model claude-opus-5
+            --max-turns 20
+            --allowedTools "Read,Write"
+          # Read and Write only. Claude cannot run a command, reach the network,
+          # or touch GitHub -- it reads a report and writes a file. The step after
+          # this one decides what happens to that file.
+          prompt: |
+            You are triaging one week of drift output for the Keep The Prac
+            Day of Defeat server fleet: five game hosts, 24 instances, plus a
+            data server. Season 10 is live, so matches are being played on this
+            hardware while you read.
+
+            Read `audit-report.md`, `audit-stdout.txt` and `restart-drift.txt`
+            in the working directory. Read whatever else in the repository helps
+            you explain a finding -- `docs/runbooks/` and `scripts/` especially.
+
+            Write your triage to `triage.md`. That file will be posted verbatim
+            to a GitHub issue, so write it for a human operator who will read it
+            on a phone before deciding whether to open a laptop.
+
+            Rank findings by what they would cost during a live season. Put the
+            thing that could interrupt a match first, every time.
+
+            For each finding worth a human's attention:
+              - what changed, stated plainly
+              - your best guess at the cause, marked as a guess when it is one
+              - ONE concrete next step: the command to run or the file to read
+              - which host or instance it affects
+
+            Rules, in order of importance:
+
+            1. Do not propose a fix, a patch, or a diff. Do not write remediation
+               commands that change anything. Investigation only -- read-only
+               commands, and naming the file someone should look at. A human
+               decides what gets changed on a live fleet.
+            2. Steady-state drift is not a finding. This fleet carries known
+               long-standing drift; the report says what is NEW since last run,
+               and that is what you are triaging. If an item is not new, mention
+               it only where it explains something that is.
+            3. Say so when the evidence does not support a conclusion. "Three
+               hosts changed together, cause not visible in this report" is a
+               useful finding. An invented cause is worse than no cause.
+            4. If nothing here actually warrants a human, say that in one line
+               and stop. A short honest triage is the good outcome, not a
+               failure to find something.
+
+            Start with a one-sentence summary line. No preamble, no restating
+            these instructions, no closing pleasantries.
+
+      - name: Open or update the issue
+        id: publish
+        if: ${{ github.event_name == 'schedule' || inputs.dry_run == false }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ needs.collect.outputs.reason }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -s triage.md ]; then
+            echo "Claude wrote no triage.md -- nothing to post." >&2
+            exit 1
+          fi
+
+          {
+            echo "_Fleet audit ${{ github.run_id }} — $REASON_"
+            echo
+            cat triage.md
+            echo
+            echo "---"
+            echo "Full report: the \`fleet-audit-${{ github.run_id }}\` artifact on [this workflow run]($RUN_URL)."
+            echo "Triaged by Claude from the drift report. To act on this, comment \`@claude\` with what you want investigated."
+          } > issue-body.md
+
+          # Reuse the open issue rather than opening a second one. One issue per
+          # open incident is the whole point: the estate already has alerts that
+          # land in a channel with no open-vs-resolved state, and a weekly issue
+          # nobody closes would reproduce that in a new place.
+          existing="$(gh issue list --label fleet-audit --state open \
+                        --json number --jq '.[0].number // empty')"
+
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body-file issue-body.md
+            url="$(gh issue view "$existing" --json url --jq .url)"
+          else
+            url="$(gh issue create \
+                     --title "Fleet audit: $REASON" \
+                     --label fleet-audit \
+                     --body-file issue-body.md)"
+          fi
+          echo "issue_url=$url" >> "$GITHUB_OUTPUT"
+          echo "$url"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-triage-${{ github.run_id }}
+          path: triage.md
+          retention-days: 90
+          if-no-files-found: warn
+
+  notify:
+    name: Discord notice
+    needs: [collect, triage]
+    if: needs.triage.outputs.issue_url != ''
+    runs-on: [self-hosted, ktp-tier2]
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Post the pointer
+        env:
+          ISSUE_URL: ${{ needs.triage.outputs.issue_url }}
+          REASON: ${{ needs.collect.outputs.reason }}
+        run: |
+          set -euo pipefail
+          # Relay config stays on the box. It is deliberately not a GitHub secret:
+          # the whole design keeps fleet-adjacent credentials off GitHub.
+          . /etc/ktp/audit.env
+          payload="$(jq -nc \
+            --arg c "$KTP_ALERT_CHANNEL" \
+            --arg u "$ISSUE_URL" \
+            --arg r "$REASON" \
+            '{channelId: $c,
+              embeds: [{title: "Fleet audit needs a look",
+                        description: ($r + "\n\n" + $u),
+                        color: 16753920}]}')"
+          curl -fsS -X POST "$KTP_RELAY_URL" \
+            -H "X-Relay-Auth: $KTP_RELAY_SECRET" \
+            -H 'Content-Type: application/json' \
+            -d "$payload" >/dev/null
+          echo "Posted: $ISSUE_URL"
