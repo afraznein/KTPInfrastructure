@@ -10,7 +10,8 @@ import unittest
 from pathlib import Path
 
 from scripts.report_service import (
-    build_aggregates, is_publishable, pending_match_ids, sql_str)
+    OFFICIAL_MATCH_TYPES, build_aggregates, excluded_by_match_type,
+    is_publishable, pending_match_ids, sql_str)
 
 SPECIMENS = os.environ.get("KTP_REPORT_SPECIMENS")
 
@@ -53,6 +54,49 @@ class PendingMatchIdsSince(unittest.TestCase):
                    "not-a-date", "2026/09/13", ""):
             with self.assertRaises(ValueError):
                 pending_match_ids(db, 8, bad)
+
+
+class OfficialMatchTypeFilter(unittest.TestCase):
+    """The operator's .ktp-only ruling. KTPMatchHandler.sma spells the same
+    set as is_official_match_type(): COMPETITIVE (0) and KTP_OT (4)."""
+
+    def test_set_is_competitive_and_ktp_ot(self):
+        self.assertEqual(OFFICIAL_MATCH_TYPES, (0, 4))
+
+    def test_filter_is_in_the_pending_query(self):
+        db = FakeDb()
+        pending_match_ids(db, 8)
+        self.assertIn("m.match_type IN (0, 4)", db.queries[0])
+
+    def test_filter_survives_since(self):
+        db = FakeDb()
+        pending_match_ids(db, 8, "2026-09-13")
+        self.assertIn("m.match_type IN (0, 4)", db.queries[0])
+        self.assertIn("m.start_time >= '2026-09-13'", db.queries[0])
+
+    def test_scrim_and_12man_are_not_official(self):
+        for t in (1, 2, 3, 5):
+            self.assertNotIn(t, OFFICIAL_MATCH_TYPES)
+
+    def test_exclusion_report_is_the_complement(self):
+        db = FakeDb("\t".join(("mt", "n")) + "\n")
+        excluded_by_match_type(db, 8)
+        q = db.queries[0]
+        self.assertIn("m.match_type IS NULL OR m.match_type NOT IN (0, 4)", q)
+
+    def test_exclusion_report_parses_counts(self):
+        rows = "\t".join(("mt", "n")) + "\n" + "\n".join(
+            "\t".join(r) for r in (("1", "68"), ("2", "145"), ("NULL", "3")))
+        self.assertEqual(excluded_by_match_type(FakeDb(rows), 8),
+                         {"scrim": 68, "12man": 145, "unset": 3})
+
+    def test_exclusion_report_empty_when_nothing_dropped(self):
+        header = "\t".join(("mt", "n")) + "\n"
+        self.assertEqual(excluded_by_match_type(FakeDb(header), 8), {})
+
+    def test_exclusion_report_validates_since(self):
+        with self.assertRaises(ValueError):
+            excluded_by_match_type(FakeDb(), 8, "not-a-date")
 
 
 class PublishableGate(unittest.TestCase):
