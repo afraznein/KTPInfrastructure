@@ -1,152 +1,111 @@
-# Auto-derived spawn ownership per (map, flag_index). NOT hand-reviewed --
-# do not hand-edit; regenerate via the derivation script referenced in
-# handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md section 4.
+# Authored spawn ownership per (map, flag_index).
 #
-# Derived 2026-09-08 from 886 HUD recordings under /opt/hud-observer/matches, flags_init readings, majority vote after skipping the first 3 readings per half (transient neutral window).
-# confidence_threshold=0.7 min_sample_match_halves=10.
+# Regenerate with:  python3 scripts/map_spawn_ownership.py
 #
-# Only flags that cleared the threshold are listed here -- a flag's
-# ABSENCE from this file means "unresolved", not "neutral". Do not
-# infer neutral for a missing entry; flag_swing.py must leave it
-# unseeded (current behavior) rather than guess.
+# SOURCE CHANGED 2026-09-10. This table used to be a majority vote over 886 HUD
+# recordings, which produced confidence scores rather than facts and asserted
+# home flags on five maps that do not have any. It is now read from the maps
+# themselves: every `dod_control_point` entity in a BSP carries a
+# `point_default_owner` key (0 neutral / 1 allies / 2 axis), which is the value
+# the mapper authored and the only thing that means "who owns this at spawn".
+# Nothing here is inferred from play any more.
 #
-# owner: 1 = allies, 2 = axis (never 0 here -- seeding neutral changes
-# nothing vs. the existing default, so neutral entries are omitted).
+# Why the old method went wrong, for anyone tempted to re-derive it: the engine
+# field consumers read at runtime (`CP_owner`, i.e. `m_iTeam`) is the CURRENT
+# holder, and reads 0 for a flag no team has taken since the last reset. A home
+# flag that opens owned and is never contested therefore reads neutral all
+# match. The old derivation skipped "the first 3 readings per half" to get past
+# that, and in doing so measured who usually HOLDS each flag during play, which
+# on a home flag is naturally its own team -- so every map got home flags,
+# whether or not it has any.
+#
+# owner: 1 = allies, 2 = axis. Neutral flags are omitted: seeding neutral
+# changes nothing against the existing default.
+#
+# A flag's ABSENCE still means "not asserted", and callers must not infer
+# neutral from it (`flag_swing.py` leaves it unseeded). For the five maps
+# removed in this revision the absence now additionally happens to be correct
+# -- they are authored all-neutral -- but the contract is unchanged.
+#
+# NOT LISTED, deliberately:
+#   dod_donner    -- authored 4 owned, but no CP carries a usable `point_index`,
+#                    so the BSP cannot settle which flag_index each name takes.
+#                    dodx resolves that order at runtime from the game DLL.
+#                    Two matches on record; leave unseeded rather than guess.
+#   dod_flash     -- authored 4 owned and fully resolvable, but not in the
+#                    competitive pool. Add it here if it ever enters.
 
+# --- dod_armory_b6 --------------------------------------------------------
+# Unchanged. The BSP agrees with what this table already said.
 [maps.dod_armory_b6.flags.0]
 flag_name = "Allied First"
 owner = 1
-confidence = 0.8691
-sample_match_halves = 346
+source = "bsp:point_default_owner"
 
 [maps.dod_armory_b6.flags.3]
 flag_name = "Axis First"
 owner = 2
-confidence = 0.8674
-sample_match_halves = 346
+source = "bsp:point_default_owner"
 
-[maps.dod_halle.flags.0]
-flag_name = "The Church"
-owner = 1
-confidence = 0.8482
-sample_match_halves = 31
-
-[maps.dod_halle.flags.3]
-flag_name = "The Crossroads"
-owner = 2
-confidence = 0.8438
-sample_match_halves = 31
-
-[maps.dod_lennon5_b1.flags.0]
-flag_name = "the cliffs"
-owner = 1
-confidence = 0.7829
-sample_match_halves = 339
-
-[maps.dod_lennon5_b1.flags.4]
-flag_name = "the street"
-owner = 2
-confidence = 0.7951
-sample_match_halves = 339
-
-[maps.dod_railroad2_s9a.flags.0]
-flag_name = "backalley"
-owner = 1
-confidence = 0.7984
-sample_match_halves = 108
-
-[maps.dod_railroad2_s9a.flags.1]
-flag_name = "railroad"
-owner = 1
-confidence = 0.8007
-sample_match_halves = 108
-
-[maps.dod_railroad2_s9a.flags.4]
-flag_name = "platform"
-owner = 2
-confidence = 0.7985
-sample_match_halves = 108
-
-[maps.dod_railyard_s9d.flags.0]
+# --- dod_saints2_b3e ------------------------------------------------------
+# CORRECTED 2026-09-10. The previous revision asserted flag 0 = "The Bridge" =
+# allies and omitted "Allied 2nd" entirely. The Bridge is the map's NEUTRAL
+# centre flag (point_team_points=2); it is index 2, not 0.
+#
+# saints2 ships `point_index = -1` on every CP, so the BSP settles ownership by
+# name but not the index order. The order below is the game DLL's own, from two
+# independent confirmations: KTPHudObserver's hand-verified permutation
+# (VERIFIED across 65 production matches, three ways) and production's own
+# `ktp_flag_state_events`, which has recorded flag_index 2 = "The Bridge" on
+# every server running a CP-identity-resolving module since 2026-09-04.
+[maps.dod_saints2_b3e.flags.0]
 flag_name = "Allied 1st"
 owner = 1
-confidence = 0.8216
-sample_match_halves = 24
-
-[maps.dod_railyard_s9d.flags.1]
-flag_name = "Allied 2nd"
-owner = 1
-confidence = 0.791
-sample_match_halves = 24
-
-[maps.dod_railyard_s9d.flags.3]
-flag_name = "Axis 2nd"
-owner = 2
-confidence = 0.7829
-sample_match_halves = 24
-
-[maps.dod_railyard_s9d.flags.4]
-flag_name = "Axis 1st"
-owner = 2
-confidence = 0.8135
-sample_match_halves = 24
-
-[maps.dod_saints2_b3e.flags.0]
-flag_name = "The Bridge"
-owner = 1
-confidence = 0.9397
-sample_match_halves = 232
+source = "bsp:point_default_owner + dll cp_index order"
 
 [maps.dod_saints2_b3e.flags.1]
-flag_name = "Allied 1st"
+flag_name = "Allied 2nd"
 owner = 1
-confidence = 0.7187
-sample_match_halves = 232
+source = "bsp:point_default_owner + dll cp_index order"
 
 [maps.dod_saints2_b3e.flags.3]
 flag_name = "Axis 2nd"
 owner = 2
-confidence = 0.8814
-sample_match_halves = 232
+source = "bsp:point_default_owner + dll cp_index order"
 
 [maps.dod_saints2_b3e.flags.4]
 flag_name = "Axis 1st"
 owner = 2
-confidence = 0.9601
-sample_match_halves = 232
+source = "bsp:point_default_owner + dll cp_index order"
 
+# --- dod_solitude2 --------------------------------------------------------
+# Unchanged. The BSP agrees with what this table already said.
 [maps.dod_solitude2.flags.0]
 flag_name = "Allied First"
 owner = 1
-confidence = 0.7502
-sample_match_halves = 23
+source = "bsp:point_default_owner"
 
 [maps.dod_solitude2.flags.3]
 flag_name = "Axis First"
 owner = 2
-confidence = 0.7549
-sample_match_halves = 23
+source = "bsp:point_default_owner"
 
-[maps.dod_thunder2.flags.0]
-flag_name = "POINT_DONNER_ALLIEDHQ"
-owner = 1
-confidence = 0.9094
-sample_match_halves = 114
-
-[maps.dod_thunder2.flags.1]
-flag_name = "POINT_ALLIEDSTREET"
-owner = 1
-confidence = 0.8804
-sample_match_halves = 114
-
-[maps.dod_thunder2.flags.3]
-flag_name = "POINT_AXISSTREET"
-owner = 2
-confidence = 0.8772
-sample_match_halves = 114
-
-[maps.dod_thunder2.flags.4]
-flag_name = "POINT_DONNER_AXISHQ"
-owner = 2
-confidence = 0.907
-sample_match_halves = 114
+# --- REMOVED 2026-09-10: authored all-neutral -----------------------------
+# Each of these asserted home flags that the map does not author. Their flag
+# NAMES and indices were right -- they match the BSP exactly -- so this was
+# purely a wrong ownership call, and seeding it made every report on these maps
+# open from a false position.
+#
+#   dod_halle           was 0 "The Church"=allies, 3 "The Crossroads"=axis
+#   dod_lennon5_b1      was 0 "the cliffs"=allies, 4 "the street"=axis
+#   dod_railroad2_s9a   was 0 "backalley"=allies, 1 "railroad"=allies,
+#                           4 "platform"=axis
+#   dod_railyard_s9d    was 0 "Allied 1st"=allies, 1 "Allied 2nd"=allies,
+#                           3 "Axis 2nd"=axis,    4 "Axis 1st"=axis
+#   dod_thunder2        was 0 "POINT_DONNER_ALLIEDHQ"=allies,
+#                           1 "POINT_ALLIEDSTREET"=allies,
+#                           3 "POINT_AXISSTREET"=axis,
+#                           4 "POINT_DONNER_AXISHQ"=axis
+#
+# dod_lennon5_b1 and dod_thunder2 are the two most-played maps in the pool, so
+# between them this was the majority of affected reports.
