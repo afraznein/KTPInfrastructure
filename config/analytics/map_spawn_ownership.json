@@ -1,0 +1,592 @@
+{
+  "generated_utc": "2026-09-10T12:16:47Z",
+  "source": "BSP entity lump, point_default_owner key",
+  "authority": "authored map data \u2014 not inferred from play. Supersedes any possession-derived table.",
+  "maps": {
+    "dod_anjou_a5": {
+      "cp_count": 4,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "The Ruined House",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "The Factory",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "The Underpass",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "The Church",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        }
+      ]
+    },
+    "dod_anzio": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "POINT_ANZIO_LAUNDRY",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "POINT_BRIDGE",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "POINT_ANZIO_STREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "POINT_ANZIO_PLAZA",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "POINT_ANZIO_HILL",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_anzio2_test3": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "POINT_ANZIO_LAUNDRY",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "POINT_BRIDGE",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "POINT_ANZIO_STREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "POINT_ANZIO_PLAZA",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "POINT_ANZIO_HILL",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_armory_b6": {
+      "cp_count": 4,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 2,
+      "flags": [
+        {
+          "flag_name": "Allied First",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "The Bridge",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "Warehouse",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "Axis First",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis",
+          "flag_index": 3
+        }
+      ]
+    },
+    "dod_donner": {
+      "cp_count": 5,
+      "index_source": "point_index_absent",
+      "home_flag_count": 4,
+      "flags": [
+        {
+          "flag_name": "POINT_DONNER_AXISHQ",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis"
+        },
+        {
+          "flag_name": "POINT_AXISSTREET",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis"
+        },
+        {
+          "flag_name": "POINT_ALLIEDSTREET",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies"
+        },
+        {
+          "flag_name": "POINT_DONNER_ALLIEDHQ",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies"
+        },
+        {
+          "flag_name": "POINT_DONNER_MAINSTREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        }
+      ]
+    },
+    "dod_flash": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 4,
+      "flags": [
+        {
+          "flag_name": "POINT_FLASH_ALLIEDBASE",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "POINT_FLASH_TRAIL",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "POINT_FLASH_FLASHVILLESTREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "POINT_FIELD",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "POINT_FLASH_AXISBASE",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_halle": {
+      "cp_count": 4,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "The Church",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "Bridge",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "The Hotel",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "The Crossroads",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        }
+      ]
+    },
+    "dod_harrington": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "bridge",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "plateau",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "Town Centre",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "arch",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "mountain house",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_lennon2": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "the cliffs",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "the alley",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "the courtyard",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "Well",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "the street",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_lennon5_b1": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "the cliffs",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "the alley",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "the courtyard",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "Well",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "the street",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_railroad2_s9a": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "backalley",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "railroad",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "Town Square",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "ruined house",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "platform",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_railyard_s9a": {
+      "cp_count": 5,
+      "index_source": "point_index_absent",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "the backalley",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "the ruined house",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "the railroad",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "the residential area",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "the Town Square",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        }
+      ]
+    },
+    "dod_railyard_s9d": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "Allied 1st",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "Allied 2nd",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "the Town Square",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "Axis 2nd",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "Axis 1st",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    },
+    "dod_saints2_b2": {
+      "cp_count": 5,
+      "index_source": "point_index_absent",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "The Bridge",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "Allied 1st",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "Allied 2nd",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "Axis 2nd",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "Axis 1st",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        }
+      ]
+    },
+    "dod_saints2_b3e": {
+      "cp_count": 5,
+      "index_source": "point_index_absent",
+      "home_flag_count": 4,
+      "flags": [
+        {
+          "flag_name": "The Bridge",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral"
+        },
+        {
+          "flag_name": "Allied 1st",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies"
+        },
+        {
+          "flag_name": "Allied 2nd",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies"
+        },
+        {
+          "flag_name": "Axis 2nd",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis"
+        },
+        {
+          "flag_name": "Axis 1st",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis"
+        }
+      ]
+    },
+    "dod_solitude2": {
+      "cp_count": 4,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 2,
+      "flags": [
+        {
+          "flag_name": "Allied First",
+          "spawn_owner": 1,
+          "spawn_owner_name": "allies",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "Grassy Knoll",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "Church",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "Axis First",
+          "spawn_owner": 2,
+          "spawn_owner_name": "axis",
+          "flag_index": 3
+        }
+      ]
+    },
+    "dod_thunder2": {
+      "cp_count": 5,
+      "index_source": "bsp_point_index",
+      "home_flag_count": 0,
+      "flags": [
+        {
+          "flag_name": "POINT_DONNER_ALLIEDHQ",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 0
+        },
+        {
+          "flag_name": "POINT_ALLIEDSTREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 1
+        },
+        {
+          "flag_name": "POINT_DONNER_MAINSTREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 2
+        },
+        {
+          "flag_name": "POINT_AXISSTREET",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 3
+        },
+        {
+          "flag_name": "POINT_DONNER_AXISHQ",
+          "spawn_owner": 0,
+          "spawn_owner_name": "neutral",
+          "flag_index": 4
+        }
+      ]
+    }
+  }
+}

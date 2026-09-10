@@ -199,11 +199,12 @@ def load_fixture(db: EphemeralMysql, fixture: Path) -> None:
 
 
 def load_spawn_ownership(path: Path, map_name: str) -> dict[int, int]:
-    """(flag_index -> 1/2) reconstructed spawn owners for one map.
+    """(flag_index -> 1/2) AUTHORED spawn owners for one map.
 
-    Auto-derived, not hand-reviewed -- see config/analytics/spawn_ownership.toml
-    and handover/FLAG_OWNERSHIP_ANALYTICS_HANDOVER_20260908.md. A flag absent
-    here is unresolved, not neutral; callers must not fill in a default.
+    Read from each map's own BSP (`point_default_owner`), not inferred from
+    play -- see config/analytics/spawn_ownership.toml and regenerate with
+    scripts/map_spawn_ownership.py. A flag absent here is unresolved, not
+    neutral; callers must not fill in a default.
     """
     if not path.exists():
         return {}
