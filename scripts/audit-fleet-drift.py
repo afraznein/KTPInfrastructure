@@ -70,6 +70,12 @@ elif hasattr(sys.stdout, 'buffer'):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 SNAPSHOT_SCRIPT = Path(__file__).with_name('fleet-drift-snapshot.sh')
+# Uploaded and run alongside the snapshot rather than folded into it. The patch
+# check is also the thing an operator runs by hand after `update-lgsm`, and its
+# exit code is the point there; keeping one file means the weekly audit and that
+# manual run can never disagree about what "patched" means. It emits its own
+# `=== LINUXGSM MONITOR ===` section, so it parses as ordinary snapshot facts.
+MONITOR_CHECK_SCRIPT = Path(__file__).with_name('ktp-monitor-patch-check.sh')
 EXPECTED_SYSCTLS = Path(__file__).resolve().parent.parent / 'provision' / 'expected-sysctls.conf'
 EXPECTED_BINARIES = Path(__file__).resolve().parent.parent / 'provision' / 'expected-binaries.conf'
 EXPECTED_CMDLINE = Path(__file__).resolve().parent.parent / 'provision' / 'expected-cmdline.conf'
@@ -243,14 +249,22 @@ def run_snapshot(host_info):
         ssh.connect(**connect_kwargs)
         sftp = ssh.open_sftp()
         sftp.put(str(SNAPSHOT_SCRIPT), '/tmp/_fleet_snapshot.sh')
+        sftp.put(str(MONITOR_CHECK_SCRIPT), '/tmp/_ktp_monitor_check.sh')
         sftp.close()
         # Normalize line endings in case SFTP introduced CRLF
-        ssh.exec_command('sed -i "s/\\r$//" /tmp/_fleet_snapshot.sh', timeout=15)
+        ssh.exec_command(
+            'sed -i "s/\\r$//" /tmp/_fleet_snapshot.sh /tmp/_ktp_monitor_check.sh',
+            timeout=15)
         # Pass the sample port via env var — snapshot script uses it for
         # per-port binary checks. Default matches the script's own default.
         port = host_info.get('sample_port', 27015)
+        # `;` not `&&`: the monitor check exits 1 when it finds an unpatched or
+        # unparseable instance, which is a finding to report, not a reason to
+        # drop the host's whole snapshot.
         _, stdout, stderr = ssh.exec_command(
-            f'KTP_SAMPLE_PORT={port} bash /tmp/_fleet_snapshot.sh', timeout=120)
+            f'KTP_SAMPLE_PORT={port} bash /tmp/_fleet_snapshot.sh; '
+            f'bash /tmp/_ktp_monitor_check.sh',
+            timeout=120)
         out = stdout.read().decode(errors='replace')
         err = stderr.read().decode(errors='replace').strip()
         ssh.close()
