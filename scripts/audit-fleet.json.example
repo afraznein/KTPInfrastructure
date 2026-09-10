@@ -44,6 +44,14 @@
     }
   ],
 
+  "_data_server_comment": "Read by scripts/ktp-timezone-drift.py, which checks the HLStatsX daemon and MySQL as well as the game hosts. audit-fleet-drift.py ignores it. Omitting it does not narrow that check to a pass — it reports an error, because the daemon's timezone is where a game host's log stamp is finally interpreted.",
+  "data_server": {
+    "name": "DataServer",
+    "host": "__DATA_SERVER_IP__",
+    "user": "root",
+    "key_filename": "/root/.ssh/id_ed25519"
+  },
+
   "_auth_notes": [
     "password:     plaintext SSH password (simplest; matches existing dodserver creds)",
     "key_filename: path to SSH private key (use instead of password for key-based auth)",
