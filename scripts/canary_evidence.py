@@ -250,6 +250,7 @@ ORDER BY fp.flag_index
 
 
 CAPTURE_EVENT_TYPES = set(analytics.CAPTURE_EVENT_TYPES)
+CAPTURE_EVENT_TYPES_OPTIONAL = set(analytics.CAPTURE_EVENT_TYPES_OPTIONAL)
 
 
 def collect_capture_health(
@@ -294,8 +295,13 @@ def capture_health_evidence(
     health_by_half: dict[int, set[str]] = {}
     for row in health:
         health_by_half.setdefault(int(row["half"]), set()).add(str(row["event_type"]))
+    # Required types must all be present; a newer producer's extra streams
+    # (CAPTURE_EVENT_TYPES_OPTIONAL, e.g. schema 24's `shot`) are permitted but
+    # not demanded, so this holds across a fleet mid-rollout. Exact equality
+    # here reported every match as incomplete the moment a newer plugin shipped.
     complete_types = bool(expected_halves) and all(
-        health_by_half.get(half, set()) == CAPTURE_EVENT_TYPES
+        CAPTURE_EVENT_TYPES <= health_by_half.get(half, set())
+        <= (CAPTURE_EVENT_TYPES | CAPTURE_EVENT_TYPES_OPTIONAL)
         for half in expected_halves
     )
     drops = sum(int(row.get("dropped") or 0) for row in health)
