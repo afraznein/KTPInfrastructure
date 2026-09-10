@@ -39,8 +39,32 @@ def _schema23_position_evidence():
     return manifests, health, positions
 
 
+def _schema24_position_evidence():
+    # ENGINE_STATS_EXPANSION_PLAN_20260909.md wave 0: schema 24 adds "shot"
+    # but carries the same position_state/map_revision contract schema 23
+    # does. Regression coverage for the fix in evaluate_capture_authorization
+    # / evaluate_position_provenance -- both used an exact {22,23} / != 23
+    # schema check that would have rejected this evidence outright.
+    manifests, health, positions = _schema23_position_evidence()
+    manifests[0]["schema_version"] = 24
+    manifests[0]["capabilities"] += ",shot"
+    return manifests, health, positions
+
+
 def test_schema23_position_provenance_authorizes_exact_state_and_revision():
     manifests, health, positions = _schema23_position_evidence()
+    result = analytics.evaluate_position_provenance(
+        {1}, manifests, health, positions
+    )
+    assert result["authorized"] is True
+    assert result["captured_bsp_sha256"] == "a" * 64
+    assert result["health_accepted"] == result["rows"] == 1
+    assert result["invalid_state_rows"] == 0
+    assert result["revision_mismatch_rows"] == 0
+
+
+def test_schema24_position_provenance_authorizes_the_same_contract_as_schema23():
+    manifests, health, positions = _schema24_position_evidence()
     result = analytics.evaluate_position_provenance(
         {1}, manifests, health, positions
     )

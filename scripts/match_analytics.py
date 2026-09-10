@@ -328,7 +328,14 @@ def evaluate_capture_authorization(
             if item.strip()
         }
         if (
-            int(row.get("schema_version") or 0) not in {22, 23}
+            # 24 added 2026-09-10 (ENGINE_STATS_EXPANSION_PLAN_20260909.md wave
+            # 0): schema 24 is additive over 23 (adds "shot"; drops nothing),
+            # so it authorizes the same objective_attempt/grenade_entity
+            # contract 22/23 do. An exact {22, 23} set would have failed this
+            # gate for every match the moment a schema-24 producer shipped --
+            # the same class of bug the KTPHLStatsX daemon fix (PR #87)
+            # addressed on the producer side.
+            int(row.get("schema_version") or 0) not in {22, 23, 24}
             or abs(float(row.get("position_interval") or 0) - 2.0) > 0.01
             or not {"objective_attempt", "grenade_entity"}.issubset(capabilities)
         ):
@@ -441,7 +448,11 @@ def evaluate_position_provenance(
         }
         revision = str(row.get("map_revision_sha256") or "")
         if (
-            int(row.get("schema_version") or 0) != 23
+            # 24 added 2026-09-10, same reasoning as evaluate_capture_authorization
+            # above: schema 24 carries the same position_state/map_revision
+            # contract schema 23 does, so "!= 23" would reject a schema-24
+            # manifest's position provenance outright.
+            int(row.get("schema_version") or 0) not in {23, 24}
             or not {"position_state", "map_revision"}.issubset(capabilities)
             or str(row.get("map_revision_algorithm") or "") != "sha256"
             or re.fullmatch(r"[0-9a-f]{64}", revision) is None

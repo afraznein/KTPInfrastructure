@@ -550,7 +550,10 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         and set(cadence_manifest_halves) == observed_halves
         and len(cadence_manifest_halves) == len(observed_halves)
         and all(
-            integer(row.get("schema_version")) in {22, 23}
+            # 24 added 2026-09-10 (ENGINE_STATS_EXPANSION_PLAN_20260909.md wave
+            # 0): additive over 23, same 2.00s position contract -- see the
+            # matching fix in match_analytics.evaluate_capture_authorization.
+            integer(row.get("schema_version")) in {22, 23, 24}
             and abs(floating(row.get("position_interval")) - 2.0) <= 0.01
             for row in manifests
         )

@@ -4,6 +4,37 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### Lane B + analytics: shot-context stream coverage, and a schema-24 drift fix (2026-09-10)
+
+Wave 0 of `ENGINE_STATS_EXPANSION_PLAN_20260909.md`, following KTPAMXX and
+KTPHLStatsX's `dod_client_weapon_fire` / `ktp_shot_events` change (schema
+23 -> 24).
+
+- **Lane B now exercises the `shot` stream.** `scripts/lane_b_e2e.py` counts
+  the `triggered "shot"` marker and `tests/e2e_stats/assertions.py` gained
+  `check_shot_events`: emitted-vs-persisted parity against `ktp_shot_events`
+  (tolerant of the table not existing, same reasoning as `check_damage_ledger`
+  for a corpus log older than migrate_027), plus a per-attacker invariant —
+  a player's shot rows must cover their damage-dealt rows in the same
+  match/half, since damage cannot happen without a prior weapon-fire
+  dispatch. `migrate_027_shot_events.sql` added to `DEFAULT_SCHEMA_FILES`
+  and both `--schema` blocks in `lane-b-stats-e2e.yml`
+  (`tests/unit/test_lane_b_schema_list_drift.py` guards the three staying
+  in sync).
+- **Found and fixed the same exact-schema-equality defect PR #87 fixed in
+  the daemon, in three more places in this repo:**
+  `match_analytics.evaluate_capture_authorization` (`schema_version not in
+  {22, 23}`), `match_analytics.evaluate_position_provenance` (`!= 23`), and
+  `match_readiness`'s position-cadence authorization (`in {22, 23}`) would
+  each have rejected a schema-24 manifest outright the moment the new
+  plugin shipped fleet-wide — not merely missing the new `shot` capability,
+  but failing capture authorization and position provenance for every match
+  played on the new plugin. All widened to include 24 (schema 24 is
+  additive over 23: adds `shot`, drops nothing). `check_capture_health` in
+  `tests/e2e_stats/assertions.py` had the same defect in SQL
+  (`schema_version = 23`), fixed to `>= 23`.
+  New regression coverage: `test_schema24_position_provenance_authorizes_the_same_contract_as_schema23`.
+
 ### `scripts`: fleet timezone-uniformity check (2026-09-09)
 
 - `hlstats.pl:2542` computes `$ev_remotetime = timelocal(...)` unconditionally — it reads a game

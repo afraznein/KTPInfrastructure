@@ -980,6 +980,88 @@ def check_damage_ledger(db, *, emitted: int) -> dict:
             "rows": rows, "cap_violations": 0, "detail": f"{rows}/{emitted} carried, cap never violated"}
 
 
+def check_shot_events(db, *, emitted: int, match_id: str | None = None,
+                       half: int | None = None) -> dict:
+    """Did every emitted `shot` marker land in `ktp_shot_events`, and does
+    each attacker's shot count cover their damage-dealt count?
+
+    ENGINE_STATS_EXPANSION_PLAN_20260909.md wave 0. Tolerant of
+    `ktp_shot_events` not existing at all -- migrate_027 is new; a corpus log
+    captured before it landed replayed against a schema that predates it is a
+    coverage gap (this run cannot judge the stream), not a defect, same
+    reasoning as `check_damage_ledger` above.
+
+    The per-attacker invariant (shots >= damage rows where they're attacker,
+    within the same match/half) is the cheapest proof the stream is real
+    rather than an artifact of the batched insert: dealing damage requires a
+    prior weapon-fire dispatch -- ktp_stats_capture.inc emits `shot` for
+    every actuation the clip-decrement detector sees, melee included, with no
+    weapon-type filter -- so a player with more damage rows than shot rows in
+    the same scope means rows were lost on the way in, not that they played
+    differently. Only checked when scoped to a match_id + half; unscoped
+    calls (corpus replay with no single match/half to bound the join) skip it
+    rather than compare data that never shared a producer context.
+    """
+    table_exists = db.count(
+        "SELECT COUNT(*) FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ktp_shot_events'"
+    ) > 0
+    if not table_exists:
+        return {"code": "shot_events", "status": "not_exercised", "emitted": emitted,
+                "rows": 0, "invariant_violations": 0, "detail":
+                "ktp_shot_events does not exist -- migrate_027 was not applied "
+                "to this database, so the stream was not exercised this run."}
+    scope_sql = None
+    if match_id is not None:
+        scope_sql = f"match_id = {_sql_literal(match_id)}"
+        if half is not None:
+            scope_sql += f" AND half = {int(half)}"
+    rows = db.count(
+        "SELECT COUNT(*) FROM ktp_shot_events"
+        + (f" WHERE {scope_sql}" if scope_sql else "")
+    )
+    if emitted == 0:
+        return {"code": "shot_events", "status": "not_exercised", "emitted": 0,
+                "rows": rows, "invariant_violations": 0, "detail":
+                "no `shot` markers in the game log, so the stream was not "
+                "exercised this run."}
+    if rows != emitted:
+        return {"code": "shot_events", "status": "pipeline", "emitted": emitted,
+                "rows": rows, "invariant_violations": 0, "detail":
+                f"{emitted} shot marker(s) in the game log but {rows} row(s) "
+                f"in ktp_shot_events -- a batched multi-row INSERT (the first "
+                f"ktp_* stream that isn't one row per event), a shortfall "
+                f"means the batch flush is failing (check daemon SQL errors) "
+                f"or the marker line isn't reaching the daemon."}
+    violations = 0
+    if scope_sql is not None:
+        violations = db.count(f"""
+SELECT COUNT(*) FROM (
+    SELECT attacker_id, COUNT(*) AS damage_rows
+    FROM ktp_damage_events WHERE {scope_sql}
+    GROUP BY attacker_id
+) dmg
+LEFT JOIN (
+    SELECT player_id, COUNT(*) AS shot_rows
+    FROM ktp_shot_events WHERE {scope_sql}
+    GROUP BY player_id
+) sh ON sh.player_id = dmg.attacker_id
+WHERE dmg.damage_rows > COALESCE(sh.shot_rows, 0)
+""")
+        if violations > 0:
+            return {"code": "shot_events", "status": "pipeline", "emitted": emitted,
+                    "rows": rows, "invariant_violations": violations, "detail":
+                    f"{violations} player(s) dealt more damage rows than they "
+                    f"have shot rows in the same match/half -- damage cannot "
+                    f"precede the weapon-fire dispatch that caused it, so this "
+                    f"is a shot-stream defect, not a play-style artifact."}
+    return {"code": "shot_events", "status": "ok", "emitted": emitted, "rows": rows,
+            "invariant_violations": 0, "detail":
+            f"{rows}/{emitted} carried"
+            + (", every attacker's shots covered their damage-dealt count"
+               if scope_sql is not None else "")}
+
+
 def assert_no_dropped_lines(log_text: str) -> None:
     """The plugin's ring buffer never overflowed.
 
@@ -1715,7 +1797,7 @@ def check_capture_health(db, *, match_id: str, half: int,
     manifest = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_manifests
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND producer='stats_logging' AND schema_version = 23
+  AND producer='stats_logging' AND schema_version >= 23
   AND ABS(position_interval - 2.0) <= 0.01
   AND FIND_IN_SET('objective_attempt', capabilities) > 0
   AND FIND_IN_SET('grenade_entity', capabilities) > 0
