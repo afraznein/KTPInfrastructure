@@ -165,7 +165,9 @@ The failure reason is not readable without journal access
 
 These need the live fleet and could not be answered from a workstation —
 `dodserver@` refuses the workstation key on all five hosts, `krodssh` holds no
-private key, and `sudo` on the data server needs a password.
+private key, and `sudo` on the data server needs a password. The access model,
+and why the weekly audit is the only path that reaches the fleet today, are in
+[`FLEET_AUDIT_ACCESS.md`](FLEET_AUDIT_ACCESS.md).
 
 1. Do the five game hosts carry a local disk/inode check this repo does not
    track? Hole 1 assumes not.
