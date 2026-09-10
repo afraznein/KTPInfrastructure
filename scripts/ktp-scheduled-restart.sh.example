@@ -2,9 +2,13 @@
 #
 # THIS FILE IS THE SOURCE OF TRUTH for the scheduled restart. The gitignored
 # scripts/ktp-scheduled-restart.sh beside it is a local working copy holding the
-# live AUTH_SECRET and channel IDs; regenerate it FROM here, filling only the
-# three placeholders below. Never the other way round, and never hand-maintain
+# live channel IDs; regenerate it FROM here, filling only the two placeholders
+# below. Never the other way round, and never hand-maintain
 # the two as separate lineages - that is how a fleet ends up on a third shape.
+#
+# The relay secret is NOT a placeholder any more: it is sourced at run time from
+# /etc/ktp/discord-relay.conf, so no copy of this script ever holds it and a
+# rotation cannot leave a deployed file behind on a retired value.
 #
 # The 2026-08-04 header claimed the opposite direction. Following it left this
 # file structurally AHEAD of both the fleet and the copy it named, and left that
@@ -23,7 +27,14 @@
 # ============================================================================
 RELAY_URL="https://discord-relay-78814186981.us-central1.run.app/reply"
 EDIT_URL="https://discord-relay-78814186981.us-central1.run.app/edit"
-AUTH_SECRET="YOUR_AUTH_SECRET_HERE"
+# Relay secret lives in /etc/ktp/discord-relay.conf so a rotation reaches one file per
+# host instead of five copies of this script. Sourced but never fatal: this script owns
+# the 03:00 restart, which must survive a missing conf -- only Discord posting degrades.
+RELAY_CONF="/etc/ktp/discord-relay.conf"
+[ -r "$RELAY_CONF" ] && . "$RELAY_CONF"
+if [ -z "${AUTH_SECRET:-}" ]; then
+    echo "[WARN] AUTH_SECRET unset ($RELAY_CONF missing or unreadable) - Discord notification will fail; restart continues." >&2
+fi
 
 # Detect game server instances dynamically from ~/dod-* directories.
 # An instance can be excluded from the restart cycle by creating a
@@ -513,6 +524,114 @@ for port in "${PORTS[@]}"; do
     fi
 done
 
+# ============================================================================
+# Stale curl socket-map sweep (KTPAMXXCurl) — soft, but escalates on its own
+# ============================================================================
+# KTPAMXXCurl hands its sockets to asio and lets libcurl keep connections alive
+# across requests; `stale socket_map_ entry` is the module reporting an fd in its
+# map that libcurl had already disowned. It has never been seen on the fleet.
+# That is exactly why it was a recurring hand-run chore and could never close —
+# only a HIT closes it, so a human re-grepped five hosts forever. Here it is a
+# monitor instead, and a monitor has to survive being wrong.
+#
+# THREE things this sweep has to get right. All three have already produced an
+# answer that looked clean and meant nothing:
+#
+#   1. TWO LOG TREES PER INSTANCE. `serverfiles/dod/logs` (HLDS) and
+#      `serverfiles/dod/addons/ktpamx/logs` (AMXX). The module logs through the
+#      AMXX logger, so a sweep of the HLDS tree alone returns a zero about the
+#      wrong tree. Both are scanned, and each is controlled separately.
+#   2. `grep -I`, and the LOG trees rather than the dod tree. The string is a
+#      compiled-in constant inside `addons/ktpamx/modules/amxxcurl_ktp_i386.so`
+#      — grepping the tree returns one hit per instance, all of them the
+#      module's own error message rather than log output.
+#   3. A POSITIVE CONTROL, per tree. "no hits" and "did not read any logs" are
+#      the same output otherwise. Every line either logger writes is stamped
+#      `L MM/DD/YYYY - `, so a tree whose control matches zero files was not
+#      read, and is reported BLIND — never as clean.
+#
+# Bounded to the last KTP_SOCKMAP_SCAN_DAYS days (2) rather than all history:
+# ~1,280 HLDS files per instance accumulate since 2026, and re-reading them
+# nightly buys nothing. The job runs nightly, so a 48h window overlaps itself
+# and a single skipped night still leaves no gap. A duplicate report costs an
+# operator one glance; a gap costs the finding.
+SOCKMAP_PATTERN='stale socket_map_ entry'
+SOCKMAP_CONTROL='^L [0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9] - '
+SOCKMAP_DAYS="${KTP_SOCKMAP_SCAN_DAYS:-2}"
+SOCKMAP_HITS=0
+SOCKMAP_HIT_FILES=()
+SOCKMAP_BLIND=()
+
+SOCKMAP_TREES=()
+for port in "${PORTS[@]}"; do
+    SOCKMAP_TREES+=("$port|hlds|$HOME/dod-$port/serverfiles/dod/logs")
+    SOCKMAP_TREES+=("$port|amxx|$HOME/dod-$port/serverfiles/dod/addons/ktpamx/logs")
+done
+if [ "$WARMUP_PRESENT" -eq 1 ]; then
+    SOCKMAP_TREES+=("warmup|hlds|$WARMUP_DIR/serverfiles/dod/logs")
+    SOCKMAP_TREES+=("warmup|amxx|$WARMUP_DIR/serverfiles/dod/addons/ktpamx/logs")
+fi
+
+log "Sweeping both log trees for stale curl socket-map entries (last ${SOCKMAP_DAYS}d)..."
+for spec in "${SOCKMAP_TREES[@]}"; do
+    sm_port="${spec%%|*}"; sm_rest="${spec#*|}"
+    sm_kind="${sm_rest%%|*}"; sm_tree="${sm_rest#*|}"
+
+    if [ ! -d "$sm_tree" ]; then
+        log "  [$sm_port] $sm_kind: BLIND — no such tree: $sm_tree"
+        SOCKMAP_BLIND+=("[$sm_port] $sm_kind (missing)")
+        continue
+    fi
+
+    # The file list is materialised once so the hit count and the control count
+    # are provably over the SAME set. Two independent finds could disagree
+    # across a log rotation, which is the one way a control stops controlling.
+    SM_LIST=$(mktemp 2>/dev/null)
+    if [ -z "$SM_LIST" ]; then
+        log "  [$sm_port] $sm_kind: BLIND — mktemp failed"
+        SOCKMAP_BLIND+=("[$sm_port] $sm_kind (mktemp)")
+        continue
+    fi
+    find "$sm_tree" -type f -mtime -"$SOCKMAP_DAYS" -print0 2>/dev/null > "$SM_LIST"
+
+    SM_CTRL=$(xargs -0 -r grep -lIE -- "$SOCKMAP_CONTROL" < "$SM_LIST" 2>/dev/null | wc -l)
+    SM_CTRL=${SM_CTRL//[^0-9]/}
+    if [ "${SM_CTRL:-0}" -eq 0 ]; then
+        log "  [$sm_port] $sm_kind: BLIND — control matched 0 files in $sm_tree"
+        SOCKMAP_BLIND+=("[$sm_port] $sm_kind (control 0)")
+        rm -f "$SM_LIST"
+        continue
+    fi
+
+    SM_TREE_HITS=0
+    while IFS= read -r sm_file; do
+        [ -n "$sm_file" ] || continue
+        SM_TREE_HITS=$((SM_TREE_HITS + 1))
+        SOCKMAP_HITS=$((SOCKMAP_HITS + 1))
+        SOCKMAP_HIT_FILES+=("[$sm_port] $sm_file")
+    done < <(xargs -0 -r grep -lI -- "$SOCKMAP_PATTERN" < "$SM_LIST" 2>/dev/null)
+    rm -f "$SM_LIST"
+
+    if [ "$SM_TREE_HITS" -gt 0 ]; then
+        log "  [$sm_port] $sm_kind: $SM_TREE_HITS file(s) HIT, across $SM_CTRL read"
+    else
+        log "  [$sm_port] $sm_kind: clean across $SM_CTRL file(s) read"
+    fi
+done
+
+if [ "$SOCKMAP_HITS" -gt 0 ]; then
+    log "STALE SOCKET MAP: $SOCKMAP_HITS log file(s) carry '$SOCKMAP_PATTERN':"
+    for sm_file in "${SOCKMAP_HIT_FILES[@]}"; do
+        log "  SOCKMAP: $sm_file"
+    done
+fi
+if [ ${#SOCKMAP_BLIND[@]} -gt 0 ]; then
+    log "SOCKMAP SWEEP BLIND on ${#SOCKMAP_BLIND[@]} tree(s) — a zero from these means nothing:"
+    for sm_b in "${SOCKMAP_BLIND[@]}"; do
+        log "  BLIND: $sm_b"
+    done
+fi
+
 # Identify any failed ports
 FAILED_PORTS=""
 if [ "$RUNNING" -ne "$EXPECTED_RUNNING" ]; then
@@ -562,6 +681,31 @@ fi
 # this guard exists to close.
 if [ "$SWAP_FAILED" -gt 0 ]; then
     FINAL_DESC="$FINAL_DESC\\n**SWAP FAILED on $SWAP_FAILED file(s) — wave PARTIALLY applied, see restart log:**${SWAP_FAILED_FILES[*]}"
+    if [ "$FINAL_COLOR" -eq "$COLOR_GREEN" ]; then
+        FINAL_COLOR=$COLOR_ORANGE
+    fi
+fi
+
+# The socket-map sweep rides in on the same terms as the swap failure above, and
+# for the same reason: it must escalate even when every server came up green,
+# because the whole finding is orthogonal to whether the restart worked.
+#
+# A BLIND tree escalates too. "I found nothing" and "I did not look" are the same
+# embed otherwise, and this check exists precisely because a zero nobody could
+# distinguish from a non-measurement was re-run by hand five times.
+#
+# Deliberately NOT reflected in the exit code, unlike SWAP_FAILED. The exit code
+# is the restart's own verdict, and a stale socket-map entry says nothing about
+# whether the restart succeeded; conflating them would make cron report a healthy
+# fleet as a failed job every night until someone fixed a module bug.
+if [ "$SOCKMAP_HITS" -gt 0 ]; then
+    FINAL_DESC="$FINAL_DESC\\n**STALE SOCKET MAP in $SOCKMAP_HITS log file(s) — KTPAMXXCurl connection reuse, see restart log:**${SOCKMAP_HIT_FILES[*]}"
+    if [ "$FINAL_COLOR" -eq "$COLOR_GREEN" ]; then
+        FINAL_COLOR=$COLOR_ORANGE
+    fi
+fi
+if [ ${#SOCKMAP_BLIND[@]} -gt 0 ]; then
+    FINAL_DESC="$FINAL_DESC\\n**Socket-map sweep BLIND on ${#SOCKMAP_BLIND[@]} log tree(s) — its zero is not a measurement:**${SOCKMAP_BLIND[*]}"
     if [ "$FINAL_COLOR" -eq "$COLOR_GREEN" ]; then
         FINAL_COLOR=$COLOR_ORANGE
     fi

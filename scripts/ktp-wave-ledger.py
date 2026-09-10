@@ -19,6 +19,16 @@ reminder. The intent is recorded at STAGE time, when the md5 is already known
     on memory: the gate sits on the action the operator is going to take
     anyway, and flipping the row is what clears it.
 
+Each artifact also carries its BUILD BASE -- the source commit it was compiled
+from -- because the md5 alone answers "is this the same file" and never "has
+this moved since". Of eleven artifacts on the fleet only three had a base
+recorded anywhere, and the missing eight cannot be recovered: none of these
+artifacts is byte-reproducible (`.amxx` bakes a per-minute BUILD_TIME, ReHLDS
+bakes a build-id and `__DATE__`), so rebuilding candidate commits and comparing
+md5s returns a MISMATCH for the correct base and reads as "none of these built
+it". `stats_logging.amxx`'s base is gone for exactly that reason. Stage time is
+the only moment the base is known, so that is where it is written.
+
 Three things this deliberately does NOT do:
 
   * It does not parse a version out of an artifact. `.amxx` files embed no
@@ -37,7 +47,8 @@ Usage:
   ktp-wave-ledger.py status                     # what is pending, and what is due
   ktp-wave-ledger.py check                      # CLAUDE.md only; no fleet, no network
   ktp-wave-ledger.py reconcile                  # read the fleet, then gate on CLAUDE.md
-  ktp-wave-ledger.py record -a NAME=MD5:REMOTE_DIR [-a ...] --hosts a,b --targets 24
+  ktp-wave-ledger.py record -a NAME=MD5:REMOTE_DIR [-a ...] --hosts a,b --targets 24 \
+                            --base NAME=owner/repo@sha
 
 Exit codes (`check` / `reconcile`):
   0  nothing due, or every due wave's rows agree with the fleet
@@ -85,6 +96,18 @@ COMPONENT_BY_BASENAME = {
 }
 
 MD5_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+
+# A build base: `<sha>`, optionally repo-qualified as `owner/repo@<sha>`, with a
+# `-dirty` suffix when the tree it was built in was not clean. The repo half is
+# not decoration -- a bare short sha is ambiguous across the ~30 repos in this
+# estate, and a base nobody can resolve is not a record. A dirty base is worth
+# storing verbatim: it says the artifact is NOT that commit, which is a fact the
+# next reader needs and cannot get any other way.
+BASE_RE = re.compile(r"^(?:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@)?[0-9a-f]{7,40}(?:-dirty)?$",
+                     re.IGNORECASE)
+
+NO_BASE = ("NOT RECORDED -- and not recoverable: this artifact is not byte-reproducible, "
+           "so rebuilding candidate commits returns a mismatch for the CORRECT base")
 
 
 # --------------------------------------------------------------------------
@@ -210,11 +233,19 @@ def ledger_dir() -> str:
 
 def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
                 narrowed: bool = False, staged_at: float | None = None) -> str:
-    """Write one wave's intent. `artifacts` items: basename, md5, remote_dir, version?"""
+    """Write one wave's intent. `artifacts` items: basename, md5, remote_dir, version?, base?
+
+    `base` is accepted as None so a hand-recorded or pre-existing wave still
+    loads, but a base that IS supplied has to be well-formed -- a typo silently
+    stored is the same as no record at all, only harder to notice.
+    """
     staged_at = time.time() if staged_at is None else staged_at
     for a in artifacts:
         if not MD5_RE.match(a.get("md5", "")):
             raise ValueError(f"{a.get('basename')}: not an md5: {a.get('md5')!r}")
+        if a.get("base") is not None and not BASE_RE.match(str(a["base"])):
+            raise ValueError(f"{a.get('basename')}: not a build base: {a['base']!r} "
+                             "(want [owner/repo@]<7-40 hex>[-dirty])")
     d = ledger_dir()
     os.makedirs(d, exist_ok=True)
     # Second-resolution ids collide, and a collision would silently overwrite an
@@ -233,7 +264,8 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
         "targets": targets,
         "narrowed": narrowed,
         "artifacts": [{"basename": a["basename"], "md5": a["md5"].lower(),
-                       "remote_dir": a.get("remote_dir", ""), "version": a.get("version")}
+                       "remote_dir": a.get("remote_dir", ""), "version": a.get("version"),
+                       "base": a.get("base")}
                       for a in artifacts],
         "reconciled_at": None,
         "reconciled_by": None,
@@ -428,6 +460,8 @@ def _cmd_status(args) -> int:
         for a in e["artifacts"]:
             v = f"  {a['version']}" if a.get("version") else ""
             print(f"    {a['basename']}  {a['md5']}{v}")
+            print(f"      built from {a['base']}" if a.get("base")
+                  else f"      built from {NO_BASE}")
     return 0
 
 
@@ -488,6 +522,10 @@ def _cmd_reconcile(args) -> int:
                 print(f"  {a['basename']}: live {len(matched)}/{len(seen)} on {want}")
             else:
                 print(f"  {a['basename']}: {want} (fleet NOT read -- --no-fleet)")
+            # Quoted here because reconcile is where the CLAUDE.md row gets
+            # written, and the row is the only place the base outlives the
+            # ledger entry that is about to be marked reconciled.
+            print(f"    built from {a['base']}" if a.get("base") else f"    built from {NO_BASE}")
             f = check_row(text, a["basename"], want, a.get("version"))
             print(f"    CLAUDE.md: {'OK' if f.ok else 'STALE'} -- {f.detail}")
             if not f.ok:
@@ -509,13 +547,26 @@ def _cmd_reconcile(args) -> int:
 
 
 def _cmd_record(args) -> int:
+    bases = {}
+    for spec in args.base:
+        name, sep, base = spec.partition("=")
+        if not sep or not BASE_RE.match(base.strip()):
+            sys.exit(f"FATAL: --base wants NAME=[owner/repo@]<7-40 hex>[-dirty], got {spec!r}")
+        bases[name.strip()] = base.strip()
+
     artifacts = []
     for spec in args.artifact:
         name, _, rest = spec.partition("=")
         md5, _, remote_dir = rest.partition(":")
         if not MD5_RE.match(md5):
             sys.exit(f"FATAL: -a wants NAME=MD5[:REMOTE_DIR], got {spec!r}")
-        artifacts.append({"basename": name, "md5": md5, "remote_dir": remote_dir})
+        artifacts.append({"basename": name, "md5": md5, "remote_dir": remote_dir,
+                          "base": bases.pop(name, None)})
+    # A --base naming an artifact that is not in the wave is a typo in the one
+    # field nobody can reconstruct later, so it is fatal rather than ignored.
+    if bases:
+        sys.exit(f"FATAL: --base names artifacts not in this wave: {', '.join(sorted(bases))}")
+
     path = record_wave(artifacts, args.hosts.split(","), args.targets)
     print(path)
     return 0
@@ -544,6 +595,10 @@ def main(argv=None) -> int:
 
     w = sub.add_parser("record", help="Record a wave by hand (stage-wave.py does this for you).")
     w.add_argument("-a", "--artifact", action="append", required=True, metavar="NAME=MD5[:REMOTE_DIR]")
+    w.add_argument("--base", action="append", default=[], metavar="NAME=BASE",
+                   help="Source commit NAME was built from, e.g. "
+                        "KTPMatchHandler.amxx=afraznein/KTPMatchHandler@b891b0e. Repeatable. "
+                        "stage-wave.py supplies this for you and refuses to stage without it.")
     w.add_argument("--hosts", required=True)
     w.add_argument("--targets", type=int, required=True)
     w.set_defaults(func=_cmd_record)

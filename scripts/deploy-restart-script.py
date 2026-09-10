@@ -23,6 +23,8 @@ Safety model:
       'addons/ktpamx/modules/\\*.new'    >= 2
       'created missing.*monitoring.lock' >= 1
       'ktp_extension_loaded'             >= 3   (R8 assert, added 2026-07-07)
+      'stale socket_map_ entry'          >= 1   (socket-map sweep)
+      'SOCKMAP_CONTROL'                  >= 2   (...and its positive control)
 
 Usage:
     deploy-restart-script.py [--hosts atlanta,dallas] [--force] [--dry-run]
@@ -66,6 +68,12 @@ TRIPWIRES = [
     ("grep -c 'addons/ktpamx/modules/\\*.new' {path}", 2, ">="),
     ("grep -c 'created missing.*monitoring.lock' {path}", 1, ">="),
     ("grep -c 'ktp_extension_loaded' {path}", 3, ">="),
+    # The socket-map sweep and, separately, its per-tree positive control. A
+    # deploy that carries the sweep but drops the control ships a check that
+    # cannot tell "no hits" from "read no logs" — which is the defect the sweep
+    # was written to end, so it is tripwired on its own line.
+    ("grep -c 'stale socket_map_ entry' {path}", 1, ">="),
+    ("grep -c 'SOCKMAP_CONTROL' {path}", 2, ">="),
 ]
 
 
