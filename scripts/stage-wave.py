@@ -61,6 +61,21 @@ holding it true):
      that was going to happen anyway; flipping the row clears the gate by
      itself. --allow-unreconciled overrides.
 
+  7. BUILD-BASE RECORD. `--base <basename>=[owner/repo@]<sha>` records the
+     source commit each artifact was compiled from, into the same wave ledger
+     entry as its md5. REQUIRED by default: --allow-missing-base is the opt-out,
+     and it says NOT RECORDED in the ledger rather than leaving the field blank.
+     The md5 answers "is this the same file" and never "has this moved since",
+     and the base is a fact only the person running this command holds -- this
+     tool has no idea which repo the artifact came out of.
+     It cannot be recovered afterwards. NONE of these artifacts is
+     byte-reproducible: `.amxx` bakes a per-minute BUILD_TIME and ReHLDS bakes a
+     build-id and `__DATE__`, so rebuilding candidate commits and comparing md5s
+     returns a MISMATCH for the CORRECT base and reads as "none of these built
+     it". `stats_logging.amxx`'s base is unrecoverable for exactly that reason.
+     Stage time is the last moment the base is known, which is why it is a gate
+     here and not a reminder in a checklist.
+
 Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
 permissions are correct), re-verifies md5 24/24, and prints the exact
@@ -72,9 +87,12 @@ topology and password-from-env, so there is one source of truth for the fleet
 list and no secret/IP is duplicated here.
 
 Usage:
-  # a plugin wave (basename=md5 pins each artifact to its reviewed build)
+  # a plugin wave (basename=md5 pins each artifact to its reviewed build;
+  #                basename=sha records what it was BUILT FROM)
   stage-wave.py -f compiled/KTPMatchHandler.amxx --expect KTPMatchHandler.amxx=0d3a174eb96e638579125a8f1a4cd23c \
-                -f compiled/ktp_cvar.amxx        --expect ktp_cvar.amxx=6e55811b716a03e294941ab03ddd85c1
+                                                 --base   KTPMatchHandler.amxx=afraznein/KTPMatchHandler@b891b0e \
+                -f compiled/ktp_cvar.amxx        --expect ktp_cvar.amxx=6e55811b716a03e294941ab03ddd85c1 \
+                                                 --base   ktp_cvar.amxx=afraznein/KTPCvarChecker@27223fa
   # a module wave
   stage-wave.py -f dodx_ktp_i386.so --expect dodx_ktp_i386.so=<md5>
   # a single-instance soak, preserving the live build first
@@ -99,6 +117,8 @@ Env: KTP_FLEET_SSH_PASSWORD (or ~/.ktp_fleet_ssh_password), same as deploy-to-fl
 import argparse
 import importlib.util
 import os
+import re
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -136,6 +156,56 @@ SWAP_GLOBS = [
     "serverfiles/dod/addons/ktpamx/modules/*.new",
     "serverfiles/dod/addons/ktpamx/plugins/*.new",
 ]
+
+
+def parse_base_pins(values):
+    """{basename: base} from repeatable `--base BASENAME=BASE`. Raises ValueError.
+
+    Validated against the ledger's own BASE_RE so the shape this tool accepts and
+    the shape the record will hold can never drift apart.
+    """
+    out = {}
+    for v in values:
+        if "=" not in v:
+            raise ValueError(f"--base must be BASENAME=BASE, got '{v}'")
+        k, b = v.split("=", 1)
+        k, b = k.strip(), b.strip()
+        if not ledger.BASE_RE.match(b):
+            raise ValueError(f"--base {k}: '{b}' is not a build base. Want "
+                             f"[owner/repo@]<7-40 hex>[-dirty], e.g. "
+                             f"{k}=afraznein/KTPMatchHandler@b891b0e")
+        out[k] = b
+    return out
+
+
+def detect_build_base(local_path):
+    """Best-effort `owner/repo@sha[-dirty]` for the tree an artifact sits in, or None.
+
+    SUGGESTED IN AN ERROR MESSAGE ONLY -- never recorded on its own. HEAD is what
+    the repo says now, and an artifact is just a file: it can predate the
+    checkout it sits beside (KTPMatchHandler 0.10.170 was built four hours after
+    HEAD moved, and the reverse ordering leaves no trace), or have been copied
+    into a staging tree that is not a repo at all. A guessed base reads exactly
+    like a supplied one, so guessing quietly is worse than not recording.
+    """
+    d = os.path.dirname(os.path.abspath(local_path))
+
+    def git(*a):
+        return subprocess.run(("git", "-C", d) + a, capture_output=True, text=True, timeout=15)
+
+    try:
+        head = git("rev-parse", "--short=12", "HEAD")
+        if head.returncode != 0 or not head.stdout.strip():
+            return None
+        sha = head.stdout.strip()
+        dirty = "-dirty" if git("status", "--porcelain").stdout.strip() else ""
+        url = git("config", "--get", "remote.origin.url").stdout.strip()
+        m = re.search(r"[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?$", url)
+        slug = f"{m.group(1)}/{m.group(2)}@" if m else ""
+        cand = f"{slug}{sha}{dirty}"
+        return cand if ledger.BASE_RE.match(cand) else None
+    except Exception:
+        return None
 
 
 def _connect(host_info):
@@ -351,6 +421,16 @@ def main():
                     help="Local artifact path. Repeatable.")
     ap.add_argument("--expect", action="append", default=[], metavar="BASENAME=MD5",
                     help="Pin an artifact's local md5 to its reviewed build. Repeatable.")
+    ap.add_argument("--base", action="append", default=[], metavar="BASENAME=BASE",
+                    help="The source commit this artifact was BUILT FROM, e.g. "
+                         "KTPMatchHandler.amxx=afraznein/KTPMatchHandler@b891b0e. Repeatable, "
+                         "and REQUIRED -- see --allow-missing-base. Written into the wave ledger "
+                         "beside the md5; it cannot be recovered afterwards, because none of "
+                         "these artifacts is byte-reproducible.")
+    ap.add_argument("--allow-missing-base", action="store_true",
+                    help="Stage without recording a build base. The ledger then says NOT "
+                         "RECORDED for that artifact -- permanently, since rebuilding candidate "
+                         "commits and comparing md5s cannot find it.")
     ap.add_argument("--hosts", default="all",
                     help=f'Comma-separated (or "all"). Choices: {",".join(d2f.SERVERS)}')
     ap.add_argument("--ports", default="all",
@@ -486,10 +566,49 @@ def main():
     if unpinned:
         print(f"WARNING: not md5-pinned (no --expect): {', '.join(unpinned)}")
 
+    # ---- Build-base gate ----
+    # The md5 says "is this the same file". It never says "has this moved since",
+    # and that second question is the one asked six weeks later. Only the person
+    # running this command knows the answer -- this tool has no idea which of the
+    # ~30 repos the artifact came out of -- and by the time anyone asks, it is
+    # gone: rebuilding candidates and comparing md5s returns a mismatch for the
+    # CORRECT base, because nothing here is byte-reproducible. So it is required,
+    # with a loud, explicit opt-out rather than a silent optional field.
+    try:
+        bases = parse_base_pins(args.base)
+    except ValueError as ex:
+        sys.exit(f"FATAL: {ex}")
+    stray = sorted(set(bases) - {a.basename for a in artifacts})
+    if stray:
+        sys.exit(f"FATAL: --base names artifacts not in this wave: {', '.join(stray)}. "
+                 "(Nothing staged.)")
+    unbased = [a for a in artifacts if a.basename not in bases]
+    if unbased and not args.allow_missing_base:
+        print("FATAL: no --base (build base) for: "
+              f"{', '.join(a.basename for a in unbased)}", file=sys.stderr)
+        print("The wave ledger would record the md5 and nothing about where it came from, so", file=sys.stderr)
+        print('"has this moved since?" becomes unanswerable -- and it stays unanswerable, because', file=sys.stderr)
+        print("`.amxx` bakes a per-minute BUILD_TIME and ReHLDS bakes a build-id and __DATE__:", file=sys.stderr)
+        print("rebuilding candidate commits and comparing md5s returns a MISMATCH for the base", file=sys.stderr)
+        print("that actually built it. Supply it:", file=sys.stderr)
+        for a in unbased:
+            guess = detect_build_base(a.local_path)
+            hint = (f"   # that tree's HEAD is {guess} -- CHECK it is what you built"
+                    if guess else "   # no git tree beside the artifact; take it from where you built")
+            print(f"  --base {a.basename}=<owner/repo@sha>{hint}", file=sys.stderr)
+        sys.exit("Or --allow-missing-base to stage a wave whose origin is deliberately "
+                 "unrecorded. (Nothing staged.)")
+    if unbased:
+        print("WARNING: --allow-missing-base -- no build base for "
+              f"{', '.join(a.basename for a in unbased)}.")
+        print("  The ledger will read NOT RECORDED for these, and that is permanent: they are not")
+        print("  byte-reproducible, so the base cannot be found later by rebuilding and comparing.")
+
     print(f"Artifacts ({len(artifacts)}):")
     for a in artifacts:
         pin = " [pinned]" if a.basename in expect else ""
         print(f"  {a.basename} -> dod-*/{a.remote_dir}/  ({a.size}B, md5 {a.md5}){pin}")
+        print(f"      built from {bases.get(a.basename) or 'NOT RECORDED'}")
     targets = _target_instances(host_keys, port_filter)
     if port_filter is None:
         print(f"Targets: {len(targets)} active instances across {len(host_keys)} host(s).\n")
@@ -595,15 +714,20 @@ def main():
     try:
         ledger_path = ledger.record_wave(
             [{"basename": a.basename, "md5": a.md5, "remote_dir": a.remote_dir,
-              "version": row_versions.get(a.basename)} for a in artifacts],
+              "version": row_versions.get(a.basename), "base": bases.get(a.basename)}
+             for a in artifacts],
             hosts=host_keys, targets=len(targets), narrowed=port_filter is not None)
         print(f"\nWave recorded: {ledger_path}")
     except Exception as ex:
         print(f"\nWARNING: could not record the wave for the row-flip gate: {ex!r}", file=sys.stderr)
         print("  The stage is fine; only the morning-after gate is unarmed. Record it by hand:",
               file=sys.stderr)
+        # The base rides into the fallback command too. This branch is the one
+        # moment the base exists only in this process's memory, and a hand-record
+        # line that drops it loses the field permanently.
         pairs = " ".join(f"-a {a.basename}={a.md5}:{a.remote_dir}" for a in artifacts)
-        print(f"  ktp-wave-ledger.py record {pairs} --hosts {','.join(host_keys)} "
+        base_args = " ".join(f"--base {n}={b}" for n, b in sorted(bases.items()))
+        print(f"  ktp-wave-ledger.py record {pairs} {base_args} --hosts {','.join(host_keys)} "
               f"--targets {len(targets)}", file=sys.stderr)
 
     # ---- Next-step hint ----
