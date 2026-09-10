@@ -27,13 +27,14 @@ channel IDs, derives its instance list at run time from `~/dod-*`, and carries
 #164's swap-failure escalation.
 
 **L2 — the gitignored working copy.** `scripts/ktp-scheduled-restart.sh`, ignored
-`@secret` because it holds the live relay secret. **It is not a canonical.** It
-stopped tracking anything on 2026-08-04: no #164, and a relay secret that does
-not match what the fleet runs.
+`@secret` for historical reasons — since the relay secret moved to a conf file it
+holds no secret at all, only the two channel IDs. **It is not a canonical.**
+Regenerate it from L3; never hand-edit it.
 
 **L3 — the tracked `.example`.** `scripts/ktp-scheduled-restart.sh.example`.
-Structurally the **most complete** of the three — #164's escalation *and* the
-warmup/LAN work that never went to the fleet — with three placeholder values.
+Structurally the **most complete** of the three — #164's escalation, #293's
+socket-map sweep, *and* the warmup/LAN work that never went to the fleet — with
+two placeholder values.
 
 ## Why both obvious syncs are destructive
 
@@ -41,10 +42,11 @@ warmup/LAN work that never went to the fleet — with three placeholder values.
   Discord embed and the non-zero exit all disappear, restoring the silent "restart
   complete, all green" outcome while a wave sits half-applied. It also installs a
   relay secret the fleet is not using.
-- **L3 → fleet blanks the relay secret and both channel IDs**, so the 03:00
-  notification stops and nothing else about the restart looks wrong. This is why
-  #164 was deployed as a delta against the live script's own anchors rather than
-  by copying `.example`.
+- **L3 → fleet blanks both channel IDs**, so the 03:00 notification stops and
+  nothing else about the restart looks wrong. This is why #164 was deployed as a
+  delta against the live script's own anchors rather than by copying `.example`.
+  It used to blank the relay secret too; that half is closed, because the secret
+  is no longer a value this file can carry.
 - **Fleet → L3 deletes the warmup work.** This is the one that is easy to talk
   yourself into, because it sounds like "make the repo match reality". `.example`
   is *ahead* of the fleet, not behind it; regenerating it from a host would drop
@@ -64,10 +66,19 @@ warmup/LAN work that never went to the fleet — with three placeholder values.
 
 `.example` already **is** the union. The fix is not a new script — it is to stop
 treating L2 as a lineage. L2 becomes what its ignore tag says it is: a local
-working copy, regenerated from L3 by filling three placeholders.
+working copy, regenerated from L3 by filling two placeholders.
 
-That L3 loses nothing relative to L1 is checkable, and was checked. Every hunk L3
-has and L1 lacks is inert on a fleet host as it stands:
+⚠️ **"L3 loses nothing relative to L1" IS NOT A STANDING PROPERTY — it is a
+measurement, and it expired once.** It was true when checked on 2026-08-27 and
+false by 2026-09-10: the fleet had gained the `/etc/ktp/discord-relay.conf`
+sourcing, L3 still hardcoded `AUTH_SECRET`, and following the fill instruction
+literally would have written the live relay secret onto five production hosts and
+reverted the conf indirection. The block was ported into L3 rather than filled
+(#293 deploy). **Re-derive this direction before every deploy — diff a live host
+against `.example` and read the deletions, not just the additions.** The
+deletions are the ones that cost something.
+
+Every remaining hunk L3 has and L1 lacks is inert on a fleet host as it stands:
 
 - **Warmup legs** are gated on `[ -d "$WARMUP_DIR" ] && [ -x … ]`, and
   `/srv/ktpdata/warmup` is **absent on 5 of 5 hosts**, so `WARMUP_PRESENT` is 0
@@ -82,7 +93,7 @@ has and L1 lacks is inert on a fleet host as it stands:
   double quotes bash only treats a backslash as special before ``$ ` " \`` and a
   newline. Verified, not assumed. L1 uses both spellings; L3 uses one.
 
-So **filling L3's three placeholders with a host's existing values yields a
+So **filling L3's two placeholders with a host's existing values yields a
 script that behaves identically to what that host runs today.** L2 has nothing
 L3 lacks.
 
@@ -93,16 +104,24 @@ L3 lacks.
 | Atlanta, Dallas, Denver, New York, Chicago | **None.** Every added hunk is gated off on a fleet host, and `EXPECTED_RUNNING` resolves to the value the `NUM_SERVERS` it replaces already had. |
 
 Real but latent: the fleet gains the legs it would need if a warmup instance were
-ever added, and stops being a fourth lineage. The single thing that must not go
-wrong is the fill — a deploy that leaves `YOUR_AUTH_SECRET_HERE` in place ends the
-Discord notification silently.
+ever added, and stops being a fourth lineage. The thing that must not go wrong is
+the fill — a placeholder left in place ends the Discord notification silently,
+while the restart still runs and still reports "restart complete" in green.
+✅ **The `YOUR_AUTH_SECRET_HERE` case is now structurally impossible**, because no
+copy of this script carries the secret; the two channel-ID placeholders remain,
+and `ktp-restart-drift.py` reports any that survive a deploy.
 
 ## Regeneration direction
 
-**L3 is the source of truth. L2 is derived from it.** Fill `AUTH_SECRET`,
-`CHANNEL_KTP` and `CHANNEL_EXTERNAL`; change nothing else. The 2026-08-04 header
-asserted the opposite direction, which is how the tracked file ended up ahead of
-the thing it claimed to be a copy of.
+**L3 is the source of truth. L2 is derived from it.** Fill `CHANNEL_KTP` and
+`CHANNEL_EXTERNAL`; change nothing else. The 2026-08-04 header asserted the
+opposite direction, which is how the tracked file ended up ahead of the thing it
+claimed to be a copy of.
+
+⚠️ **Source of truth is a rule about where edits go, not a promise that L3 is
+current.** The fleet can still gain something first — it did, with the conf
+sourcing. When that happens the fix is to port the block INTO L3 and redeploy,
+never to fill around it.
 
 ## Detecting the next divergence
 
