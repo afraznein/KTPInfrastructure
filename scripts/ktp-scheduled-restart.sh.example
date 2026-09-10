@@ -2,9 +2,13 @@
 #
 # THIS FILE IS THE SOURCE OF TRUTH for the scheduled restart. The gitignored
 # scripts/ktp-scheduled-restart.sh beside it is a local working copy holding the
-# live AUTH_SECRET and channel IDs; regenerate it FROM here, filling only the
-# three placeholders below. Never the other way round, and never hand-maintain
+# live channel IDs; regenerate it FROM here, filling only the two placeholders
+# below. Never the other way round, and never hand-maintain
 # the two as separate lineages - that is how a fleet ends up on a third shape.
+#
+# The relay secret is NOT a placeholder any more: it is sourced at run time from
+# /etc/ktp/discord-relay.conf, so no copy of this script ever holds it and a
+# rotation cannot leave a deployed file behind on a retired value.
 #
 # The 2026-08-04 header claimed the opposite direction. Following it left this
 # file structurally AHEAD of both the fleet and the copy it named, and left that
@@ -23,7 +27,14 @@
 # ============================================================================
 RELAY_URL="https://discord-relay-78814186981.us-central1.run.app/reply"
 EDIT_URL="https://discord-relay-78814186981.us-central1.run.app/edit"
-AUTH_SECRET="YOUR_AUTH_SECRET_HERE"
+# Relay secret lives in /etc/ktp/discord-relay.conf so a rotation reaches one file per
+# host instead of five copies of this script. Sourced but never fatal: this script owns
+# the 03:00 restart, which must survive a missing conf -- only Discord posting degrades.
+RELAY_CONF="/etc/ktp/discord-relay.conf"
+[ -r "$RELAY_CONF" ] && . "$RELAY_CONF"
+if [ -z "${AUTH_SECRET:-}" ]; then
+    echo "[WARN] AUTH_SECRET unset ($RELAY_CONF missing or unreadable) - Discord notification will fail; restart continues." >&2
+fi
 
 # Detect game server instances dynamically from ~/dod-* directories.
 # An instance can be excluded from the restart cycle by creating a
