@@ -97,7 +97,14 @@ def test_spawn_ownership_seeds_initial_state_and_survives_initial_row():
     result = build_flag_swing_shadow(
         states, [], [], [], ROSTER, spawn_ownership={0: 1})
     assert result["reconstructed_initial_flags"] == [0]
-    assert any("reconstructed from HUD" in c for c in result["caveats"])
+    # A seeded flag must be DISCLOSED as not-observed, whatever the source of
+    # the seed happens to be -- it was HUD flags_init recordings originally
+    # and is the map's authored BSP point_default_owner since #295. Assert the
+    # disclosure exists and names the flag, not the sentence it is phrased in;
+    # pinning the wording is what broke this test when the source improved.
+    disclosure = [c for c in result["caveats"] if "ownership" in c.lower()]
+    assert disclosure, result["caveats"]
+    assert any("[0]" in c for c in disclosure), disclosure
     # No non-initial transition ever printed to the timeline for flag 0,
     # but the seeded ownership should still count in p_allies -- confirm
     # indirectly via a later allies kill: man-advantage swing alone would
