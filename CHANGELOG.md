@@ -4,6 +4,80 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: capture-health type checks no longer break on a newer producer (2026-09-10)
+
+Two places compared the set of per-half health streams against
+`CAPTURE_EVENT_TYPES` for **exact equality**:
+`match_analytics.evaluate_capture_authorization` and `canary_evidence`'s
+`complete_types`. `ksc_emit_health` loops over every event type the plugin
+knows, so a plugin that gains a stream gains a health row — and schema 24
+(KTPAMXX #102) added `shot`, making it 12 rows where the list has 11.
+
+Left alone, the first match played on the new plugin would have reported
+`half N does not contain each exact health type once` on **every half of
+every match**, and the canary would have called its health coverage
+incomplete — while nothing was actually wrong. That would have landed
+squarely on the wave-0 canary it was meant to validate.
+
+- `CAPTURE_EVENT_TYPES` stays the **required** core that must appear exactly
+  once per half; new `CAPTURE_EVENT_TYPES_OPTIONAL` carries streams a newer
+  producer may additionally emit (`shot`).
+- Both checks now require all of the core, permit the optional, and still
+  reject an unknown type or a repeat — so the original intent (catch a stream
+  that went dark, catch duplicates) is preserved while a fleet mid-rollout
+  passes on both plugin versions.
+- Five tests in `tests/e2e_stats/test_match_analytics_integration.py` cover
+  both directions: an 11-type and a 12-type producer both accepted, and a
+  missing / unknown / repeated type each still an error.
+
+This is the same exact-equality trap as the schema-version gates fixed
+earlier today, in a different guise.
+
+
+### `config` + `scripts`: spawn ownership now comes from the maps, not from play (2026-09-10)
+
+`config/analytics/spawn_ownership.toml` seeds the opening flag position of
+every generated report. It was a majority vote over 886 HUD recordings, taken
+after skipping each half's opening readings — which meant it measured who
+*usually holds* each flag during play, not who the mapper *authored* it to.
+On a home flag those are the same answer; on a neutral flag they are not, so
+the table asserted home flags on five maps that author none.
+
+Corrected against the maps themselves. Every `dod_control_point` entity in a
+BSP carries `point_default_owner` (0 neutral / 1 allies / 2 axis) — the
+authored value, and the only thing that means "who owns this at spawn".
+
+- **New `scripts/map_spawn_ownership.py`** reads it straight out of the entity
+  lump, fetching maps from the public fastdl mirror (cached locally, so a
+  re-run is offline). Self-contained; no dependency on the observer repo's
+  copy of the same parse. It refuses to guess a `flag_index` on maps that ship
+  no usable `point_index` — those still get authoritative per-flag ownership
+  keyed by name, with `index_source` saying why the order is absent.
+- **Removed, authored all-neutral:** `dod_halle`, `dod_lennon5_b1`,
+  `dod_railroad2_s9a`, `dod_railyard_s9d`, `dod_thunder2`. Their flag names
+  and indices were right — they match the BSP exactly — so this was purely a
+  wrong ownership call. `dod_lennon5_b1` and `dod_thunder2` are the two
+  most-played maps in the pool, so between them this was the majority of
+  affected reports.
+- **Corrected `dod_saints2_b3e`:** the table had The Bridge — the map's
+  neutral centre flag — at index 0 and owned by allies, and omitted Allied 2nd
+  entirely. saints2 ships `point_index = -1` on every CP, so its order comes
+  from the game DLL; the corrected order is confirmed twice over, by
+  KTPHudObserver's hand-verified permutation and by production's own
+  `ktp_flag_state_events`.
+- **Unchanged:** `dod_armory_b6` and `dod_solitude2` — the BSPs agree with
+  what the table already said.
+- Provenance strings in `match_analytics.load_spawn_ownership` and
+  `flag_swing.py`'s report caveat updated: they described the table as
+  reconstructed from HUD recordings, which is no longer true.
+- `tests/unit/test_spawn_ownership_table.py` pins the corrected content, the
+  authored-neutral omissions, and the saints2 index regression specifically,
+  so a future re-derivation from play cannot quietly reintroduce it.
+
+`config/analytics/map_spawn_ownership.json` carries the full audit record for
+all 17 pool maps, including the neutral ones the TOML deliberately omits.
+
+
 ### Lane B + analytics: shot-context stream coverage, and a schema-24 drift fix (2026-09-10)
 
 Wave 0 of `ENGINE_STATS_EXPANSION_PLAN_20260909.md`, following KTPAMXX and

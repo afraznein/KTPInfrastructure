@@ -171,15 +171,21 @@ done
 **Mandatory verification — a patched monitor that cannot parse is worse than an unpatched one.** Always run this after patching, after `update-lgsm`, and on any new host before enabling the monitor cron:
 
 ```bash
-# 1. Does it still parse?  ANY failure here means the patch landed wrong.
-for d in ~/dod-2701*; do
-  f="$d/lgsm/modules/command_monitor.sh"
-  bash -n "$f" 2>/dev/null && echo "OK      $(basename $d)" || echo "BROKEN  $(basename $d)"
-done
+# 1. Does it still parse, and is the old-type check still neutralised?
+#    Exits 1 on any instance that is BROKEN, MISSING or oldtype=armed.
+bash scripts/ktp-monitor-patch-check.sh
 
 # 2. Does monitor actually run?  Expect "Checking session ... OK", not an error.
 ~/dod-27015/dodserver monitor
 ```
+
+`ktp-monitor-patch-check.sh` reports one line per instance
+(`dod-27015: parse=OK oldtype=disabled samesocket=armed duppid=armed`) plus the
+LinuxGSM versions found on the host, and matches on the text of each `pgrep`
+condition rather than a line number — the version-sensitivity above is exactly
+what a line-numbered check would reproduce. `audit-fleet-drift.py` uploads and
+runs the same file weekly, so its output is also compared across the fleet;
+finding no instances at all is a failure, not a clean run.
 
 > 🔴🔴 **DO NOT "repair" it by turning the orphaned `elif` back into an `if`.** That makes
 > the file parse, which re-arms the very checks this patch exists to disable — and an armed
