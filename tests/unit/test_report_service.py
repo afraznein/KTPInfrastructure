@@ -220,6 +220,9 @@ class AggregatesSynthetic(unittest.TestCase):
         self.assertEqual(m["kill_hotspots"], [{"col": 0, "row": 0, "kills": 4}])
         lane = m["recurring_lanes"][0]
         self.assertEqual((lane["count"], lane["mean_distance"], lane["headshot_rate"]), (7, 256.0, 0.5))
+        self.assertEqual(lane["origin"], {"col": 0, "row": 0, "x": 128.0, "y": 128.0})
+        # fine lattice (256-unit fixture grid) spans the (0,0) cell and the lane end at x=384
+        self.assertEqual(m["lattice"]["scheme"], "world_grid_v2")
         self.assertEqual(m["lattice"]["columns"], 2)
         self.assertEqual(m["flags"][0]["flag_name"], "L")
         self.assertNotIn("player", json.dumps(ss))
@@ -243,6 +246,9 @@ class AggregatesSynthetic(unittest.TestCase):
         self.assertEqual(names, ["One", "Two"])  # 3-match players only
         self.assertTrue(all("player_id" not in p for p in lb["players"]))
         self.assertTrue(all(p["se"] >= 0 for p in lb["players"]))
+        # 2026-09-09 ruling: displayed KTPR v2 never goes negative, floor 50.
+        self.assertTrue(all(p["rating"] >= 50 and p["sos_rating"] >= 50
+                            for p in lb["players"]))
 
 
 @unittest.skipUnless(SPECIMENS and Path(SPECIMENS).is_dir(),
@@ -273,6 +279,8 @@ class AggregatesCorpus(unittest.TestCase):
         self.assertEqual(len(lb["players"]), expected)
         self.assertGreaterEqual(len(lb["players"]), 100)
         self.assertTrue(all(p["name"] for p in lb["players"]))
+        self.assertTrue(all(p["rating"] >= 50 and p["sos_rating"] >= 50
+                            for p in lb["players"]))
         body = json.dumps(aggs)
         self.assertNotIn("player_id", body)
         self.assertNotIn("Â¬", body)

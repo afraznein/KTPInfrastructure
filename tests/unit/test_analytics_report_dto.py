@@ -102,18 +102,19 @@ def internal_report():
         },
         "telemetry_lifecycles": {"private_facts": {}},
         "spatial_layers": {
-            "status": "available", "definition": "spatial_layers_v1",
-            "definition_version": 1, "caveats": [],
-            "parameters": {"grid_size": 256.0, "sample_seconds": 2.0,
-                           "cell_minimum_seconds": 15.0, "hotspot_minimum_events": 2,
+            "status": "available", "definition": "spatial_layers_v2",
+            "definition_version": 2, "caveats": [],
+            "parameters": {"grid_size": 128.0, "lane_grid_size": 256.0, "sample_seconds": 2.0,
+                           "cell_minimum_seconds": 15.0, "window_seconds": 60.0,
+                           "window_cell_minimum_seconds": 6.0, "hotspot_minimum_events": 2,
                            "hotspot_minimum_contributors": 2, "lane_minimum_occurrences": 3,
-                           "lane_minimum_contributors": 2, "publish_frag_vectors": False,
-                           "lattice": "world_256_v1", "clock": "producer_game_time"},
-            "lattice": {"scheme": "world_256_v1", "grid_size": 256.0,
-                        "column_index_min": -6, "row_index_min": -2,
-                        "columns": 15, "rows": 11},
+                           "lane_minimum_contributors": 2, "publish_frag_vectors": True,
+                           "lattice": "world_grid_v2", "clock": "producer_game_time"},
+            "lattice": {"scheme": "world_grid_v2", "grid_size": 128.0,
+                        "column_index_min": -12, "row_index_min": -3,
+                        "columns": 29, "rows": 20},
             "flags": [{"flag_index": 0, "flag_name": "Laundry", "x": -1495.0,
-                       "y": -326.0, "col": -6, "row": -2}],
+                       "y": -326.0, "col": -12, "row": -3}],
             "coverage": {"samples_total": 20, "samples_used": 20, "frags_total": 5,
                          "frags_with_endpoints": 5, "frags_used": 4,
                          "cells_total": 2, "cells_censored": 1},
@@ -122,21 +123,26 @@ def internal_report():
                                          "team1_samples": 6, "team2_samples": 2,
                                          "control": 0.5}]},
                 "kill_hotspots": {"cells": [{"col": 0, "row": 0, "kills": 3}]},
-                "death_hotspots": {"cells": [{"col": 2, "row": 0, "deaths": 3}]},
+                "death_hotspots": {"cells": [{"col": 4, "row": 0, "deaths": 3}]},
                 "recurring_lanes": {"vectors": [{
                     "origin": {"col": 0, "row": 0, "x": 128.0, "y": 128.0},
                     "destination": {"col": 2, "row": 0, "x": 640.0, "y": 128.0},
                     "count": 3, "mean_distance": 590.1, "mean_angle_degrees": 1.2,
                     "headshot_rate": 0.333}]},
+                "halves": {"1": {"start": 0.0, "end": 14.0, "cells": [
+                    {"col": 0, "row": 0, "samples": 8, "seconds": 16.0,
+                     "team1_samples": 8, "team2_samples": 0, "control": 1.0}]}},
+                "windows": {"window_seconds": 60.0, "minimum_seconds": 6.0,
+                            "columns": ["half", "window", "col", "row", "team1", "team2"],
+                            "rows": [[1, 0, 0, 0, 8, 0]]},
+                "frag_vectors": {"published": True, "vectors": [{
+                    "half": 1, "game_time": 10.0,
+                    "attacker": {"name": "A", "team": 1}, "victim": {"name": "B", "team": 2},
+                    "origin": {"x": 10.0, "y": 10.0}, "destination": {"x": 600.0, "y": 20.0},
+                    "weapon": "kar", "headshot": False, "distance": 590.1, "angle_degrees": 1.0}]},
             },
-            "private_frag_vectors": {"visibility": "private_shadow_only", "published": False,
-                                     "vectors": [{"half": 1, "game_time": 10.0,
-                                                  "attacker": {"name": "A", "team": 1},
-                                                  "victim": {"name": "B", "team": 2},
-                                                  "origin": {"x": 10.0, "y": 10.0},
-                                                  "destination": {"x": 600.0, "y": 20.0},
-                                                  "weapon": "kar", "headshot": False,
-                                                  "distance": 590.1, "angle_degrees": 1.0}]},
+            "private_frag_vectors": {"visibility": "private_shadow_only", "vectors": [
+                {"half": 1, "attacker": {"name": "SECRET", "team": 1}}]},
         },
     }
 
@@ -164,9 +170,16 @@ class Sanitize(unittest.TestCase):
         self.assertIn("recomputed", r["notice"])
         self.assertEqual(r["ktpr_v2"]["players"][0]["name"], "A")
         self.assertEqual(r["ktpr_v2"]["definition_version"], 1)
+        self.assertEqual(r["ktpr_v2"]["players"][0]["rating"], 122.5)
         # flag_swing rows carry no name internally; joined by id, id dropped
         self.assertEqual(r["flag_swing"]["players"][0]["name"], "A")
         self.assertNotIn("player_id", r["flag_swing"]["players"][0])
+
+    def test_ktpr_rating_never_negative(self):
+        rpt = internal_report()
+        rpt["shadow_explorations"]["ktpr_v2"]["players"][0]["rating"] = -9.0
+        r = sanitize_report(rpt)["ratings"]["ktpr_v2"]
+        self.assertEqual(r["players"][0]["rating"], 50.0)
 
     def test_accumulation_unavailable_when_not_scored(self):
         acc = sanitize_report(internal_report())["ratings"]["accumulation"]
@@ -225,23 +238,36 @@ class Sanitize(unittest.TestCase):
         self.assertNotIn("player_id", json.dumps(pos))
         self.assertNotIn("depth_sum", json.dumps(pos))
 
-    def test_spatial_block_copies_aggregates_never_private_vectors(self):
+    def test_spatial_block_copies_layers_and_published_paths(self):
         dto = sanitize_report(internal_report())
         sp = dto["spatial"]
         self.assertEqual(sp["status"], "available")
         self.assertTrue(sp["provisional"])
-        self.assertEqual(sp["lattice"]["column_index_min"], -6)
+        self.assertEqual(sp["lattice"]["grid_size"], 128.0)
         self.assertEqual(sp["flags"][0]["flag_name"], "Laundry")
         self.assertEqual(sp["occupancy"][0]["control"], 0.5)
         self.assertEqual(sp["kill_hotspots"], [{"col": 0, "row": 0, "kills": 3}])
         self.assertEqual(sp["recurring_lanes"][0]["destination"]["x"], 640.0)
-        self.assertEqual(sp["parameters"]["lane_minimum_occurrences"], 3)
+        self.assertEqual(sp["parameters"]["lane_grid_size"], 256.0)
         self.assertNotIn("publish_frag_vectors", sp["parameters"])
+        self.assertEqual(sp["halves"]["1"]["cells"][0]["control"], 1.0)
+        self.assertEqual(sp["halves"]["1"]["end"], 14.0)
+        self.assertEqual(sp["windows"]["rows"], [[1, 0, 0, 0, 8, 0]])
+        kp = sp["kill_paths"]
+        self.assertTrue(kp["published"])
+        self.assertEqual(kp["vectors"][0]["attacker"], {"name": "A", "team": 1})
+        self.assertEqual(kp["vectors"][0]["destination"], {"x": 600.0, "y": 20.0})
         body = json.dumps(dto)
-        for leak in ("private_frag_vectors", "\"attacker\"", "\"published\"",
-                     "\"x\": 10.0", "angle_degrees\": 1.0"):
-            self.assertNotIn(leak, body, leak)
+        self.assertNotIn("private_frag_vectors", body)
+        self.assertNotIn("SECRET", body)
         assert_sanitized(dto)
+
+    def test_spatial_paths_withheld_when_not_published(self):
+        rep = internal_report()
+        rep["spatial_layers"]["layers"]["frag_vectors"]["published"] = False
+        sp = sanitize_report(rep)["spatial"]
+        self.assertFalse(sp["kill_paths"]["published"])
+        self.assertEqual(sp["kill_paths"]["vectors"], [])
 
     def test_spatial_unavailable_when_block_missing(self):
         rep = internal_report()
@@ -250,6 +276,7 @@ class Sanitize(unittest.TestCase):
         self.assertEqual(sp["status"], "unavailable")
         self.assertIsNone(sp["lattice"])
         self.assertEqual(sp["occupancy"], [])
+        self.assertEqual(sp["kill_paths"]["vectors"], [])
 
     def test_positional_unavailable_when_blocks_missing(self):
         rep = internal_report()

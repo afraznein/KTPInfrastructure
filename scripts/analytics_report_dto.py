@@ -50,6 +50,20 @@ def _num(value):
         return None
 
 
+def ktpr_display(z, *, floor: float = 50.0, center: float = 100.0,
+                  per_z: float = 15.0):
+    """Map a KTPR v2 z-score rating onto a floored display scale.
+
+    Operator ruling 2026-09-09: KTPR v2 must never show a negative number
+    on the website; 50 is the floor. Internal z-score math (ktpr_v2.py,
+    ktpr_season.py) is unaffected — this only shapes what ships in the DTO.
+    """
+    value = _num(z)
+    if value is None:
+        return None
+    return round(max(floor, center + per_z * value), 2)
+
+
 def _name(value):
     """Repair double-encoded UTF-8 ('SavageÂ¬' -> 'Savage¬').
 
@@ -251,7 +265,7 @@ def sanitize_report(report: dict) -> dict:
                     {"name": _name(p.get("player_name_at_match"))
                      or names_by_id.get(p.get("player_id")),
                      "team": p.get("team"),
-                     "rating": _num(p.get("rating")),
+                     "rating": ktpr_display(p.get("rating")),
                      "components": {k: _num(v) for k, v in
                                     (p.get("components") or {}).items()}}
                     for p in ktpr.get("players") or []
@@ -332,30 +346,61 @@ def _positional_block(se: dict, names_by_id: dict) -> dict:
 
 
 SPATIAL_PARAMETERS = (
-    "grid_size", "sample_seconds", "cell_minimum_seconds",
+    "grid_size", "lane_grid_size", "sample_seconds", "cell_minimum_seconds",
+    "window_seconds", "window_cell_minimum_seconds",
     "hotspot_minimum_events", "hotspot_minimum_contributors",
     "lane_minimum_occurrences", "lane_minimum_contributors", "lattice",
 )
+OCCUPANCY_FIELDS = ("col", "row", "samples", "seconds", "team1_samples", "team2_samples", "control")
 
 
 def _spatial_block(report: dict) -> dict:
-    """Aggregate map layers on the world_256_v1 lattice (spatial_layers_v1):
-    occupancy/control cells, unattributed kill/death hotspot cells, thresholded
-    recurring lanes, flag origins. Coordinates are world units. The producer's
-    `private_frag_vectors` (per-frag kill angles with names) is never copied —
-    per-frag angles stay private until the suppression ruling lands."""
+    """Map layers (spatial_layers_v2): occupancy/control cells (whole match,
+    per half, per time window), unattributed kill/death hotspot cells,
+    thresholded recurring lanes, flag origins — and, by the operator's
+    2026-09-09 ruling, per-frag kill paths with attacker/victim names when the
+    producer published them. Coordinates are world units. The producer's
+    `private_frag_vectors` (paths held back when the publish flag is off) is
+    never copied."""
     sp = report.get("spatial_layers") or {}
     layers = sp.get("layers") or {}
     params = sp.get("parameters") or {}
 
+    def cell_rows(rows, fields: tuple) -> list:
+        return [{k: _num(c.get(k)) for k in fields} for c in rows or []]
+
     def cells(name: str, fields: tuple) -> list:
-        return [{k: _num(c.get(k)) for k in fields}
-                for c in (layers.get(name) or {}).get("cells") or []]
+        return cell_rows((layers.get(name) or {}).get("cells"), fields)
 
     def endpoint(e: dict) -> dict:
         return {k: _num(e.get(k)) for k in ("col", "row", "x", "y")}
 
+    halves = {
+        str(h): {"start": _num(v.get("start")), "end": _num(v.get("end")),
+                 "cells": cell_rows(v.get("cells"), OCCUPANCY_FIELDS)}
+        for h, v in (layers.get("halves") or {}).items()
+    }
+    windows = layers.get("windows") or {}
+    frag_layer = layers.get("frag_vectors") or {}
+    paths = [
+        {"half": _num(v.get("half")), "game_time": _num(v.get("game_time")),
+         "attacker": _actor(v.get("attacker") or {}), "victim": _actor(v.get("victim") or {}),
+         "origin": {k: _num((v.get("origin") or {}).get(k)) for k in ("x", "y")},
+         "destination": {k: _num((v.get("destination") or {}).get(k)) for k in ("x", "y")},
+         "weapon": v.get("weapon"), "headshot": bool(v.get("headshot")),
+         "distance": _num(v.get("distance")), "angle_degrees": _num(v.get("angle_degrees"))}
+        for v in (frag_layer.get("vectors") or []) if frag_layer.get("published")
+    ]
+
     return {
+        "halves": halves,
+        "windows": {
+            "window_seconds": _num(windows.get("window_seconds")),
+            "minimum_seconds": _num(windows.get("minimum_seconds")),
+            "columns": list(windows.get("columns") or []),
+            "rows": [[_num(x) for x in row] for row in windows.get("rows") or []],
+        },
+        "kill_paths": {"published": bool(frag_layer.get("published")), "vectors": paths},
         "status": sp.get("status", "unavailable"),
         "definition": sp.get("definition"),
         "definition_version": sp.get("definition_version"),
@@ -371,8 +416,7 @@ def _spatial_block(report: dict) -> dict:
             for f in sp.get("flags") or []
         ],
         "coverage": {k: _num(v) for k, v in (sp.get("coverage") or {}).items()},
-        "occupancy": cells("occupancy", ("col", "row", "samples", "seconds",
-                                         "team1_samples", "team2_samples", "control")),
+        "occupancy": cells("occupancy", OCCUPANCY_FIELDS),
         "kill_hotspots": cells("kill_hotspots", ("col", "row", "kills")),
         "death_hotspots": cells("death_hotspots", ("col", "row", "deaths")),
         "recurring_lanes": [

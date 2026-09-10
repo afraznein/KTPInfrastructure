@@ -36,7 +36,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from scripts.ktpr_season import build_ktpr_v22
-from scripts.analytics_report_dto import PROVISIONAL_NOTICE, _name
+from scripts.analytics_report_dto import PROVISIONAL_NOTICE, _name, ktpr_display
 
 DATABASE = "hlstatsx"
 # Hard-check gate: FAIL on this code is cosmetic/expected for legacy '1.3-'
@@ -317,8 +317,8 @@ def build_season_spatial(reports: list[dict]) -> dict:
     only adds evidence. Unattributed throughout — no ids ever enter."""
     per_map: dict[str, dict] = defaultdict(lambda: {
         "matches": 0, "occ": defaultdict(lambda: [0, 0]), "kills": defaultdict(int),
-        "deaths": defaultdict(int), "lanes": defaultdict(lambda: [0, 0.0, 0.0]),
-        "flags": {}, "sample_seconds": 2.0, "grid": 256.0})
+        "deaths": defaultdict(int), "lanes": defaultdict(lambda: [0, 0.0, 0.0, None]),
+        "flags": {}, "sample_seconds": 2.0, "grid": 128.0})
     versions = set()
     for r in reports:
         sp = r.get("spatial_layers") or {}
@@ -346,6 +346,7 @@ def build_season_spatial(reports: list[dict]) -> dict:
             lane[0] += v["count"]
             lane[1] += v["count"] * v["mean_distance"]
             lane[2] += v["count"] * v["headshot_rate"]
+            lane[3] = lane[3] or (v["origin"], v["destination"])  # lane-grid centers, world units
         for f in sp.get("flags") or []:
             m["flags"].setdefault(f["flag_index"], f)
 
@@ -362,20 +363,21 @@ def build_season_spatial(reports: list[dict]) -> dict:
         deaths = [{"col": c, "row": r, "deaths": n} for (c, r), n in sorted(m["deaths"].items())]
         grid = m["grid"]
         lanes = sorted((
-            {"origin": {"col": oc, "row": orow, "x": (oc + 0.5) * grid, "y": (orow + 0.5) * grid},
-             "destination": {"col": dc, "row": drow, "x": (dc + 0.5) * grid, "y": (drow + 0.5) * grid},
+            {"origin": dict(ends[0]), "destination": dict(ends[1]),
              "count": n, "mean_distance": round(dist / n, 1), "headshot_rate": round(hs / n, 3)}
-            for (oc, orow, dc, drow), (n, dist, hs) in m["lanes"].items()),
+            for (n, dist, hs, ends) in m["lanes"].values()),
             key=lambda v: -v["count"])
         flags = sorted(m["flags"].values(), key=lambda f: f["flag_index"])
+        # Lanes live on the coarser lane grid; bound the fine lattice by their
+        # endpoint coordinates rather than their coarse cell indices.
         keys = ({(c["col"], c["row"]) for c in occupancy + kills + deaths}
                 | {(f["col"], f["row"]) for f in flags}
-                | {(v["origin"]["col"], v["origin"]["row"]) for v in lanes}
-                | {(v["destination"]["col"], v["destination"]["row"]) for v in lanes})
+                | {(math.floor(v[e]["x"] / grid), math.floor(v[e]["y"] / grid))
+                   for v in lanes for e in ("origin", "destination")})
         lattice = None
         if keys:
             cmin, rmin = min(c for c, _ in keys), min(r for _, r in keys)
-            lattice = {"scheme": "world_256_v1", "grid_size": grid,
+            lattice = {"scheme": "world_grid_v2", "grid_size": grid,
                        "column_index_min": cmin, "row_index_min": rmin,
                        "columns": max(c for c, _ in keys) - cmin + 1,
                        "rows": max(r for _, r in keys) - rmin + 1}
@@ -463,7 +465,8 @@ def build_aggregates(reports: list[dict]) -> dict[str, dict]:
         # database ids stay server-side; the website gets names only
         "players": [
             {"name": _name(p["name"]), "matches": p["matches"],
-             "rating": p["rating"], "sos_rating": p["sos_rating"],
+             "rating": ktpr_display(p["rating"]),
+             "sos_rating": ktpr_display(p["sos_rating"]),
              "se": p["se"]}
             for p in ktpr["players"] if p["matches"] >= ktpr["min_matches"]
         ],
