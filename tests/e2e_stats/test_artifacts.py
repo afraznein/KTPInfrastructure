@@ -111,6 +111,8 @@ def daemon_repo(tmp_path):
         (23, "headshot_observed_provenance"),
         (24, "team_membership_intervals"),
         (25, "position_state_map_revision"),
+        # 026 is deliberately absent upstream; the sequence goes 025 -> 027.
+        (27, "shot_events"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -131,7 +133,7 @@ def test_collect_gathers_every_artifact(amxx_repo, daemon_repo, tmp_path):
     assert arts.gamedata_dir.is_dir()
     assert arts.hlstats_pl.is_file()
     assert (arts.build_dir / "base-schema.sql").is_file()
-    assert len(arts.schema_sql) == 22
+    assert len(arts.schema_sql) == 23
     assert len(arts.seed_sql) == 2
 
 
@@ -155,9 +157,8 @@ def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
     assert artifacts.hlstats_pl.is_file()
 
 
-def test_default_schema_sequence_includes_retention_through_telemetry23():
+def test_default_schema_sequence_includes_retention_through_shot_events():
     assert DEFAULT_SCHEMA_FILES[-12:] == (
-        "sql/migrate_014_match_type_retention.sql",
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
@@ -169,6 +170,7 @@ def test_default_schema_sequence_includes_retention_through_telemetry23():
         "sql/migrate_023_headshot_observed_provenance.sql",
         "sql/migrate_024_team_membership_intervals.sql",
         "sql/migrate_025_position_state_map_revision.sql",
+        "sql/migrate_027_shot_events.sql",
     )
 
 
