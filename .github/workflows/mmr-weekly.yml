@@ -53,16 +53,30 @@ jobs:
         working-directory: scripts/mmr
         run: python run_weekly.py --holdout "${{ github.event.inputs.holdout || '10' }}"
 
+      - name: Upload digest and summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: mmr-weekly-${{ github.run_number }}
+          path: |
+            scripts/mmr/weekly_digest.md
+            scripts/mmr/weekly_summary.json
+          if-no-files-found: error
+
       - name: Commit updated ratings
         run: |
           cd scripts/mmr
-          if git diff --quiet -- ratings_current.json weekly_digest.md weekly_summary.json; then
-            echo "no rating changes this week"
+          # Pre-season / no completed matches: nothing is rated, so no file.
+          if [ ! -f ratings_current.json ]; then
+            echo "no ratings produced (no completed matches yet) -- nothing to commit"
+            exit 0
+          fi
+          git add ratings_current.json
+          if git diff --cached --quiet; then
+            echo "ratings unchanged this week -- nothing to commit"
             exit 0
           fi
           git config user.name "ktp-mmr-bot"
           git config user.email "noreply@github.com"
-          git add ratings_current.json weekly_digest.md weekly_summary.json
           git commit -m "MMR weekly update $(date -u +%Y-%m-%d)"
           git push
 

@@ -10,3 +10,8 @@ __pycache__/
 backtest.json
 prep_scrim12man.json
 ratings_*full_history*.json
+
+# Weekly run outputs: the digest goes into the issue, the summary drives the
+# workflow's next step. Only ratings_current.json is versioned state.
+weekly_digest.md
+weekly_summary.json
