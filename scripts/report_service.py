@@ -97,29 +97,75 @@ def load_match_analytics(repo: Path):
     return ma
 
 
-def pending_match_ids(db: LocalMysql, schema_version: int,
-                      since: str | None = None) -> list[str]:
-    # Flag-state producer rows are the corpus criterion; verify the join
-    # column names on the server before first run.
-    # `since` (e.g. "2026-09-13") excludes everything before it by
-    # ktp_matches.start_time — there is no official/scrim flag on a match,
-    # so a date floor is the only way to keep pre-season pracc traffic out
-    # of the first cron run without hand-filtering match ids.
+# KTPMatchHandler's own predicate, mirrored: is_official_match_type(t) is
+# t == MATCH_TYPE_COMPETITIVE (0, .ktp) or t == MATCH_TYPE_KTP_OT (4, .ktpOT)
+# — the two password-gated, results-bearing types. Spelling that set out
+# per-site is how .ktpOT ended up cancellable while .ktp was protected.
+OFFICIAL_MATCH_TYPES = (0, 4)
+
+# ktp_matches.match_type, per that column's own COMMENT on the server.
+MATCH_TYPE_LABELS = {
+    "0": "competitive/.ktp", "1": "scrim", "2": "12man",
+    "3": "draft", "4": "KTP OT/.ktpOT", "5": "draft OT", "NULL": "unset",
+}
+
+
+def _pending_corpus_sql(schema_version: int, since: str | None,
+                        select: str, tail: str) -> str:
     if since is not None and not re.fullmatch(
             r"\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?", since):
         raise ValueError(f"--since must be 'YYYY-MM-DD' or "
                          f"'YYYY-MM-DD HH:MM:SS', got {since!r}")
     since_clause = f"AND m.start_time >= '{since}' " if since else ""
-    out = db.sql(
-        "SELECT DISTINCT m.match_id FROM ktp_matches m "
+    return (
+        f"SELECT {select} FROM ktp_matches m "
         "JOIN ktp_flag_state_events f ON BINARY f.match_id = BINARY m.match_id "
         "LEFT JOIN ktp_match_reports r ON BINARY r.match_id = BINARY m.match_id "
         f"AND r.schema_version = {schema_version} "
-        f"WHERE m.match_id IS NOT NULL AND r.id IS NULL {since_clause}"
-        "ORDER BY m.match_id"
+        f"WHERE m.match_id IS NOT NULL AND r.id IS NULL {since_clause}{tail}"
     )
+
+
+def pending_match_ids(db: LocalMysql, schema_version: int,
+                      since: str | None = None) -> list[str]:
+    # Flag-state producer rows are the corpus criterion; verify the join
+    # column names on the server before first run.
+    # `since` (e.g. "2026-09-13") is a coarse date floor on start_time, NOT
+    # the official/scrim discriminator: match_type is, and it carries the
+    # operator's 2026-09-08 .ktp-only ruling.
+    # A NULL match_type is dropped, deliberately — IN excludes NULL, an
+    # untyped match is not a provably official one, and failing closed
+    # publishes nothing rather than publishing pracc traffic as league data.
+    # cmd_generate prints what the filter dropped, so the drop is never silent.
+    types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
+    out = db.sql(_pending_corpus_sql(
+        schema_version, since, "DISTINCT m.match_id",
+        f"AND m.match_type IN ({types}) ORDER BY m.match_id"))
     lines = out.strip().splitlines()
     return [ln for ln in lines[1:] if ln] if lines else []
+
+
+def excluded_by_match_type(db: LocalMysql, schema_version: int,
+                           since: str | None = None) -> dict[str, int]:
+    """What the official-type filter drops, keyed by match_type label.
+
+    Reported, never acted on. A filter whose effect nobody can see is how a
+    wrong type set silently omits real matches instead of failing loudly.
+    """
+    types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
+    out = db.sql(_pending_corpus_sql(
+        schema_version, since,
+        "COALESCE(CAST(m.match_type AS CHAR), 'NULL') AS mt, "
+        "COUNT(DISTINCT m.match_id) AS n",
+        f"AND (m.match_type IS NULL OR m.match_type NOT IN ({types})) "
+        "GROUP BY mt ORDER BY mt"))
+    dropped: dict[str, int] = {}
+    for line in out.strip().splitlines()[1:]:
+        if not line.strip():
+            continue
+        mt, n = line.split("\t")
+        dropped[MATCH_TYPE_LABELS.get(mt, f"match_type={mt}")] = int(n)
+    return dropped
 
 
 def next_revision(db: LocalMysql, match_id: str, schema_version: int) -> int:
@@ -189,6 +235,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
     ids = args.match_ids or pending_match_ids(db, schema_version, args.since)
     print(f"pending: {len(ids)} matches (schema v{schema_version})")
+    if not args.match_ids:
+        dropped = excluded_by_match_type(db, schema_version, args.since)
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(dropped.items()))
+        print(f"excluded by match_type filter: {sum(dropped.values())}"
+              f"{f' ({detail})' if detail else ''}")
     failures = 0
     for match_id in ids:
         try:
