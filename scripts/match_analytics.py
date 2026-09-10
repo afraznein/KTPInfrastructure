@@ -123,7 +123,7 @@ INTEGER_COLUMNS = {
     "invalid_half_frags", "damage_events", "invalid_half_damage",
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
     "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
-    "legacy_damage_dealt",
+    "legacy_damage_dealt", "legacy_kills", "statsme_damage_dealt", "statsme_frags",
     "event_id", "event_unix", "killer_id", "killer_team", "victim_team",
     "match_type", "flag_index", "owner_team", "is_initial",
     "attacker_id", "attacker_team", "assister_id", "assister_team",
@@ -611,6 +611,59 @@ def check(level: str, code: str, message: str, **evidence: Any) -> dict[str, Any
     return {"level": level, "code": code, "message": message, "evidence": evidence}
 
 
+# Statsme may carry more frags than the match if a match_id was reused; outside
+# this band its damage describes more than this match and cannot be published.
+LEGACY_DAMAGE_COVERAGE_TOLERANCE = 0.15
+
+
+def resolve_legacy_damage(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pick the legacy damage source for one match, or refuse to pick.
+
+    `ktp_match_stats` half=0 is a derived sum of the two half rows, so a fault in
+    either lands in it with nothing to flag it -- and one did: half=1 damage is
+    booked twice on every match from 2026-03-11 to 2026-03-18, per player at
+    exactly 2.000x, while kills stay correct. Statsme is the reference, but only
+    where its own frag count says its rows cover this match and no other.
+
+    Returns per-player damage (None where it cannot be known) plus the verdict,
+    which is reported as a quality check rather than applied silently.
+    """
+    cache_damage = sum(r.get("legacy_damage_dealt") or 0 for r in rows)
+    cache_kills = sum(r.get("legacy_kills") or 0 for r in rows)
+    statsme_rows = [r for r in rows if r.get("statsme_damage_dealt") is not None]
+    statsme_damage = sum(r["statsme_damage_dealt"] for r in statsme_rows)
+    statsme_frags = sum(r.get("statsme_frags") or 0 for r in statsme_rows)
+
+    def verdict(source: str, damage: dict[int, int | None]) -> dict[str, Any]:
+        return {
+            "source": source,
+            "damage": damage,
+            "cache_damage": cache_damage,
+            "statsme_damage": statsme_damage if statsme_rows else None,
+            "cache_kills": cache_kills,
+            "statsme_frags": statsme_frags if statsme_rows else None,
+        }
+
+    by_cache = {r["player_id"]: r.get("legacy_damage_dealt") for r in rows}
+    if not statsme_rows:
+        return verdict("cache", by_cache)
+    if cache_damage == statsme_damage:
+        return verdict("agree", by_cache)
+
+    lo = (1.0 - LEGACY_DAMAGE_COVERAGE_TOLERANCE) * cache_kills
+    hi = (1.0 + LEGACY_DAMAGE_COVERAGE_TOLERANCE) * cache_kills
+    if cache_kills <= 0 or not lo <= statsme_frags <= hi:
+        # The two sources disagree and nothing says which is describing this
+        # match. Absent is the only honest answer -- a number here would be a
+        # claim about real players that no source supports.
+        return verdict("unresolved", {r["player_id"]: None for r in rows})
+
+    return verdict(
+        "statsme",
+        {r["player_id"]: r.get("statsme_damage_dealt") for r in rows},
+    )
+
+
 def evaluate_quality(
     match_id: str,
     match: dict[str, Any] | None,
@@ -618,6 +671,7 @@ def evaluate_quality(
     inventory: dict[str, Any],
     sources: dict[str, bool] | None = None,
     source_mode: str = "database",
+    legacy_damage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return transparent checks; never repair a source mismatch here."""
     checks: list[dict[str, Any]] = []
@@ -706,6 +760,21 @@ def evaluate_quality(
         checks.append(check(
             "WARN", "damage_source_not_captured",
             "This archive predates per-hit damage; legacy aggregate damage is shown.",
+        ))
+        v = legacy_damage or {"source": "cache"}
+        source = v.get("source")
+        checks.append(check(
+            "PASS" if source == "agree" else "WARN",
+            "legacy_damage_source",
+            {
+                "agree": "ktp_match_stats and Statsme agree on legacy damage.",
+                "cache": "No Statsme rows; legacy damage rests on ktp_match_stats alone.",
+                "statsme": "ktp_match_stats disagrees with Statsme; Statsme is published "
+                           "because its frag count corroborates its coverage.",
+                "unresolved": "The two legacy damage sources disagree and neither is "
+                              "corroborated; damage is absent, not zero.",
+            }.get(source, "Legacy damage source is unknown."),
+            **{k: val for k, val in v.items() if k != "damage"},
         ))
     elif inventory.get("damage_events", 0) == 0:
         checks.append(check("WARN", "damage_missing", "No per-hit damage rows exist."))
@@ -1018,7 +1087,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         out.append(f"| `{source}` | {'yes' if captured else 'no'} |")
     out += [
         "", "Uncaptured sources are reported as unavailable, not as observed zeroes. "
-        "For legacy archives, Damage uses `ktp_match_stats`; damage taken and +/- remain unavailable.",
+        "For legacy archives, Damage comes from `ktp_match_stats` or Statsme, whichever the "
+        "`legacy_damage_source` check names; damage taken and +/- remain unavailable.",
         "", "## Team summary", "",
         markdown_table(report["teams"], [
             ("team_name", "Team"), ("kills", "K"), ("deaths", "D"),
@@ -1354,11 +1424,12 @@ def build_report(
     inventory_rows = query_rows(db, "quality_inventory.sql", match_id)
     inventory = inventory_rows[0] if inventory_rows else {}
     match = match_rows[0] if match_rows else None
+    legacy_damage = None
     if not sources["per_hit_damage"]:
-        cached = {
-            row["player_id"]: row["legacy_damage_dealt"]
-            for row in query_rows(db, "legacy_player_cache.sql", match_id)
-        }
+        legacy_damage = resolve_legacy_damage(
+            query_rows(db, "legacy_player_cache.sql", match_id)
+        )
+        cached = legacy_damage["damage"]
         duration = (match or {}).get("duration_seconds", 0) or 0
         for player in players:
             damage = cached.get(player["player_id"])
@@ -1379,7 +1450,8 @@ def build_report(
         for player in players:
             player["damage_per_minute"] = None
     quality = evaluate_quality(
-        match_id, match, players, inventory, sources, source_mode
+        match_id, match, players, inventory, sources, source_mode,
+        legacy_damage=legacy_damage,
     )
     players_public = public_players(players)
     resolved_objective_config = objective_config or ObjectivePressureConfig()
