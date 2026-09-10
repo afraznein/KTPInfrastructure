@@ -4,6 +4,36 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: capture-health type checks no longer break on a newer producer (2026-09-10)
+
+Two places compared the set of per-half health streams against
+`CAPTURE_EVENT_TYPES` for **exact equality**:
+`match_analytics.evaluate_capture_authorization` and `canary_evidence`'s
+`complete_types`. `ksc_emit_health` loops over every event type the plugin
+knows, so a plugin that gains a stream gains a health row — and schema 24
+(KTPAMXX #102) added `shot`, making it 12 rows where the list has 11.
+
+Left alone, the first match played on the new plugin would have reported
+`half N does not contain each exact health type once` on **every half of
+every match**, and the canary would have called its health coverage
+incomplete — while nothing was actually wrong. That would have landed
+squarely on the wave-0 canary it was meant to validate.
+
+- `CAPTURE_EVENT_TYPES` stays the **required** core that must appear exactly
+  once per half; new `CAPTURE_EVENT_TYPES_OPTIONAL` carries streams a newer
+  producer may additionally emit (`shot`).
+- Both checks now require all of the core, permit the optional, and still
+  reject an unknown type or a repeat — so the original intent (catch a stream
+  that went dark, catch duplicates) is preserved while a fleet mid-rollout
+  passes on both plugin versions.
+- Five tests in `tests/e2e_stats/test_match_analytics_integration.py` cover
+  both directions: an 11-type and a 12-type producer both accepted, and a
+  missing / unknown / repeated type each still an error.
+
+This is the same exact-equality trap as the schema-version gates fixed
+earlier today, in a different guise.
+
+
 ### `config` + `scripts`: spawn ownership now comes from the maps, not from play (2026-09-10)
 
 `config/analytics/spawn_ownership.toml` seeds the opening flag position of

@@ -51,6 +51,60 @@ def _schema24_position_evidence():
     return manifests, health, positions
 
 
+def _health_rows(event_types, half=1):
+    return [{
+        "half": half, "event_type": event_type,
+        "attempted": 1, "enqueued": 1, "dropped": 0, "emitted": 1,
+        "daemon_received": 1, "daemon_accepted": 1, "daemon_rejected": 0,
+        "correlation_failure_count": 0, "sequence_gap_count": 0,
+        "duplicate_or_reordered_count": 0,
+    } for event_type in event_types]
+
+
+def _health_errors(event_types):
+    """Errors evaluate_capture_authorization raises about health TYPES only."""
+    manifests, _, _ = _schema23_position_evidence()
+    result = analytics.evaluate_capture_authorization(
+        {1}, manifests, _health_rows(event_types))
+    return [e for e in result["errors"]
+            if "health type" in e or "repeats" in e]
+
+
+def test_a_producer_emitting_only_the_required_health_types_is_accepted():
+    assert _health_errors(analytics.CAPTURE_EVENT_TYPES) == []
+
+
+def test_a_newer_producer_emitting_an_optional_health_type_is_accepted():
+    """Schema 24 adds a `shot` health row -- 12 rows, not 11.
+
+    `ksc_emit_health` loops over every event type the plugin knows, so a plugin
+    that gains a stream gains a health row. Comparing for exact equality broke
+    on the first match a newer plugin played, reporting every half malformed
+    while nothing was wrong.
+    """
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("shot",)
+    assert _health_errors(types) == []
+
+
+def test_a_missing_required_health_type_is_still_an_error():
+    """The point of the list: a stream that went dark must be caught."""
+    types = tuple(t for t in analytics.CAPTURE_EVENT_TYPES if t != "damage")
+    errors = _health_errors(types)
+    assert errors and any("damage" in e for e in errors)
+
+
+def test_an_unknown_health_type_is_still_an_error():
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("not_a_real_stream",)
+    errors = _health_errors(types)
+    assert errors and any("not_a_real_stream" in e for e in errors)
+
+
+def test_a_repeated_health_type_is_still_an_error():
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("damage",)
+    errors = _health_errors(types)
+    assert errors and any("repeats" in e for e in errors)
+
+
 def test_schema23_position_provenance_authorizes_exact_state_and_revision():
     manifests, health, positions = _schema23_position_evidence()
     result = analytics.evaluate_position_provenance(
