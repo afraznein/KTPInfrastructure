@@ -4,6 +4,57 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: fleet timezone-uniformity check (2026-09-09)
+
+- `hlstats.pl:2542` computes `$ev_remotetime = timelocal(...)` unconditionally — it reads a game
+  server's naked wall-clock log stamp and interprets it in the **daemon's** timezone. That value
+  already drives the `last_team_change + 2 s` grace that suppresses a team-kill after a team switch
+  (`HLstats_EventHandlers.plib:792, 877, 1145`). **A game host provisioned in UTC would mis-attribute
+  team kills today, silently.** The fleet agrees on `America/New_York` by convention: no runtime
+  assertion, no fleet check, nothing in the provisioning path pins it. A rebuilt or newly provisioned
+  host is the arrival path, and today it lands with nothing reporting.
+- New `scripts/ktp-timezone-drift.py`. Read-only: it reads clocks, one config line and a log tail,
+  writes nothing, restarts nothing. Host addressing comes from the same `/etc/ktp/audit-fleet.json`
+  the fleet audit uses; nothing is hardcoded.
+- **The load-bearing probe is not `timedatectl`.** That reads a host's *config*; the daemon consumes
+  what the *engine stamps into the log line*, and a host can satisfy the first while failing the
+  second. So per instance: take the last log line's reading, interpret it the way the daemon does,
+  and compare against the log file's mtime, which is absolute. A wrong zone lands whole hours away.
+  `timedatectl`, `/etc/localtime` and NTP are kept as secondary config checks and are labelled as
+  such in the output.
+- The two legs are complementary and neither subsumes the other: stamp-vs-mtime catches a wrong
+  **zone** (a host whose clock is merely wrong shifts both readings together and passes), while
+  host-clock-vs-auditor catches a wrong **clock** (right zone, dead NTP, internally consistent stamps
+  hours from reality).
+- Also checks the daemon and MySQL, because that is where a game host's stamp is finally
+  interpreted: `@@system_time_zone` against the zone's abbreviation *at that instant*,
+  `NOW()`−`UTC_TIMESTAMP()` against its offset, `@@global.time_zone` still `SYSTEM`, and that no host
+  sets `TZ` explicitly for the daemon — it is supposed to resolve through `/etc/localtime`.
+- The expected offset and abbreviation are **derived from the tz database at the measured instant**,
+  never written down, so the check needs no editing twice a year and a DST transition cannot read as
+  drift. Both DST folds are tried for a log stamp and the nearer taken: during the fall-back hour a
+  local reading names two instants, and resolving to the wrong one would report an hour of legitimate
+  lines as drift every November.
+- **Controls travel in the script, not only in the testing.** Per host a positive control (instance
+  dirs discovered, `dodserver.cfg` carrying its `hostname` line) and a negative control (listing a
+  directory that cannot exist must fail). If the negative control *succeeds*, no result from that
+  host counts — on this estate a clean zero has repeatedly been a permissions denial rendered as a
+  number. The probes are `PROBE_BEGIN`/`PROBE_END` bracketed because a killed probe emits a prefix
+  that parses perfectly and reads as a host with fewer instances.
+- Exit **1** = the check could not be trusted (host unreachable, control failed, probe truncated, no
+  tz database), **2** = drift, **0** = clean. An unreachable host is a failure rather than a skip,
+  and `ERROR` outranks `DRIFT`: a sweep you cannot trust is worse news than one that measured
+  something wrong.
+- `mysql.time_zone_name` is empty, so a future `CONVERT_TZ()` with a named zone returns `NULL`
+  rather than erroring. Nothing reads it today, so this is **reported and does not affect the exit
+  code** — the output says so.
+- Not scheduled and not wired into `ktp-fleet-audit.sh`. That wrapper's argument handling makes a
+  check that never ran look like a check that passed; run the Python directly.
+- `tests/unit/test_ktp_timezone_drift.py` injects the drift the fleet does not have — a host
+  stamping in UTC, a database that stopped following the host clock, a daemon with `TZ` pinned — plus
+  every way the probe can fail while looking clean. A check that has only ever been seen to pass is a
+  check nobody has tested.
+
 ### `ci`: Lane B can boot a candidate engine instead of the image's baked one (2026-09-09)
 
 - Lane B took refs for AMXX, the daemon, MatchHandler and this repo, but never for the engine.
