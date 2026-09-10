@@ -94,6 +94,7 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_023_headshot_observed_provenance.sql",
     "sql/migrate_024_team_membership_intervals.sql",
     "sql/migrate_025_position_state_map_revision.sql",
+    "sql/migrate_027_shot_events.sql",
 )
 
 def _md5(path: Path) -> str:

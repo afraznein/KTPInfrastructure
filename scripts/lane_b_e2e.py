@@ -1553,6 +1553,11 @@ def main() -> int:
             log_invariants.count_in_match(report_match_log, 'triggered "damage"')
             if report.get("match") else 0
         )
+        shot_total = log_text.count('triggered "shot"')
+        shot_match_emitted = (
+            log_invariants.count_in_match(report_match_log, 'triggered "shot"')
+            if report.get("match") else 0
+        )
         life_match_emitted = (
             log_invariants.count_in_match(
                 report_match_log, 'triggered "life_boundary"'
@@ -1659,6 +1664,8 @@ def main() -> int:
             "frag_context_diagnostic_match": diagnostic_frag_context_emitted,
             "damage": log_text.count('triggered "damage"'),
             "damage_match": damage_match_emitted,
+            "shot": shot_match_emitted,
+            "shot_total": shot_total,
             # DoD 1.3 completes a capture with one of two log lines, and
             # ktp_flag_captures now carries both: `dod_capture_area` for the
             # timed/breakable multi-capper areas and `dod_control_point` for
@@ -1794,6 +1801,12 @@ def main() -> int:
             assertions.check_damage_producer_clocks(
                 db,
                 emitted=report["emitted"]["damage_match"],
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
+            assertions.check_shot_events(
+                db,
+                emitted=report["emitted"]["shot"],
                 match_id=((report.get("match") or {}).get("match_id")),
                 half=((report.get("match") or {}).get("half")),
             ),
