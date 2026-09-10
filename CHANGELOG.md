@@ -4,6 +4,33 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed - a plugin that failed to compile produced a SUCCESSFUL build (2026-09-10)
+
+`build/plugins/Dockerfile` ran the Pawn compiler as
+`./amxxpc ... || echo "WARNING: $name may have had errors"`. That `||` also
+neutralised the script's own `set -e`, and the missing-artifact branch printed
+`FAILED` and returned 0. So a plugin that failed to compile produced a
+**successful** image whose `/output/plugins/` simply lacked that `.amxx`.
+
+A server that loads no `stats_logging.amxx` collects **nothing at all** --
+silently, with every build and deploy step reporting success. This is not
+hypothetical: KTPAMXX `main` did not compile for several hours today
+(`undefined symbol "dod_is_deployed"`, KTPAMXX #106) and nothing anywhere
+reported it. KTPAMXX CI skips plugin compilation by design and defers to this
+build, so this swallow was the only thing standing between a broken plugin and
+a deploy, two days before the season opener.
+
+The script now collects failures and fails the build at the end, naming every
+broken plugin rather than stopping at the first. A plugin counts as failed if
+`amxxpc` exits non-zero **or** no `.amxx` is produced -- checked separately,
+because a cached or stale artifact can outlive a failed compile.
+
+Verified against the real toolchain (`amxxpc 2.7.33.5799`) by running the
+shipped script over both cases: a plugin that compiles exits 0 and reports
+`Compilation Complete`; a plugin that does not exits 1 and reports
+`PLUGIN BUILD FAILED: <names>`.
+
+
 ### `scripts`: capture-health type checks no longer break on a newer producer (2026-09-10)
 
 Two places compared the set of per-half health streams against
