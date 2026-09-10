@@ -62,6 +62,23 @@ jobs:
             scripts/mmr/weekly_summary.json
           if-no-files-found: error
 
+      - name: Open findings issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd scripts/mmr
+          HAS_FINDINGS=$(python -c "import json;print(json.load(open('weekly_summary.json'))['has_findings'])")
+          HEADLINE=$(python -c "import json;print(json.load(open('weekly_summary.json'))['headline'])")
+          if [ "$HAS_FINDINGS" != "True" ]; then
+            echo "nothing worth an issue this week: $HEADLINE"
+            exit 0
+          fi
+          gh issue create \
+            --title "MMR weekly: $HEADLINE" \
+            --body-file weekly_digest.md \
+            --label "mmr,automated" \
+            --repo "${{ github.repository }}"
+
       - name: Commit updated ratings
         run: |
           cd scripts/mmr
@@ -79,20 +96,3 @@ jobs:
           git config user.email "noreply@github.com"
           git commit -m "MMR weekly update $(date -u +%Y-%m-%d)"
           git push
-
-      - name: Open findings issue
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd scripts/mmr
-          HAS_FINDINGS=$(python -c "import json;print(json.load(open('weekly_summary.json'))['has_findings'])")
-          HEADLINE=$(python -c "import json;print(json.load(open('weekly_summary.json'))['headline'])")
-          if [ "$HAS_FINDINGS" != "True" ]; then
-            echo "nothing worth an issue this week: $HEADLINE"
-            exit 0
-          fi
-          gh issue create \
-            --title "MMR weekly: $HEADLINE" \
-            --body-file weekly_digest.md \
-            --label "mmr,automated" \
-            --repo "${{ github.repository }}"
