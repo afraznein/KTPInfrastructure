@@ -83,10 +83,30 @@ from scripts.match_timelines import (  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
 SCHEMA_VERSION = 9  # 8: positional shadow blocks; 9: spatial_layers (occupancy/hotspots/lanes on world_256_v1)
+# The health streams EVERY producer contract emits, schema 21 onward. All of
+# these must appear exactly once per half; a missing one means that stream went
+# dark, which is the defect this list exists to catch.
 CAPTURE_EVENT_TYPES = (
     "life", "damage", "position", "frag", "assist", "break",
     "flag_state", "flag_position", "objective_attempt", "team_membership",
     "grenade_entity",
+)
+
+# Streams a NEWER producer may additionally emit. Permitted but not required,
+# so one set of expectations covers a fleet mid-rollout.
+#
+# `ksc_emit_health` loops over every event type the plugin knows, so a plugin
+# that gains a stream gains a health row for it. Comparing the observed set for
+# exact equality against the required list therefore breaks on the first match
+# played by a newer plugin -- every half reports "does not contain each exact
+# health type once" while nothing is actually wrong. Schema 24 added `shot`
+# (KTPAMXX #102) and would have done exactly that to every match, on both this
+# check and canary_evidence's `complete_types`.
+#
+# Anything outside required|optional is still an error: an unknown type is a
+# producer/daemon disagreement worth failing on.
+CAPTURE_EVENT_TYPES_OPTIONAL = (
+    "shot",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
@@ -378,8 +398,17 @@ def evaluate_capture_authorization(
     for half in sorted(observed):
         rows = [row for row in health if int(row.get("half") or 0) == half]
         types = [str(row.get("event_type") or "") for row in rows]
-        if set(types) != expected_types or len(types) != len(expected_types):
-            errors.append(f"half {half} does not contain each exact health type once")
+        observed_types = set(types)
+        missing = expected_types - observed_types
+        unknown = observed_types - expected_types - set(CAPTURE_EVENT_TYPES_OPTIONAL)
+        if missing:
+            errors.append(
+                f"half {half} is missing health type(s) {sorted(missing)}")
+        if unknown:
+            errors.append(
+                f"half {half} carries unknown health type(s) {sorted(unknown)}")
+        if len(types) != len(observed_types):
+            errors.append(f"half {half} repeats a health type")
         for row in rows:
             event_type = str(row.get("event_type") or "")
             counters = {
