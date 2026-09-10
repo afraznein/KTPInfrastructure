@@ -45,14 +45,10 @@ missing=()
 sourceless=()
 manifests_seen=0
 
-# Every plugin the builder compiles is `<name>.sma` -> `<name>.amxx`, so the
-# manifest entry alone locates the source; the dir mapping lives in the
-# Dockerfile and is deliberately not duplicated here.
-#
-# Indexed in ONE walk rather than one per entry: the same 11 plugins appear in
-# all three profiles, and a per-entry find of the project root measured 34s a
-# lookup on a network drive. Depth-capped and pruned for the same reason —
-# sources sit at <root>/<repo>/<name>.sma or <root>/KTPAMXX/plugins/[dod/].
+# Every plugin the builder compiles is `<name>.sma` -> `<name>.amxx`, so a
+# manifest entry locates its own source and the dir mapping stays in the
+# Dockerfile. Indexed in one walk — a find per entry takes minutes on a
+# network drive, and the profiles repeat the same plugins.
 SOURCE_INDEX=""
 if [ -n "$SOURCES_ROOT" ]; then
     SOURCE_INDEX="$(find "$SOURCES_ROOT" -maxdepth 4 \

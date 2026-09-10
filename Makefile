@@ -213,10 +213,9 @@ build-plugins: build-base build-amxx seed-from-latest
 # extract-artifacts downgrades a failed `docker cp` to a warning, which is how
 # a stale or short plugin set reaches a published base image unnoticed.
 #
-# --sources covers the other direction: build/plugins/Dockerfile prints
-# `SKIP: ... not found` and exits 0 when a plugin's .sma is absent, so an
-# un-checked-out plugin repo would otherwise publish a green image one plugin
-# short. Named here rather than in the Dockerfile so the failure survives.
+# --sources covers the other direction: the builder prints `SKIP: ... not
+# found` and exits 0 for an absent .sma, so an un-checked-out plugin repo
+# would otherwise publish a green image one plugin short.
 verify-plugin-artifacts:
 	@bash scripts/verify-plugin-manifest.sh --sources "$(KTP_PROJECT_ROOT)" \
 		$(ARTIFACTS_DIR)/plugins \
