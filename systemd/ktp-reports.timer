@@ -1,0 +1,16 @@
+[Unit]
+Description=Build and publish KTP match reports every 15 minutes
+
+[Timer]
+# Every 15 minutes, offset off :00. Everything else on this box fires on the
+# hour (ktp-hlstatsx-ingest-monitor, sysstat-collect, the :10 demo publish),
+# and a report tick during a live match is worth keeping clear of that spike.
+OnCalendar=*-*-* *:04,19,34,49:00
+# A missed window -- reboot, or the box down during a match -- runs once on the
+# next start rather than being skipped. generate reads hlstatsx retroactively,
+# so a late run still publishes the matches it missed.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

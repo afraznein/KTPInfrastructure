@@ -1,0 +1,43 @@
+[Unit]
+Description=KTP match reports (generate, aggregate, then sync to the website)
+Documentation=file:///opt/ktp-reports/KTPInfrastructure/docs/runbooks/REPORT_PIPELINE_INSTALL.md
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ktpreports
+Group=ktpreports
+WorkingDirectory=/opt/ktp-reports/KTPInfrastructure
+
+# KTP_SUPABASE_URL and KTP_SUPABASE_SECRET_KEY. Only report_sync reads them;
+# the two report_service steps are local-socket mysql and need no secret.
+EnvironmentFile=/etc/ktp/reports.env
+
+# Three steps, in this order. systemd runs ExecStart lines sequentially and
+# stops at the first non-zero exit, which is what we want: an aggregate built
+# from a failed generate, or a sync of a failed aggregate, would publish a
+# half-built season to the live site.
+#
+# The --since floor is the season boundary, and it is load-bearing. Everything
+# before 2026-09-13 is pre-season pracc and scrim traffic with no official
+# standing, and there is no official/scrim flag in the schema -- this date is
+# the only thing separating them. Do not widen it to backfill; that publishes
+# practice matches as league results.
+ExecStart=/usr/bin/python3 -m scripts.report_service --repo . generate --since 2026-09-13
+ExecStart=/usr/bin/python3 -m scripts.report_service --repo . aggregate
+ExecStart=/usr/bin/python3 -m scripts.report_sync
+
+# generate only revisits a match when the report schema version changes, so a
+# tick with nothing new is nearly free. A full re-stamp after a schema bump is
+# the slow case this bounds.
+TimeoutStartSec=1800
+Nice=10
+IOSchedulingClass=idle
+
+# Deliberately only NoNewPrivileges. ProtectSystem=strict was tried and
+# removed: it makes the checkout read-only, so Python cannot write __pycache__
+# and the unit fails on a detail unrelated to what it does. The account is
+# already nologin with SELECT everywhere and INSERT/UPDATE on exactly the two
+# tables it owns, which is where the real containment is.
+NoNewPrivileges=true
