@@ -4,6 +4,43 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `ci`: the shared smoke gate could not tell a regression from its own breakage (2026-09-10)
+
+`smoke-callable.yml` is reusable, so its red check lands on the CALLER's PR.
+`assert-no-failed` reported every non-running plugin, which meant a plugin the
+base image had failed to ship failed somebody else's build under a name they
+had never touched. It did, on `JimmyLockhart65616/DoD-hud-observer`: the plugin
+under test loaded fine and the job died on `stats_loggi=bad load`.
+
+The three gates added earlier the same day — the compile guard, the manifest
+check, and `verify-plugin-artifacts` — all fire at BUILD time, so they stop the
+next bad image. None of them changes what a caller sees when a bad image is
+already on `:latest`.
+
+- `assert-no-failed --under-test <names>` splits the verdict by attribution: a
+  non-running module or plugin matching one of `<names>` exits `1`, anything
+  else exits `3`. Without the flag every failure exits `1`, as before.
+- `smoke-callable.yml` passes `assert_plugin` and `assert_module` through, and
+  turns exit `3` into a `KTP base image fault` warning plus a job-summary entry
+  — but only after the forced GHCR re-pull has ruled out a stale `:latest`, so
+  the 2026-04-29 propagation race still self-heals. A caller that names neither
+  keeps the strict behaviour; a gate that excuses everything is worse than one
+  that is red.
+- `publish-base-image.yml` now boots the image it just built and runs the
+  *unscoped* `assert-no-failed` BEFORE pushing. That is what makes the scoping
+  safe: the class callers stop failing on now fails in the repo that owns it,
+  and a broken image never reaches `:latest`. Build-time checks cannot see a
+  plugin that is present and still fails to load.
+
+Not fixed here: `stats_logging.amxx` cannot be built from `KTPAMXX` `main` —
+`851c67e5` added a `dod_is_deployed()` call to
+`plugins/dod/ktp_stats_capture.inc`, and that native is declared in
+`dodfun.inc`, which `stats_logging.sma` does not include. Adding the include
+compiles and then the native is missing at runtime: `dodfun` is in none of
+`config/{local,online,lan}/modules.ini` and is absent from the fleet. That
+needs a DODX-side deployed check or a deliberate module addition, in
+`afraznein/KTPAMXX`.
+
 ### `build`: verify the plugin set an image ships against the manifest that loads it (2026-09-10)
 
 The compile guard added the same day makes a plugin that fails to compile fail
