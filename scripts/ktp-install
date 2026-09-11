@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""Install a file from a git commit and record it in the deploy manifest.
+
+    ktp-install --repo DIR --commit SHA --src PATH --dest PATH --expect-md5 MD5|-
+    ktp-install --file F --source-repo NAME --commit SHA --src PATH --blob-md5 MD5 --dest PATH --expect-md5 MD5|-
+    ktp-install --file F --template --source-repo NAME --commit SHA --src PATH.example --dest PATH --expect-md5 MD5|-
+    ktp-install --report [--repo DIR]
+
+The installed bytes are the git blob, so a file's md5 alone identifies the commit
+it came from; the manifest records which one. No version string is written into
+any script: labels drift, bytes do not.
+
+Where there is no checkout (the game hosts), push the bytes and pass --file with
+--blob-md5, taken from `git show SHA:PATH | md5sum` where the repo is. A filled
+template cannot equal any blob: pass --template, and the row records the
+template's commit and path with the filled file's md5.
+
+Manifest, one format in two places: /usr/local/share/ktp-infra/DEPLOYED.tsv when
+run as root, ~/.ktp/DEPLOYED.tsv otherwise, so dodserver never needs sudo.
+KTP_MANIFEST overrides both. Append-only, one header line then one row per
+install; a path's current state is its LAST row.
+
+--report reads every manifest that applies on the host. It exits 0 when every
+recorded file still has the md5 of its last row, 1 on drift or a missing file,
+and 2 when there is no manifest or one cannot be parsed.
+"""
+
+import argparse
+import fcntl
+import getpass
+import hashlib
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+SYSTEM_MANIFEST = "/usr/local/share/ktp-infra/DEPLOYED.tsv"
+USER_MANIFEST = os.path.expanduser("~/.ktp/DEPLOYED.tsv")
+HEADER = ["installed_path", "md5", "source_repo", "source_commit", "source_path",
+          "deployed_at_iso", "previous_md5", "deployed_by"]
+HEX = re.compile(r"[0-9a-f]+\Z")
+
+
+class ManifestError(Exception):
+    pass
+
+
+def manifest_for_writes():
+    if os.environ.get("KTP_MANIFEST"):
+        return os.environ["KTP_MANIFEST"]
+    return SYSTEM_MANIFEST if os.geteuid() == 0 else USER_MANIFEST
+
+
+def manifests_for_report():
+    if os.environ.get("KTP_MANIFEST"):
+        return [os.environ["KTP_MANIFEST"]]
+    return [SYSTEM_MANIFEST, USER_MANIFEST]
+
+
+def backup_dir():
+    if os.environ.get("KTP_INSTALL_BACKUPS"):
+        return os.environ["KTP_INSTALL_BACKUPS"]
+    return "/var/backups/ktp-install" if os.geteuid() == 0 else os.path.expanduser("~/.ktp/backups")
+
+
+def is_template(source_path):
+    return source_path.endswith(".example")
+
+
+def md5_bytes(b):
+    return hashlib.md5(b).hexdigest()
+
+
+def md5_file(path):
+    try:
+        with open(path, "rb") as f:
+            return md5_bytes(f.read())
+    except FileNotFoundError:
+        return "-"
+
+
+def git(repo, *args):
+    p = subprocess.run(["git", "-C", repo, *args], capture_output=True)
+    if p.returncode != 0:
+        raise SystemExit("git %s failed: %s" % (" ".join(args), p.stderr.decode(errors="replace").strip()))
+    return p.stdout
+
+
+def repo_name(repo):
+    url = subprocess.run(["git", "-C", repo, "remote", "get-url", "origin"],
+                         capture_output=True, text=True).stdout.strip()
+    name = url.rstrip("/").split("/")[-1] if url else os.path.basename(os.path.abspath(repo))
+    return name[:-4] if name.endswith(".git") else name
+
+
+def read_manifest(path):
+    """Rows as dicts. Anything malformed raises: a manifest we cannot parse proves nothing."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError as e:
+        raise ManifestError("cannot read %s: %s" % (path, e))
+    if lines and lines[-1] == "":
+        lines.pop()
+    if not lines or lines[0].split("\t") != HEADER:
+        raise ManifestError("%s: missing or unexpected header" % path)
+    rows = []
+    for n, line in enumerate(lines[1:], start=2):
+        cols = line.split("\t")
+        if len(cols) != len(HEADER):
+            raise ManifestError("%s:%d: expected %d columns, got %d" % (path, n, len(HEADER), len(cols)))
+        row = dict(zip(HEADER, cols))
+        if not (len(row["md5"]) == 32 and HEX.match(row["md5"])
+                and len(row["source_commit"]) == 40 and HEX.match(row["source_commit"])):
+            raise ManifestError("%s:%d: md5 or commit is not full-length hex" % (path, n))
+        rows.append(row)
+    return rows
+
+
+def append_row(row, path):
+    for v in row.values():
+        if "\t" in v or "\n" in v:
+            raise SystemExit("refusing to write a field containing a tab or newline: %r" % v)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        existing = f.read()
+        if not existing:
+            f.write("\t".join(HEADER) + "\n")
+        elif not existing.startswith("\t".join(HEADER) + "\n"):
+            raise SystemExit("%s: header does not match; not appending to a file we cannot read back" % path)
+        f.write("\t".join(row[h] for h in HEADER) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def resolve_content(a):
+    """Return (bytes to install, full commit sha, source repo name)."""
+    if a.template and not is_template(a.src):
+        raise SystemExit("--template needs --src to name the .example it was filled from")
+    if not a.template and is_template(a.src):
+        raise SystemExit("%s is a template; install the filled copy with --file and --template" % a.src)
+    if a.repo:
+        repo = os.path.abspath(a.repo)
+        commit = git(repo, "rev-parse", "--verify", a.commit + "^{commit}").decode().strip()
+        blob = git(repo, "show", "%s:%s" % (commit, a.src))
+        name = a.source_repo or repo_name(repo)
+        if not a.file:
+            if a.template:
+                raise SystemExit("--template needs --file: the filled copy is what gets installed")
+            return blob, commit, name
+        with open(a.file, "rb") as f:
+            content = f.read()
+        if not a.template and content != blob:
+            raise SystemExit("--file differs from %s:%s" % (commit[:12], a.src))
+        return content, commit, name
+    if not (a.file and a.source_repo):
+        raise SystemExit("without --repo, pass --file and --source-repo")
+    if not (len(a.commit) == 40 and HEX.match(a.commit)):
+        raise SystemExit("without --repo the commit cannot be resolved here; pass the full 40-hex sha")
+    with open(a.file, "rb") as f:
+        content = f.read()
+    if not a.template:
+        if not a.blob_md5:
+            raise SystemExit("without --repo, --blob-md5 is what proves these are the blob's bytes")
+        if md5_bytes(content) != a.blob_md5:
+            raise SystemExit("--file is %s, not the blob's %s" % (md5_bytes(content), a.blob_md5))
+    return content, a.commit, a.source_repo
+
+
+def install(a):
+    content, commit, source_repo = resolve_content(a)
+    new_md5 = md5_bytes(content)
+
+    current = md5_file(a.dest)
+    if current != a.expect_md5:
+        raise SystemExit("%s is %s, expected %s; not touching it" % (a.dest, current, a.expect_md5))
+    if current == new_md5:
+        raise SystemExit("%s already has md5 %s; nothing to install" % (a.dest, new_md5))
+
+    mode = a.mode
+    if current != "-":
+        st = os.stat(a.dest)
+        mode = mode if mode is not None else (st.st_mode & 0o7777)
+        bdir = backup_dir()
+        os.makedirs(bdir, exist_ok=True)
+        bk = os.path.join(bdir, "%s.%s.%s" % (os.path.basename(a.dest), current[:8],
+                                              time.strftime("%Y%m%dT%H%M%S")))
+        with open(a.dest, "rb") as src, open(bk, "wb") as dst:
+            dst.write(src.read())
+        if md5_file(bk) != current:
+            raise SystemExit("backup %s does not match the file it copies" % bk)
+    elif mode is None:
+        mode = 0o755
+
+    tmp = a.dest + ".new"
+    with open(tmp, "wb") as f:
+        f.write(content)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, mode)
+    if md5_file(tmp) != new_md5:
+        os.unlink(tmp)
+        raise SystemExit("%s did not write back as %s" % (tmp, new_md5))
+    if md5_file(a.dest) != current:
+        os.unlink(tmp)
+        raise SystemExit("%s changed while installing; not swapping" % a.dest)
+    os.replace(tmp, a.dest)
+    if md5_file(a.dest) != new_md5:
+        raise SystemExit("%s does not read back as %s after the swap" % (a.dest, new_md5))
+
+    who = os.environ.get("KTP_DEPLOYED_BY") or "%s@%s" % (os.environ.get("SUDO_USER") or getpass.getuser(),
+                                                          socket.gethostname())
+    manifest = manifest_for_writes()
+    append_row({
+        "installed_path": os.path.abspath(a.dest),
+        "md5": new_md5,
+        "source_repo": source_repo,
+        "source_commit": commit,
+        "source_path": a.src,
+        "deployed_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "previous_md5": current,
+        "deployed_by": who,
+    }, manifest)
+    print("installed %s  %s -> %s  from %s@%s:%s%s  (recorded in %s)"
+          % (a.dest, current, new_md5, source_repo, commit[:12], a.src,
+             " [templated]" if a.template else "", manifest))
+
+
+def report(a):
+    paths = [p for p in manifests_for_report() if os.path.exists(p)]
+    if not paths:
+        print("UNTRUSTED  no manifest at %s" % " or ".join(manifests_for_report()))
+        return 2
+    last = {}
+    for mp in paths:
+        try:
+            rows = read_manifest(mp)
+        except ManifestError as e:
+            print("UNTRUSTED  %s" % e)
+            return 2
+        if not rows:
+            print("UNTRUSTED  %s has a header and no rows" % mp)
+            return 2
+        for r in rows:
+            last[r["installed_path"]] = r
+    bad = 0
+    for path in sorted(last):
+        r = last[path]
+        now = md5_file(path)
+        if now == "-":
+            state = "MISSING"
+        elif now != r["md5"]:
+            state = "DRIFT"
+        else:
+            state = "TEMPLATED" if is_template(r["source_path"]) else "OK"
+        extra = ""
+        if a.repo and state in ("OK", "TEMPLATED"):
+            p = subprocess.run(["git", "-C", a.repo, "show", "%s:%s" % (r["source_commit"], r["source_path"])],
+                               capture_output=True)
+            if p.returncode != 0:
+                state, extra = "SOURCE-MISMATCH", "  (recorded commit has no such path)"
+            elif state == "OK" and md5_bytes(p.stdout) != r["md5"]:
+                state, extra = "SOURCE-MISMATCH", "  (recorded commit does not hold these bytes)"
+        if state not in ("OK", "TEMPLATED"):
+            bad += 1
+        print("%-15s %s  %s  %s@%s:%s%s" % (state, path, now, r["source_repo"], r["source_commit"][:12],
+                                            r["source_path"], extra))
+    return 1 if bad else 0
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--report", action="store_true")
+    ap.add_argument("--repo")
+    ap.add_argument("--commit")
+    ap.add_argument("--src")
+    ap.add_argument("--dest")
+    ap.add_argument("--file")
+    ap.add_argument("--template", action="store_true")
+    ap.add_argument("--blob-md5")
+    ap.add_argument("--expect-md5")
+    ap.add_argument("--mode", type=lambda s: int(s, 8))
+    ap.add_argument("--source-repo")
+    a = ap.parse_args(argv)
+    if a.report:
+        return report(a)
+    missing = [n for n in ("commit", "src", "dest", "expect_md5") if getattr(a, n) is None]
+    if missing:
+        ap.error("install needs --" + ", --".join(m.replace("_", "-") for m in missing))
+    install(a)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
