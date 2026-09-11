@@ -92,13 +92,21 @@ Dry-run the sync before arming anything. This is the step that catches a
 misplaced or unreadable secret, and it writes nothing:
 
 ```bash
-sudo -u ktpreports env $(sudo cat /etc/ktp/reports.env | xargs) \
+sudo -u ktpreports env -u USER -u LOGNAME $(sudo cat /etc/ktp/reports.env | xargs) \
   python3 -m scripts.report_sync --dry-run
 ```
 
 Run it from `/opt/ktp-reports/KTPInfrastructure`. It should report what it
 would push and exit 0. `missing env KTP_SUPABASE_URL` means the file is not
 readable by the account — check group ownership and the `0640` mode.
+
+`-u USER -u LOGNAME` is load-bearing rather than tidiness. `sudo -u` leaves
+`$USER` set to the invoking user, and the `mysql` client takes its default
+username from that — so without it the command authenticates as **root** and
+`auth_socket` refuses with `ERROR 1698 (28000): Access denied for user
+'root'@'localhost'`, which reads exactly like a broken pipeline. The systemd
+unit is unaffected, because `User=ktpreports` sets the environment correctly.
+This only bites when a human runs a step by hand.
 
 Then arm it:
 
@@ -130,6 +138,22 @@ gone and the match listed.
 ```bash
 journalctl -u ktp-reports.service -n 50 --no-pager
 ```
+
+### Use the verifier, not a row count
+
+`SELECT COUNT(*) FROM ktp_match_reports` returns 0 when the timer never ran,
+when it ran and correctly found nothing, and when it ran and failed — and the
+site answers 200 in all three. The verifier tells those apart and exits
+non-zero when the pipeline is broken:
+
+```bash
+cd /opt/ktp-reports/KTPInfrastructure
+sudo -u ktpreports env -u USER -u LOGNAME   python3 -m scripts.verify_report_pipeline --since 2026-09-13 --site https://ktpleague.gg
+```
+
+It reads `/var/log/ktp-report-service.log`, which the unit writes via
+`StandardOutput=append:`. If that file is absent the `RAN` check fails, which
+is the correct answer to "did it run" rather than a fault in the verifier.
 
 ## The `--since` floor
 
