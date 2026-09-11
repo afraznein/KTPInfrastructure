@@ -48,6 +48,7 @@ alerted but not remediated is fine, and is most of this estate.
 | LinuxGSM monitor patch reverted by `update-lgsm` | **yes, new** | no | no | `ktp-monitor-patch-check.sh`, weekly via the fleet audit — nothing before PR #297 |
 | Patched `command_monitor.sh` fails to parse | **yes, new** | no | no | same; this is the 2026-07-22 shape |
 | HLTV proxy dies while its wrapper lives | yes | yes | no | `ktp-hltv-liveness.sh` — fail-streak plus alert cooldown |
+| HLTV proxy bound but never connected to its game server | **yes, new** | **yes, new** | no | `ktp-hltv-liveness.sh` alerts when a proxy's newest `auto_*` demo goes stale; `hltv-restart-all.sh` counts a proxy only once it has connected. Before this, a proxy answering `Not connected.` passed both |
 | HLTV instance coverage gap (27020-27044) | yes | yes | no | `ktp-data-server-health.sh`, hourly |
 | Host disk or inode exhaustion | **no** | **no** | no | **hole** — see below |
 | Configuration drift between hosts | yes | yes | no | `ktp-fleet-audit.sh`, Monday 05:00 ET, posts only NEW items |

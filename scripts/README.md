@@ -314,12 +314,15 @@ Scheduled restart script for all HLTV instances with Discord notification.
 in its scope, so a change to `hltv-api.py` needs an explicit
 `systemctl restart hltv-api` - waiting for the scheduled restart will not pick it up.
 
+**Note:** A proxy counts as a success only once its journal shows it connected to its
+game server after the restart (`Received baseline` or `Connected to Game Server`), within
+`CONNECT_WAIT_SECONDS` (default 180). An active proxy that never connects is reported as
+*up but not connected* and turns the summary orange.
+
 **Deployed to:** `/usr/local/bin/hltv-restart-all.sh` (data server)
 
-**Cron:**
-```
-0 3,11 * * * /usr/local/bin/hltv-restart-all.sh >> /var/log/hltv-restart.log 2>&1
-```
+**Schedule:** the `hltv-restart.timer` systemd timer, 03:00 and 11:00 ET. It is not cron:
+`ktp-soak-verify.py` reads `journalctl -u hltv-restart`, which a cron job would not write.
 
 ### ktp-backup.sh
 Backs up MySQL database and key configuration files.
