@@ -4,6 +4,35 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: the demo renamer dropped every cancelled or force-reset half (2026-09-11)
+
+KTPHLTVRecorder sends `MATCH_WINDOW_CLOSE` only at match end. A cancelled second
+half or a `.forcereset` never sends one, so `hltv-demo-renamer` held the window
+open, abandoned it after 4h with a WARNING, and renamed nothing;
+`ktp-demo-cleanup-auto.sh` then deleted the demo at 6h. Six halves went that way
+between 2026-09-03 and 2026-09-10, three of them real play (`1.3-6704-NY1`,
+`1.3-6706-NY1`, `1.3-6755-DAL1`, all h1).
+
+- A window still open when a *different* match opens on the same HLTV port is
+  bounded by that OPEN (`Orphaned window` WARNING) and renamed through the normal
+  path, half-less. A candidate whose last write runs past the bound belongs to
+  the later match and is never taken, even as a sole candidate: the sole-candidate
+  allowance is for one match's h1 file running into its own h2, not into someone
+  else's match.
+- A window that reaches the 4h abandon with nothing after it now flushes the one
+  recording that was live at its open, half-less, instead of nothing. Later idle
+  recordings are left to the cleanup sweep.
+- `closed but no matching auto-* files` is now WARNING. The renamer has no alert
+  path, so it is not paged; `ktp-soak-verify` now counts it together with
+  `Abandoning stale window` and `Orphaned window`.
+- `verify-hltv-demo-renamer.sh` no longer looks for `SSH connected` in the last
+  200 journal lines. That line is logged only on connect, so the check failed on
+  any healthy long-running process; the `last_read_ok` check already proves the
+  loop is reading.
+
+Not deployed: installing the script and restarting `hltv-demo-renamer` is an
+operator act.
+
 ### `hltv`: a proxy that is up but never connected now alerts (2026-09-11)
 
 On 2026-09-09 the 11:00 HLTV restart brought `hltv@27020` (ATL1) up without its
