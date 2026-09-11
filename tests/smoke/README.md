@@ -64,7 +64,14 @@ python -m tests.smoke.cli assert-no-failed --port 27016
 Default `--rcon-password` is `changeme` — matches `config/local/dodserver.cfg`.
 For a manual subprocess boot pass whatever the harness used (`smoketest`).
 
-Exit codes: `0` clean, `1` assertion fail, `2` infrastructure error.
+Exit codes: `0` clean, `1` assertion fail, `2` infrastructure error, `3`
+base-image fault (only reachable via `assert-no-failed --under-test`).
+
+`assert-no-failed --under-test <names>` splits the verdict by attribution: a
+non-running module or plugin matching one of `<names>` exits `1`, anything else
+exits `3`. Omitting the flag keeps the original everything-is-fatal behaviour,
+which is what `publish-base-image.yml` wants — there every plugin in the image
+is ours, so every failure is too.
 
 ### Live boot (Linux / CI)
 
@@ -211,14 +218,22 @@ When the workflow fails:
    error in the change under test.
 
 **A plugin that is not the change under test failing is a base-image fault,
-not yours.** `assert-no-failed` reports every non-running plugin, and AMXX
-truncates the name in `amx plugins` (`stats_loggi` is `stats_logging.amxx`),
-so the row that fails the run can name something the caller never touched.
-The builder fails on a plugin that does not compile, and
-`make verify-plugin-artifacts` fails on one that `plugins.ini` loads but the
-artifact directory does not carry, so this should surface as a red
-`Publish runtime test-base image` run naming the plugin — check that workflow
-before suspecting your own change.
+not yours — and since 2026-09-10 the gate says so instead of going red.**
+AMXX truncates the name in `amx plugins` (`stats_loggi` is
+`stats_logging.amxx`), so the row that fails can name something the caller
+never touched. The boot step now passes `assert_plugin` and `assert_module`
+to `assert-no-failed --under-test`; a failure among them still fails the job,
+and a failure among anything else becomes a `KTP base image fault` warning
+plus a job-summary entry, after a forced GHCR re-pull has ruled out a stale
+`:latest`.
+
+Fixing it belongs to `afraznein/KTPInfrastructure`, and three gates there are
+supposed to catch it first: the builder fails on a plugin that does not
+compile, `make verify-plugin-artifacts` fails on one that `plugins.ini` loads
+but the artifact directory does not carry, and `publish-base-image.yml` boots
+the image and runs the *strict* `assert-no-failed` before pushing. So a base
+image fault should already be visible as a red `Publish runtime test-base
+image` run naming the plugin.
 
 ### Adding a smoke workflow to another KTP repo
 

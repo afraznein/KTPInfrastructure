@@ -5,12 +5,15 @@ Usage:
     python -m tests.smoke.cli rcon "amx modules" --port 27016 ...
     python -m tests.smoke.cli assert-modules --port 27016 --expect amxxcurl,reapi,dodx
     python -m tests.smoke.cli assert-plugins --port 27016 --expect KTPMatchHandler.amxx,...
-    python -m tests.smoke.cli assert-no-failed --port 27016
+    python -m tests.smoke.cli assert-no-failed --port 27016 [--under-test KTPHudObserver]
 
 Exit codes:
     0  all assertions passed
     1  assertion failure (a module/plugin was missing or not running)
     2  infrastructure error (rcon timeout, bad password, network)
+    3  base-image fault: something failed to load and NOTHING that failed is
+       under test. Only reachable via `assert-no-failed --under-test`; without
+       that flag such a failure is a 1, exactly as before.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import sys
 from collections.abc import Sequence
 
 from .asserts import (
+    InfrastructureFault,
     assert_modules_loaded,
     assert_no_failed_modules,
     assert_no_failed_plugins,
@@ -31,6 +35,7 @@ from .server_handle import ServerHandle
 EXIT_OK = 0
 EXIT_ASSERT = 1
 EXIT_INFRA = 2
+EXIT_IMAGE_FAULT = 3
 
 
 def _split_csv(value: str) -> list[str]:
@@ -83,8 +88,18 @@ def cmd_assert_plugins(args: argparse.Namespace) -> int:
 
 def cmd_assert_no_failed(args: argparse.Namespace) -> int:
     handle = _make_handle(args)
-    mod_rows = assert_no_failed_modules(handle)
-    plug_rows = assert_no_failed_plugins(handle)
+    under_test = _split_csv(args.under_test) if args.under_test else None
+    # An under-test set that parses to nothing would silently downgrade every
+    # failure to a base-image fault — the "gate that passes because it stopped
+    # checking" shape. Refuse rather than guess.
+    if args.under_test and not under_test:
+        print(
+            f"INFRA: --under-test {args.under_test!r} parsed to zero names",
+            file=sys.stderr,
+        )
+        return EXIT_INFRA
+    mod_rows = assert_no_failed_modules(handle, under_test)
+    plug_rows = assert_no_failed_plugins(handle, under_test)
     print(f"OK: no failed modules ({len(mod_rows)}) or plugins ({len(plug_rows)})")
     return EXIT_OK
 
@@ -122,6 +137,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     nf = sub.add_parser("assert-no-failed", help="Assert no module/plugin is in failed state")
     _add_target_args(nf)
+    nf.add_argument(
+        "--under-test",
+        default="",
+        help=(
+            "comma-separated module/plugin names that ARE the change under test. "
+            "A failure among these exits 1; a failure among everything else exits 3 "
+            "(base-image fault). Omit to make every failure exit 1."
+        ),
+    )
     nf.set_defaults(func=cmd_assert_no_failed)
 
     return p
@@ -135,6 +159,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except AssertionError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return EXIT_ASSERT
+    except InfrastructureFault as exc:
+        print(f"IMAGE-FAULT: {exc}", file=sys.stderr)
+        return EXIT_IMAGE_FAULT
     except RconAuthError as exc:
         print(f"INFRA: rcon auth rejected: {exc}", file=sys.stderr)
         return EXIT_INFRA

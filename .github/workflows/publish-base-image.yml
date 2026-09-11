@@ -40,6 +40,7 @@ jobs:
 
     env:
       VERSION: base
+      RCON_PASSWORD: changeme
       IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base
 
     steps:
@@ -169,6 +170,55 @@ jobs:
         run: |
           export KTP_PROJECT_ROOT="$(cd .. && pwd)"
           docker compose -f docker-compose.local.yml build ktp-game-1
+
+      # --- Boot the image and assert nothing failed to load, BEFORE pushing.
+      #
+      # Strict and unscoped: every plugin here is ours, so every failure is.
+      # smoke-callable.yml scopes the same check to the change under test, and
+      # this is what makes that safe — the class a caller stops failing on
+      # still fails in the repo that owns the image. The build-time guards
+      # cannot see a plugin that is present and still fails to LOAD.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Boot and assert the image is clean (pre-push gate)
+        working-directory: KTPInfrastructure
+        run: |
+          set -uo pipefail
+          export KTP_PROJECT_ROOT="$(cd .. && pwd)"
+          rc=0
+          docker compose -f docker-compose.local.yml up -d --no-build ktp-game-1 || rc=1
+          if [ "$rc" -eq 0 ]; then
+            python -m tests.smoke.cli wait-ready --port 27016 \
+              --rcon-password "$RCON_PASSWORD" --timeout 120 || rc=1
+          fi
+          # plugin_init is deferred until after precache, so rcon answers well
+          # before `amx plugins` has any rows. Poll rather than sleep.
+          if [ "$rc" -eq 0 ]; then
+            rows=0
+            for i in $(seq 1 60); do
+              out=$(python -m tests.smoke.cli rcon "amx plugins" --port 27016 --rcon-password "$RCON_PASSWORD" 2>/dev/null || true)
+              rows=$(echo "$out" | grep -cE '^\s*\[\s*[0-9]+\]' || true)
+              [ "$rows" -gt 0 ] && break
+              sleep 1
+            done
+            if [ "${rows:-0}" -eq 0 ]; then
+              echo "::error::plugin_init did not complete within 60s — refusing to publish"
+              rc=1
+            fi
+          fi
+          if [ "$rc" -eq 0 ]; then
+            python -m tests.smoke.cli assert-no-failed --port 27016 \
+              --rcon-password "$RCON_PASSWORD" || rc=$?
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::Base image failed its own boot check — NOT publishing. Every downstream smoke run, including external callers, would inherit this."
+            docker compose -f docker-compose.local.yml logs --tail 300 --no-color ktp-game-1 || true
+          fi
+          docker compose -f docker-compose.local.yml down -v 2>/dev/null || true
+          exit "$rc"
 
       # --- Push to GHCR. Two tags: `latest` (smoke pulls this) + the short
       # commit SHA of KTPInfrastructure (so a regression can be pinned).

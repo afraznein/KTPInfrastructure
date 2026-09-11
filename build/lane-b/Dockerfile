@@ -147,7 +147,11 @@ ARG NEW_BOT_URL=https://drive.google.com/uc?export=download&id=1KWxlqTNOe_yTXPZ3
 ARG NEW_BOT_SHA256=8f659fe14af21377c61e8c4645e2f0380d70cb33e4caf6f1f5caf4ed2d594f49
 
 RUN set -eux; \
-    curl -fsSL "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    # Retry transient Drive hiccups/rate-limits instead of failing an unrelated
+    # PR outright; sha256sum below still catches a payload that downloads fine
+    # but isn't the right bytes (an HTML rate-limit page, a moved file).
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+      "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
     echo "${NEW_BOT_SHA256}  /tmp/new_bot.zip" | sha256sum -c -; \
     # The archive is rooted at `dod/`, and the game tree is /opt/hlds/dod, so
     # extracting at /opt/hlds lands every file exactly where it belongs.
@@ -206,7 +210,8 @@ ARG METAMOD_URL=https://github.com/rehlds/Metamod-R/releases/download/1.3.0.149/
 ARG METAMOD_SHA256=ede7f59c4e0220afe8c02aa348a130cce527f87d36ffdb674e37a501ce57be94
 
 RUN set -eux; \
-    curl -fsSL "$METAMOD_URL" -o /tmp/metamod.zip; \
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+      "$METAMOD_URL" -o /tmp/metamod.zip; \
     echo "${METAMOD_SHA256}  /tmp/metamod.zip" | sha256sum -c -; \
     # Archive is rooted at `addons/`, so extract into the game dir.
     unzip -q -o /tmp/metamod.zip 'addons/*' -d /opt/hlds/dod; \
