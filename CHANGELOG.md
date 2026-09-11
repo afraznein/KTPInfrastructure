@@ -4,6 +4,32 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: a deploy manifest, so every live script can be traced to a commit (2026-09-11)
+
+Nothing recorded what was installed where. The only way to learn which commit a
+live script came from was to hash it against every version in the repo's
+history, and a hand-edited or re-encoded copy matched nothing at all. A sweep of
+the data server and the five game hosts found exactly that: a cron wrapper whose
+only difference from its commit is one em-dash re-encoded in transit, and live
+scripts with no source in any repo.
+
+- `scripts/ktp-install` installs a file from a git commit: a compare-and-swap on
+  the destination's current md5, a banked backup, `.new` then `mv`, a read-back,
+  and one appended row in the deploy manifest. The installed bytes are the blob,
+  so no version string is written into any script.
+- One manifest format in two places: `/usr/local/share/ktp-infra/DEPLOYED.tsv`
+  for root, `~/.ktp/DEPLOYED.tsv` for everyone else, so `dodserver` records game
+  host installs without sudo.
+- A host without a checkout installs pushed bytes with `--file --blob-md5`. A
+  filled template installs with `--template` and records the `.example` it came
+  from.
+- `ktp-install --report` flags DRIFT, MISSING and, with `--repo`,
+  SOURCE-MISMATCH. It fails closed on a missing or unparseable manifest.
+- `docs/DEPLOY_MANIFEST.md` documents both; `docs/LIVE_SCRIPT_INVENTORY.md` records
+  what is live today and where it came from.
+
+Nothing is installed by this change and no manifest exists on any host yet.
+
 ### `scripts`: the demo renamer dropped every cancelled or force-reset half (2026-09-11)
 
 KTPHLTVRecorder sends `MATCH_WINDOW_CLOSE` only at match end. A cancelled second
