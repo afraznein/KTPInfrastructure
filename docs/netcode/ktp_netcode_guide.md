@@ -117,7 +117,7 @@ Each command snapshot contains:
 **Backup commands for reliability:**
 Every packet also includes **backup commands** — copies of recent commands the server might have missed if a packet was dropped. This is automatic and transparent. If a packet gets lost on the network, the server recovers your inputs from the next packet's backup data.
 
-**What about the server's ticrate?** KTP servers run at 1000 Hz (`sys_ticrate 1000`), meaning the server processes game logic 1000 times per second. Setting `cl_cmdrate` higher than your FPS has no benefit (you can't generate commands faster than you render frames), but setting it significantly lower than your FPS means you're batching more commands per packet, increasing the delay between your action and the server seeing it.
+**What about the server's ticrate?** KTP servers run `sys_ticrate 1500` with the `-absgrid` frame-pacing launch flag, which yields a steady ~1000 server frames per second (`rehlds/dedicated/src/sys_ded.cpp:173`), so the server processes game logic about 1000 times per second. Setting `cl_cmdrate` higher than your FPS has no benefit (you can't generate commands faster than you render frames), but setting it significantly lower than your FPS means you're batching more commands per packet, increasing the delay between your action and the server seeing it.
 
 **Recommended:** `cl_cmdrate 101` for the standard `fps_max 100` setup. If you run a higher frame cap, match it to your fps_max (e.g. 250 at 240fps) — values above your actual FPS are inert, since you can't generate commands faster than you render frames. Note: engine-source research indicates the Steam client caps effective cmdrate near ~100 regardless, so 101 is sufficient for most players; setting higher is harmless.
 
@@ -156,7 +156,7 @@ cl_cmdrate 300 (1 packet every 3.3ms):
 | Chronically jittery route (SA/EU long-haul) | **0.02–0.03** |
 | Above 0.03 | No legitimate case — the 0.05 cap is a ceiling, not a target |
 
-**Ping alone is not a reason — yours or your opponents'.** Latency delays the update stream uniformly (a stable 160ms connection still gets a snapshot every ~9.8ms) and lag compensation accounts for it; high-ping players often do need 0.02, but because long routes tend to be jittery, not because of the ping number. Raising interp does nothing against high-ping *opponents* either: their staleness is baked in server-side before your packet is sent, the buffer applies to every entity equally, and a choppy opponent's warpy movement just plays back the same — later. The "shot me behind cover" effect is the *shooter's* rewind window (their ping + their interp, capped server-side by `sv_maxunlag 0.5`) — no client setting of yours changes it.
+**Ping alone is not a reason — yours or your opponents'.** Latency delays the update stream uniformly (a stable 160ms connection still gets a snapshot every ~9.8ms) and lag compensation accounts for it; high-ping players often do need 0.02, but because long routes tend to be jittery, not because of the ping number. Raising interp does nothing against high-ping *opponents* either: their staleness is baked in server-side before your packet is sent, the buffer applies to every entity equally, and a choppy opponent's warpy movement just plays back the same — later. The "shot me behind cover" effect is the *shooter's* rewind window (their ping + their interp, latency part capped server-side by `sv_maxunlag 0.3`) — no client setting of yours changes it.
 
 ---
 
@@ -193,7 +193,7 @@ Timeline:
     └────────┘         └────────┘                  └────────┘
 
     Server rewinds ◄───────────────────────────────────►
-    opponents to where              sv_maxunlag (500ms max)
+    opponents to where              sv_maxunlag (300ms max)
     you saw them
 ```
 
@@ -208,7 +208,9 @@ When your shot arrives at the server:
 
 **`sv_unlagsamples 1`** (KTP setting, June 2026): The server uses your single most recent latency sample for lag compensation. KTP previously ran 20-sample averaging, but analysis showed the client frame buffer advances per client packet (~100/sec), so 20 samples smeared ~200ms of latency history — and one ping spike inside the window could silently zero out lag compensation for a shot. One fresh sample tracks your actual current latency. This also rewards a steady, unchoked packet flow — another reason the locked `rate` and cmdrate-matches-fps recommendations matter.
 
-**`sv_maxunlag 0.5`** (KTP setting): The maximum rewind window is 500ms. If your effective latency (ping + interp) exceeds 500ms, lag compensation is disabled and you'll need to lead your shots. For US players on US servers (typical 20-80ms ping), this is never an issue.
+**`sv_maxunlag 0.3`** (fleet value, verified live 2026-09-11): the latency part of the rewind is capped at 300 ms. Lag compensation is not switched off above that: the server rewinds `min(latency, 0.3)` plus your interp (`rehlds/engine/sv_user.cpp:1353`, `targettime` at `:1367`), so a player above 300 ms has to lead moving targets by the difference. US players on US servers (typically 20-80 ms) and EU players at about 100 ms are never affected.
+
+**Another player's connection doesn't affect your shots** (verified against the engine 2026-09-11). Lag compensation is per shooter: when you fire, the server rewinds using only your latency and your interp (`SV_SetupMove`, `rehlds/engine/sv_user.cpp:1323-1367`), and no other player's connection enters the calculation. A player with loss or jitter mostly hurts themselves: their own rewinds wobble, and the server replays or freezes their lost movement (`sv_user.cpp:1898-1900`), so they stutter for opponents, but hits on them still count, because the rewind uses the positions the server recorded. One quirk: the server computes ping as round trip minus one update interval (`ping_time = realtime - senttime - next_messageinterval`, `sv_user.cpp:2126`), so a player with a ping under about 10 ms can come out at or below zero. `SV_CalcClientTime` skips those samples and returns 0 when none are left (`sv_user.cpp:1138-1199`), so that player's own shots get no rewind for that packet: a few units, harmless to everyone else.
 
 ---
 
@@ -289,7 +291,7 @@ Delta compression is why GoldSrc packets are so small. If a player is standing s
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `sys_ticrate` | 1500 | Requested tick ceiling — achieves ~1000 real fps of physics/logic |
+| `sys_ticrate` | 1500 | Requested tick ceiling; with the `-absgrid` launch flag it paces to a steady ~1000 fps of physics/logic |
 | `sv_maxupdaterate` | 120 | Max entity updates per second to clients |
 | `sv_minupdaterate` | 100 | Minimum updates per second |
 | `sv_maxcmdrate` | 500 | Max client command packets accepted |
@@ -297,7 +299,7 @@ Delta compression is why GoldSrc packets are so small. If a player is standing s
 | `sv_maxrate` | 100000 | Bandwidth cap — locked equal to the floor since March 2026 |
 | `sv_minrate` | 100000 | 100 KB/s bandwidth floor |
 | `sv_unlag` | 1 | Lag compensation enabled |
-| `sv_maxunlag` | 0.5 | Max 500ms rewind window |
+| `sv_maxunlag` | 0.3 | Latency part of the rewind capped at 300 ms (verified live 2026-09-11) |
 | `sv_unlagsamples` | 1 | Latest latency sample used for lag comp (see above) |
 
 ### KTPCvarChecker Enforced Client Settings
@@ -323,7 +325,7 @@ Delta compression is why GoldSrc packets are so small. If a player is standing s
 ### "My shots don't register"
 - Verify `cl_lc 1` — without this, you have to lead shots by your full ping
 - Check `ex_interp` — if above 0.01, you're seeing players further in the past than you need to
-- Check your ping — lag compensation works up to 500ms, but degrades above ~150ms
+- Check your ping — the latency part of the rewind is capped at 300 ms (`sv_maxunlag 0.3`), so above that you have to lead moving targets
 - Consider raising `cl_cmdrate` — lower cmdrate = more delay between your click and the server seeing it
 
 ### "net_graph shows high choke"

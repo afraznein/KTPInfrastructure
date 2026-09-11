@@ -1,5 +1,7 @@
 # sv_unlagsamples Change — Discord Post
 
+> ⛔ **SUPERSEDED (noted 2026-09-11): the fleet runs `sv_unlagsamples 1`, not 20.** Kept as history. 20 was reverted because `SV_CalcClientTime` returns 0 whenever the ping samples in its window differ by more than 200 ms (`rehlds/engine/sv_user.cpp:1138-1199`, guard at `:1196`). Over a 20-packet window, one ping spike zeroed lag compensation for every shot in that span. See `ktp_netcode_guide.md`.
+
 Post as a single message in #server-updates or similar.
 
 ---
