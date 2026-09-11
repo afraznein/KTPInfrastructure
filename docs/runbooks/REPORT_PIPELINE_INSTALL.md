@@ -161,18 +161,22 @@ is the correct answer to "did it run" rather than a fault in the verifier.
 
 ## The `--since` floor
 
-`ktp-reports.service` pins `--since 2026-09-13`. Everything before that date is
-pre-season pracc and scrim traffic with no official standing, and there is no
-official/scrim flag in the schema, so this date is the only thing separating
-them. Widening it publishes practice matches as league results.
+`ktp-reports.service` pins `--since 2026-09-13`, and every step also requires an
+official match type: `.ktp` (0) or `.ktpOT` (4), the set KTPMatchHandler's
+`is_official_match_type()` uses, defined once in `scripts/report_scope.py`.
+Scrims, 12mans, drafts and untyped (NULL) matches are never reported, whatever
+their date. Widening either publishes practice matches as league results.
 
-All three steps carry the same floor, and `aggregate` and `report_sync` refuse to
-start without one. `generate --since` only scopes which matches it discovers; a
-report persisted any other way (an explicit match id, a manual test run by
-someone with INSERT on `ktp_match_reports`) is still held back by `aggregate`,
-which will not pool it into the season, and by `report_sync`, which will not push
-it. Both print `held back by --since …: N` when they skip one. A report whose
-match has no `ktp_matches` row is held back too, since its date cannot be proved.
+All three steps apply the same scope: an official-type half that started on or
+after the floor. `aggregate` and `report_sync` refuse to start without a floor.
+`generate` only uses it to discover matches; a report persisted any other way (an
+explicit match id, a manual test run by someone with INSERT on
+`ktp_match_reports`) is still held back by `aggregate`, which will not pool it
+into the season, and by `report_sync`, which will not push it. They print
+`held back by --since …: N` and `held back by match_type …: N` when they skip
+one, and `generate <match_id>` warns when an explicit id is out of scope. A
+report whose match has no `ktp_matches` row is held back too, since neither its
+date nor its type can be proved.
 
 When you move the floor for a new season, move it on all three `ExecStart` lines.
 

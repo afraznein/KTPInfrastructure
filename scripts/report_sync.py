@@ -18,10 +18,11 @@ Environment (operator-provisioned file, e.g. /etc/ktp/report-sync.env):
 Usage (from the KTPInfrastructure repo root):
   python3 -m scripts.report_sync --since 2026-09-13 [--dry-run]
 
---since is required: only reports whose match started on or after it are
-pushed. It is the same season floor `report_service generate --since` uses, and
-it is what keeps a report written outside generate's discovery (an explicit
-match id, a manual test run) off the website.
+--since is required, and only in-season reports are pushed: an official match
+type (.ktp, .ktpOT) with a half on or after the floor. That is the scope
+`report_service generate` discovers matches by, defined once in
+scripts/report_scope.py, and it is what keeps a report written outside
+generate's discovery (an explicit match id, a manual test run) off the website.
 """
 from __future__ import annotations
 
@@ -35,6 +36,8 @@ import sys
 import urllib.request
 
 from scripts.analytics_report_dto import assert_sanitized, sanitize_report
+from scripts.report_scope import (
+    IN_SCOPE, classify, match_scope_columns, print_held)
 
 DATABASE = "hlstatsx"
 # Every kind here is name-keyed; database ids never cross to the website
@@ -56,11 +59,6 @@ def since_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(
             f"must be 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS', got {value!r}")
     return value
-
-
-def in_scope(match_start: str, since: str) -> bool:
-    # No ktp_matches row means the match is not provably in season, so it stays off.
-    return match_start not in ("", "NULL") and match_start >= since
 
 
 def mysql(query: str) -> str:
@@ -115,25 +113,25 @@ def supabase_all(path: str) -> list[dict]:
 
 
 def pending_reports(since: str) -> list[tuple[str, int, int]]:
-    """Latest publishable (match_id, schema_version, revision) per match whose
-    match started on or after `since`, minus rows Supabase already has."""
-    # Same column generate's --since reads. ktp_matches holds a row per half,
-    # so MAX() is "any half on or after the floor", matching generate's DISTINCT.
+    """Latest publishable (match_id, schema_version, revision) per in-season
+    match, minus rows Supabase already has."""
     out = mysql(
         "SELECT r.match_id, r.schema_version, r.revision, "
-        "(SELECT MAX(m.start_time) FROM ktp_matches m "
-        "WHERE BINARY m.match_id = BINARY r.match_id) AS match_start FROM "
+        f"{match_scope_columns('r')} FROM "
         "ktp_match_reports r JOIN (SELECT match_id, MAX(id) AS id "
         "FROM ktp_match_reports WHERE publishable = 1 GROUP BY match_id) "
         "latest ON latest.id = r.id"
     )
     rows = [f for ln in out.strip().splitlines()[1:]
-            if (f := ln.split("\t")) and len(f) == 4]
-    local = {(f[0], int(f[1]), int(f[2])) for f in rows
-             if in_scope(f[3], since)}
-    held = len(rows) - len(local)
-    if held:
-        print(f"held back by --since {since}: {held} publishable report(s)")
+            if (f := ln.split("\t")) and len(f) == 5]
+    local, held = set(), {}
+    for f in rows:
+        verdict = classify(f[3], f[4], since)
+        if verdict == IN_SCOPE:
+            local.add((f[0], int(f[1]), int(f[2])))
+        else:
+            held[verdict] = held.get(verdict, 0) + 1
+    print_held(held, since)
     have = {(row["match_id"], row["report_schema_version"], row["revision"])
             for row in supabase_all(
                 "/rest/v1/match_report"

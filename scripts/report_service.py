@@ -39,6 +39,8 @@ from pathlib import Path
 
 from scripts.ktpr_season import build_ktpr_v22
 from scripts.analytics_report_dto import PROVISIONAL_NOTICE, _name
+from scripts.report_scope import (
+    IN_SCOPE, OFFICIAL_MATCH_TYPES, classify, match_scope_columns, print_held)
 
 DATABASE = "hlstatsx"
 # Hard-check gate: FAIL on this code is cosmetic/expected for legacy '1.3-'
@@ -112,11 +114,7 @@ def load_match_analytics(repo: Path):
     return ma
 
 
-# KTPMatchHandler's own predicate, mirrored: is_official_match_type(t) is
-# t == MATCH_TYPE_COMPETITIVE (0, .ktp) or t == MATCH_TYPE_KTP_OT (4, .ktpOT)
-# — the two password-gated, results-bearing types. Spelling that set out
-# per-site is how .ktpOT ended up cancellable while .ktp was protected.
-OFFICIAL_MATCH_TYPES = (0, 4)
+# OFFICIAL_MATCH_TYPES lives in scripts/report_scope.py, shared with aggregate and report_sync.
 
 # ktp_matches.match_type, per that column's own COMMENT on the server.
 MATCH_TYPE_LABELS = {
@@ -257,7 +255,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
     print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
     ids = args.match_ids or pending_match_ids(db, schema_version, args.since)
     print(f"pending: {len(ids)} matches (schema v{schema_version})")
-    if not args.match_ids:
+    if args.match_ids:
+        for warning in explicit_scope_warnings(db, args.match_ids):
+            print(f"WARNING: {warning}: persisted anyway, but aggregate and "
+                  "report_sync hold its report back")
+    else:
         dropped = excluded_by_match_type(db, schema_version, args.since)
         detail = ", ".join(f"{k} {v}" for k, v in sorted(dropped.items()))
         print(f"excluded by match_type filter: {sum(dropped.values())}"
@@ -290,30 +292,49 @@ def since_arg(value: str) -> str:
 
 
 def latest_publishable_reports(db: LocalMysql, since: str) -> list[dict]:
-    """Latest publishable report per match whose match started on or after
-    `since`. Without the floor, a report written outside generate's discovery
-    (an explicit match id, a manual test) is pooled into the season aggregates."""
+    """Latest publishable report per in-season match: one with an official-type
+    half that started on or after `since`. Without this, a report written outside
+    generate's discovery (an explicit match id, a manual test) is pooled into the
+    season aggregates."""
     out = db.sql(
-        "SELECT (SELECT MAX(m.start_time) FROM ktp_matches m "
-        "WHERE BINARY m.match_id = BINARY r.match_id) AS match_start, "
-        "r.report FROM ktp_match_reports r "
+        f"SELECT {match_scope_columns('r')}, r.report "
+        "FROM ktp_match_reports r "
         "JOIN (SELECT match_id, MAX(id) AS id FROM ktp_match_reports "
         "      WHERE publishable = 1 GROUP BY match_id) latest "
         "ON latest.id = r.id"
     )
-    kept, held = [], 0
+    kept, held = [], {}
     for ln in out.splitlines()[1:]:
         if not ln.strip():
             continue
-        start, _, body = ln.partition("\t")
-        # No ktp_matches row means the match is not provably in season.
-        if start not in ("", "NULL") and start >= since:
+        start, official, body = ln.split("\t", 2)
+        verdict = classify(start, official, since)
+        if verdict == IN_SCOPE:
             kept.append(json.loads(body))
         else:
-            held += 1
-    if held:
-        print(f"held back by --since {since}: {held} publishable report(s)")
+            held[verdict] = held.get(verdict, 0) + 1
+    print_held(held, since)
     return kept
+
+
+def explicit_scope_warnings(db: LocalMysql, match_ids: list[str]) -> list[str]:
+    """Explicit ids that aggregate and report_sync will hold back whatever the
+    date: no ktp_matches row, or no official-type half. generate still persists
+    them, because an explicit id is how the pipeline is tested."""
+    ids = " UNION ALL ".join(f"SELECT {sql_str(m)} AS match_id"
+                             for m in match_ids)
+    out = db.sql(
+        f"SELECT x.match_id, {match_scope_columns('x')} FROM ({ids}) x")
+    warnings = []
+    for ln in out.splitlines()[1:]:
+        if not ln.strip():
+            continue
+        match_id, start, official = ln.split("\t")
+        if start in ("", "NULL"):
+            warnings.append(f"{match_id} has no ktp_matches row")
+        elif official in ("", "NULL"):
+            warnings.append(f"{match_id} is not an official match type")
+    return warnings
 
 
 MIN_LOCATED_DEATHS = 30      # overextension table row threshold (prototype)

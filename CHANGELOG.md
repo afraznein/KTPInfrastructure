@@ -4,6 +4,25 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: the report sync and aggregate now apply generate's match-type rule too (2026-09-11)
+
+`generate` only discovers official matches (`.ktp` 0, `.ktpOT` 4), but an
+explicit `generate <match_id>` bypasses discovery, and `aggregate` and
+`report_sync` checked only the date floor. A test report for a real scrim or
+12man played on or after the floor would have been pooled into the season and
+pushed to Supabase, where the sync never deletes it.
+
+- `OFFICIAL_MATCH_TYPES` and the scope test move to `scripts/report_scope.py`,
+  and generate, aggregate and report_sync all use it. A report is in scope only
+  if its match has an official-type half that started on or after `--since`:
+  the same per-half test generate's discovery applies. NULL types stay out.
+- Out-of-scope reports are held back and counted:
+  `held back by match_type (official only: 0, 4): N`.
+- `generate <match_id>` warns when an explicit id has no `ktp_matches` row or no
+  official-type half. It still persists the report, since that is how the
+  pipeline is tested.
+- No unit change: updating the checkout is the whole deploy.
+
 ### `scripts`: the report sync and aggregate now honour the season floor too (2026-09-11)
 
 `ktp-reports.service` scoped only `generate` to `--since 2026-09-13`. `aggregate`
