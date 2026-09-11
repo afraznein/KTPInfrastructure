@@ -510,7 +510,9 @@ def _hud_tables_present() -> bool:
         SELECT COUNT(*) FROM information_schema.tables
         WHERE table_schema = DATABASE() AND table_name = 'hud_kill_assists';
     """
-    rows = _parse_rows(run_sql(sql))
+    # list(): _parse_rows yields. A bare generator is truthy when empty and not
+    # subscriptable, so dropping this makes the check raise instead of answering.
+    rows = list(_parse_rows(run_sql(sql)))
     return bool(rows) and int(rows[0][0]) > 0
 
 
