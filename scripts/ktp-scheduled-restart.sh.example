@@ -534,6 +534,9 @@ done
 # only a HIT closes it, so a human re-grepped five hosts forever. Here it is a
 # monitor instead, and a monitor has to survive being wrong.
 #
+# A quiet sweep is still not proof of health: it keys on `socket_map_`, which the
+# close callback has just emptied, so it cannot catch the recycled-fd case.
+#
 # THREE things this sweep has to get right. All three have already produced an
 # answer that looked clean and meant nothing:
 #
