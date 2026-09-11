@@ -93,7 +93,7 @@ misplaced or unreadable secret, and it writes nothing:
 
 ```bash
 sudo -u ktpreports env $(sudo cat /etc/ktp/reports.env | xargs) \
-  python3 -m scripts.report_sync --dry-run
+  python3 -m scripts.report_sync --since 2026-09-13 --dry-run
 ```
 
 Run it from `/opt/ktp-reports/KTPInfrastructure`. It should report what it
@@ -165,6 +165,16 @@ is the correct answer to "did it run" rather than a fault in the verifier.
 pre-season pracc and scrim traffic with no official standing, and there is no
 official/scrim flag in the schema, so this date is the only thing separating
 them. Widening it publishes practice matches as league results.
+
+All three steps carry the same floor, and `aggregate` and `report_sync` refuse to
+start without one. `generate --since` only scopes which matches it discovers; a
+report persisted any other way (an explicit match id, a manual test run by
+someone with INSERT on `ktp_match_reports`) is still held back by `aggregate`,
+which will not pool it into the season, and by `report_sync`, which will not push
+it. Both print `held back by --since …: N` when they skip one. A report whose
+match has no `ktp_matches` row is held back too, since its date cannot be proved.
+
+When you move the floor for a new season, move it on all three `ExecStart` lines.
 
 Nothing is lost by a late install. `generate` reads `hlstatsx` retroactively, so
 matches played before the timer existed still publish on the first run.

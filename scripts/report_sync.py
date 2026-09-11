@@ -16,7 +16,12 @@ Environment (operator-provisioned file, e.g. /etc/ktp/report-sync.env):
   KTP_SUPABASE_SECRET_KEY=<service role secret; never the publishable key>
 
 Usage (from the KTPInfrastructure repo root):
-  python3 -m scripts.report_sync [--dry-run]
+  python3 -m scripts.report_sync --since 2026-09-13 [--dry-run]
+
+--since is required: only reports whose match started on or after it are
+pushed. It is the same season floor `report_service generate --since` uses, and
+it is what keeps a report written outside generate's discovery (an explicit
+match id, a manual test run) off the website.
 """
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -41,6 +47,20 @@ SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "leaderboard_ktpr_v22",
 PAGE_SIZE = 500
 # A server that ignores `offset` would otherwise page forever on one result.
 MAX_PAGES = 4000
+
+SINCE_RE = re.compile(r"\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?")
+
+
+def since_arg(value: str) -> str:
+    if not SINCE_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"must be 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS', got {value!r}")
+    return value
+
+
+def in_scope(match_start: str, since: str) -> bool:
+    # No ktp_matches row means the match is not provably in season, so it stays off.
+    return match_start not in ("", "NULL") and match_start >= since
 
 
 def mysql(query: str) -> str:
@@ -94,18 +114,26 @@ def supabase_all(path: str) -> list[dict]:
     raise RuntimeError(f"{path}: still returning rows after {MAX_PAGES} pages")
 
 
-def pending_reports() -> list[tuple[str, int, int]]:
-    """Latest publishable (match_id, schema_version, revision) per match,
-    minus rows Supabase already has."""
+def pending_reports(since: str) -> list[tuple[str, int, int]]:
+    """Latest publishable (match_id, schema_version, revision) per match whose
+    match started on or after `since`, minus rows Supabase already has."""
+    # Same column generate's --since reads. ktp_matches holds a row per half,
+    # so MAX() is "any half on or after the floor", matching generate's DISTINCT.
     out = mysql(
-        "SELECT r.match_id, r.schema_version, r.revision FROM "
+        "SELECT r.match_id, r.schema_version, r.revision, "
+        "(SELECT MAX(m.start_time) FROM ktp_matches m "
+        "WHERE BINARY m.match_id = BINARY r.match_id) AS match_start FROM "
         "ktp_match_reports r JOIN (SELECT match_id, MAX(id) AS id "
         "FROM ktp_match_reports WHERE publishable = 1 GROUP BY match_id) "
         "latest ON latest.id = r.id"
     )
-    local = {(f[0], int(f[1]), int(f[2]))
-             for ln in out.strip().splitlines()[1:]
-             if (f := ln.split("\t")) and len(f) == 3}
+    rows = [f for ln in out.strip().splitlines()[1:]
+            if (f := ln.split("\t")) and len(f) == 4]
+    local = {(f[0], int(f[1]), int(f[2])) for f in rows
+             if in_scope(f[3], since)}
+    held = len(rows) - len(local)
+    if held:
+        print(f"held back by --since {since}: {held} publishable report(s)")
     have = {(row["match_id"], row["report_schema_version"], row["revision"])
             for row in supabase_all(
                 "/rest/v1/match_report"
@@ -124,8 +152,8 @@ def fetch_report(match_id: str, schema_version: int, revision: int) -> dict:
     return json.loads(lines[1])
 
 
-def sync_reports(dry_run: bool) -> int:
-    todo = pending_reports()
+def sync_reports(dry_run: bool, since: str) -> int:
+    todo = pending_reports(since)
     print(f"reports to sync: {len(todo)}")
     for match_id, schema_version, revision in todo:
         report = fetch_report(match_id, schema_version, revision)
@@ -196,15 +224,19 @@ def sync_aggregates(dry_run: bool) -> int:
     return synced
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+    # Required with no default: a sync that forgot its floor would publish
+    # every pre-season test and pracc report it can see.
+    ap.add_argument("--since", type=since_arg, required=True,
+                    help="season floor on the match's ktp_matches.start_time")
+    args = ap.parse_args(argv)
     for var in ("KTP_SUPABASE_URL", "KTP_SUPABASE_SECRET_KEY"):
         if not os.environ.get(var):
             print(f"missing env {var}", file=sys.stderr)
             return 2
-    n = sync_reports(args.dry_run)
+    n = sync_reports(args.dry_run, args.since)
     m = sync_aggregates(args.dry_run)
     print(f"done: {n} reports, {m} aggregates")
     return 0

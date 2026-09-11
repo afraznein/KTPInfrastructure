@@ -97,8 +97,9 @@ class TestPendingReports(unittest.TestCase):
     SYNCED = SERVER_MAX_ROWS + 200
 
     def _mysql_out(self):
-        head = "match_id\tschema_version\trevision"
-        body = [f"{r['match_id']}\t8\t1" for r in report_rows(self.LOCAL)]
+        head = "match_id\tschema_version\trevision\tmatch_start"
+        body = [f"{r['match_id']}\t8\t1\t2026-09-14 21:00:00"
+                for r in report_rows(self.LOCAL)]
         return "\n".join([head] + body)
 
     def test_unpaged_read_would_resync_rows_past_the_cap(self):
@@ -119,7 +120,7 @@ class TestPendingReports(unittest.TestCase):
         with mock.patch.object(report_sync, "mysql",
                                lambda q: self._mysql_out()):
             with mock.patch.object(report_sync, "supabase", server):
-                todo = report_sync.pending_reports()
+                todo = report_sync.pending_reports("2026-09-13")
         self.assertEqual(len(todo), self.LOCAL - self.SYNCED)
         self.assertEqual(todo[0][0], f"m{self.SYNCED:05d}")
         self.assertTrue(server.calls > 1)
@@ -199,6 +200,70 @@ class TestSyncableKinds(unittest.TestCase):
                 synced = report_sync.sync_aggregates(False)
         self.assertEqual(synced, 1)
         self.assertEqual([b["kind"] for b in posted], ["map_profiles"])
+
+
+class TestSinceFloor(unittest.TestCase):
+    """A publishable report for a pre-season match must never reach the site."""
+
+    FLOOR = "2026-09-13"
+    ROWS = [
+        ("1.3-6774-ATL1", "2026-09-09 20:54:06"),   # pre-season test target
+        ("1.3-7000-ATL1", "2026-09-13 00:00:00"),   # exactly on the floor
+        ("1.3-7001-DAL1", "2026-09-14 21:00:00"),
+        ("orphan-no-match-row", "NULL"),
+    ]
+
+    def _mysql_out(self):
+        head = "match_id\tschema_version\trevision\tmatch_start"
+        return "\n".join([head] + [f"{m}\t9\t1\t{s}" for m, s in self.ROWS])
+
+    def _pending(self, since):
+        with mock.patch.object(report_sync, "mysql",
+                               lambda q: self._mysql_out()):
+            with mock.patch.object(report_sync, "supabase",
+                                   lambda p, method="GET", body=None: []):
+                return [m for m, _, _ in report_sync.pending_reports(since)]
+
+    def test_pre_floor_report_is_held_back(self):
+        self.assertNotIn("1.3-6774-ATL1", self._pending(self.FLOOR))
+
+    def test_on_and_after_floor_reports_sync(self):
+        """Positive control: without it, holding back everything would pass."""
+        self.assertEqual(self._pending(self.FLOOR),
+                         ["1.3-7000-ATL1", "1.3-7001-DAL1"])
+
+    def test_report_without_a_match_row_is_held_back(self):
+        self.assertNotIn("orphan-no-match-row", self._pending("2000-01-01"))
+
+    def test_query_reads_the_same_column_generate_does(self):
+        seen = []
+        with mock.patch.object(report_sync, "mysql",
+                               lambda q: seen.append(q) or self._mysql_out()):
+            with mock.patch.object(report_sync, "supabase",
+                                   lambda p, method="GET", body=None: []):
+                report_sync.pending_reports(self.FLOOR)
+        self.assertIn("m.start_time", seen[0])
+        self.assertIn("ktp_matches", seen[0])
+
+    def test_no_floor_refuses_to_run(self):
+        env = {"KTP_SUPABASE_URL": "https://x.test",
+               "KTP_SUPABASE_SECRET_KEY": "k"}
+
+        def must_not_run(*a, **k):
+            raise AssertionError("synced without a floor")
+
+        with mock.patch.dict("os.environ", env):
+            with mock.patch.object(report_sync, "sync_reports", must_not_run):
+                with mock.patch.object(report_sync, "sync_aggregates",
+                                       must_not_run):
+                    with self.assertRaises(SystemExit) as ctx:
+                        report_sync.main(["--dry-run"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_floor_rejects_non_date_shape(self):
+        for bad in ("2026-09-13'; DROP TABLE x; --", "2026/09/13", ""):
+            with self.assertRaises(SystemExit):
+                report_sync.main(["--since", bad])
 
 
 if __name__ == "__main__":
