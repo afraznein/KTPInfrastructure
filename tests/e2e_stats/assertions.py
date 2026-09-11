@@ -1020,6 +1020,39 @@ def check_shot_events(db, *, emitted: int, match_id: str | None = None,
         "SELECT COUNT(*) FROM ktp_shot_events"
         + (f" WHERE {scope_sql}" if scope_sql else "")
     )
+    # `shot` is optional (CAPTURE_EVENT_TYPES_OPTIONAL): a producer that does
+    # not advertise it in its manifest is a schema-23 line, and "no shot rows"
+    # is then the correct outcome, not a coverage gap. Reporting it as a gap
+    # fails every 1.19.x run under --require-complete-coverage for a stream
+    # that build was never meant to carry. The inverse is a real defect: shot
+    # markers in the log from a producer that does NOT advertise the
+    # capability. The daemon drops those at the manifest gate, but they still
+    # consume sequence numbers from the shared producer counter and flush on
+    # their own timer, so they interleave with every other stream and book
+    # gaps/reorders against all of them -- run 34514130350 measured 905 of
+    # each on a schema-23 build that still had the emitter compiled in.
+    if match_id is not None:
+        half_sql = f" AND half={int(half)}" if half is not None else ""
+        advertised = db.count(f"""
+SELECT COUNT(*) FROM ktp_capture_manifests
+WHERE BINARY match_id=BINARY {_sql_literal(match_id)}{half_sql}
+  AND FIND_IN_SET('shot', capabilities) > 0
+""") > 0
+        if not advertised:
+            if emitted > 0:
+                return {"code": "shot_events", "status": "pipeline",
+                        "emitted": emitted, "rows": rows,
+                        "invariant_violations": 0, "detail":
+                        f"{emitted} shot marker(s) in the game log from a "
+                        f"producer whose manifest does not advertise `shot` -- "
+                        f"the daemon drops them, but their sequence numbers "
+                        f"still interleave with every other stream and poison "
+                        f"sequence_gap_count for the whole half. The emitter "
+                        f"must be off on a schema-23 line (ktp_stats_shots 0)."}
+            return {"code": "shot_events", "status": "ok", "emitted": 0,
+                    "rows": rows, "invariant_violations": 0, "detail":
+                    "producer does not advertise `shot`; stream correctly "
+                    "absent (schema-23 line)."}
     if emitted == 0:
         return {"code": "shot_events", "status": "not_exercised", "emitted": 0,
                 "rows": rows, "invariant_violations": 0, "detail":
@@ -1816,7 +1849,7 @@ SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
   AND (event_type NOT IN ('life','damage','position','frag','assist','break',
                           'flag_state','flag_position','objective_attempt',
-                          'grenade_entity','team_membership')
+                          'grenade_entity','team_membership','shot')
        OR attempted IS NULL OR attempted < 0
        OR enqueued IS NULL OR enqueued < 0
        OR dropped IS NULL OR dropped < 0
@@ -1839,15 +1872,31 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 """)
-    ok = manifest == 1 and rows == 11 and distinct_types == 11 and bad == 0
+    # Eleven required types, exactly once each. `shot` is optional and MAY be
+    # present once (mirrors CAPTURE_EVENT_TYPES_OPTIONAL in match_analytics):
+    # ksc_emit_health loops over the plugin's whole event enum, so a 1.19.4+
+    # build emits a zeroed shot row whether or not it advertises the stream,
+    # and a schema-24 build emits a live one. Pinning the count at 11 failed
+    # both. Anything outside required|optional is still a defect, via `bad`.
+    required_present = db.count(f"""
+SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
+WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
+  AND event_type IN ('life','damage','position','frag','assist','break',
+                     'flag_state','flag_position','objective_attempt',
+                     'grenade_entity','team_membership')
+""")
+    ok = (manifest == 1 and required_present == 11
+          and rows == distinct_types and bad == 0)
     return {
         "code": "capture_health",
         "status": "ok" if ok else "pipeline",
         "detail": (
-            "Schema-23 manifest and all eleven attempted/enqueued/emitted/receipt counters reconcile"
+            f"Schema-23+ manifest and all eleven required counters reconcile "
+            f"({distinct_types - required_present} optional type(s) present)"
             if ok else
-            f"manifest={manifest} health_rows={rows}/11 "
-            f"distinct_types={distinct_types}/11 unhealthy_rows={bad}"
+            f"manifest={manifest} health_rows={rows} required_types="
+            f"{required_present}/11 distinct_types={distinct_types} "
+            f"unhealthy_rows={bad}"
         ),
         "manifest_rows": manifest,
         "health_rows": rows,
