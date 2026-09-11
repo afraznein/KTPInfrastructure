@@ -9,11 +9,54 @@ import os
 import unittest
 from pathlib import Path
 
+from unittest import mock
+
+from scripts import report_service
 from scripts.report_service import (
     OFFICIAL_MATCH_TYPES, build_aggregates, excluded_by_match_type,
-    is_publishable, pending_match_ids, sql_str)
+    is_publishable, latest_publishable_reports, pending_match_ids, sql_str)
 
 SPECIMENS = os.environ.get("KTP_REPORT_SPECIMENS")
+
+
+class AggregateSinceFloor(unittest.TestCase):
+    """A publishable pre-season report must not be pooled into the season."""
+
+    FLOOR = "2026-09-13"
+
+    def _db(self):
+        rows = [("2026-09-09 20:54:06", "pre"), ("2026-09-13 00:00:00", "on"),
+                ("2026-09-14 21:00:00", "after"), ("NULL", "orphan")]
+        body = "\n".join(f"{s}\t" + json.dumps({"match_id": m})
+                         for s, m in rows)
+        return FakeDb(response="match_start\treport\n" + body + "\n")
+
+    def test_pre_floor_and_orphan_reports_are_not_pooled(self):
+        got = [r["match_id"] for r in latest_publishable_reports(self._db(),
+                                                                 self.FLOOR)]
+        self.assertEqual(got, ["on", "after"])
+
+    def test_query_reads_the_same_column_generate_does(self):
+        db = self._db()
+        latest_publishable_reports(db, self.FLOOR)
+        self.assertIn("m.start_time", db.queries[0])
+
+    def test_aggregate_without_a_floor_refuses_to_run(self):
+        def must_not_run(args):
+            raise AssertionError("aggregated without a floor")
+
+        with mock.patch.object(report_service, "cmd_aggregate", must_not_run):
+            with self.assertRaises(SystemExit) as ctx:
+                report_service.main(["--repo", ".", "aggregate"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_aggregate_passes_its_floor_through(self):
+        seen = []
+        with mock.patch.object(report_service, "cmd_aggregate",
+                               lambda args: seen.append(args.since) or 0):
+            report_service.main(["--repo", ".", "aggregate",
+                                 "--since", self.FLOOR])
+        self.assertEqual(seen, [self.FLOOR])
 
 
 def check(level, code):

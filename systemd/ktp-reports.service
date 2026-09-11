@@ -24,9 +24,12 @@ EnvironmentFile=/etc/ktp/reports.env
 # standing, and there is no official/scrim flag in the schema -- this date is
 # the only thing separating them. Do not widen it to backfill; that publishes
 # practice matches as league results.
+# All three steps carry the SAME floor. generate's only scopes discovery; a
+# report written another way (an explicit match id, a manual test) is stopped
+# by aggregate's and sync's. aggregate and report_sync refuse to start without it.
 ExecStart=/usr/bin/python3 -m scripts.report_service --repo . generate --since 2026-09-13
-ExecStart=/usr/bin/python3 -m scripts.report_service --repo . aggregate
-ExecStart=/usr/bin/python3 -m scripts.report_sync
+ExecStart=/usr/bin/python3 -m scripts.report_service --repo . aggregate --since 2026-09-13
+ExecStart=/usr/bin/python3 -m scripts.report_sync --since 2026-09-13
 
 # generate only revisits a match when the report schema version changes, so a
 # tick with nothing new is nearly free. A full re-stamp after a schema bump is

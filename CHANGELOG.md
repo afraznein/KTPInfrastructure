@@ -4,6 +4,29 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: the report sync and aggregate now honour the season floor too (2026-09-11)
+
+`ktp-reports.service` scoped only `generate` to `--since 2026-09-13`. `aggregate`
+pooled, and `report_sync` pushed to the website, the latest publishable report
+for EVERY match in `ktp_match_reports`, whatever its date. That held only while
+nothing but the timer's own `generate` wrote to the table. A test run with an
+explicit match id (which bypasses `--since`) could write a publishable report
+for a pre-season match; the next 15-minute tick would then fold it into the season
+aggregates and push it to Supabase, where the sync never deletes it.
+
+- `report_sync` and `report_service aggregate` take a required `--since`. They
+  keep only reports whose match has a `ktp_matches.start_time` on or after it,
+  the same column and "any half" semantics `generate --since` uses, and print
+  `held back by --since …: N` for what they skip.
+- A report whose match has no `ktp_matches` row is held back, not published.
+- Without `--since` both exit 2 before touching the database: a forgotten floor
+  must stop the pipeline, never silently re-open publication of everything.
+- `systemd/ktp-reports.service` passes `--since 2026-09-13` to all three steps.
+
+Deploy the unit and the checkout together: new code under the old unit, or the
+old code under the new unit, fails `aggregate` with exit 2, so the tick publishes
+nothing until both land.
+
 ### `scripts`: a deploy manifest, so every live script can be traced to a commit (2026-09-11)
 
 Nothing recorded what was installed where. The only way to learn which commit a

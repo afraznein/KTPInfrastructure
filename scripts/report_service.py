@@ -2,7 +2,7 @@
 
 Runs ON the data server (local-socket mysql, no SSH hop), from the repo root:
   python3 -m scripts.report_service --repo . generate
-  python3 -m scripts.report_service --repo . aggregate
+  python3 -m scripts.report_service --repo . aggregate --since 2026-09-13
 
 `generate` discovers matches that have flag-state producer rows and no
 persisted report at the current schema version, runs
@@ -282,15 +282,38 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
-def latest_publishable_reports(db: LocalMysql) -> list[dict]:
+def since_arg(value: str) -> str:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?", value):
+        raise argparse.ArgumentTypeError(
+            f"must be 'YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS', got {value!r}")
+    return value
+
+
+def latest_publishable_reports(db: LocalMysql, since: str) -> list[dict]:
+    """Latest publishable report per match whose match started on or after
+    `since`. Without the floor, a report written outside generate's discovery
+    (an explicit match id, a manual test) is pooled into the season aggregates."""
     out = db.sql(
-        "SELECT r.report FROM ktp_match_reports r "
+        "SELECT (SELECT MAX(m.start_time) FROM ktp_matches m "
+        "WHERE BINARY m.match_id = BINARY r.match_id) AS match_start, "
+        "r.report FROM ktp_match_reports r "
         "JOIN (SELECT match_id, MAX(id) AS id FROM ktp_match_reports "
         "      WHERE publishable = 1 GROUP BY match_id) latest "
         "ON latest.id = r.id"
     )
-    lines = out.splitlines()
-    return [json.loads(ln) for ln in lines[1:] if ln.strip()]
+    kept, held = [], 0
+    for ln in out.splitlines()[1:]:
+        if not ln.strip():
+            continue
+        start, _, body = ln.partition("\t")
+        # No ktp_matches row means the match is not provably in season.
+        if start not in ("", "NULL") and start >= since:
+            kept.append(json.loads(body))
+        else:
+            held += 1
+    if held:
+        print(f"held back by --since {since}: {held} publishable report(s)")
+    return kept
 
 
 MIN_LOCATED_DEATHS = 30      # overextension table row threshold (prototype)
@@ -549,7 +572,7 @@ def build_aggregates(reports: list[dict]) -> dict[str, dict]:
 
 def cmd_aggregate(args: argparse.Namespace) -> int:
     db = LocalMysql()
-    reports = latest_publishable_reports(db)
+    reports = latest_publishable_reports(db, args.since)
     if not reports:
         print("no publishable reports; nothing to aggregate")
         return 0
@@ -583,7 +606,7 @@ def cmd_aggregate(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo", type=Path, required=True,
                     help="KTPInfrastructure checkout on this server")
@@ -595,8 +618,12 @@ def main() -> int:
                      help="only auto-discover matches with start_time >= "
                           "this ('YYYY-MM-DD' or 'YYYY-MM-DD HH:MM:SS'); "
                           "ignored when match_ids are given explicitly")
-    sub.add_parser("aggregate")
-    args = ap.parse_args()
+    agg = sub.add_parser("aggregate")
+    # Required with no default, like report_sync's: an aggregate that forgot
+    # its floor pools pre-season test reports into the published season.
+    agg.add_argument("--since", type=since_arg, required=True,
+                     help="only pool reports whose match start_time >= this")
+    args = ap.parse_args(argv)
     return cmd_generate(args) if args.cmd == "generate" else cmd_aggregate(args)
 
 
