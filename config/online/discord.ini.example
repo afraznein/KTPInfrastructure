@@ -1,3 +1,5 @@
+; PUBLIC REFERENCE: the league keeps the canonical copy of this template in a private repo.
+; This public copy may lag behind it; don't treat a difference here as the live config.
 ; KTP Discord Integration Configuration
 ; Profile: ONLINE (production)
 ;
