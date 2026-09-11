@@ -13,7 +13,7 @@ This document analyzes the GoldSrc engine's network timing systems, focusing on 
 **Key Findings:**
 - The game server engine has **no hardcoded updaterate ceiling** — `sv_maxupdaterate` is a server admin cvar, not an engine limit. Only a hardcoded floor of 10 UPS exists.
 - HLTV proxy caps (`MAX_PROXY_UPDATERATE = 100`) are **HLTV-only** and do not affect game clients.
-- The theoretical minimum `ex_interp` is dominated by a hardcoded **0.05f (50ms) buffer** — raising updaterate above 100 Hz provides diminishing returns without removing this buffer.
+- **HLTV only:** the proxy writes its spectators `ex_interp = 1/updaterate + 0.015` (`rehlds/HLTV/Proxy/src/Proxy.cpp:760`; the 0.05 buffer described below has since been cut to 0.015). It is not a floor for game clients: the game server takes each client's own `lerp_msec`, caps it at 0.1 s, and raises it to one update interval when lower (`rehlds/engine/sv_user.cpp:1357-1363`). *(Corrected 2026-09-11.)*
 - Valve has issued **no modern guidance** on GoldSrc netcode rates. The engine shipped in 2004 and rate defaults have never been updated.
 
 ---
@@ -55,7 +55,7 @@ if (fps > 0.0)
 
 ### Current Settings
 - **Default:** 100 Hz
-- **KTP Servers:** 1000 Hz (via `-sys_ticrate 1000` command line)
+- **KTP Servers:** `sys_ticrate 1500` in `dodserver.cfg` with the `-absgrid` launch flag (alongside `-pingboost 2`), an absolute-time 1 ms sleep grid (`rehlds/dedicated/src/sys_ded.cpp:173`) that paces the server to a steady ~1000 fps. *(Corrected 2026-09-11; this said 1000 Hz via the command line.)*
 - **Practical Maximum:** ~1000 Hz (limited by CPU and kernel scheduling)
 
 ---
@@ -189,6 +189,8 @@ cvar_t sv_rehlds_stringcmdrate_max_burst = { "sv_rehlds_stringcmdrate_max_burst"
 
 ### The Critical Formula
 
+> ⚠️ **Scope (2026-09-11):** this formula is the HLTV proxy's value for its spectators, not a limit on players. Game clients are covered under *Theoretical Floor* below.
+
 **File:** `rehlds/HLTV/Proxy/src/Proxy.cpp`
 
 ```cpp
@@ -218,7 +220,7 @@ Where:
 | 100 Hz | 0.010s | 0.05s | **0.060s (60ms)** |
 
 ### Theoretical Floor
-**0.06 seconds (60ms)** - Even setting `ex_interp 0` in console, the engine enforces this minimum.
+**HLTV spectators only:** the proxy formula above sets their value (now `1/updaterate + 0.015`, `Proxy.cpp:760`). **Game clients have no 0.06 floor.** The server reads the client's `lerp_msec`, caps it at 0.1 s, and raises it to one update interval (`1/cl_updaterate`, about 9.8 ms at the client.dll's 102 cap) when lower, before rewinding for that client's shots (`rehlds/engine/sv_user.cpp:1357-1363`). KTPCvarChecker separately enforces `ex_interp` 0.01–0.05 on players. *(Corrected 2026-09-11: this said the engine enforces 0.06 for everyone, which applied the HLTV formula to game clients.)*
 
 ---
 

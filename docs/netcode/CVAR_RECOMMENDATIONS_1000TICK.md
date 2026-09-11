@@ -5,6 +5,8 @@
 **Enforcer:** KTPCvarChecker 7.12
 **Author:** Nein_
 
+> ⚠️ **Superseded where it conflicts (noted 2026-09-11).** Kept as the February 2026 record. Current state: `ex_interp` is enforced **0.01–0.05** (KTPCvarChecker 7.38+), so `ex_interp 0` is a violation that gets corrected. The fleet runs `sys_ticrate 1500` with `-absgrid` frame pacing (a steady ~1000 fps). `cl_updaterate` above 102 does nothing, because the DoD client.dll caps the value it reports: 836 of 836 `cl_updaterate` values in the September KTPCvarChecker logs were 100-102. The settings players should follow are in the public `KTP Cvar List.md` in KTP_Documentation.
+
 ---
 
 ## Executive Summary
@@ -129,9 +131,11 @@ At 120 Hz the current rate cap provides adequate headroom. At higher updaterates
 
 ### ex_interp (Currently: 0-0.03)
 
+> ⚠️ **Corrected 2026-09-11:** now enforced 0.01–0.05, and 0 is corrected to 0.01. The game server floors interp at one update interval anyway (`rehlds/engine/sv_user.cpp:1362-1363`); a client value below that interval makes the client extrapolate between snapshots while the server rewinds as if it had not. The "`ex_interp 0` is optimal" recommendation in this section no longer applies.
+
 **What it does:** Sets the interpolation time window for rendering entity positions between server updates.
 
-**Engine behavior:** The game server engine does NOT enforce any floor or ceiling on ex_interp for game clients. The 0.05f buffer formula (`(1.0f / updaterate) + 0.05f`) only exists in the HLTV Proxy code (`Proxy.cpp:749`) and only affects HLTV viewers.
+**Engine behavior:** The game server engine does NOT enforce any floor or ceiling on ex_interp for game clients. The 0.05f buffer formula (`(1.0f / updaterate) + 0.05f`) only exists in the HLTV Proxy code (`Proxy.cpp:760` today, where the buffer is now `+ 0.015f`) and only affects HLTV viewers.
 
 **How it interacts with ping:**
 
@@ -570,7 +574,7 @@ The main benefit of 1000 tick for clients is more precise lag compensation (serv
 | `KTPReHLDS/rehlds/engine/sv_main.cpp:1723-1746` | SV_CheckUpdateRate() |
 | `KTPReHLDS/rehlds/engine/sv_main.cpp:5467` | Rate clamping code |
 | `KTPReHLDS/rehlds/HLTV/Proxy/src/Proxy.h:49-58` | MAX_PROXY_UPDATERATE |
-| `KTPReHLDS/rehlds/HLTV/Proxy/src/Proxy.cpp:749` | ex_interp formula with 0.05f buffer |
+| `KTPReHLDS/rehlds/HLTV/Proxy/src/Proxy.cpp:760` | HLTV ex_interp formula (buffer now 0.015f; was 0.05f at line 749) |
 | `KTP DoD Server/serverfiles/dod/dodserver.cfg` | Server rate configuration |
 | `KTP_Documentation/KTP Cvar List.md` | Player-facing cvar requirements |
 

@@ -31,12 +31,12 @@
 > tuning nothing, and the lines survive in several `.cfg` templates.
 >
 > **4. `ex_interp 0` in the proposed Quick Reference is now a violation.**
-> KTPCvarChecker enforces `ex_interp` in the range **0.009 – 0.05**, so 0 is below
+> KTPCvarChecker enforces `ex_interp` in the range **0.01 – 0.05** (7.38+; it was 0.009, below the ~9.8 ms update gap at the client.dll's 102 cap, and its write-back truncated to 0.008), so 0 is below
 > the floor and gets corrected. Since v7.35 the plugin also logs `NETOBS_INTERP_LOW`
 > when `ex_interp` falls under `1/cl_updaterate`.
 >
 > ➡️ **Current enforced ranges, for reference:** `cl_updaterate` 100–120 ·
-> `cl_cmdrate` 100–1000 · `rate` 100000 (locked) · `ex_interp` 0.009–0.05 ·
+> `cl_cmdrate` 100–1000 · `rate` 100000 (locked) · `ex_interp` 0.01–0.05 ·
 > `fps_max` 60–750.
 
 ---
