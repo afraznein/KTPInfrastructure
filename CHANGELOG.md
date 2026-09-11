@@ -4,6 +4,31 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `hltv`: a proxy that is up but never connected now alerts (2026-09-11)
+
+On 2026-09-09 the 11:00 HLTV restart brought `hltv@27020` (ATL1) up without its
+own `configs/hltv-27020.cfg`, so it never connected to its game server. It
+answered `Not connected.` for about 15h45m, until the next 03:00 restart, and the
+12man played on ATL1 that evening was never recorded. Every check passed: the
+port was bound, the unit was active, and the restart summary read "24 succeeded".
+
+- `ktp-hltv-liveness.sh` also checks that each bound proxy is RECORDING: it alerts
+  when the newest `auto_*` demo named by that proxy's own `record` line is older
+  than `STALE_SECONDS` (default 300). A connected proxy writes continuously, even
+  to an empty server. It fails closed: a config with no `record` line, or no demo
+  at all, is reported rather than skipped. The existing two-sample threshold, 3h
+  reminder and recovery message cover both checks.
+- `hltv-restart-all.sh` counts a proxy as a success only once its journal shows a
+  connect line after its own `Started` line, within `CONNECT_WAIT_SECONDS`
+  (default 180). A proxy that never connects is listed as *up but not connected*,
+  the summary turns orange, and the log line carries `failed` so
+  `ktp-soak-verify` flags it.
+- The liveness DOWN alert escaped its backticks as `\``, which is not a valid JSON
+  escape, so the relay could not parse that embed. It now uses plain backticks.
+- Paths and timings can be overridden from the environment, so
+  `tests/unit/test_hltv_liveness_and_restart.py` runs both scripts against stubbed
+  `systemctl`, `ss`, `journalctl` and `curl`.
+
 ### `ci`: the shared smoke gate could not tell a regression from its own breakage (2026-09-10)
 
 `smoke-callable.yml` is reusable, so its red check lands on the CALLER's PR.
