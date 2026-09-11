@@ -14,7 +14,8 @@ from unittest import mock
 from scripts import report_service
 from scripts.report_service import (
     OFFICIAL_MATCH_TYPES, build_aggregates, excluded_by_match_type,
-    is_publishable, latest_publishable_reports, pending_match_ids, sql_str)
+    explicit_scope_warnings, is_publishable, latest_publishable_reports,
+    pending_match_ids, sql_str)
 
 SPECIMENS = os.environ.get("KTP_REPORT_SPECIMENS")
 
@@ -25,11 +26,15 @@ class AggregateSinceFloor(unittest.TestCase):
     FLOOR = "2026-09-13"
 
     def _db(self):
-        rows = [("2026-09-09 20:54:06", "pre"), ("2026-09-13 00:00:00", "on"),
-                ("2026-09-14 21:00:00", "after"), ("NULL", "orphan")]
-        body = "\n".join(f"{s}\t" + json.dumps({"match_id": m})
-                         for s, m in rows)
-        return FakeDb(response="match_start\treport\n" + body + "\n")
+        # (match_start, official_start, match_id): every match here is official.
+        rows = [("2026-09-09 20:54:06", "2026-09-09 20:54:06", "pre"),
+                ("2026-09-13 00:00:00", "2026-09-13 00:00:00", "on"),
+                ("2026-09-14 21:00:00", "2026-09-14 21:00:00", "after"),
+                ("NULL", "NULL", "orphan")]
+        body = "\n".join(f"{s}\t{o}\t" + json.dumps({"match_id": m})
+                         for s, o, m in rows)
+        return FakeDb(
+            response="match_start\tofficial_start\treport\n" + body + "\n")
 
     def test_pre_floor_and_orphan_reports_are_not_pooled(self):
         got = [r["match_id"] for r in latest_publishable_reports(self._db(),
@@ -57,6 +62,53 @@ class AggregateSinceFloor(unittest.TestCase):
             report_service.main(["--repo", ".", "aggregate",
                                  "--since", self.FLOOR])
         self.assertEqual(seen, [self.FLOOR])
+
+
+class AggregateMatchTypeScope(unittest.TestCase):
+    """An in-date scrim or 12man report must not be pooled into the season."""
+
+    FLOOR = "2026-09-13"
+
+    def _db(self):
+        rows = [("2026-09-14 21:00:00", "2026-09-14 21:00:00", "official"),
+                ("2026-09-14 22:00:00", "NULL", "twelve_man"),
+                ("2026-09-14 20:00:00", "2026-09-12 20:00:00", "early_official")]
+        body = "\n".join(f"{s}\t{o}\t" + json.dumps({"match_id": m})
+                         for s, o, m in rows)
+        return FakeDb(
+            response="match_start\tofficial_start\treport\n" + body + "\n")
+
+    def test_only_the_official_in_date_match_is_pooled(self):
+        got = [r["match_id"] for r in latest_publishable_reports(self._db(),
+                                                                 self.FLOOR)]
+        self.assertEqual(got, ["official"])
+
+    def test_query_filters_on_the_official_set(self):
+        db = self._db()
+        latest_publishable_reports(db, self.FLOOR)
+        self.assertIn("m.match_type IN (0, 4)", db.queries[0])
+
+
+class ExplicitScopeWarnings(unittest.TestCase):
+    """generate <ids> persists out-of-scope reports but must say so."""
+
+    def _warnings(self):
+        db = FakeDb("match_id\tmatch_start\tofficial_start\n"
+                    "ok\t2026-09-14 21:00:00\t2026-09-14 21:00:00\n"
+                    "scrim\t2026-09-14 21:00:00\tNULL\n"
+                    "ghost\tNULL\tNULL\n")
+        return db, explicit_scope_warnings(db, ["ok", "scrim", "ghost"])
+
+    def test_names_the_out_of_scope_ids_only(self):
+        _, warnings = self._warnings()
+        self.assertEqual(warnings, ["scrim is not an official match type",
+                                    "ghost has no ktp_matches row"])
+
+    def test_every_id_is_asked_about_in_one_query(self):
+        db, _ = self._warnings()
+        self.assertEqual(len(db.queries), 1)
+        self.assertEqual(db.queries[0].count("UNION ALL"), 2)
+        self.assertIn(sql_str("scrim"), db.queries[0])
 
 
 def check(level, code):

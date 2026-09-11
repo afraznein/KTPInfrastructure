@@ -97,8 +97,8 @@ class TestPendingReports(unittest.TestCase):
     SYNCED = SERVER_MAX_ROWS + 200
 
     def _mysql_out(self):
-        head = "match_id\tschema_version\trevision\tmatch_start"
-        body = [f"{r['match_id']}\t8\t1\t2026-09-14 21:00:00"
+        head = "match_id\tschema_version\trevision\tmatch_start\tofficial_start"
+        body = [f"{r['match_id']}\t8\t1\t2026-09-14 21:00:00\t2026-09-14 21:00:00"
                 for r in report_rows(self.LOCAL)]
         return "\n".join([head] + body)
 
@@ -206,16 +206,18 @@ class TestSinceFloor(unittest.TestCase):
     """A publishable report for a pre-season match must never reach the site."""
 
     FLOOR = "2026-09-13"
+    # (match_id, match_start, official_start): every match here is official.
     ROWS = [
-        ("1.3-6774-ATL1", "2026-09-09 20:54:06"),   # pre-season test target
-        ("1.3-7000-ATL1", "2026-09-13 00:00:00"),   # exactly on the floor
-        ("1.3-7001-DAL1", "2026-09-14 21:00:00"),
-        ("orphan-no-match-row", "NULL"),
+        ("1.3-6774-ATL1", "2026-09-09 20:54:06", "2026-09-09 20:54:06"),
+        ("1.3-7000-ATL1", "2026-09-13 00:00:00", "2026-09-13 00:00:00"),
+        ("1.3-7001-DAL1", "2026-09-14 21:00:00", "2026-09-14 21:00:00"),
+        ("orphan-no-match-row", "NULL", "NULL"),
     ]
 
     def _mysql_out(self):
-        head = "match_id\tschema_version\trevision\tmatch_start"
-        return "\n".join([head] + [f"{m}\t9\t1\t{s}" for m, s in self.ROWS])
+        head = "match_id\tschema_version\trevision\tmatch_start\tofficial_start"
+        return "\n".join([head] + [f"{m}\t9\t1\t{s}\t{o}"
+                                   for m, s, o in self.ROWS])
 
     def _pending(self, since):
         with mock.patch.object(report_sync, "mysql",
@@ -264,6 +266,57 @@ class TestSinceFloor(unittest.TestCase):
         for bad in ("2026-09-13'; DROP TABLE x; --", "2026/09/13", ""):
             with self.assertRaises(SystemExit):
                 report_sync.main(["--since", bad])
+
+
+class TestMatchTypeScope(unittest.TestCase):
+    """A publishable report for an in-date scrim or 12man must never reach the
+    site: sync applies the same official-type rule generate discovers by."""
+
+    FLOOR = "2026-09-13"
+    ROWS = [
+        # an official match after the floor: the positive control
+        ("1.3-7001-DAL1", "2026-09-14 21:00:00", "2026-09-14 21:00:00"),
+        # a 12man after the floor: rows exist, no official-type half
+        ("1.3-7002-NY1", "2026-09-14 22:00:00", "NULL"),
+        # official half before the floor, a later non-official half after it
+        ("1.3-6990-ATL1", "2026-09-14 20:00:00", "2026-09-12 20:00:00"),
+    ]
+
+    def _mysql_out(self):
+        head = "match_id\tschema_version\trevision\tmatch_start\tofficial_start"
+        return "\n".join([head] + [f"{m}\t9\t1\t{s}\t{o}"
+                                   for m, s, o in self.ROWS])
+
+    def _run(self):
+        seen, printed = [], []
+        with mock.patch.object(report_sync, "mysql",
+                               lambda q: seen.append(q) or self._mysql_out()):
+            with mock.patch.object(report_sync, "supabase",
+                                   lambda p, method="GET", body=None: []):
+                with mock.patch("builtins.print",
+                                lambda *a, **k: printed.append(" ".join(
+                                    str(x) for x in a))):
+                    todo = [m for m, _, _ in
+                            report_sync.pending_reports(self.FLOOR)]
+        return todo, seen, printed
+
+    def test_only_the_official_in_date_match_syncs(self):
+        todo, _, _ = self._run()
+        self.assertEqual(todo, ["1.3-7001-DAL1"])
+
+    def test_in_date_12man_is_held_back_and_counted(self):
+        _, _, printed = self._run()
+        self.assertIn("held back by match_type (official only: 0, 4): "
+                      "1 publishable report(s)", printed)
+
+    def test_official_half_must_itself_be_after_the_floor(self):
+        _, _, printed = self._run()
+        self.assertIn("held back by --since 2026-09-13: "
+                      "1 publishable report(s)", printed)
+
+    def test_query_filters_on_the_official_set(self):
+        _, seen, _ = self._run()
+        self.assertIn("m.match_type IN (0, 4)", seen[0])
 
 
 if __name__ == "__main__":
