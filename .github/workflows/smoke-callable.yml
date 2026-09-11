@@ -414,14 +414,36 @@ jobs:
       # smoke overlay, and re-boot once. Slow path (use_base_image: false)
       # builds the runtime image locally and isn't subject to this race —
       # the retry is gated to fast path only.
+      #
+      # assert-no-failed is scoped with --under-test, because this workflow's
+      # red check lands on the CALLER's PR — including repos we do not own, and
+      # a plugin the base image failed to ship is ours. Exit 3 ("something
+      # failed and none of it is under test") is a labelled warning here and a
+      # hard failure in publish-base-image.yml, which owns the image.
       # ============================================================
       - name: Boot, wait, and assert (with single retry on fast-path)
         working-directory: KTPInfrastructure
         env:
           ARTIFACT_CONTAINER_PATH: ${{ inputs.artifact_container_path }}
           USE_BASE_IMAGE: ${{ inputs.use_base_image && '1' || '0' }}
+          ASSERT_PLUGIN: ${{ inputs.assert_plugin }}
+          ASSERT_MODULE: ${{ inputs.assert_module }}
+          UNDER_TEST_LABEL: ${{ inputs.under_test_label }}
         run: |
           set -uo pipefail
+
+          # Names that ARE the change under test. Empty means the caller asked
+          # for no scoped assertion at all, and assert-no-failed then keeps its
+          # original everything-is-fatal behaviour — a caller that names nothing
+          # must not get a gate that excuses everything.
+          UNDER_TEST=""
+          for name in "$ASSERT_PLUGIN" "$ASSERT_MODULE"; do
+            [ -n "$name" ] || continue
+            UNDER_TEST="${UNDER_TEST:+$UNDER_TEST,}$name"
+          done
+          echo "under-test scope for assert-no-failed: ${UNDER_TEST:-<none: strict mode>}"
+
+          IMAGE_FAULT_DETAIL=""
 
           boot_and_check() {
             export KTP_PROJECT_ROOT="$(cd .. && pwd)"
@@ -451,7 +473,37 @@ jobs:
               return 1
             fi
 
-            python -m tests.smoke.cli assert-no-failed --port 27016 --rcon-password "$RCON_PASSWORD"
+            # Exit 3 = something is in a failed state and none of it is under
+            # test. Propagated, not swallowed: the caller decides below.
+            # stderr is teed to a file rather than captured, so the message
+            # still reaches the log whatever the exit code turns out to be.
+            local err="${RUNNER_TEMP:-/tmp}/assert-no-failed.err"
+            local rc=0
+            if [ -n "$UNDER_TEST" ]; then
+              python -m tests.smoke.cli assert-no-failed --port 27016 \
+                --rcon-password "$RCON_PASSWORD" --under-test "$UNDER_TEST" \
+                2>"$err" || rc=$?
+            else
+              python -m tests.smoke.cli assert-no-failed --port 27016 \
+                --rcon-password "$RCON_PASSWORD" 2>"$err" || rc=$?
+            fi
+            cat "$err" >&2
+            IMAGE_FAULT_DETAIL="$(cat "$err")"
+            return "$rc"
+          }
+
+          report_image_fault() {
+            echo "::warning title=KTP base image fault (not your change)::${UNDER_TEST_LABEL}: the runtime image shipped something that failed to load, and none of it is the change under test. This job is NOT reporting a regression in your code. Owner: afraznein/KTPInfrastructure (publish-base-image.yml). Detail: ${IMAGE_FAULT_DETAIL}"
+            {
+              echo "### KTP base image fault — not the change under test"
+              echo ""
+              echo "\`\`\`"
+              echo "${IMAGE_FAULT_DETAIL}"
+              echo "\`\`\`"
+              echo ""
+              echo "Every assertion about **${UNDER_TEST_LABEL}** still ran and is reported"
+              echo "separately. Fixing this belongs to \`afraznein/KTPInfrastructure\`."
+            } >> "$GITHUB_STEP_SUMMARY"
           }
 
           refresh_base_image_and_overlay() {
@@ -476,7 +528,9 @@ jobs:
           }
 
           # First attempt
-          if boot_and_check; then
+          RC=0
+          boot_and_check || RC=$?
+          if [ "$RC" -eq 0 ]; then
             exit 0
           fi
 
@@ -484,16 +538,33 @@ jobs:
           # locally from source — it has no GHCR involvement, so a failure
           # there is real, not staleness.
           if [ "$USE_BASE_IMAGE" != "1" ]; then
+            if [ "$RC" -eq 3 ]; then
+              report_image_fault
+              exit 0
+            fi
             echo "::error::Slow-path boot+assert failed (no retry)"
             exit 1
           fi
 
-          echo "::warning::Tier 1 smoke initial boot+assert failed on fast path."
+          # A stale `:latest` can strand ANY plugin, under test or not, so an
+          # exit 3 gets the same forced re-pull before it is called a defect.
+          # Downgrading it straight to a warning would make the 2026-04-29
+          # propagation race unrecoverable for every caller but the one whose
+          # own plugin went missing.
+          echo "::warning::Tier 1 smoke initial boot+assert failed on fast path (rc=$RC)."
           echo "::warning::Retrying once with forced GHCR re-pull (suspected :latest propagation race)."
           echo "::warning::See publish-base-image.yml Layer 1 verify step + KTPInfrastructure CHANGELOG 1.5.4 for context."
           refresh_base_image_and_overlay || exit 1
-          if boot_and_check; then
+          RC=0
+          boot_and_check || RC=$?
+          if [ "$RC" -eq 0 ]; then
             echo "::warning::Retry succeeded — original failure was GHCR propagation race, not a real bug."
+            exit 0
+          fi
+          if [ "$RC" -eq 3 ]; then
+            # Survived a forced re-pull, so the published image really is short
+            # a plugin. Still not this caller's change.
+            report_image_fault
             exit 0
           fi
           echo "::error::Retry also failed — this is likely a real failure, not staleness."
