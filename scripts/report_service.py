@@ -122,7 +122,14 @@ def _pending_corpus_sql(schema_version: int, since: str | None,
         "JOIN ktp_flag_state_events f ON BINARY f.match_id = BINARY m.match_id "
         "LEFT JOIN ktp_match_reports r ON BINARY r.match_id = BINARY m.match_id "
         f"AND r.schema_version = {schema_version} "
-        f"WHERE m.match_id IS NOT NULL AND r.id IS NULL {since_clause}{tail}"
+        # end_time IS NULL means the match is still being played. Without this
+        # the 15-minute timer catches a match mid-play, writes a report from
+        # partial data, and `r.id IS NULL` is false forever after -- so it is
+        # never regenerated. Measured: 0 of 124 matches over 09-06..09-09 were
+        # left NULL, so this delays a report by at most one tick, and only for
+        # a match that is genuinely still running.
+        f"WHERE m.match_id IS NOT NULL AND m.end_time IS NOT NULL "
+        f"AND r.id IS NULL {since_clause}{tail}"
     )
 
 
