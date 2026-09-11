@@ -41,3 +41,10 @@ IOSchedulingClass=idle
 # already nologin with SELECT everywhere and INSERT/UPDATE on exactly the two
 # tables it owns, which is where the real containment is.
 NoNewPrivileges=true
+
+# scripts/verify_report_pipeline.py defaults to --log /var/log/ktp-report-service.log
+# and keys its RAN check on that file's MTIME -- a durable artifact, deliberately
+# not a log line. Journal-only output leaves that file absent, so the verifier
+# fails every run whether or not the pipeline worked.
+StandardOutput=append:/var/log/ktp-report-service.log
+StandardError=append:/var/log/ktp-report-service.log
