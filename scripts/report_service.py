@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import pwd
 import re
 import math
 import statistics
@@ -44,6 +46,19 @@ DATABASE = "hlstatsx"
 COSMETIC_FAIL_CODES = {"match_id_shape"}
 
 
+def _os_user() -> str:
+    """The OS identity auth_socket is checked against.
+
+    The client does not reliably default to it. Under `sudo -u ktpreports` the
+    process really is uid ktpreports and $USER/$LOGNAME are already ktpreports,
+    yet mysql still sends `root` and the server refuses with 1698 -- measured,
+    including with --no-defaults and with the environment unset. Only an
+    explicit --user works, so send one: the call then behaves identically under
+    systemd, under sudo, and interactively.
+    """
+    return pwd.getpwuid(os.geteuid()).pw_name
+
+
 class LocalMysql:
     """Duck-types EphemeralMysql.sql() over the local mysql CLI (auth_socket)."""
 
@@ -55,7 +70,7 @@ class LocalMysql:
         self.calls += 1
         proc = subprocess.run(
             ["mysql", "--batch", "--raw", "--default-character-set=utf8mb4",
-             self.database],
+             f"--user={_os_user()}", self.database],
             input=query, capture_output=True, text=True, timeout=600,
             encoding="utf-8", errors="replace",
         )

@@ -92,7 +92,7 @@ Dry-run the sync before arming anything. This is the step that catches a
 misplaced or unreadable secret, and it writes nothing:
 
 ```bash
-sudo -u ktpreports env -u USER -u LOGNAME $(sudo cat /etc/ktp/reports.env | xargs) \
+sudo -u ktpreports env $(sudo cat /etc/ktp/reports.env | xargs) \
   python3 -m scripts.report_sync --dry-run
 ```
 
@@ -100,13 +100,17 @@ Run it from `/opt/ktp-reports/KTPInfrastructure`. It should report what it
 would push and exit 0. `missing env KTP_SUPABASE_URL` means the file is not
 readable by the account — check group ownership and the `0640` mode.
 
-`-u USER -u LOGNAME` is load-bearing rather than tidiness. `sudo -u` leaves
-`$USER` set to the invoking user, and the `mysql` client takes its default
-username from that — so without it the command authenticates as **root** and
-`auth_socket` refuses with `ERROR 1698 (28000): Access denied for user
-'root'@'localhost'`, which reads exactly like a broken pipeline. The systemd
-unit is unaffected, because `User=ktpreports` sets the environment correctly.
-This only bites when a human runs a step by hand.
+These work because `report_service.py` passes `--user` explicitly. It did not
+always: plain `mysql` sends `root` even when the process really is uid
+`ktpreports` and `$USER`/`$LOGNAME` are already `ktpreports` — measured,
+including with `--no-defaults` and with the environment unset. The server then
+refuses with `ERROR 1698 (28000): Access denied for user 'root'@'localhost'`,
+which reads exactly like a broken pipeline rather than a wrong invocation.
+
+An earlier version of this page blamed `sudo -u` for leaking `$USER` and told
+you to unset it. **That was wrong** — those variables are already correct
+under `sudo`, and unsetting them changes nothing. The fix belongs in the client
+invocation, not the shell.
 
 Then arm it:
 
@@ -148,7 +152,7 @@ non-zero when the pipeline is broken:
 
 ```bash
 cd /opt/ktp-reports/KTPInfrastructure
-sudo -u ktpreports env -u USER -u LOGNAME   python3 -m scripts.verify_report_pipeline --since 2026-09-13 --site https://ktpleague.gg
+sudo -u ktpreports python3 -m scripts.verify_report_pipeline --since 2026-09-13 --site https://ktpleague.gg
 ```
 
 It reads `/var/log/ktp-report-service.log`, which the unit writes via
