@@ -290,16 +290,19 @@ def suite_post_matchday() -> SuiteResult:
     #   (a) "Deferred-rename abandon" — WARNING-level: window was deferred for
     #       >4h waiting on HLTV rotation that never came. Force-flushed as a
     #       combined name (no half marker). Rare; long-running session no rotate.
-    #   (b) "no matching auto-* files" — INFO-level but worth flagging: window
-    #       had no candidate file AND no sibling demo extending into the window.
-    #       Closest signal to a real recording loss the renamer can produce.
+    #   (b) "no matching auto-* files" — WARNING-level: window had no candidate
+    #       file AND no sibling demo extending into the window. Closest signal
+    #       to a real recording loss the renamer can produce.
+    #   (c) "Abandoning stale window" / "Orphaned window" — a match that never
+    #       sent MATCH_WINDOW_CLOSE (cancelled, force-reset). Its demo is now
+    #       flushed half-less; flag it so the flush gets a look.
     # The "HLTV did not rotate at half boundary; data is in the prior-half file"
     # log line is INTENTIONALLY EXCLUDED here — that's a single-file-match case
     # with data preserved, no operator action needed (was the bulk of the prior
     # YELLOW noise pre-fix).
     rc, out, _ = sh(
         f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 '
-        f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon" | wc -l'
+        f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon|Abandoning stale window|Orphaned window" | wc -l'
     )
     loss_count = int(out) if out.isdigit() else 0
     if loss_count == 0:
@@ -311,7 +314,7 @@ def suite_post_matchday() -> SuiteResult:
     else:
         _, detail, _ = sh(
             f'journalctl -u hltv-demo-renamer --since "{since_iso_local}" --no-pager 2>&1 '
-            f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon" | head -10'
+            f'| grep -E "no matching auto-\\* files in mtime|Deferred-rename abandon|Abandoning stale window|Orphaned window" | head -10'
         )
         result.checks.append(CheckResult(
             name="Recording-loss / abandon warnings",

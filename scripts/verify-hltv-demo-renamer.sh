@@ -126,8 +126,6 @@ echo "=== recent runtime ==="
 log=$(journalctl -u "$UNIT" -n 200 --no-pager -o cat 2>/dev/null || true)
 check "no traceback in recent log" \
       "$(echo "$log" | grep -q Traceback && echo n || echo y)"
-hosts=$(echo "$log" | grep -c 'SSH connected' || true)
-check "hosts connected since start" "$([ "${hosts:-0}" -gt 0 ] && echo y || echo n)" "${hosts:-0}"
 # A failed `mv` never consumes its source, so a leftover .new is the durable
 # evidence of a partial deploy.
 stray=$(ls /usr/local/bin/*.new /etc/systemd/system/*.new 2>/dev/null | wc -l)

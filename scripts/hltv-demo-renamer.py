@@ -70,7 +70,7 @@ WATCHDOG_ENABLED = bool(os.environ.get("NOTIFY_SOCKET"))
 
 # Match windows older than this without a CLOSE are abandoned (server crash,
 # plugin reload mid-match, etc.). 4 hours covers OT + tech pauses + extra
-# slack; matches finishing later just don't get renamed automatically.
+# slack; an abandoned window flushes only the recording live at its open.
 WINDOW_ABANDON_AGE_SEC = 4 * 3600
 
 # How far back from CLOSE event to look for matching auto-* files. Keep
@@ -175,6 +175,8 @@ class OpenWindow:
     # our original window and a fresh mtime-based scan would miss them.
     deferred: bool = False
     deferred_candidates: List[str] = field(default_factory=list)
+    # No CLOSE ever arrived, so close_unix is a bound we inferred, not one the plugin sent.
+    orphaned: bool = False
 
     def key(self) -> Tuple[int, str, str]:
         return (self.hltv_port, self.match_id, self.half)
@@ -412,7 +414,8 @@ class Renamer:
     def __init__(self, dry_run: bool = False):
         self.dry_run = dry_run
 
-    def rename_for_window(self, window: OpenWindow, *, force: bool = False) -> List[Tuple[Path, Path]]:
+    def rename_for_window(self, window: OpenWindow, *, force: bool = False,
+                          live_at_open_only: bool = False) -> List[Tuple[Path, Path]]:
         """Returns list of (original, renamed) paths actually renamed.
 
         Bug 1 deferred-rename: if all candidate files are the latest auto-*
@@ -425,6 +428,9 @@ class Renamer:
         `force=True` flushes a deferred window unconditionally (used at
         abandon-time), naming with no half marker (combined / single-file
         match) since we know HLTV never rotated.
+
+        `live_at_open_only=True` keeps just the recording that was live when the
+        window opened (used for a window abandoned with nothing after it).
         """
         if window.close_unix is None:
             return []
@@ -462,6 +468,10 @@ class Renamer:
             mtime_lo = window.open_unix - MTIME_WINDOW_PAD_BEFORE_SEC
             mtime_hi = window.close_unix + MTIME_WINDOW_PAD_AFTER_SEC
             candidates = [p for p, mt in all_friendly_auto if mtime_lo <= mt <= mtime_hi]
+            if live_at_open_only and candidates:
+                # Rotation is sequential, so the earliest last-write in range is the
+                # recording live at open; anything later is idle play after the match.
+                candidates = [min(candidates, key=lambda p: p.stat().st_mtime)]
 
             if not candidates:
                 # No auto-* in our mtime range. Either genuine recording loss OR
@@ -476,7 +486,7 @@ class Renamer:
                         friendly, window.match_id, window.half,
                     )
                 else:
-                    logging.info(
+                    logging.warning(
                         "Window %s/%s/%s closed but no matching auto-* files in mtime [%s, %s]",
                         friendly, window.match_id, window.half,
                         _fmt_ts(mtime_lo), _fmt_ts(mtime_hi),
@@ -510,7 +520,7 @@ class Renamer:
         # the FINAL mtime tells ownership: last write well past OUR close =
         # a later window's file. Keep a sole candidate regardless — the
         # legitimate no-rotation single-file case extends past close by design.
-        if len(candidates) > 1:
+        if len(candidates) > 1 or window.orphaned:
             settled = []
             for c in candidates:
                 try:
@@ -518,7 +528,9 @@ class Renamer:
                         settled.append(c)
                 except OSError:
                     continue  # vanished under us — drop
-            if settled and len(settled) < len(candidates):
+            # An orphan's bound is another match's OPEN, so even a sole candidate
+            # running past it is that match's recording, not this one's.
+            if (settled or window.orphaned) and len(settled) < len(candidates):
                 dropped = [c.name for c in candidates if c not in settled]
                 logging.info(
                     "Window %s/%s/%s: excluding %s (last write past close+%ds — belongs to a later window)",
@@ -536,7 +548,8 @@ class Renamer:
             hltv_ts = m.group("hltv_ts")
             map_name = m.group("map")
             target_name = self._build_target_name(window, friendly, hltv_ts, map_name,
-                                                  segment=idx, omit_half=flush_combined)
+                                                  segment=idx,
+                                                  omit_half=flush_combined or window.orphaned)
             dst = DEMOS_DIR / target_name
 
             if dst.exists():
@@ -727,6 +740,18 @@ class Service:
                                  hltv_port, match_id, half)
                     continue
 
+                # CLOSE fires only at match end, so a cancelled or force-reset
+                # match leaves its window open; the next match on this port bounds it.
+                for w in self.state.open_windows:
+                    if (w.hltv_port == hltv_port
+                            and w.match_id != match_id
+                            and w.close_unix is None):
+                        w.close_unix = wall_time
+                        w.orphaned = True
+                        logging.warning("Orphaned window: port=%d match=%s half=%s never closed "
+                                        "— bounded by OPEN of %s",
+                                        w.hltv_port, w.match_id, w.half, match_id)
+
                 # KTPMatchHandler fires ktp_match_start once per half (h1, h2,
                 # ot1...). MATCH_WINDOW_CLOSE only fires once per whole match
                 # at MATCH_END. So when h2 OPEN arrives, h1's window is still
@@ -788,8 +813,12 @@ class Service:
         for w in self.state.open_windows:
             if w.close_unix is None:
                 if now - w.open_unix > WINDOW_ABANDON_AGE_SEC:
-                    logging.warning("Abandoning stale window: port=%d match=%s half=%s age=%ds",
+                    logging.warning("Abandoning stale window: port=%d match=%s half=%s age=%ds "
+                                    "— flushing the recording live at its open",
                                     w.hltv_port, w.match_id, w.half, now - w.open_unix)
+                    w.close_unix = now
+                    w.orphaned = True
+                    self.renamer.rename_for_window(w, force=True, live_at_open_only=True)
                 else:
                     still_open.append(w)
                 continue
