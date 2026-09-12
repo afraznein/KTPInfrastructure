@@ -222,6 +222,27 @@ Before committing to the multi-week Phase 3 build, ran a direct measurement of `
 
 (Default SCHED_OTHER run shows the expected ~50µs scheduler-quantum overshoot + occasional 2-7ms jitter from preemption — confirms the SCHED_FIFO+pin path is the right baseline for production-style measurements. See `results.tsv` for the full table.)
 
+> 🔻 **SUPERSEDED 2026-09-11 — READ THIS BEFORE THE SECTION BELOW.** Everything from here to the end of
+> this experiment log describes `-absgrid` as a regression: a "1.435ms floor", ~643-691 fps, "identical
+> regression", and open hypotheses about where the loop overhead goes. **That is a 2026-05 reading of a
+> configuration we no longer run, and it is wrong about the fleet today.**
+>
+> Measured 2026-09-11 across all 24 instances (`research/hitreg-2026-09-11/absgrid/ABSGRID_ANALYSIS.md`):
+> **1000.0 fps at p50**, with the worst gap per 10s window at **1.43ms p50**. ⚠️ **That 1.43 is a
+> WORST-GAP, not an interframe average** — reading it as an average is exactly what made absgrid look
+> like a 643 fps regression here.
+>
+> 🔑 **What changed is the pairing, not the kernel:** `-absgrid` runs with **`sys_ticrate 1500`**.
+> `Host_FilterTime` rejects a frame that arrives early, so a 1ms grid under a 1000 ticrate throws work
+> away — which is the regression this log kept measuring. No custom kernel and no `idle=poll` were
+> needed, and the Phase 3 conclusion below ("custom kernel build is NOT needed") still holds.
+>
+> ⚠️ Chicago is a pacing outlier (a VPS): >3ms late wakes in 8.5% of idle windows. Baremetals are far
+> tighter. Do not read Chicago's numbers as fleet-wide.
+>
+> ➡️ **Kept rather than deleted, because the method is still right and the open questions below were
+> answered by measurement, not by argument.**
+
 **Implications:**
 
 1. **Phase 3 custom kernel build is NOT needed.** ~2-3 weeks of build effort + monthly Ubuntu kernel-update rebuild commitment is avoided. We dodged a bullet.
