@@ -1080,7 +1080,7 @@ def main() -> int:
                          "(1 << MatchType). -1 (default) leaves the plugin's own "
                          "default alone (4 = 12-mans only). Set before the match "
                          "starts, because the plugin applies it once at match live.")
-    ap.add_argument("--shot-detail", type=int, default=0,
+    ap.add_argument("--shot-detail", type=int, default=-1,
                     help="ktp_stats_shot_detail for this run. 0 (default) "
                          "leaves the diagnostic fields NULL; 1 populates them. "
                          "The plugin default is 0 -- production opts a match "
@@ -1385,6 +1385,18 @@ def main() -> int:
                         print("  " + preflight["detail"], flush=True)
 
                     if mh_amxx is not None:
+                        def _shot_detail_then_preflight():
+                            # -1 means DO NOT TOUCH the cvar. Anything else
+                            # overrides whatever KTPMatchHandler decided from
+                            # the match type: the plugin applies its gate ~1.5s
+                            # after the round restart and this hook runs later,
+                            # so an unconditional rcon here silently wins and
+                            # makes a gate test measure the harness instead.
+                            if args.shot_detail >= 0:
+                                handle.rcon(
+                                    f'ktp_stats_shot_detail {int(args.shot_detail)}')
+                            _strict_live_preflight()
+
                         if args.shot_detail_types >= 0:
                             handle.rcon(
                                 f'ktp_shot_detail_types {int(args.shot_detail_types)}')
@@ -1394,11 +1406,7 @@ def main() -> int:
                             per_team=args.per_team, before_play=_stage_kill_switch,
                             during_play=_stage_clean_scenarios,
                             after_match=_stage_post_match_frag,
-                            after_live=lambda: (
-                                handle.rcon(
-                                    f'ktp_stats_shot_detail {int(args.shot_detail)}'),
-                                _strict_live_preflight(),
-                            )[-1])
+                            after_live=_shot_detail_then_preflight)
                         # Freeze kill-switch recovery evidence before the
                         # intentionally separate diagnostic match.  A later
                         # diagnostic assist must not make a clean match with no

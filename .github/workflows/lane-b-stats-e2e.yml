@@ -248,7 +248,7 @@ jobs:
       ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
-      SHOT_DETAIL: ${{ inputs.shot_detail || '0' }}
+      SHOT_DETAIL: ${{ inputs.shot_detail || '-1' }}
       SHOT_DETAIL_TYPES: ${{ inputs.shot_detail_types || '-1' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
@@ -573,7 +573,7 @@ jobs:
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
               --map "$MAP_NAME" --per-team 6 --play-seconds "$PLAY_SECONDS" \
-              --shot-detail "${SHOT_DETAIL:-0}" \
+              --shot-detail "${SHOT_DETAIL:--1}" \
               --shot-detail-types "${SHOT_DETAIL_TYPES:--1}" \
               --matchhandler-src /src/KTPMatchHandler \
               --matchhandler-includes /src/KTPAMXX/plugins/include \

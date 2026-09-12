@@ -93,8 +93,8 @@ on:
           stays off unless a match type is deliberately opted in.
         required: false
         type: choice
-        options: ['0', '1']
-        default: '0'
+        options: ['-1', '0', '1']
+        default: '-1'
       play_seconds:
         description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
         required: false
