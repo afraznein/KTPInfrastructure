@@ -79,6 +79,15 @@ on:
         required: false
         type: string
         default: dod_anzio
+      shot_detail:
+        description: >-
+          ktp_stats_shot_detail for this run. 0 (default, matching the plugin
+          default) leaves the shot diagnostics NULL; 1 populates them. The flag
+          stays off unless a match type is deliberately opted in.
+        required: false
+        type: choice
+        options: ['0', '1']
+        default: '0'
       play_seconds:
         description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
         required: false
@@ -102,4 +111,5 @@ jobs:
       engine_ref: ${{ inputs.engine_ref }}
       map_name: ${{ inputs.map_name }}
       play_seconds: ${{ inputs.play_seconds }}
+      shot_detail: ${{ inputs.shot_detail }}
     secrets: inherit

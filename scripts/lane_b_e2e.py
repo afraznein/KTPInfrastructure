@@ -1075,6 +1075,11 @@ def main() -> int:
     ap.add_argument("--map", default="dod_anzio")
     ap.add_argument("--per-team", type=int, choices=(6,), default=6,
                     help="Lane B is fixed at tournament-sized 6v6")
+    ap.add_argument("--shot-detail", type=int, default=0,
+                    help="ktp_stats_shot_detail for this run. 0 (default) "
+                         "leaves the diagnostic fields NULL; 1 populates them. "
+                         "The plugin default is 0 -- production opts a match "
+                         "type in deliberately, so the lane must too.")
     ap.add_argument("--play-seconds", type=int, default=360,
                     help="full-match play window; v6 schema22/2s ratings require at least "
                          "the profile minimum (currently 300 seconds)")
@@ -1381,7 +1386,11 @@ def main() -> int:
                             per_team=args.per_team, before_play=_stage_kill_switch,
                             during_play=_stage_clean_scenarios,
                             after_match=_stage_post_match_frag,
-                            after_live=_strict_live_preflight)
+                            after_live=lambda: (
+                                handle.rcon(
+                                    f'ktp_stats_shot_detail {int(args.shot_detail)}'),
+                                _strict_live_preflight(),
+                            )[-1])
                         # Freeze kill-switch recovery evidence before the
                         # intentionally separate diagnostic match.  A later
                         # diagnostic assist must not make a clean match with no

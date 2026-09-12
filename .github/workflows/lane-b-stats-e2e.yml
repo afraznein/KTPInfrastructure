@@ -111,6 +111,15 @@ on:
         required: false
         type: string
         default: dod_anzio
+      shot_detail:
+        description: >-
+          ktp_stats_shot_detail for the run. 0 (default, matching the
+          plugin default) leaves the shot diagnostics NULL; 1 populates
+          them. Production opts a match type in deliberately, so the lane
+          does too.
+        required: false
+        type: string
+        default: '0'
       play_seconds:
         description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
         required: false
@@ -158,6 +167,15 @@ on:
         required: false
         type: string
         default: 'dod_anzio'
+      shot_detail:
+        description: >-
+          ktp_stats_shot_detail for the run. 0 (default, matching the
+          plugin default) leaves the shot diagnostics NULL; 1 populates
+          them. Production opts a match type in deliberately, so the lane
+          does too.
+        required: false
+        type: string
+        default: '0'
       play_seconds:
         description: 'How long to let the bots play'
         required: false
@@ -216,6 +234,7 @@ jobs:
       ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
+      SHOT_DETAIL: ${{ inputs.shot_detail || '0' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
@@ -539,6 +558,7 @@ jobs:
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
               --map "$MAP_NAME" --per-team 6 --play-seconds "$PLAY_SECONDS" \
+              --shot-detail "${SHOT_DETAIL:-0}" \
               --matchhandler-src /src/KTPMatchHandler \
               --matchhandler-includes /src/KTPAMXX/plugins/include \
               --artifact-manifest /work/build/artifacts/artifact-manifest.json \
