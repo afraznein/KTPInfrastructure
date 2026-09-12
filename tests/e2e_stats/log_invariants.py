@@ -763,6 +763,28 @@ def count_in_match(log_text: str, needle: str) -> int:
     return sum(1 for line in lines[start:stop] if needle in line)
 
 
+def count_for_match_id(log_text: str, needle: str, match_id: str) -> int:
+    """Count markers carrying a specific matchid, wherever they sit in the log.
+
+    count_in_match() scopes by log POSITION, between KTP_MATCH_START and
+    KTP_MATCH_END. The daemon does not: it attributes by the matchid stamped on
+    the marker itself. Those two disagree by a real window -- KTPMatchHandler
+    sets the match context 1.5s after the round restart but logs
+    KTP_MATCH_START at 2.0s, deliberately, so the context is live before the
+    daemon sees the start marker. Anything captured in that 0.5s gap is
+    correctly tagged and correctly stored, and invisible to position scoping.
+
+    For a high-rate stream that is not a rounding error: a bot match put 4 shots
+    in that gap, which read as 335 rows against 331 markers and looked exactly
+    like duplication. Compare like the daemon compares.
+    """
+    if not match_id:
+        return 0
+    tag = '(matchid "%s")' % match_id
+    return sum(1 for line in log_text.splitlines()
+               if needle in line and tag in line)
+
+
 def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
     """Successful BreakDrive synthetic deaths inside the driven match.
 

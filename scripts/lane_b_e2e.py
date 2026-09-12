@@ -1579,8 +1579,17 @@ def main() -> int:
             if report.get("match") else 0
         )
         shot_total = log_text.count('triggered "shot"')
+        # Scoped by matchid rather than by log position, because that is how the
+        # daemon attributes these rows. KTPMatchHandler sets the match context
+        # 1.5s after the round restart and logs KTP_MATCH_START at 2.0s -- a
+        # deliberate 0.5s gap so the context is live before the daemon sees the
+        # start marker. Shots captured in that gap are correctly tagged, correctly
+        # stored, and invisible to position scoping, which reads as duplication:
+        # a bot match put 4 shots there and reported 335 rows against 331 markers.
         shot_match_emitted = (
-            log_invariants.count_in_match(report_match_log, 'triggered "shot"')
+            log_invariants.count_for_match_id(
+                report_match_log, 'triggered "shot"',
+                (report.get("match") or {}).get("match_id", ""))
             if report.get("match") else 0
         )
         life_match_emitted = (
