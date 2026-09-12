@@ -26,6 +26,7 @@ Config: /etc/ktp/stats-export.conf (mode 600), or the environment.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -37,6 +38,19 @@ from datetime import datetime, timedelta, timezone
 CONF = "/etc/ktp/stats-export.conf"
 DB_NAME = "hlstatsx"
 BATCH = 50  # the endpoint's own ceiling; a larger payload is a 400
+
+# League play only. 0 is `.ktp`, 4 is `.ktpOT`; 1/2/3/5 are scrim, 12-man and
+# draft, and NULL is untyped. Canonical copy lives in scripts/report_scope.py
+# as OFFICIAL_MATCH_TYPES -- duplicated here because this script deploys as a
+# standalone file to /usr/local/bin with no package to import from. Keep the
+# two in step.
+OFFICIAL_MATCH_TYPES = (0, 4)
+
+# What was last sent, so a match already accepted is not re-POSTed on every
+# tick. Keyed by match id, valued by a hash of the built payload, so a match
+# whose stats are still being corrected is re-sent and a settled one is not.
+STATE_PATH = os.environ.get(
+    "STATS_EXPORT_STATE", "/var/lib/ktp-stats-export/sent.json")
 
 # The two DoD objective actions. ⚠️ DoD writes `dod_control_point` /
 # `dod_capture_area` -- grepping for CS's `Captured` returns 0 against millions
@@ -147,7 +161,12 @@ def fetch_matches(db: Db, hours: int, match_id: str | None) -> list[dict]:
         # (the box runs America/New_York), so comparing them against a UTC
         # instant silently shortens the window by the UTC offset -- 48 hours
         # became 44 and dropped four matches, with nothing to notice.
-        where = (f"end_time is not null and end_time >= now() - interval {int(hours)} hour")
+        # League play only -- see OFFICIAL_MATCH_TYPES. Without this the window
+        # carries every pracc, scrim and 12-man match that happened to end in
+        # it, and they reach the site as if they were results.
+        types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
+        where = (f"end_time is not null and match_type in ({types}) "
+                 f"and end_time >= now() - interval {int(hours)} hour")
     # UNIX_TIMESTAMP resolves each DATETIME in the session zone, so it is right
     # per row across a DST boundary -- which a single run-wide offset would not
     # be on the nightly 14-day sweep.
@@ -301,6 +320,33 @@ def post(url: str, secret: str, payload: dict, quiet: bool) -> bool:
     return False
 
 
+def payload_digest(built: dict) -> str:
+    return hashlib.sha256(json.dumps(
+        built, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def load_sent() -> dict[str, str]:
+    try:
+        with open(STATE_PATH, encoding="utf-8") as fh:
+            state = json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
+def save_sent(sent: dict[str, str]) -> None:
+    """Best effort. Losing this costs a redundant POST, never a missing match,
+    so a read-only state directory must not fail the export."""
+    try:
+        os.makedirs(os.path.dirname(STATE_PATH) or ".", exist_ok=True)
+        tmp = f"{STATE_PATH}.tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(sent, fh, indent=1, sort_keys=True)
+        os.replace(tmp, STATE_PATH)
+    except OSError as exc:
+        print(f"warning: could not write {STATE_PATH}: {exc}", file=sys.stderr)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=int, default=48,
@@ -309,6 +355,9 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="build and print the payload; POST nothing")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--resend", action="store_true",
+                    help="ignore what was already sent and POST the whole "
+                         "window again (use if the site lost data)")
     args = ap.parse_args()
 
     conf = load_config()
@@ -340,6 +389,23 @@ def main() -> int:
     log(f"built {len(built)} match(es), {incomplete} without a box score",
         quiet=args.quiet)
 
+    # A match sits in the window for `hours` after it ends, so without this the
+    # same settled payload is POSTed on every tick -- the endpoint answers
+    # "unchanged" and nothing is learned. Re-send only what actually changed.
+    skip_state = args.resend or args.dry_run or args.match_id
+    sent = {} if skip_state else load_sent()
+    digests = {b["gameMatchId"]: payload_digest(b) for b in built}
+    fresh = [b for b in built
+             if sent.get(b["gameMatchId"]) != digests[b["gameMatchId"]]]
+    if not fresh:
+        log(f"nothing new to export ({len(built)} already sent unchanged)",
+            quiet=args.quiet)
+        return 0
+    if len(fresh) != len(built):
+        log(f"{len(fresh)} new or changed, {len(built) - len(fresh)} unchanged",
+            quiet=args.quiet)
+    built = fresh
+
     if args.dry_run:
         print(json.dumps({"source": "hlstatsx", "matches": built}, indent=2))
         return 0
@@ -353,8 +419,16 @@ def main() -> int:
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "matches": chunk,
         }
-        ok = post(conf["STATS_INGEST_URL"], conf["STATS_INGEST_SECRET"],
-                  payload, args.quiet) and ok
+        if post(conf["STATS_INGEST_URL"], conf["STATS_INGEST_SECRET"],
+                payload, args.quiet):
+            # Per chunk, not per run: a later chunk failing must not discard
+            # the record of an earlier one the site already accepted.
+            for b in chunk:
+                sent[b["gameMatchId"]] = digests[b["gameMatchId"]]
+        else:
+            ok = False
+    if not skip_state:
+        save_sent(sent)
 
     # Non-zero on failure so the systemd OnFailure wiring carries it to Discord.
     # An exporter that fails silently is the same defect as the stats it exists
