@@ -79,6 +79,13 @@ on:
         required: false
         type: string
         default: dod_anzio
+      shot_detail_types:
+        description: >-
+          ktp_shot_detail_types bitmask for KTPMatchHandler, as (1 << MatchType).
+          -1 (default) leaves the plugin default alone (4 = 12-mans only).
+        required: false
+        type: string
+        default: '-1'
       shot_detail:
         description: >-
           ktp_stats_shot_detail for this run. 0 (default, matching the plugin
@@ -112,4 +119,5 @@ jobs:
       map_name: ${{ inputs.map_name }}
       play_seconds: ${{ inputs.play_seconds }}
       shot_detail: ${{ inputs.shot_detail }}
+      shot_detail_types: ${{ inputs.shot_detail_types }}
     secrets: inherit

@@ -1075,6 +1075,11 @@ def main() -> int:
     ap.add_argument("--map", default="dod_anzio")
     ap.add_argument("--per-team", type=int, choices=(6,), default=6,
                     help="Lane B is fixed at tournament-sized 6v6")
+    ap.add_argument("--shot-detail-types", type=int, default=-1,
+                    help="ktp_shot_detail_types bitmask for KTPMatchHandler, as "
+                         "(1 << MatchType). -1 (default) leaves the plugin's own "
+                         "default alone (4 = 12-mans only). Set before the match "
+                         "starts, because the plugin applies it once at match live.")
     ap.add_argument("--shot-detail", type=int, default=0,
                     help="ktp_stats_shot_detail for this run. 0 (default) "
                          "leaves the diagnostic fields NULL; 1 populates them. "
@@ -1380,6 +1385,9 @@ def main() -> int:
                         print("  " + preflight["detail"], flush=True)
 
                     if mh_amxx is not None:
+                        if args.shot_detail_types >= 0:
+                            handle.rcon(
+                                f'ktp_shot_detail_types {int(args.shot_detail_types)}')
                         report["match"] = run_match(
                             MatchDriver(handle), half=1,
                             play_seconds=args.play_seconds, log_path=args.log,
