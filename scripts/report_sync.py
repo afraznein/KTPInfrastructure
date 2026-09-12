@@ -36,6 +36,7 @@ import sys
 import urllib.request
 
 from scripts.analytics_report_dto import assert_sanitized, sanitize_report
+from scripts.player_alias import apply_aliases, fetch_alias_index
 from scripts.report_scope import (
     IN_SCOPE, classify, match_scope_columns, print_held)
 
@@ -153,8 +154,20 @@ def fetch_report(match_id: str, schema_version: int, revision: int) -> dict:
 def sync_reports(dry_run: bool, since: str) -> int:
     todo = pending_reports(since)
     print(f"reports to sync: {len(todo)}")
+    alias_index = fetch_alias_index(supabase_all) if todo else {}
+    print(f"website aliases: {len(alias_index)} steam ids")
     for match_id, schema_version, revision in todo:
         report = fetch_report(match_id, schema_version, revision)
+        # Publish the canonical website alias, not whatever name was typed
+        # into the game that night. Unmatched players keep theirs.
+        alias_stats = apply_aliases(report, alias_index)
+        if alias_stats["unresolved"]:
+            print(f"  {match_id}: {len(alias_stats['unresolved'])} of "
+                  f"{alias_stats['roster']} players have no website account: "
+                  + ", ".join(alias_stats["unresolved"]))
+        if alias_stats["ambiguous_names"]:
+            print(f"  {match_id}: name shared by two players, left as played: "
+                  + ", ".join(alias_stats["ambiguous_names"]))
         dto = sanitize_report(report)
         canonical = json.dumps(dto, ensure_ascii=False, sort_keys=True)
         row = {

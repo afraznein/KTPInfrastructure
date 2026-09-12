@@ -1,0 +1,105 @@
+# KTP Lane C — pre-preprod experimental sandbox.
+#
+# A thin, workflow_dispatch-ONLY wrapper around lane-b-stats-e2e.yml's reusable
+# harness, for investigation and code changes that are not ready to ship —
+# structurally incapable of touching anything destined for prod, regardless of
+# what branch this file lives on:
+#
+#   - NO `pull_request`, `push`, or `workflow_call` trigger. Only a human
+#     dispatching it manually can ever run it.
+#   - NOT referenced by corpus-regression.yml (KTPAMXX) or any other workflow.
+#     Lane B's own `corpus` lane is what composes the required status check
+#     `corpus-regression / Lane B (corpus, preprod, run 1)` on KTPAMXX's `main`
+#     and `preprod` — this file has no path into that at all.
+#   - `infrastructure_ref`/`matchhandler_ref` default to `main`, not `preprod`.
+#     Lane B's own workflow_dispatch defaults to `preprod` for these, which is
+#     correct for Lane B's job (testing against the harness that actually ships
+#     next) but wrong for a sandbox meant to sit BEFORE preprod in the pipeline
+#     — an experiment here should not casually pull in preprod's harness
+#     content by default. Pass an explicit `preprod` if a run genuinely needs
+#     that harness, but that is an opt-in, not the default.
+#
+# GitHub only registers a workflow_dispatch trigger for a file that exists on
+# the repository's default branch — a file living only on a feature branch
+# cannot be dispatched via UI/API at all. That is why this file has to live on
+# `main` to be usable. It does NOT mean test code goes to main: the actual refs
+# under test (amxx_ref, daemon_ref, ...) are supplied at dispatch time and can
+# point anywhere, including throwaway investigation branches. Landing this
+# orchestration file on `main` carries no more risk than any other
+# workflow_dispatch-only file already here — it runs nothing until a human
+# triggers it, and what it triggers is fully described by the inputs below.
+#
+# Delegates to lane-b-stats-e2e.yml's `workflow_call` entry point rather than
+# duplicating its ~700 lines: this sandbox rides along with any future harness
+# fix instead of drifting from it.
+
+name: Lane C - Experimental (pre-preprod sandbox)
+
+on:
+  workflow_dispatch:
+    inputs:
+      infrastructure_ref:
+        description: 'KTPInfrastructure ref/SHA for the Lane B harness (defaults to main, NOT preprod)'
+        required: true
+        type: string
+        default: 'main'
+      matchhandler_ref:
+        description: 'KTPMatchHandler ref/SHA for the test-mode match driver (defaults to main, NOT preprod)'
+        required: true
+        type: string
+        default: 'main'
+      amxx_ref:
+        description: 'KTPAMXX ref/SHA under test'
+        required: true
+        type: string
+        default: 'main'
+      daemon_ref:
+        description: 'KTPHLStatsX ref/SHA under test'
+        required: true
+        type: string
+        default: 'main'
+      lane:
+        description: >-
+          'full' = 12 bots (6v6) + server + database + assertion suite. 'corpus' =
+          deterministic committed-log replay. Neither mode gates anything here —
+          Lane C is workflow_dispatch-only and referenced by nothing.
+        required: false
+        type: choice
+        options: [full, corpus]
+        default: full
+      engine_ref:
+        description: >-
+          KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
+          engine. Empty keeps the baked engine. 'full' lane only.
+        required: false
+        type: string
+        default: ''
+      map_name:
+        description: Map to run bots on
+        required: false
+        type: string
+        default: dod_anzio
+      play_seconds:
+        description: Full-match play window (v6 schema22/2s ratings require at least 300 seconds)
+        required: false
+        type: string
+        default: '360'
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  experimental:
+    name: Lane C (${{ inputs.lane }}, experimental)
+    uses: ./.github/workflows/lane-b-stats-e2e.yml
+    with:
+      amxx_ref: ${{ inputs.amxx_ref }}
+      daemon_ref: ${{ inputs.daemon_ref }}
+      lane: ${{ inputs.lane }}
+      infrastructure_ref: ${{ inputs.infrastructure_ref }}
+      matchhandler_ref: ${{ inputs.matchhandler_ref }}
+      engine_ref: ${{ inputs.engine_ref }}
+      map_name: ${{ inputs.map_name }}
+      play_seconds: ${{ inputs.play_seconds }}
+    secrets: inherit
