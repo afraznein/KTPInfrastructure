@@ -104,8 +104,8 @@ class CheckDrained(unittest.TestCase):
 
 class CheckCoherent(unittest.TestCase):
     def test_cosmetic_fail_at_publishable_is_expected(self):
-        # quality_status FAIL at publishable=1 is match_id_shape on legacy
-        # '1.3-' ids; failing on it would fail on every real match.
+        # quality_status FAIL at publishable=1 is a cosmetic match_id_shape
+        # FAIL; failing on it would withhold the match over a label.
         self.assertTrue(check_coherent([("1.3-9001-ATL1", "FAIL", 1)]).ok)
 
     def test_pass_at_unpublishable_fails(self):

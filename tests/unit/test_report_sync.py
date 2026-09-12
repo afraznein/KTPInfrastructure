@@ -5,6 +5,7 @@ the properties under test here are the ones whose failure is irreversible:
 that the already-synced set is read in full, and that no aggregate reaches
 PostgREST without passing the forbidden-key assertion.
 """
+import json
 import unittest
 from unittest import mock
 
@@ -124,6 +125,58 @@ class TestPendingReports(unittest.TestCase):
         self.assertEqual(len(todo), self.LOCAL - self.SYNCED)
         self.assertEqual(todo[0][0], f"m{self.SYNCED:05d}")
         self.assertTrue(server.calls > 1)
+
+
+class TestReportRowTimestamps(unittest.TestCase):
+    """The row POSTed here is the write. started_at lands in a timestamptz
+    column, so it has to leave carrying an offset: sent naive, Postgres reads
+    league time as UTC and every published label reads four hours early."""
+
+    STARTED = "2026-09-14 21:00:00"
+    MATCH = "1788919258-CHI1"
+
+    def _posted_row(self):
+        posted = []
+        pending = ("match_id\tschema_version\trevision\tmatch_start\t"
+                   "official_start\n"
+                   f"{self.MATCH}\t9\t1\t{self.STARTED}\t{self.STARTED}")
+        report = json.dumps({
+            "schema_version": 9,
+            "generated_at": "2026-09-14T21:05:00+00:00",
+            "match_id": self.MATCH,
+            "quality": {"status": "FAIL", "checks": []},
+            "match": {"map_name": "dod_anzio", "started_at": self.STARTED,
+                      "duration_seconds": 100, "halves_played": 2},
+        })
+
+        def fake_mysql(query):
+            if "ktp_match_reports r" in query:
+                return pending
+            return "report\n" + report
+
+        def fake_supabase(path, method="GET", body=None):
+            if method == "POST":
+                posted.append(body)
+                return None
+            return []
+
+        with mock.patch.object(report_sync, "mysql", fake_mysql):
+            with mock.patch.object(report_sync, "supabase", fake_supabase):
+                report_sync.sync_reports(False, "2026-09-13")
+        return posted[0]
+
+    def test_started_at_is_written_with_its_offset(self):
+        self.assertEqual(self._posted_row()["started_at"],
+                         "2026-09-14T21:00:00-04:00")
+
+    def test_the_naive_league_string_never_reaches_the_column(self):
+        self.assertNotEqual(self._posted_row()["started_at"], self.STARTED)
+
+    def test_generated_at_still_carries_utc(self):
+        """Positive control in the same row: one of these stamps was already
+        right, so finding an offset somewhere would not discriminate."""
+        self.assertEqual(self._posted_row()["generated_at"],
+                         "2026-09-14T21:05:00+00:00")
 
 
 def aggregate_line(kind, payload_json, revision=1):
