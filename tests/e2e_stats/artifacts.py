@@ -95,6 +95,14 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_024_team_membership_intervals.sql",
     "sql/migrate_025_position_state_map_revision.sql",
     "sql/migrate_027_shot_events.sql",
+    # 028 is load-bearing for 027, not optional: it adds the UNIQUE
+    # (server_id, match_id, half, producer_sequence) that the daemon's
+    # `INSERT ... ON DUPLICATE KEY UPDATE id=id` relies on. Without the index the
+    # upsert has no key to collide with and silently degrades to a plain INSERT,
+    # so a lane running 027 alone exercises the dedup path as a no-op and reports
+    # clean whether or not it works.
+    "sql/migrate_028_shot_events_dedup.sql",
+    "sql/migrate_029_shot_target_state.sql",
 )
 
 def _md5(path: Path) -> str:
