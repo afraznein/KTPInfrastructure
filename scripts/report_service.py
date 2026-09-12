@@ -43,8 +43,9 @@ from scripts.report_scope import (
     IN_SCOPE, OFFICIAL_MATCH_TYPES, classify, match_scope_columns, print_held)
 
 DATABASE = "hlstatsx"
-# Hard-check gate: FAIL on this code is cosmetic/expected for legacy '1.3-'
-# match ids (see WEBSITE_SHADOW_STATS_PROMOTION_HANDOVER_20260906.md §4).
+# Hard-check gate: a FAIL on this code never withholds a match. The shape
+# check recognises every id KTPMatchHandler writes, so a FAIL here means an
+# unrecognised id -- worth reporting, not worth dropping the match over.
 COSMETIC_FAIL_CODES = {"match_id_shape"}
 
 

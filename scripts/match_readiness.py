@@ -26,13 +26,13 @@ from typing import Any, Iterable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.match_analytics import (  # noqa: E402
+    MATCH_ID_RE,
     evaluate_capture_authorization,
     evaluate_position_provenance,
 )
 
 SCHEMA_VERSION = 2
 METRIC_ELIGIBILITY_VERSION = 1
-MATCH_ID_RE = re.compile(r"(?:\d+-KTP\d+|[A-Za-z0-9._-]+-TEST)$")
 INSERT_RE = re.compile(r"^INSERT INTO `([^`]+)` \((.*?)\) VALUES \((.*)\);$")
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 REQUIRED_EVENT_TABLES = (

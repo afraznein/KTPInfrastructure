@@ -3,6 +3,7 @@ Corpus sweep runs when KTP_REPORT_SPECIMENS points at report-*.json files."""
 import json
 import os
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from scripts.analytics_report_dto import (
@@ -139,6 +140,52 @@ def internal_report():
                                                   "distance": 590.1, "angle_degrees": 1.0}]},
         },
     }
+
+
+class Timestamps(unittest.TestCase):
+    """started_at crosses into a Postgres timestamptz column, which reads a
+    naive literal as UTC. Stamping the offset here is what keeps the published
+    label off by nothing rather than by four hours."""
+
+    def _started(self, value):
+        rep = internal_report()
+        rep["match"]["started_at"] = value
+        return sanitize_report(rep)["match"]["started_at"]
+
+    def test_naive_league_time_carries_its_offset(self):
+        self.assertEqual(self._started("2026-09-14 21:00:00"),
+                         "2026-09-14T21:00:00-04:00")
+
+    def test_the_published_instant_is_the_one_that_was_played(self):
+        """The wall clock alone proves nothing; the instant it resolves to
+        once Postgres reads it is the thing that was wrong."""
+        got = datetime.fromisoformat(self._started("2026-09-14 21:00:00"))
+        self.assertEqual(got.astimezone(timezone.utc),
+                         datetime(2026, 9, 15, 1, 0, tzinfo=timezone.utc))
+
+    def test_offset_follows_the_date_across_the_dst_change(self):
+        """A fixed -04:00 would be wrong for every match from early November,
+        which is inside the season."""
+        self.assertTrue(self._started("2026-11-20 21:00:00").endswith("-05:00"))
+        self.assertTrue(self._started("2026-09-14 21:00:00").endswith("-04:00"))
+
+    def test_an_already_stamped_value_is_left_alone(self):
+        """Idempotent, so a later reader cannot double-correct it."""
+        self.assertEqual(self._started("2026-09-14T21:00:00+00:00"),
+                         "2026-09-14T21:00:00+00:00")
+
+    def test_a_missing_start_is_null_not_the_string_None(self):
+        rep = internal_report()
+        del rep["match"]["started_at"]
+        self.assertIsNone(sanitize_report(rep)["match"]["started_at"])
+
+    def test_generated_at_was_already_aware_and_is_untouched(self):
+        """Positive control: the report mints its own stamp in UTC, so only
+        started_at needed this and the other must read as it always did."""
+        rep = internal_report()
+        rep["generated_at"] = "2026-09-06T00:00:00+00:00"
+        self.assertEqual(sanitize_report(rep)["source"]["generated_at"],
+                         "2026-09-06T00:00:00+00:00")
 
 
 class Sanitize(unittest.TestCase):
