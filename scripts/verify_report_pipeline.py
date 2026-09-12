@@ -118,9 +118,9 @@ def check_drained(still_pending: list[str]) -> Finding:
 
 
 def check_coherent(rows: list[tuple[str, str, int]]) -> Finding:
-    """quality_status FAIL at publishable=1 is expected, not a defect: the
-    cosmetic match_id_shape check fails on every legacy '1.3-' id. The
-    incoherent direction is the one worth failing on."""
+    """quality_status FAIL at publishable=1 is expected, not a defect:
+    match_id_shape is cosmetic and never withholds a match. The incoherent
+    direction is the one worth failing on."""
     bad = [mid for mid, status, pub in rows if pub == 0 and status == "PASS"]
     if bad:
         return Finding(False, "COHERENT",

@@ -21,9 +21,16 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 CONTRACT_VERSION = "analytics-report-dto-v1.0.0"
+
+# hlstatsx DATETIMEs are naive league-local time: the data server runs
+# America/New_York. The website column is timestamptz, which reads a naive
+# literal as UTC, so an unstamped value publishes four hours early.
+REPORT_SOURCE_TZ = "America/New_York"
 
 # Key names that must never appear anywhere in a sanitized DTO (identity,
 # raw event/positional keys, private blocks). Rating blocks are allowed
@@ -66,6 +73,33 @@ def _name(value):
         except (UnicodeEncodeError, UnicodeDecodeError):
             continue
     return value
+
+
+def _instant(value):
+    """Naive league-local timestamp -> ISO-8601 carrying its UTC offset.
+
+    Stamped here, at the one point the value becomes public, so the website's
+    timestamptz column and the payload copy of it cannot disagree. Idempotent:
+    an already-aware value passes through, so a second reader cannot
+    double-correct. Anything unparseable is returned untouched -- a malformed
+    timestamp should fail its insert loudly, not arrive silently shifted.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text == "None":
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    if parsed.tzinfo is None:
+        # Per-date, so a match either side of the November DST change is
+        # stamped with the offset that was actually in force.
+        parsed = parsed.replace(tzinfo=ZoneInfo(REPORT_SOURCE_TZ))
+    return parsed.isoformat()
 
 
 def _actor(a: dict) -> dict:
@@ -148,7 +182,7 @@ def sanitize_report(report: dict) -> dict:
         "match": {
             "match_id": report.get("match_id"),
             "map_name": match.get("map_name"),
-            "started_at": str(match.get("started_at")),
+            "started_at": _instant(match.get("started_at")),
             "duration_seconds": _num(match.get("duration_seconds")),
             "halves_played": _num(match.get("halves_played")),
         },

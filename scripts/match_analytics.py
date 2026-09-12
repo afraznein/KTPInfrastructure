@@ -111,6 +111,12 @@ CAPTURE_EVENT_TYPES_OPTIONAL = (
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
 
+# Production ids are <epoch>-<SERVER> (1788919258-CHI1); the 12-man branch
+# writes 1.3-<queueId>-<SERVER>; test mode writes <anything>-TEST. The server
+# alias is matched generically so a new region is not stamped malformed.
+MATCH_ID_RE = re.compile(
+    r"(?:\d+|1\.3-\d+)-[A-Z]{2,5}\d+|[A-Za-z0-9._-]+-TEST")
+
 INTEGER_COLUMNS = {
     "server_id", "player_id", "team", "duration_seconds", "halves_played",
     "open_halves", "is_test_match", "kills", "deaths", "assists",
@@ -681,11 +687,12 @@ def evaluate_quality(
         "statsme": True, "statsme2": True, "legacy_match_cache": True,
         "assists": True,
     }
+    shaped = bool(MATCH_ID_RE.fullmatch(match_id))
     checks.append(check(
-        "PASS" if re.fullmatch(r"\d+-KTP\d+|[A-Za-z0-9._-]+-TEST", match_id) else "FAIL",
+        "PASS" if shaped else "FAIL",
         "match_id_shape",
         "Match identifier has a recognized production or test shape."
-        if re.fullmatch(r"\d+-KTP\d+|[A-Za-z0-9._-]+-TEST", match_id)
+        if shaped
         else "Match identifier is malformed; preserve it for source-data investigation.",
         match_id=match_id,
     ))
