@@ -198,6 +198,36 @@ def local_md5(path):
     return h.hexdigest()
 
 
+# Resolved per process, never matched on a command line: the Tier-2 harness starts
+# `./hlds_linux` from inside the tree, so the tree path never appears in one.
+_IDLE_PROBE = (
+    "t=$(readlink -f '{tree}' 2>/dev/null || echo '{tree}'); printf 'TREE\\t%s\\n' \"$t\"; "
+    "for p in $(pgrep -x hlds_linux); do "
+    "printf '%s\\t%s\\t%s\\n' \"$p\" \"$(readlink /proc/$p/exe 2>/dev/null || echo '?')\" "
+    "\"$(readlink /proc/$p/cwd 2>/dev/null || echo '?')\"; done"
+)
+
+
+def runner_processes(probe_out):
+    """hlds_linux processes the probe places in the runner tree.
+
+    A process whose exe and cwd are both unreadable counts as busy: an unknown
+    is not an idle runner.
+    """
+    tree, busy = None, []
+    for ln in probe_out.splitlines():
+        parts = ln.split("\t")
+        if len(parts) == 2 and parts[0] == "TREE":
+            tree = parts[1].rstrip("/")
+        elif len(parts) == 3:
+            pid, exe, cwd = parts
+            known = [p for p in (exe, cwd) if p != "?"]
+            if (not known or tree is None
+                    or any(p == tree or p.startswith(tree + "/") for p in known)):
+                busy.append(f"pid {pid}  exe={exe}  cwd={cwd}")
+    return busy
+
+
 def check_runner_idle(ssh):
     """Is a test server live in the runner tree? Reported, not enforced here.
 
@@ -206,8 +236,11 @@ def check_runner_idle(ssh):
     operator reaches for precisely when the estate is in an odd state --
     print nothing about the drift it was asked to describe.
     """
-    out, _ = run(ssh, f"pgrep -af '{RUNNER_TREE}' | grep -v pgrep")
-    busy = [ln for ln in out.splitlines() if "hlds_linux" in ln]
+    out, _ = run(ssh, _IDLE_PROBE.format(tree=RUNNER_TREE))
+    if not any(ln.startswith("TREE\t") for ln in out.splitlines()):
+        return ("could not probe the runner for a live hlds_linux -- an unanswered probe "
+                "is not an idle runner", "--ignore-running")
+    busy = runner_processes(out)
     if not busy:
         return None
     print("A test server is running out of the runner tree:")

@@ -4,6 +4,24 @@ All notable changes to KTP Infrastructure will be documented in this file.
 
 ## [Unreleased]
 
+### `scripts`: `sync-runner-stack.py`'s "not during a run" guard can fire now (2026-09-12)
+
+The guard ran `pgrep -af '<runner tree>'` and looked for `hlds_linux` in the
+output. The Tier-2 harness starts `./hlds_linux` from inside the tree
+(`tests/smoke/boot_subprocess.py`: `cwd=serverfiles`), so the tree path is in
+no command line and the guard never matched a live run.
+
+- The probe now lists every `hlds_linux` process and resolves its
+  `/proc/<pid>/exe` and `cwd`; a process is in the runner tree if either one is.
+  The tree path itself is resolved with `readlink -f`.
+- It fails closed: a probe that returns nothing (a dropped session) is reported
+  as a blocker, and a process whose exe and cwd are both unreadable counts as busy.
+- `config-tests.yml` now installs `paramiko`. `tests/unit/test_sync_runner_stack.py`
+  importorskips it, so until now that whole file was skipped in CI.
+- Tests cover a relative launch, a sibling directory sharing the prefix, a replaced
+  binary still mapped, an unreadable process and an empty probe, plus a Linux-only
+  end-to-end test that starts a real `./hlds_linux` from inside a temp tree.
+
 ### `scripts`: the report sync and aggregate now apply generate's match-type rule too (2026-09-11)
 
 `generate` only discovers official matches (`.ktp` 0, `.ktpOT` 4), but an

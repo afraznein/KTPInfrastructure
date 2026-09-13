@@ -66,3 +66,90 @@ def test_no_duplicate_paths():
     overwrites the first -- so the pre-sync artifact is silently lost."""
     paths, _ = sync.sync_set()
     assert len(paths) == len(set(paths))
+
+
+# --- runner-idle guard --------------------------------------------------------
+
+TREE = "/opt/ktp-tier2-runner/serverfiles"
+
+
+def _probe(*procs, tree=TREE):
+    return "\n".join([f"TREE\t{tree}"] + ["\t".join(p) for p in procs])
+
+
+def test_relative_launch_from_inside_the_tree_is_busy():
+    """The harness runs `./hlds_linux` with cwd=serverfiles, so the tree path is
+    in no command line -- only exe and cwd carry it."""
+    out = _probe(("4242", f"{TREE}/hlds_linux", TREE))
+    assert len(sync.runner_processes(out)) == 1
+
+
+def test_a_game_server_elsewhere_is_not_the_runner():
+    home = "/home/dodserver/dod-27015/serverfiles"
+    assert sync.runner_processes(_probe(("77", f"{home}/hlds_linux", home))) == []
+
+
+def test_a_sibling_directory_sharing_the_prefix_is_not_the_tree():
+    other = TREE + "-old"
+    assert sync.runner_processes(_probe(("5", f"{other}/hlds_linux", other))) == []
+
+
+def test_a_replaced_binary_still_mapped_is_busy():
+    assert len(sync.runner_processes(_probe(("9", f"{TREE}/hlds_linux (deleted)", "?")))) == 1
+
+
+def test_an_unreadable_process_counts_as_busy():
+    assert len(sync.runner_processes(_probe(("9", "?", "?")))) == 1
+
+
+def test_no_hlds_linux_is_idle(monkeypatch):
+    monkeypatch.setattr(sync, "run", lambda ssh, cmd, timeout=120: (_probe(), ""))
+    assert sync.check_runner_idle(object()) is None
+
+
+def test_a_busy_runner_blocks_behind_the_override_flag(monkeypatch, capsys):
+    out = _probe(("4242", f"{TREE}/hlds_linux", TREE))
+    monkeypatch.setattr(sync, "run", lambda ssh, cmd, timeout=120: (out, ""))
+    blocker = sync.check_runner_idle(object())
+    assert blocker is not None and blocker[1] == "--ignore-running"
+    assert "4242" in capsys.readouterr().out
+
+
+def test_an_unanswered_probe_is_not_an_idle_runner(monkeypatch):
+    """A dropped session returns empty output; read as "no processes", the guard
+    would wave through exactly the case it cannot see."""
+    monkeypatch.setattr(sync, "run", lambda ssh, cmd, timeout=120: ("", ""))
+    blocker = sync.check_runner_idle(object())
+    assert blocker is not None and "could not probe" in blocker[0]
+
+
+def test_the_probe_resolves_processes_not_command_lines():
+    probe = sync._IDLE_PROBE.format(tree=TREE)
+    assert "/proc/$p/exe" in probe and "/proc/$p/cwd" in probe
+    assert "pgrep -af" not in probe
+
+
+def test_the_probe_sees_a_relative_launch_on_a_real_kernel(tmp_path):
+    """End to end: a process named hlds_linux started as `./hlds_linux` from inside
+    the tree -- the exact shape the old command-line match never saw."""
+    import shutil
+    import subprocess
+    import time
+
+    if not sys.platform.startswith("linux") or not shutil.which("pgrep") or not shutil.which("sleep"):
+        pytest.skip("needs Linux /proc, pgrep and sleep")
+    tree = tmp_path / "serverfiles"
+    tree.mkdir()
+    shutil.copy(shutil.which("sleep"), tree / "hlds_linux")
+    proc = subprocess.Popen(["./hlds_linux", "30"], cwd=tree)
+    try:
+        time.sleep(0.3)
+        probe = lambda t: subprocess.run(["bash", "-c", sync._IDLE_PROBE.format(tree=t)],
+                                         capture_output=True, text=True).stdout
+        out = probe(tree)
+        assert any(f"pid {proc.pid} " in b for b in sync.runner_processes(out)), out
+        elsewhere = probe(tmp_path / "elsewhere")
+        assert not any(f"pid {proc.pid} " in b for b in sync.runner_processes(elsewhere)), elsewhere
+    finally:
+        proc.kill()
+        proc.wait()
