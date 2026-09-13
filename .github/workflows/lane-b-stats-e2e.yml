@@ -570,6 +570,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_028_shot_events_dedup.sql \
                        /work/build/artifacts/sql/migrate_029_shot_target_state.sql \
                        /work/build/artifacts/sql/migrate_030_shot_target_player.sql \
+                       /work/build/artifacts/sql/migrate_031_shot_shooter_stance.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
@@ -658,6 +659,7 @@ jobs:
                        /work/build/artifacts/sql/migrate_028_shot_events_dedup.sql \
                        /work/build/artifacts/sql/migrate_029_shot_target_state.sql \
                        /work/build/artifacts/sql/migrate_030_shot_target_player.sql \
+                       /work/build/artifacts/sql/migrate_031_shot_shooter_stance.sql \
               --seed /work/build/artifacts/sql/migrate_003_assist_action.sql \
                      /work/build/artifacts/sql/migrate_004_cap_break_action.sql \
                      /work/tests/e2e_stats/fixtures/lane_b_standard_actions.sql \
