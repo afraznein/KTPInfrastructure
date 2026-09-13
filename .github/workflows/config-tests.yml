@@ -82,7 +82,8 @@ jobs:
 
       - name: Install test dependencies
         if: steps.changes.outputs.run == '1'
-        run: python -m pip install pytest "jsonschema>=4.18"
+        # paramiko: tests/unit/test_sync_runner_stack.py importorskips it, so without it that file never runs.
+        run: python -m pip install pytest "jsonschema>=4.18" paramiko
 
       - name: Run config-parse + harness unit tests
         if: steps.changes.outputs.run == '1'
