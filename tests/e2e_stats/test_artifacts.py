@@ -115,6 +115,7 @@ def daemon_repo(tmp_path):
         (27, "shot_events"),
         (28, "shot_events_dedup"),
         (29, "shot_target_state"),
+        (30, "shot_target_player"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -160,7 +161,7 @@ def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
 
 
 def test_default_schema_sequence_includes_retention_through_shot_events():
-    assert DEFAULT_SCHEMA_FILES[-14:] == (
+    assert DEFAULT_SCHEMA_FILES[-15:] == (
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
@@ -178,6 +179,7 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         # plain INSERT and the lane reports the dedup path clean either way.
         "sql/migrate_028_shot_events_dedup.sql",
         "sql/migrate_029_shot_target_state.sql",
+        "sql/migrate_030_shot_target_player.sql",
     )
 
 

@@ -103,6 +103,7 @@ DEFAULT_SCHEMA_FILES = (
     # clean whether or not it works.
     "sql/migrate_028_shot_events_dedup.sql",
     "sql/migrate_029_shot_target_state.sql",
+    "sql/migrate_030_shot_target_player.sql",
 )
 
 def _md5(path: Path) -> str:
