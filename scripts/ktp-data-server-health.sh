@@ -84,6 +84,45 @@ BANLIST_STALE_SEC=900
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
+# >>> ktp-alert-settle — extracted verbatim by tests/unit/test_health_transition_report.py
+# systemd reports `activating`/`deactivating`/`reloading` while a unit is mid-restart, and
+# an hourly cron sampling at :00 lands in the same minute as hltv-restart.timer (03:00 and
+# 11:00 ET). 252 of the 325 alerts logged over 2026-04-20..09-15 fell in hours 03, 04, 11
+# and 12. A transitional state is re-read after a settle delay; a unit still not active
+# then is genuinely stuck and still alerts. One sleep per run, not one per unit.
+SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+_settle_slept=0
+# Answers in $SETTLED rather than on stdout: a caller writing `s=$(settled_state x)`
+# runs this in a subshell, where the once-per-run latch below is discarded and every
+# transitional unit pays the full delay — 24 proxies, eight minutes.
+settled_state() {
+    local unit=$1
+    SETTLED=$(systemctl is-active "$unit" 2>/dev/null || true)
+    case "$SETTLED" in
+        activating|deactivating|reloading|refreshing)
+            if [ "$_settle_slept" -eq 0 ]; then
+                sleep "$SETTLE_SECONDS"
+                _settle_slept=1
+            fi
+            SETTLED=$(systemctl is-active "$unit" 2>/dev/null || true)
+            ;;
+    esac
+}
+# <<< ktp-alert-settle
+
+# >>> ktp-alert-join — extracted verbatim by tests/unit/test_health_transition_report.py
+# `printf '%s\n' "${arr[@]}" | grep -v '^$' | paste -sd, -` prints one BLANK line for an
+# empty array; grep then matches nothing and exits 1, and under `set -e -o pipefail` that
+# kills the run before the TRANSITIONS line and before the Discord POST. From #207
+# (2026-08-31) until this commit the check could only speak when a failure and a recovery
+# landed in the SAME hourly run — 0 of 42 logged transitions were one-sided, against 257
+# of 283 in the month before. A first-ever failure alerted nobody.
+join_keys() {
+    local IFS=,
+    printf '%s' "$*"
+}
+# <<< ktp-alert-join
+
 # ---- Previous "down" set ----
 # Read before the checks run, not after, because the disk thresholds below latch
 # on it: an item already reported stays reported until it clears the lower bound.
@@ -101,7 +140,7 @@ down=()
 declare -A detail=()
 
 for svc in "${CRITICAL_SERVICES[@]}"; do
-    state=$(systemctl is-active "$svc" 2>/dev/null || true)
+    settled_state "$svc"; state=$SETTLED
     if [ "$state" != "active" ]; then
         down+=("$svc=$state")
     fi
@@ -197,7 +236,7 @@ missing_hltv=()
 for p in $(seq "$HLTV_PORT_START" "$HLTV_PORT_END"); do
     if is_excluded "$p"; then continue; fi
     expected_hltv=$((expected_hltv + 1))
-    state=$(systemctl is-active "hltv@$p" 2>/dev/null || true)
+    settled_state "hltv@$p"; state=$SETTLED
     if [ "$state" = "active" ]; then
         active_hltv=$((active_hltv + 1))
     else
@@ -360,8 +399,8 @@ fi
 # Names alongside the counts — without them, a recovered blip is
 # undiagnosable after the fact, since only the Discord embed carries which
 # item transitioned.
-new_down_names=$(printf '%s\n' "${new_down[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
-recovered_names=$(printf '%s\n' "${recovered[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
+new_down_names=$(join_keys "${new_down[@]}")
+recovered_names=$(join_keys "${recovered[@]}")
 echo "[$(ts)] TRANSITIONS: new_down=${#new_down[@]}${new_down_names:+ [${new_down_names}]} recovered=${#recovered[@]}${recovered_names:+ [${recovered_names}]}"
 
 # Build Discord embed body
@@ -382,9 +421,10 @@ fi
 
 # Still-down services (persistent, informational footer)
 if [ ${#down[@]} -gt 0 ]; then
-    current_list=$(printf '%s\n' "${down[@]}" 2>/dev/null | grep -v '^$' | sort -u)
+    mapfile -t down_sorted < <(printf '%s\n' "${down[@]}" | sort -u)
+    current_list=$(join_keys "${down_sorted[@]}")
     if [ -n "$current_list" ]; then
-        desc+=$'\n''_All currently down: '"$(echo "$current_list" | paste -sd, -)"'_'
+        desc+=$'\n''_All currently down: '"${current_list}"'_'
     fi
 fi
 

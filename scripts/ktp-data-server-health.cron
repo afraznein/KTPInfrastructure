@@ -1,8 +1,14 @@
 # KTP Data Server Health — hourly check
 # Critical-enough that a 10-minute window felt like overkill; most issues
 # here are background services whose failures aren't player-visible.
+#
+# :17, not :00. At :00 this sampled in the same minute as hltv-restart.timer
+# (03:00 and 11:00 ET) and reported the proxies it caught mid-restart as down —
+# 252 of the 325 alerts logged over 2026-04-20..09-15 landed in hours 03, 04, 11
+# and 12. The script's settle re-read is the real guard; this keeps the sample
+# away from a restart we schedule ourselves, and off the top-of-hour cron pile-up.
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 MAILTO=''
 
-0 * * * *     root  /usr/local/bin/ktp-data-server-health.sh >> /var/log/ktp-data-server-health.log 2>&1
+17 * * * *    root  /usr/local/bin/ktp-data-server-health.sh >> /var/log/ktp-data-server-health.log 2>&1
