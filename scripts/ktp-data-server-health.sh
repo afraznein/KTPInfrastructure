@@ -191,26 +191,105 @@ is_excluded() {
     done
     return 1
 }
-expected_hltv=0
-active_hltv=0
-missing_hltv=()
+# >>> ktp-hltv-confirm — extracted verbatim by tests/unit/test_health_hltv_transient.py
+# A transitional unit state is not a fault, and on this box it cannot become one:
+# hltv@.service carries TimeoutStopUSec=90s with SendSIGKILL=yes, so systemd is
+# guaranteed to leave `deactivating` — whatever terminal state follows is the fault
+# worth posting, and the next hourly run reads it. Meanwhile this cron fires at
+# 03:00:0x and 11:00:0x, inside hltv-restart-all.sh's own sequential 24-port loop,
+# where the wrapper's `( sleep 3; kill -KILL )` holds one unit's control group open
+# for three seconds. Every hltv@ token this check has ever written to the log is
+# `deactivating`; not one was `failed` or `inactive`. So confirm a transitional
+# reading once, after a pause longer than RestartSec, before calling it down.
+HLTV_CONFIRM_SLEEP="${HLTV_CONFIRM_SLEEP:-15}"
+# `Restart=always` with `RestartSec=10` outruns systemd's default start-rate limit
+# (5 starts per 10s), so a crash-looping proxy never lands in `failed`: it flaps
+# active↔activating forever and is-active reads `active` most of the time. That is
+# the hung-service shape — unit state answering a question it cannot see — and
+# NRestarts is the only leg that sees it. It counts automatic restarts only and an
+# explicit restart resets it, so the 03:00/11:00 pass re-arms it twice a day.
+HLTV_RESTART_WARN="${HLTV_RESTART_WARN:-3}"
+
+hltv_transitional() {
+    case "$1" in
+        activating|deactivating|reloading|refreshing|maintenance) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Indirected so the tests can drive the sweep without systemd. Nothing in the
+# shipped script overrides them.
+hltv_unit_state()    { systemctl is-active "hltv@$1" 2>/dev/null || true; }
+hltv_unit_restarts() { systemctl show "hltv@$1" -p NRestarts --value 2>/dev/null || true; }
+
+# hltv_confirm_states <port>... -> one "<port> <state>" line per port, in order,
+# with transitional readings re-sampled after a single shared pause. One pause for
+# the whole sweep, not one per port: the restart loop is sequential, so at most a
+# couple of ports are ever mid-transition, and a per-port sleep would multiply by
+# 24 on the one run where it costs the most.
+hltv_confirm_states() {
+    local p st
+    local -a pending=()
+    local -A st_of=()
+    for p in "$@"; do
+        st=$(hltv_unit_state "$p")
+        st_of[$p]="$st"
+        if [ "$st" != "active" ] && hltv_transitional "$st"; then
+            pending+=("$p")
+        fi
+    done
+    if [ "${#pending[@]}" -gt 0 ]; then
+        sleep "$HLTV_CONFIRM_SLEEP"
+        for p in "${pending[@]}"; do
+            st_of[$p]="$(hltv_unit_state "$p")"
+        done
+    fi
+    for p in "$@"; do
+        printf '%s %s\n' "$p" "${st_of[$p]}"
+    done
+}
+# <<< ktp-hltv-confirm
+
+expected_ports=()
 for p in $(seq "$HLTV_PORT_START" "$HLTV_PORT_END"); do
     if is_excluded "$p"; then continue; fi
-    expected_hltv=$((expected_hltv + 1))
-    state=$(systemctl is-active "hltv@$p" 2>/dev/null || true)
+    expected_ports+=("$p")
+done
+expected_hltv=${#expected_ports[@]}
+active_hltv=0
+missing_hltv=()
+up_ports=()
+while read -r p state; do
+    if [ -z "${p:-}" ]; then continue; fi
     if [ "$state" = "active" ]; then
         active_hltv=$((active_hltv + 1))
+        up_ports+=("$p")
     else
         missing_hltv+=("hltv@$p=$state")
     fi
-done
+done < <(hltv_confirm_states "${expected_ports[@]}")
+
 if [ "$active_hltv" -lt "$expected_hltv" ]; then
-    down+=("hltv-instance-count=${active_hltv}/${expected_hltv}")
-    # Also list which specific instance(s) are down so the alert is actionable
+    # Numberless key, magnitude in the body: a count moving 23/24 -> 22/24 reads to
+    # the set comparison as one recovery plus one new failure, the same defect the
+    # disk keys carried until 2026-09-15.
+    key="hltv-instance-coverage"
+    down+=("$key"); detail[$key]="${active_hltv}/${expected_hltv} proxies active"
+    # Name the instance(s) too, so the alert is actionable on its own.
     for m in "${missing_hltv[@]}"; do
         down+=("$m")
     done
 fi
+
+# Only for proxies that ARE up — a port already named above is one fault, and a
+# second token for it would double-count it in the set diff.
+for p in ${up_ports[@]+"${up_ports[@]}"}; do
+    nrestarts=$(hltv_unit_restarts "$p")
+    if [[ $nrestarts =~ ^[0-9]+$ ]] && [ "$nrestarts" -ge "$HLTV_RESTART_WARN" ]; then
+        key="hltv@$p=crash-looping"
+        down+=("$key"); detail[$key]="${nrestarts} automatic restarts since its last clean start"
+    fi
+done
 
 # ---- Disk usage + growth ----
 # No df history existed anywhere on this box (sysstat is installed but its
@@ -360,8 +439,24 @@ fi
 # Names alongside the counts — without them, a recovered blip is
 # undiagnosable after the fact, since only the Discord embed carries which
 # item transitioned.
-new_down_names=$(printf '%s\n' "${new_down[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
-recovered_names=$(printf '%s\n' "${recovered[@]}" 2>/dev/null | grep -v '^$' | paste -sd, -)
+# >>> ktp-alert-names — extracted verbatim by tests/unit/test_health_alert_names.py
+# Built in bash rather than `printf | grep -v '^$' | paste`: grep exits 1 on an
+# empty list, and under `set -euo pipefail` that aborted the run here, BEFORE the
+# Discord POST and before save_state. Only a run with something on BOTH sides ever
+# reached the alert. Measured in /var/log/ktp-data-server-health.log: 675 of 675
+# runs wrote a verdict line before that spelling shipped on 2026-08-31, 99 of 373
+# after, and not one of the 44 surviving TRANSITIONS lines carries a zero side.
+names_of() {
+    local out="" a
+    for a in "$@"; do
+        [ -n "$a" ] || continue
+        out+="${out:+,}$a"
+    done
+    printf '%s' "$out"
+}
+# <<< ktp-alert-names
+new_down_names=$(names_of ${new_down[@]+"${new_down[@]}"})
+recovered_names=$(names_of ${recovered[@]+"${recovered[@]}"})
 echo "[$(ts)] TRANSITIONS: new_down=${#new_down[@]}${new_down_names:+ [${new_down_names}]} recovered=${#recovered[@]}${recovered_names:+ [${recovered_names}]}"
 
 # Build Discord embed body
