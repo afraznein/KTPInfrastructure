@@ -5,6 +5,7 @@ the properties under test here are the ones whose failure is irreversible:
 that the already-synced set is read in full, and that no aggregate reaches
 PostgREST without passing the forbidden-key assertion.
 """
+import hashlib
 import io
 import json
 import os
@@ -233,6 +234,105 @@ class TestAggregateSanitization(unittest.TestCase):
     def test_dry_run_posts_nothing(self):
         synced, posted = self._run([aggregate_line("map_profiles", self.CLEAN)],
                                    dry_run=True)
+        self.assertEqual((synced, posted), (1, []))
+
+
+class TestSyncMmr(unittest.TestCase):
+    RATING = {"mu": 30.0, "sigma": 5.0, "ordinal": 15.0}
+    PLAYERS = [{"id": 1, "alias": "Ecl1ps3"}, {"id": 2, "alias": "gaul"}]
+
+    def _run(self, ratings, dry_run=False, existing_revision=None,
+            existing_sha=None, players=None, branch_date=None):
+        posted = []
+
+        def fake_get(url):
+            if url == report_sync.MMR_RATINGS_URL:
+                return ratings
+            if url == report_sync.MMR_BRANCH_API:
+                if branch_date is None:
+                    return None
+                return {"commit": {"commit": {"author": {"date": branch_date}}}}
+            raise AssertionError(f"unexpected GET {url}")
+
+        def fake_supabase(path, method="GET", body=None):
+            if method == "POST":
+                posted.append(body)
+                return None
+            if "offset=0" not in path:
+                return []  # page 2 of anything: end the pagination
+            if path.startswith("/rest/v1/player"):
+                return players if players is not None else self.PLAYERS
+            if path.startswith("/rest/v1/season_aggregate"):
+                if existing_revision is None:
+                    return []
+                return [{"revision": existing_revision, "payload_sha256": existing_sha}]
+            return []
+
+        with mock.patch.object(report_sync, "_github_get", fake_get), \
+                mock.patch.object(report_sync, "supabase", fake_supabase):
+            synced = report_sync.sync_mmr(dry_run)
+        return synced, posted
+
+    def test_nothing_published_yet_syncs_nothing(self):
+        synced, posted = self._run(None)
+        self.assertEqual((synced, posted), (0, []))
+
+    def test_a_qualified_player_publishes_with_the_conservative_score(self):
+        ratings = {"1": {**self.RATING, "matches": 3}}
+        synced, posted = self._run(ratings, branch_date="2026-09-16T12:00:00Z")
+        self.assertEqual(synced, 1)
+        self.assertEqual(len(posted), 1)
+        row = posted[0]
+        self.assertEqual(row["kind"], "mmr_openskill")
+        self.assertEqual(row["revision"], 1)
+        self.assertEqual(row["source_report_count"], 0)
+        self.assertEqual(row["report_schema_version"], 1)
+        self.assertEqual(row["generated_at"], "2026-09-16T12:00:00Z")
+        p = row["payload"]["players"][0]
+        self.assertEqual(p["name"], "Ecl1ps3")
+        self.assertEqual(p["matches"], 3)
+        self.assertEqual(p["rating"], 30.0)
+        self.assertEqual(p["uncertainty"], 5.0)
+        # mu - 2*sigma = 30 - 10 = 20, MMR_CONSERVATISM's own value
+        self.assertEqual(p["conservative"], 20.0)
+
+    def test_below_min_matches_is_omitted_not_flagged(self):
+        ratings = {"1": {**self.RATING, "matches": report_sync.MMR_MIN_MATCHES - 1}}
+        synced, posted = self._run(ratings)
+        self.assertEqual((synced, posted), (0, []))
+
+    def test_a_rating_with_no_website_account_is_left_out_not_guessed(self):
+        ratings = {"999": {**self.RATING, "matches": 5}}
+        synced, posted = self._run(ratings, branch_date="2026-09-16T12:00:00Z")
+        self.assertEqual((synced, posted), (0, []))
+
+    def test_unchanged_payload_is_not_reposted(self):
+        ratings = {"1": {**self.RATING, "matches": 3}}
+        payload = {
+            "provisional": True,
+            "notice": "OpenSkill ratings recompute from the full season each run.",
+            "method": "openskill-plackettluce",
+            "min_matches": report_sync.MMR_MIN_MATCHES,
+            "players": [{"name": "Ecl1ps3", "matches": 3, "rating": 30.0,
+                        "uncertainty": 5.0, "conservative": 20.0}],
+        }
+        sha = hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        synced, posted = self._run(ratings, existing_revision=3, existing_sha=sha)
+        self.assertEqual((synced, posted), (0, []))
+
+    def test_a_changed_payload_gets_the_next_revision(self):
+        ratings = {"1": {**self.RATING, "matches": 3}}
+        synced, posted = self._run(
+            ratings, existing_revision=3, existing_sha="stale-sha",
+            branch_date="2026-09-16T12:00:00Z")
+        self.assertEqual(synced, 1)
+        self.assertEqual(posted[0]["revision"], 4)
+
+    def test_dry_run_posts_nothing(self):
+        ratings = {"1": {**self.RATING, "matches": 3}}
+        synced, posted = self._run(ratings, dry_run=True)
         self.assertEqual((synced, posted), (1, []))
 
 
@@ -601,13 +701,15 @@ class TestRevalidateTrigger(unittest.TestCase):
 
     ENV = {"KTP_SUPABASE_URL": "https://x.test", "KTP_SUPABASE_SECRET_KEY": "k"}
 
-    def _run(self, argv, n):
+    def _run(self, argv, n, p=0):
         calls = []
         with mock.patch.dict("os.environ", self.ENV), \
                 mock.patch.object(report_sync, "sync_reports",
                                   lambda dry_run, since: n), \
                 mock.patch.object(report_sync, "sync_aggregates",
                                   lambda dry_run: 0), \
+                mock.patch.object(report_sync, "sync_mmr",
+                                  lambda dry_run: p), \
                 mock.patch.object(report_sync, "revalidate_site",
                                   lambda: calls.append(1)):
             rc = report_sync.main(argv)
@@ -615,6 +717,12 @@ class TestRevalidateTrigger(unittest.TestCase):
 
     def test_called_once_after_a_sync_that_changed_something(self):
         rc, calls = self._run(["--since", "2026-09-13"], n=2)
+        self.assertEqual((rc, calls), (0, [1]))
+
+    def test_called_once_when_only_mmr_changed(self):
+        """A week with no new reports but a fresh MMR publish still needs
+        the site's cache dropped -- the profile card is stale otherwise."""
+        rc, calls = self._run(["--since", "2026-09-13"], n=0, p=1)
         self.assertEqual((rc, calls), (0, [1]))
 
     def test_not_called_when_nothing_changed(self):
@@ -640,6 +748,8 @@ class TestRevalidateNeverFailsTheRun(unittest.TestCase):
                 mock.patch.object(report_sync, "sync_reports",
                                   lambda dry_run, since: 1), \
                 mock.patch.object(report_sync, "sync_aggregates",
+                                  lambda dry_run: 0), \
+                mock.patch.object(report_sync, "sync_mmr",
                                   lambda dry_run: 0), \
                 mock.patch("sys.stderr", io.StringIO()), \
                 mock.patch("urllib.request.urlopen",

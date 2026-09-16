@@ -154,6 +154,18 @@ class Divergence(unittest.TestCase):
         m.update([1, 2, 3, 4, 5, 6], [11, 12, 13, 14, 15, 16], 1.0)
         self.assertNotIn(7, m.ratings(), "a registered but unplayed player earns no rating")
 
+    def test_ratings_carries_matches_played_alongside_mu_sigma_ordinal(self):
+        """report_sync.py's publish step needs a games-played count per
+        player to gate the website's display threshold -- ratings() is the
+        only place that count (self.games) is exposed outside the model."""
+        m = self.OpenSkill()
+        team, opponent = [1, 2, 3, 4, 5, 6], [11, 12, 13, 14, 15, 16]
+        m.update(team, opponent, 1.0)
+        m.update(team, opponent, 1.0)
+        r = m.ratings()[1]
+        self.assertEqual(r["matches"], 2)
+        self.assertEqual(set(r.keys()), {"mu", "sigma", "ordinal", "matches"})
+
 
 if __name__ == "__main__":
     unittest.main()

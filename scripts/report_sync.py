@@ -11,6 +11,12 @@ rather than publishing.
 Stateless and idempotent: asks Supabase which (match_id, schema, revision)
 rows exist, inserts only the missing ones. Nothing is updated or deleted.
 
+Also syncs the mmr_openskill season_aggregate (see sync_mmr()) -- a different
+source from every other kind here: not this box's MySQL, but the public
+mmr-ratings git branch scripts/mmr/run_weekly.py publishes to from CI. Same
+idempotent shape (compares a payload hash, skips an unchanged publish), just
+a different upstream.
+
 Environment (operator-provisioned file, e.g. /etc/ktp/report-sync.env):
   KTP_SUPABASE_URL=https://<project>.supabase.co
   KTP_SUPABASE_SECRET_KEY=<service role secret; never the publishable key>
@@ -44,6 +50,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 from scripts.analytics_report_dto import assert_sanitized, sanitize_report
 from scripts.player_alias import apply_aliases, fetch_alias_index
@@ -55,8 +62,34 @@ DATABASE = "hlstatsx"
 # Every kind here is name-keyed; database ids never cross to the website
 # (2026-08-29 handover). Add a kind only after its builder emits names.
 # head_to_head is deliberately absent: its pairs are still pid-keyed.
+#
+# mmr_openskill is NOT in this set. Every kind here comes from
+# ktp_web_season_aggregates (this box's own MySQL), built by a job that runs
+# here too. The OpenSkill ladder runs somewhere that deliberately has no
+# database access at all (scripts/mmr/run_weekly.py, in CI, on public website
+# data only) and publishes to its own public git branch instead -- see
+# sync_mmr() below, which reads that branch, not MySQL.
 SYNCABLE_AGGREGATE_KINDS = {"map_profiles", "leaderboard_ktpr_v22",
                             "season_positional", "season_spatial"}
+
+# scripts/mmr/run_weekly.py publishes here (see mmr-weekly.yml's own comment
+# on why: main is a protected branch a bot push can never satisfy). Public
+# repo, public branch -- no auth needed to read it, same as the ladder's own
+# "no game-server credentials" rule.
+MMR_RATINGS_URL = "https://raw.githubusercontent.com/afraznein/KTPInfrastructure/mmr-ratings/ratings_current.json"
+MMR_BRANCH_API = "https://api.github.com/repos/afraznein/KTPInfrastructure/branches/mmr-ratings"
+# Players below this are omitted from the published payload entirely, not
+# flagged -- the website never has to tell "not enough matches" apart from
+# "nothing published yet". Matches leaderboard_ktpr_v22's own threshold.
+MMR_MIN_MATCHES = 3
+# mu - k*sigma: rate a player as if they were at the low end of plausible,
+# so two matches of winning cannot outrank a settled record. Mirrors
+# scripts/mmr/seeding_report.py's own CONSERVATISM exactly. Not imported --
+# scripts/mmr/ has no __init__.py and its own files import each other as flat
+# siblings (assuming scripts/mmr/ itself is on sys.path), which this file's
+# package-style `python3 -m scripts.report_sync` invocation cannot reach
+# cleanly. Keep the two constants in sync by hand if this one ever changes.
+MMR_CONSERVATISM = 2.0
 
 # Kept under PostgREST's default max-rows so a page is never server-truncated.
 PAGE_SIZE = 500
@@ -282,6 +315,116 @@ def sync_aggregates(dry_run: bool) -> int:
     return synced
 
 
+def _github_get(url: str):
+    """Unauthenticated GET against a public GitHub URL (raw content or API).
+
+    No token: the ladder's own rule ("no game-server credentials") extends to
+    reading it back -- this is public data on a public branch. A 404 means
+    "nothing published yet" (a fresh deploy, or a week with no completed
+    matches), which is a normal state, not an error.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "ktp-report-sync"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+
+
+def sync_mmr(dry_run: bool) -> int:
+    """Translate the OpenSkill ladder's raw output into the mmr_openskill
+    season_aggregate row the website's player-profile card reads, and
+    publish it if it has changed.
+
+    The ladder (scripts/mmr/run_weekly.py) publishes to its own public git
+    branch, keyed by the website's raw player_id and carrying no alias, no
+    display threshold, and no conservative rank score -- none of which
+    belong in that pipeline, which recomputes from scratch every run and has
+    no reason to know the website's own display conventions. This is that
+    translation, the one place those two things are allowed to meet.
+    """
+    raw = _github_get(MMR_RATINGS_URL)
+    if raw is None:
+        print("  mmr: no ratings published on mmr-ratings yet -- nothing to sync")
+        return 0
+
+    players_by_id = {row["id"]: row["alias"]
+                     for row in supabase_all("/rest/v1/player?select=id,alias")}
+
+    players, unresolved = [], 0
+    for pid_str, r in raw.items():
+        matches = r.get("matches", 0)
+        if matches < MMR_MIN_MATCHES:
+            continue
+        alias = players_by_id.get(int(pid_str))
+        if alias is None:
+            unresolved += 1
+            continue
+        mu, sigma = float(r["mu"]), float(r["sigma"])
+        players.append({
+            "name": alias,
+            "matches": matches,
+            "rating": mu,
+            "uncertainty": sigma,
+            "conservative": round(mu - MMR_CONSERVATISM * sigma, 2),
+        })
+    if unresolved:
+        print(f"  mmr: {unresolved} rated player id(s) have no website account "
+              "-- left out, not guessed")
+    if not players:
+        print("  mmr: no player has reached the display threshold yet "
+              f"({MMR_MIN_MATCHES} matches) -- nothing to sync")
+        return 0
+    players.sort(key=lambda p: -p["conservative"])
+
+    payload = {
+        "provisional": True,
+        "notice": "OpenSkill ratings recompute from the full season each run.",
+        "method": "openskill-plackettluce",
+        "min_matches": MMR_MIN_MATCHES,
+        "players": players,
+    }
+    assert_sanitized(payload)
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    sha = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    existing = supabase_all(
+        "/rest/v1/season_aggregate?select=revision,payload_sha256"
+        "&kind=eq.mmr_openskill&order=revision.desc&limit=1")
+    if existing and existing[0]["payload_sha256"] == sha:
+        print("  mmr: unchanged since the last publish -- nothing to sync")
+        return 0
+    revision = (existing[0]["revision"] + 1) if existing else 1
+
+    if dry_run:
+        print(f"  DRY aggregate mmr_openskill r{revision} ({len(players)} players)")
+        return 1
+
+    branch = _github_get(MMR_BRANCH_API)
+    generated_at = (
+        (branch or {}).get("commit", {}).get("commit", {})
+        .get("author", {}).get("date")
+        or datetime.now(timezone.utc).isoformat()
+    )
+    supabase("/rest/v1/season_aggregate", "POST", {
+        "kind": "mmr_openskill",
+        "revision": revision,
+        "generated_at": generated_at,
+        # Not built from reports -- see SYNCABLE_AGGREGATE_KINDS's own
+        # comment. Both columns are NOT NULL (season_aggregate_source_count_
+        # nonneg, _schema_version_positive), so 0 / 1 are the honest stand-in
+        # values for a kind this constraint was never written with in mind.
+        "source_report_count": 0,
+        "report_schema_version": 1,
+        "payload_sha256": sha,
+        "payload": payload,
+    })
+    print(f"  synced aggregate mmr_openskill r{revision} ({len(players)} players)")
+    return 1
+
+
 def _revalidate_transient(exc: Exception) -> bool:
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code >= 500
@@ -344,10 +487,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     n = sync_reports(args.dry_run, args.since)
     m = sync_aggregates(args.dry_run)
-    print(f"done: {n} reports, {m} aggregates")
+    p = sync_mmr(args.dry_run)
+    print(f"done: {n} reports, {m} aggregates, {p} mmr aggregate")
     # sync_reports() raises on any failed POST, so reaching here with n > 0
-    # means every one of those rows actually committed to Supabase.
-    if n and not args.dry_run:
+    # means every one of those rows actually committed to Supabase. Same for
+    # p: sync_mmr() raises on a failed POST too, never returns 1 on a dry run.
+    if (n or p) and not args.dry_run:
         revalidate_site()
     return 0
 

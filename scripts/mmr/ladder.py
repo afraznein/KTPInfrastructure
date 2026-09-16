@@ -229,7 +229,9 @@ class OpenSkill:
             self.r[p] = self.m.rating(mu=r.mu, sigma=min(r.sigma * factor, default_sigma))
 
     def ratings(self):
-        return {p: dict(mu=round(r.mu, 2), sigma=round(r.sigma, 2), ordinal=round(r.ordinal(), 2)) for p, r in self.r.items()}
+        return {p: dict(mu=round(r.mu, 2), sigma=round(r.sigma, 2), ordinal=round(r.ordinal(), 2),
+                        matches=self.games[p])
+               for p, r in self.r.items()}
 
 
 class Constant:
