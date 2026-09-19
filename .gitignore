@@ -189,3 +189,7 @@ bot-kit/
 **/bot-kit/
 # Spike output — facts from one run on one box, not a repo artifact.
 spike-report.json
+
+# discord_drafts: crawl cache (raw Discord history) and the relay token never enter the repo
+scripts/discord_drafts/data/
+scripts/discord_drafts/.env
