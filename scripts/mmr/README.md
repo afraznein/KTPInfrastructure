@@ -89,8 +89,15 @@ added to the KTPR components without double counting.
 
 ```bash
 python momentum_fetch.py     # ssh read of officials + 12mans with flag events -> data/events/*.tsv
-python momentum_report.py    # fit curves, run the ledger -> momentum_report.md
+python momentum_report.py --labels <#434 backfill sql>   # fit curves + per-map scoring, run the ledger -> momentum_report.md
 ```
+
+Objectives are priced in scoreboard points: a cap owns the flag hold it
+started until the next ownership change, and `fit_scoring` fits
+`points = cap·caps + hold3·s + hold4·s + capout·capouts` per map on the
+demo-labelled halves (thunder: hold time is most of the score, three flags
+are worth ~nothing, a capout ~18 on top of its cap). A map without enough
+labelled halves pays 1 per cap and 1 per capout until it has them.
 
 Nothing is hand-picked: `lag_lift` measures P(objective within d of a
 multikill) against the same team's own rate in that half, `fit_lift` fits

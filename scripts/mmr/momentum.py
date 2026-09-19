@@ -102,7 +102,7 @@ def multikills(frags, side, gap=MULTIKILL_GAP, min_kills=MULTIKILL_MIN):
 
 
 def objectives(flags, captures=()):
-    """[{match, half, t, kind:"cap"|"capout", team, players, flag}] from flag state.
+    """[{match, half, t, kind:"cap"|"capout", team, players, flag, held, dt}] from flag state.
 
     Ownership is replayed per half. Rows sharing a game_time are one group:
     a group that sets every flag is a reset (round start / post-capout), and
@@ -137,8 +137,15 @@ def objectives(flags, captures=()):
         groups = defaultdict(list)
         for r in rows:
             groups[_f(r["game_time"])].append(r)
+        # A cap "owns" the interval until the next ownership change: `held`
+        # flags for `dt` seconds. That is what the cap enabled, and on a
+        # hold-scored map it is where the points come from (see fit_scoring).
+        open_caps = []
         for t in sorted(groups):
             group = groups[t]
+            for cap in open_caps:
+                cap["dt"] = t - cap["t"]
+            open_caps = []
             all_neutral = owners and all(o == 0 for o in owners.values())
             if len(group) >= n_flags or (len(group) >= 2 and (all_neutral or not owners)):
                 for r in group:
@@ -151,9 +158,12 @@ def objectives(flags, captures=()):
                 if team not in (1, 2) or team == prev:
                     continue
                 who = who_capped(match, half, r["flag_name"], r["event_time"])
-                out.append({"match": match, "half": half, "t": t, "kind": "cap", "team": team,
-                            "players": who, "flag": r["flag_name"]})
-                if len(owners) == n_flags and all(o == team for o in owners.values()):
+                held = sum(1 for o in owners.values() if o == team)
+                cap = {"match": match, "half": half, "t": t, "kind": "cap", "team": team,
+                       "players": who, "flag": r["flag_name"], "held": held, "dt": 0.0}
+                out.append(cap)
+                open_caps.append(cap)
+                if held == n_flags:
                     out.append({"match": match, "half": half, "t": t, "kind": "capout", "team": team,
                                 "players": who, "flag": r["flag_name"]})
     return out
@@ -255,6 +265,70 @@ def conditional_lift(multis, objs, window=60.0, follow=(0.0, 120.0)):
     return (hw / nw if nw else 0.0), (ho / no if no else 0.0), nw, no
 
 
+# ---------------------------------------------------------------- scoring
+
+SCORING_FEATURES = ("cap", "hold3", "hold4", "capout")
+
+
+def scoring_features(objs, match, half, team):
+    """What a team did in a half, in the terms the scoreboard pays for."""
+    f = dict.fromkeys(SCORING_FEATURES, 0.0)
+    for o in objs:
+        if (o["match"], o["half"], o["team"]) != (match, half, team):
+            continue
+        if o["kind"] == "capout":
+            f["capout"] += 1
+        else:
+            f["cap"] += 1
+            if o["held"] in (3, 4):
+                f[f"hold{o['held']}"] += o["dt"]
+    return f
+
+
+def _solve(A, b):
+    n = len(A)
+    M_ = [row[:] + [b[i]] for i, row in enumerate(A)]
+    for c in range(n):
+        pivot = max(range(c, n), key=lambda r: abs(M_[r][c]))
+        M_[c], M_[pivot] = M_[pivot], M_[c]
+        if abs(M_[c][c]) < 1e-12:
+            continue
+        for r in range(n):
+            if r != c:
+                k = M_[r][c] / M_[c][c]
+                M_[r] = [x - k * y for x, y in zip(M_[r], M_[c])]
+    return [M_[i][n] / M_[i][i] if abs(M_[i][i]) > 1e-12 else 0.0 for i in range(n)]
+
+
+def fit_scoring(samples):
+    """Least squares points = sum(coef * feature), no intercept.
+
+    samples: [(features, points)]. Returns (coef dict, r2). Measured on
+    thunder (36 team-halves): ~2.5/cap, ~0.2-0.4 per second holding four
+    flags, ~45 per capout, three flags near zero. Fit per map -- lennon and
+    harrington score differently and get their own once labelled.
+    """
+    keys = SCORING_FEATURES
+    X = [[f[k] for k in keys] for f, _ in samples]
+    y = [p for _, p in samples]
+    n = len(keys)
+    A = [[sum(X[i][a] * X[i][b] for i in range(len(X))) for b in range(n)] for a in range(n)]
+    b = [sum(X[i][a] * y[i] for i in range(len(X))) for a in range(n)]
+    coef = dict(zip(keys, _solve(A, b)))
+    pred = [sum(coef[k] * f[k] for k in keys) for f, _ in samples]
+    ybar = sum(y) / len(y) if y else 0.0
+    ss = sum((v - ybar) ** 2 for v in y)
+    r2 = 1.0 - sum((v - p) ** 2 for v, p in zip(y, pred)) / ss if ss else 0.0
+    return coef, r2
+
+
+def value(event, scoring):
+    """Scoreboard points an objective event is worth under a fitted scoring."""
+    if event["kind"] == "capout":
+        return max(0.0, scoring["capout"])
+    return max(0.0, scoring["cap"] + scoring.get(f"hold{event['held']}", 0.0) * event["dt"])
+
+
 # ---------------------------------------------------------------- the ledger
 
 def attributable(lag, A, lam):
@@ -317,12 +391,16 @@ class Ledger:
         self.deposits = []
 
 
-def credit(events, curves, rho, cap_value=CAP_VALUE, capout_value=CAPOUT_VALUE, mk_value=1.0):
+def credit(events, curves, rho, cap_value=CAP_VALUE, capout_value=CAPOUT_VALUE, mk_value=1.0,
+           scoring=None):
     """{(match, half): {pid: {"total", "momentum"}}} over merged multikill + objective events.
 
     `total` is every objective value paid to the player; `momentum` is the
     part received as a depositor -- what this module adds over plain cap
     credit. `total - momentum` is the direct capper share.
+
+    `scoring` ({map: coef} from fit_scoring) prices objectives in scoreboard
+    points; without it, or for a map without a fit, cap_value/capout_value.
 
     A multikill deposits (n-2)*mk_value and is paid nothing itself -- kills
     are already paid in KTPR. A cap pays cap_value; a capout pays
@@ -341,7 +419,9 @@ def credit(events, curves, rho, cap_value=CAP_VALUE, capout_value=CAPOUT_VALUE, 
                 continue
             who = e["players"] or []
             holders = {p: 1.0 / len(who) for p in who} if who else {}
-            L.event(e["t"], e["kind"], cap_value if e["kind"] == "cap" else capout_value, holders)
+            fit = (scoring or {}).get(e.get("map"))
+            v = value(e, fit) if fit else (cap_value if e["kind"] == "cap" else capout_value)
+            L.event(e["t"], e["kind"], v, holders)
             if e["kind"] == "cap":
                 ledgers[3 - e["team"]].clear()
         out[key] = defaultdict(lambda: {"total": 0.0, "momentum": 0.0})

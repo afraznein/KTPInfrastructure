@@ -62,6 +62,11 @@ class Objectives(unittest.TestCase):
                          [(20.0, "cap", 1), (30.0, "cap", 2), (60.0, "cap", 1),
                           (100.0, "cap", 1), (120.0, "cap", 1), (120.0, "capout", 1)])
 
+    def test_a_cap_records_what_it_enabled(self):
+        """The 60s mid cap leaves allies holding 3 flags until 100s."""
+        mid = next(o for o in M.objectives(self.half()) if o["t"] == 60.0)
+        self.assertEqual((mid["held"], mid["dt"]), (3, 40.0))
+
     def test_the_capper_is_joined_by_flag_name_and_event_time(self):
         caps = [{"match_id": "M", "half": 1, "flag_name": "F1", "event_time": "2026-01-01 00:00:19", "player_id": 7}]
         obs = M.objectives(self.half(), caps)
@@ -88,6 +93,33 @@ class Lift(unittest.TestCase):
         mk = [{"match": "M", "half": 1, "t": 100.0, "kind": "multikill", "team": 1, "player": 1, "n": 3}]
         rows = M.lag_lift(mk, objs, {("M", 1): (0.0, 600.0)}, bins=((0, 15),))
         self.assertAlmostEqual(rows[0]["lift"], 1.0, places=6)
+
+
+class Scoring(unittest.TestCase):
+    def test_fit_recovers_planted_coefficients(self):
+        truth = {"cap": 2.5, "hold3": 0.05, "hold4": 0.4, "capout": 45.0}
+        samples = []
+        for i in range(12):
+            f = {"cap": 3 + i % 5, "hold3": 20.0 * (i % 4), "hold4": 15.0 * (i % 3), "capout": i % 2}
+            samples.append((f, sum(truth[k] * f[k] for k in truth)))
+        coef, r2 = M.fit_scoring(samples)
+        for k in truth:
+            self.assertAlmostEqual(coef[k], truth[k], places=6)
+        self.assertAlmostEqual(r2, 1.0, places=9)
+
+    def test_value_prices_the_hold_a_cap_enabled(self):
+        scoring = {"cap": 2.0, "hold3": 0.0, "hold4": 0.5, "capout": 40.0}
+        self.assertEqual(M.value({"kind": "cap", "held": 4, "dt": 30.0}, scoring), 17.0)
+        self.assertEqual(M.value({"kind": "cap", "held": 2, "dt": 30.0}, scoring), 2.0)
+        self.assertEqual(M.value({"kind": "capout"}, scoring), 40.0)
+
+    def test_credit_uses_the_map_fit_when_there_is_one(self):
+        scoring = {"dod_x": {"cap": 2.0, "hold3": 0.0, "hold4": 0.0, "capout": 40.0}}
+        events = [{"match": "M", "half": 1, "t": 0.0, "kind": "cap", "team": 1, "players": [2],
+                   "held": 1, "dt": 10.0, "map": "dod_x"}]
+        self.assertAlmostEqual(M.credit(events, CURVES, 0.3, scoring=scoring)[("M", 1)][2]["total"], 2.0)
+        events[0]["map"] = "dod_unfitted"
+        self.assertAlmostEqual(M.credit(events, CURVES, 0.3, scoring=scoring)[("M", 1)][2]["total"], 1.0)
 
 
 class LedgerMechanics(unittest.TestCase):

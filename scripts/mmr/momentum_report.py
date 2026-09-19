@@ -12,15 +12,21 @@ Everything is fitted on officials + 12mans together: 12mans carry the
 capout fit until enough officials exist. The officials-only lift table is
 printed beside it so the two can be compared as the season fills in.
 
+Objective values are scoreboard points where a map has a scoring fit
+(demo-labelled halves via --labels, the #434 backfill SQL), else 1 per cap
+and 1 per capout.
+
 Usage:
-    python momentum_report.py            # -> momentum_report.md
+    python momentum_report.py --labels G:/GIT/KTP/ktp_highlights/evidence/observations-s10-official-20260913.sql
 """
 from __future__ import annotations
 
+import argparse
 import math
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import demo_labels as D
 import momentum as M
 
 HERE = Path(__file__).resolve().parent
@@ -35,7 +41,27 @@ def lift_table(rows):
     return "\n".join(lines)
 
 
+def fit_scoring_by_map(labels, objs, mmap, min_halves=12):
+    """{map: coef} from demo-labelled halves, one fit per map with enough of them."""
+    samples = defaultdict(list)
+    for mid, L in labels.items():
+        if mid not in mmap:
+            continue
+        for half in (1, 2):
+            for side_name, team in (("allies", 1), ("axis", 2)):
+                pts = L["halves"][half][L["sides"][half][side_name]]
+                samples[mmap[mid]].append((M.scoring_features(objs, mid, half, team), pts))
+    out = {}
+    for mp, rows in samples.items():
+        if len(rows) >= min_halves:
+            out[mp] = M.fit_scoring(rows) + (len(rows),)
+    return out
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--labels", help="demo team-score backfill SQL (#434); enables per-map scoring")
+    args = ap.parse_args()
     frags, flags, caps, lives, matches, players = (
         M.read(n) for n in ("frags", "flags", "captures", "lives", "matches", "players"))
     mtype = {r["match_id"]: r["match_type"] for r in matches}
@@ -64,13 +90,32 @@ def main():
     mko, obo = [m for m in mk if official(m)], [o for o in ob if official(o)]
     off_rows = {k: M.lag_lift(mko, obo, M.half_spans(mko, obo), kind=k) for k in ("cap", "capout")}
 
+    # --- scoring: price objectives in points where a map has labelled halves
+    fits = {}
+    if args.labels:
+        labels = D.labels(D.read_backfill_sql(args.labels))
+        fits = fit_scoring_by_map(labels, ob, mmap)
+    scoring = {mp: coef for mp, (coef, _, _) in fits.items()}
+    for e in ob:
+        e["map"] = mmap.get(e["match"])
+
     # --- ledger
-    got = M.credit(mk + ob, curves, rho)
+    got = M.credit(mk + ob, curves, rho, scoring=scoring)
 
     lines = ["# Momentum credit report", ""]
     lines += ["Deposit/payout ledger over multikills, caps and capouts. Curves fitted on",
-              "officials + 12mans; officials-only shown for comparison. Credit units: one",
-              f"flag cap = {M.CAP_VALUE}, a capout pays {M.CAPOUT_VALUE} on top.", ""]
+              "officials + 12mans; officials-only shown for comparison.", ""]
+    if fits:
+        lines += ["Credit units: scoreboard points, from a per-map fit on demo-labelled halves",
+                  "(points = cap·caps + hold3·s + hold4·s + capout·capouts; a cap owns the hold",
+                  "until the next ownership change):", ""]
+        for mp, (coef, r2, n) in sorted(fits.items()):
+            lines.append(f"- {mp} (n={n} team-halves, R²={r2:.3f}): " +
+                         ", ".join(f"{k}={v:.2f}" for k, v in coef.items()))
+        lines += ["", f"Maps without a fit pay {M.CAP_VALUE} per cap and {M.CAPOUT_VALUE} per capout.", ""]
+    else:
+        lines += [f"Credit units: one flag cap = {M.CAP_VALUE}, a capout pays {M.CAPOUT_VALUE} on top "
+                  "(no --labels given, so no scoreboard fit).", ""]
 
     # 1 corpus
     halves = Counter(mtype[m] for m, _ in side)
