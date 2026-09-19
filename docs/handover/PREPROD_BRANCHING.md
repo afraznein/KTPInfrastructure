@@ -1,5 +1,22 @@
 # Preprod and production branch policy
 
+> 🔻 **RETIRED FOR THIS REPOSITORY, 2026-09-19.** KTPInfrastructure no longer keeps a
+> `preprod` branch; everything here targets `main`. The ruling and its evidence are in
+> `ktp-coordination` `state/infra-mmr-ratings.md` — nothing deploys from `preprod`, and 54 of
+> the last 80 merges went straight to `main` already. The tip is preserved as the tag
+> `archive/preprod-retired-20260919` (`08ccdfaf`).
+>
+> ⚠️ **The policy below still applies to KTPAMXX, KTPMatchHandler and KTPHLStatsX**, whose
+> `preprod` branches are live and genuinely diverged from their `main`. Read every paragraph
+> that follows as being about those repositories, not this one.
+>
+> 🔑 One consequence worth carrying, because it is what made the retirement a three-repo
+> change rather than a branch delete: `preprod` was not only a merge route, it was a **harness
+> lineage pointer consumed cross-repo**. KTPAMXX and KTPHLStatsX passed `infrastructure_ref:
+> preprod` as a literal, a guard pinned `LINEAGE = "preprod"`, and the branch name appeared
+> inside a **required status context name**. Deleting the branch first would have blocked every
+> PR in both repos with no author-side fix.
+
 ## Policy
 
 Every KTP repository uses a permanent `preprod` branch as the integration
