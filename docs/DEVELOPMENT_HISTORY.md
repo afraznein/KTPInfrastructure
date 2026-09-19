@@ -1267,8 +1267,8 @@ ReHLDS **.931** (cut 08-14, staged fleet-wide 08-15, activated at the 2026-08-16
 > For granular per-version changelogs, see the `CHANGELOG.md` in each project's repository.
 
 - [TECHNICAL_GUIDE.md](./TECHNICAL_GUIDE.md) - Architecture and implementation details
-- [README.md](./README.md) - Quick start and command reference
-- [CHANGELOG.md](./CHANGELOG.md) - Detailed version history
+- [README.md](../README.md) - Quick start and command reference
+- [CHANGELOG.md](../CHANGELOG.md) - Detailed version history
 
 ---
 
