@@ -118,7 +118,7 @@ Cron-scheduled work is outside both mechanisms entirely:
 
 | Job | Watched by |
 |---|---|
-| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing — that is `KTPAdminBot`#21's stale-state field, merged and not deployed |
+| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing on the box — `KTPAdminBot`#21's stale-state field (merged, not deployed) covers it in minutes, the weekly audit gate (2026-09-18) in days |
 | `ktp-fleet-audit` (Monday 05:00 ET) | **nothing**; it does refuse to run against a non-git `/opt/ktp-infra` |
 | `ktp-tier2-heartbeat` | itself; deliberately a data-server cron so it does not share fate with the GH runner it watches |
 | `ktp-backup-watchdog` | itself; exists because a run that never happens produces no output |
@@ -160,8 +160,11 @@ Ranked by what they would cost during Season 10.
    completed run raises `health-check-aborted` (naming the line it died on) or
    `health-check-missed-runs`. **A run that dies still cannot speak for itself** —
    the following run speaks for it — so a check that stops for good is invisible
-   from the box. That needs the external detector in `afraznein/KTPAdminBot`#21,
-   merged and **not deployed**.
+   from the box. Two external detectors: `afraznein/KTPAdminBot`#21's stale-state
+   field (merged, **not deployed**, minutes), and since 2026-09-18 the weekly
+   audit's gate, which triages a state file older than 6h and any item open more
+   than 3 days — the latter being the ten-day identity-reconcile shape, which
+   presence-reporting alone never surfaced.
 5. **`ktp-restart-drift.py` runs on no schedule.** The drift it was written to
    find is real and, as of 2026-08-30, still open.
 

@@ -38,6 +38,7 @@ RESTART_STEP = "Restart-script drift"
 EXPECTED_RUN_STEPS = {
     AUDIT_STEP,
     RESTART_STEP,
+    "Data-server health state",
     "Decide whether a human needs to look",
     "Open or update the issue",
     "Post the pointer",

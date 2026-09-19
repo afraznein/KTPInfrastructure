@@ -23,8 +23,16 @@
 #      and it is the estate's settled answer to repeat alerts.
 #   4. The restart-drift check failing to complete at all. That is a broken
 #      instrument, not drift, and it is always news.
+#   5. A data-server health item open longer than KTP_GATE_LONG_OPEN_DAYS
+#      (default 3). The hourly check pages once when an item appears and never
+#      again while it persists -- that is correct for a channel and wrong for
+#      a week: ktp-identity-reconcile.service sat failed for ten days after its
+#      one post. Age, not presence, is the signal, and it nags weekly by design:
+#      the triage comments on the one open issue until someone closes it.
+#   6. The health check itself not having written for KTP_GATE_HEALTH_STALE_H
+#      (default 6) hours. Nothing else watches the watcher.
 #
-# Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt
+# Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt  health-state.json
 # State:         $KTP_GATE_STATE_DIR/ktp-restart-drift-ci.txt (default /var/lib)
 # Output:        needs_triage=true|false and reason=... on stdout, one per line,
 #                in GITHUB_OUTPUT form. Exit 0 always; a gate that crashes
@@ -68,6 +76,49 @@ else
     # Save the baseline whether or not it changed. The write can fail on a
     # read-only checkout (tests, a dry local run); that must not fail the gate.
     printf '%s\n' "$cur" > "$prev" 2>/dev/null || true
+fi
+
+# 5 and 6. Long-open health items, and a health check that stopped writing.
+#    python3 rather than jq: the runner and every test host have it, and the
+#    audit this gate serves is python3 already.
+# The first interpreter that actually runs: a Windows workstation's `python3`
+# can be a Store stub that prints an install hint and exits 9009, and `|| true`
+# below would read that as "nothing to say".
+py=python3
+for cand in python3 python; do
+    if "$cand" -c pass >/dev/null 2>&1; then py=$cand; break; fi
+done
+health_reason="$("$py" - "${KTP_GATE_LONG_OPEN_DAYS:-3}" "${KTP_GATE_HEALTH_STALE_H:-6}" <<'PY' 2>/dev/null || true
+import json, sys, time
+from datetime import datetime
+days, stale_h = float(sys.argv[1]), float(sys.argv[2])
+try:
+    doc = json.load(open("health-state.json", encoding="utf-8"))
+except Exception:
+    sys.exit(0)                      # absent or unreadable: nothing to say
+fmt = "%Y-%m-%d %H:%M:%S"
+now = time.time()
+try:
+    updated = datetime.strptime(doc.get("updated_at", ""), fmt).timestamp()
+except ValueError:
+    sys.exit(0)
+if now - updated > stale_h * 3600:
+    print("Health check has not written for %dh. " % ((now - updated) // 3600))
+    sys.exit(0)
+old = []
+for key, since in (doc.get("since") or {}).items():
+    try:
+        age = (now - datetime.strptime(since, fmt).timestamp()) / 86400
+    except (TypeError, ValueError):
+        continue
+    if age >= days:
+        old.append("%s (%dd)" % (key, age))
+if old:
+    print("%d health item(s) open over %gd: %s. " % (len(old), days, ", ".join(sorted(old))))
+PY
+)"
+if [ -n "$health_reason" ]; then
+    reasons="${reasons}${health_reason}"
 fi
 
 if [ -n "$reasons" ]; then

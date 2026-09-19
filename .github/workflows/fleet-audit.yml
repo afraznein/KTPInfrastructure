@@ -144,6 +144,17 @@ jobs:
           set -uo pipefail
           python3 scripts/ktp-restart-drift.py | tee restart-drift.txt
 
+      - name: Data-server health state
+        run: |
+          # The hourly health check's own state file: what is down and since
+          # when. World-readable on this box; redacted by shape anyway before it
+          # is published, because this repository is public. Absent or
+          # unreadable degrades to {} -- the gate treats that as nothing to say,
+          # never as a failure of this job.
+          set +e
+          set -uo pipefail
+          python3 scripts/audit_redact.py < /var/lib/ktp-data-server-health.json > health-state.json             || echo '{}' > health-state.json
+
       - name: Decide whether a human needs to look
         id: gate
         # The decision lives in scripts/fleet-audit-gate.sh so it can be tested
@@ -164,6 +175,7 @@ jobs:
             audit-report.md
             audit-stdout.txt
             restart-drift.txt
+            health-state.json
           retention-days: 90
 
   triage:
@@ -215,8 +227,12 @@ jobs:
             data server. Season 10 is live, so matches are being played on this
             hardware while you read.
 
-            Read `audit-report.md`, `audit-stdout.txt` and `restart-drift.txt`
-            in the working directory. Read whatever else in the repository helps
+            Read `audit-report.md`, `audit-stdout.txt`, `restart-drift.txt` and
+            `health-state.json` in the working directory. The last is the
+            hourly data-server health check's own state: what is down and since
+            when. An item there that has been open for days is not new, but it
+            is the thing nobody has acted on, and that is exactly what a human
+            needs to be told about. Read whatever else in the repository helps
             you explain a finding -- `docs/runbooks/` and `scripts/` especially.
 
             Write your triage to `triage.md`. That file will be posted verbatim

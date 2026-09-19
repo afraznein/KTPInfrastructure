@@ -12,9 +12,11 @@ tmp_path and points KTP_GATE_STATE_DIR at a sibling directory.
 """
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -39,11 +41,16 @@ KNOWN_DRIFT = (
 )
 
 
-def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT) -> None:
+def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT, health=None) -> None:
     work.mkdir(parents=True, exist_ok=True)
     (work / "audit-stdout.txt").write_text(stdout, newline="\n")
     (work / "audit-report.md").write_text(report, newline="\n")
     (work / "restart-drift.txt").write_text(drift, newline="\n")
+    hs = work / "health-state.json"
+    if health is not None:
+        hs.write_text(json.dumps(health), newline="\n")
+    elif hs.exists():
+        hs.unlink()
 
 
 def _run(work: Path, state: Path) -> dict:
@@ -150,3 +157,71 @@ def test_reasons_accumulate(tmp_path):
          report="dod-27015: parse=BROKEN oldtype=? samesocket=? duppid=?\n")
     out = _run(work, state)
     assert "1 new repo-drift" in out["reason"] and "monitor patch fault" in out["reason"]
+
+
+# --- long-open health items, and a health check that stopped writing ---------
+
+def _ts(delta: timedelta) -> str:
+    return (datetime.now() - delta).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _health(items: dict, updated_ago=timedelta(minutes=20)) -> dict:
+    return {"updated_at": _ts(updated_ago), "down": list(items),
+            "since": {k: _ts(v) for k, v in items.items()}, "detail": {}}
+
+
+def test_a_fresh_health_item_is_the_channels_job_not_ours(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, health=_health({"failed-unit:x.service": timedelta(hours=5)}))
+    assert _run(work, state)["needs_triage"] == "false"
+
+
+def test_an_item_open_for_days_fires_and_names_itself(tmp_path):
+    """ktp-identity-reconcile sat failed ten days after its one Discord post.
+    Age, not presence, is the signal."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, health=_health({"failed-unit:ktp-identity-reconcile.service": timedelta(days=10),
+                               "disk-growth:/": timedelta(hours=2)}))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "1 health item(s) open over 3d" in out["reason"]
+    assert "ktp-identity-reconcile.service (10d)" in out["reason"]
+    assert "disk-growth" not in out["reason"]
+
+
+def test_it_nags_weekly_until_closed(tmp_path):
+    """Unlike the restart-drift leg this one is a level, on purpose: the triage
+    comments on the one open issue, and an item that is still open next week
+    still has nobody on it."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    for _ in range(2):
+        _lay(work, health=_health({"failed-unit:x.service": timedelta(days=4)}))
+        assert _run(work, state)["needs_triage"] == "true"
+
+
+def test_a_health_check_that_stopped_writing_is_news(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, health=_health({}, updated_ago=timedelta(hours=9)))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true" and "has not written for 9h" in out["reason"]
+
+
+def test_missing_or_pre_since_state_is_quiet(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work)                                     # no health-state.json at all
+    assert _run(work, state)["needs_triage"] == "false"
+    _lay(work, health={"updated_at": _ts(timedelta(minutes=5)), "down": ["x"]})   # no since map
+    assert _run(work, state)["needs_triage"] == "false"
+    (work / "health-state.json").write_text("{}")   # the collect step's degrade value
+    assert _run(work, state)["needs_triage"] == "false"
+
+
+def test_threshold_is_tunable(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, health=_health({"failed-unit:x.service": timedelta(days=2)}))
+    assert _run(work, state)["needs_triage"] == "false"
+    os.environ["KTP_GATE_LONG_OPEN_DAYS"] = "1"
+    try:
+        assert _run(work, state)["needs_triage"] == "true"
+    finally:
+        del os.environ["KTP_GATE_LONG_OPEN_DAYS"]
