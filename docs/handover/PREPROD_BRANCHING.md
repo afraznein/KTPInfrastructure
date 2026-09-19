@@ -17,6 +17,29 @@
 > inside a **required status context name**. Deleting the branch first would have blocked every
 > PR in both repos with no author-side fix.
 
+## The preprod reconciler, and why it is gone
+
+`.github/workflows/reconcile-preprod.yml` kept `preprod` a superset of `main` without anyone
+hand-rolling a reconcile PR — five of those got made by hand in three days before it existed.
+It was deleted with the branch. Its three attempts are recorded here because each one hid the
+next, and the same trap is waiting for anyone automating a push to a protected branch:
+
+1. **Fast-forward push, immediately** — rejected with *"2 of 2 required status checks are in
+   progress"*. Read at the time as *a protected branch refuses a direct push*. It does not; the
+   checks simply had not finished yet. ⚠️ The error names the wrong cause.
+2. **Open a PR + auto-merge** — `gh pr create` refused outright: *"GitHub Actions is not
+   permitted to create or approve pull requests"*. Repo auto-merge was disabled besides, so the
+   PR would have sat open anyway.
+3. **Wait for the checks, then fast-forward** — what shipped.
+
+🔑 The asymmetry that made a merge commit impossible, which is the part worth carrying:
+`integration` fires on a push to `main` and on a `pull_request`, and on nothing else. **A fresh
+merge commit pushed to a topic branch can never earn that check**, so it could never be pushed
+to a branch requiring it. A fast-forward sidesteps it by reusing `main`'s own already-green sha.
+✅ It also failed safe on its own subject: its last run, on `main`'s tip after the retirement,
+annotated *"No preprod branch; nothing to reconcile."* and exited 0 rather than painting an
+ordinary push red.
+
 ## Policy
 
 Every KTP repository uses a permanent `preprod` branch as the integration
