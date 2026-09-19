@@ -93,7 +93,8 @@ on:
         description: KTPInfrastructure ref/SHA containing the reusable harness
         required: false
         type: string
-        default: preprod
+        # main, not preprod: KTPInfrastructure's preprod is retired.
+        default: main
       matchhandler_ref:
         description: KTPMatchHandler ref/SHA for the test-mode match driver
         required: false
@@ -140,7 +141,7 @@ on:
         description: 'KTPInfrastructure ref/SHA containing the Lane B harness'
         required: true
         type: string
-        default: 'preprod'
+        default: 'main'
       matchhandler_ref:
         description: 'KTPMatchHandler ref/SHA for the test-mode match driver'
         required: true
@@ -240,7 +241,12 @@ jobs:
         run_index: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') && fromJSON('[1,2,3,4,5]') || fromJSON('[1]') }}
 
     env:
-      INFRASTRUCTURE_REF: ${{ matrix.target_ref }}
+      # The harness is NOT part of what a run is testing, so it does not follow
+      # matrix.target_ref -- which the schedule branch hardcodes to preprod, a
+      # branch this repo no longer keeps. lane-c-experimental.yml already draws
+      # this line ("defaults to main, NOT preprod"). target_ref still drives the
+      # three COMPONENT refs below, so scheduled coverage is unchanged.
+      INFRASTRUCTURE_REF: ${{ inputs.infrastructure_ref || 'main' }}
       MATCHHANDLER_REF: ${{ inputs.matchhandler_ref || matrix.target_ref }}
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
       DAEMON_REF: ${{ inputs.daemon_ref || matrix.target_ref }}
