@@ -128,9 +128,10 @@ FPS_MIN_DROP_PCT = 0.005  # 0.5%
 # 0.0, and `today > 0` makes a SINGLE ≥10ms frame a Discord alert. The σ=0
 # hazard was anticipated for zero-filled missing days; it arrives identically
 # from genuinely-flat real data, which is the regime the fleet is now in.
-# 10 clears the worst recent whole-fleet day (13 on 2026-07-12, spread across
-# hosts; no single host exceeded 3), so a host must produce a real cluster —
-# not drift from 0 to 1 — before it warns.
+# 10 sits well clear of any per-host day ktp_spike_daily has ever recorded, so a
+# host must produce a real cluster — not drift from 0 to 1 — before it warns.
+# Re-derive from that table before moving it; both anchors this line used to name
+# were superseded on the first official match night.
 SPIKE_MIN_COUNT = 10
 # ...but the flat count is magnitude-blind, and a bare ≥10 floor would silence
 # the frames operators most want to hear about: a handful of ≥100ms freezes is
@@ -149,7 +150,7 @@ SPIKE_SEVERE_MIN_COUNT = 3
 # hole that let a ~36 fps fleet sag go unnoticed before the fps floor existed.
 # Evaluated OUTSIDE the ≥4-baseline gate on purpose: an absolute threshold needs
 # no history, so it also covers the warmup window, where the σ test is blind.
-# 50 is >16x the worst observed post-async-writer host-day (3, on 2026-07-12) yet
+# 50 is an order of magnitude above any observed post-async-writer host-day yet
 # far under the 2026-07-03 jbd2 incident rate (72-187 stalls/instance). Anchoring
 # it at the incident rate (~100) would leave the 20-100 band silent — and that band
 # IS the boiled-frog case this exists to catch, so the ceiling has to sit below it.
