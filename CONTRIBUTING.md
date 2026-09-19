@@ -169,10 +169,15 @@ new deployable file type without an entry there.
 ## Branches and pull requests
 
 - **The default branch is `main`.** PRs merge into it.
-- **`preprod` is the integration branch for test/CI-lane work.** The Tier-2 lane series lands
-  there first and reaches `main` afterwards. If your change is to `tests/`, the CI workflows or
-  the test runner plumbing, ask which base you should target; otherwise target `main`.
-- **Never commit to `main` or `preprod` directly.** Branch, push the branch, open a PR.
+- **`preprod` is retired in this repository** (ruled 2026-09-19). Everything targets `main`,
+  including `tests/`, CI workflows and test-runner plumbing — there is no second base to ask
+  about. It was a batching branch with no staging environment: nothing deploys from it, and
+  2 of every 3 merges already went straight to `main`. The tip it held is preserved as the tag
+  `archive/preprod-retired-20260919`.
+  ⚠️ **KTPAMXX, KTPMatchHandler and KTPHLStatsX still have live `preprod` branches** and
+  this says nothing about them. Lane B still tests those components from `preprod`; only the
+  harness — this repository — comes from `main`.
+- **Never commit to `main` directly.** Branch, push the branch, open a PR.
 - **Branch naming** follows the prefix the work belongs to: `feat/`, `fix/`, `ci/`, `docs/`,
   `config/`, `test/`, `audit/`, plus a short kebab-case description —
   `fix/monitor-rcon-runtime`, `ci/zlib-pin`, `docs/preprod-card-reconcile`.
@@ -183,8 +188,8 @@ new deployable file type without an entry there.
 
 ### Required checks
 
-Both `main` and `preprod` require two status checks, and require your branch to be up to date
-with the base before merging:
+`main` requires its status checks, and requires your branch to be up to date with the base
+before merging:
 
 | Check | Workflow | Where it runs |
 |---|---|---|
