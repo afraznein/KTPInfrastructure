@@ -1,0 +1,319 @@
+{
+ "kind": "rating_methodology",
+ "method_version": "rating_methodology_v1",
+ "generated_at": "2026-09-22T12:47:35+00:00",
+ "provisional": true,
+ "notice": "All values are refit as matches land and may change week to week. Sample sizes and fit quality are shown so the reader can judge each number.",
+ "ktpr_v2": {
+  "name": "KTPR v2",
+  "what": "Per-match performance rating. How well you played in this match, independent of who won.",
+  "equation": "z = Σ w_c · z_c over the components available for the match; each z_c is the player's per-match z-score on that component (mean 0, spread 1 across the players in the match). A missing component's weight is redistributed over the rest.",
+  "components": [
+   {
+    "name": "swing",
+    "weight": 0.4,
+    "what": "attributed flag swing: the flag-control probability your kills and caps moved"
+   },
+   {
+    "name": "kast_f",
+    "weight": 0.25,
+    "what": "KAST-F: share of your lives with a kill, assist, survival or trade in a flag fight"
+   },
+   {
+    "name": "output",
+    "weight": 0.25,
+    "what": "damage per life / 100 + kill/death ratio"
+   },
+   {
+    "name": "multikill",
+    "weight": 0.1,
+    "what": "fast 2k + 2·fast 3k + 4·fast 4k+"
+   }
+  ],
+  "display": {
+   "equation": "max(50, 100 + 15·z)",
+   "center": 100,
+   "scale": 15,
+   "floor": 50,
+   "what": "100 is the match average; 115 is one spread above it"
+  },
+  "status": "provisional"
+ },
+ "mmr": {
+  "name": "MMR (OpenSkill)",
+  "what": "Cross-match skill rating. How likely your side is to win, learned from results across the season. Carries an uncertainty that shrinks with matches played.",
+  "model": "Plackett-Luce (openskill 6.2.0), two teams, each player's rating updated by the match result",
+  "initial": {
+   "mu": 25.0,
+   "sigma": 8.333,
+   "what": "everyone starts here; sigma is the uncertainty"
+  },
+  "displayed": {
+   "rating": "mu",
+   "uncertainty": "sigma",
+   "conservative": "mu − 3·sigma",
+   "what": "conservative is the value you are very likely at least as good as"
+  },
+  "min_matches": 3,
+  "prediction": {
+   "equation": "p_damped = 0.5 + (p − 0.5) · n / (n + k)",
+   "k": 6.0,
+   "n": "the thinner side's mean matches played",
+   "what": "a prediction between two barely-rated sides is pulled toward a coin flip; confidence is earned by evidence, not asserted by the model"
+  },
+  "performance_weighting": {
+   "enabled": false,
+   "strength": 0.35,
+   "what": "when on, a side's rating change is split by each player's KTPR contribution instead of evenly. Off until measured to predict better than even splits."
+  },
+  "status": "provisional"
+ },
+ "momentum": {
+  "name": "Momentum credit",
+  "what": "Objective value traced back to the plays that enabled it. A 4k that leads to a cap and then a capout is paid part of that objective value, decaying with the lag.",
+  "mechanism": [
+   "Every momentum event (multikill, cap, capout) is both a payout and a deposit for its team's ledger.",
+   "Payout: the event's value is split between the actor(s) and the team's outstanding deposits; the deposits' share at lag d is 1 − 1/lift(d).",
+   "Deposit: the event enters the ledger and forwards a fraction rho of anything it is later paid to the deposits that fed it — the secondary assist.",
+   "An enemy cap clears the ledger.",
+   "Kills earn nothing here; KTPR already counts them. This is objective lift only."
+  ],
+  "status": "research — not yet a KTPR component",
+  "definitions": {
+   "multikill": ">= 3 kills by one player, each within 10s of the last",
+   "lift": "P(objective within d s of a multikill) / the same team's own rate in that half",
+   "curve": "lift(d) = 1 + A·exp(−lam·d); momentum share of an objective at lag d = 1 − 1/lift(d)",
+   "rho": "fraction of a payout a deposit forwards to its own upstream deposits (secondary assist)",
+   "scoring": "points = cap·caps + hold3·s + hold4·s + capout·capouts, per map, on demo-labelled halves",
+   "fallback": {
+    "curves": "pooled",
+    "scoring": {
+     "cap": 1.0,
+     "capout": 1.0
+    }
+   },
+   "min_multikills_for_map_curve": 150
+  },
+  "fitted_at": "2026-09-19T17:40:47+00:00",
+  "corpus": {
+   "halves": 174,
+   "official_halves": 18,
+   "multikills": 1757,
+   "caps": 5137,
+   "capouts": 180
+  },
+  "rho": {
+   "value": 0.324,
+   "p_capout_after_cap_with_multikill": 0.1466,
+   "p_capout_after_cap_without": 0.0991,
+   "n_with": 1385,
+   "n_without": 3752
+  },
+  "pooled_curves": {
+   "cap": {
+    "A": 1.8309,
+    "lam": 0.10592,
+    "n_multikills": 1757,
+    "half_life_s": 6.5
+   },
+   "capout": {
+    "A": 2.8958,
+    "lam": 0.04551,
+    "n_multikills": 1757,
+    "half_life_s": 15.2
+   }
+  },
+  "maps": {
+   "dod_armory_b6": {
+    "sample": {
+     "halves": 2,
+     "official_halves": 0,
+     "multikills": 13,
+     "caps": 246,
+     "capouts": 0
+    },
+    "momentum_curves": {
+     "uses": "pooled"
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_harrington": {
+    "sample": {
+     "halves": 18,
+     "official_halves": 0,
+     "multikills": 210,
+     "caps": 1173,
+     "capouts": 48
+    },
+    "momentum_curves": {
+     "cap": {
+      "A": 0.3717,
+      "lam": 0.02665,
+      "n_multikills": 210,
+      "half_life_s": 26.0
+     },
+     "capout": {
+      "A": 1.5168,
+      "lam": 0.0321,
+      "n_multikills": 210,
+      "half_life_s": 21.6
+     }
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_lennon2": {
+    "sample": {
+     "halves": 2,
+     "official_halves": 0,
+     "multikills": 13,
+     "caps": 34,
+     "capouts": 0
+    },
+    "momentum_curves": {
+     "uses": "pooled"
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_lennon5_b1": {
+    "sample": {
+     "halves": 63,
+     "official_halves": 2,
+     "multikills": 666,
+     "caps": 2463,
+     "capouts": 108
+    },
+    "momentum_curves": {
+     "cap": {
+      "A": 1.3409,
+      "lam": 0.08454,
+      "n_multikills": 666,
+      "half_life_s": 8.2
+     },
+     "capout": {
+      "A": 2.3854,
+      "lam": 0.03459,
+      "n_multikills": 666,
+      "half_life_s": 20.0
+     }
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_railroad2_s9a": {
+    "sample": {
+     "halves": 7,
+     "official_halves": 0,
+     "multikills": 37,
+     "caps": 62,
+     "capouts": 0
+    },
+    "momentum_curves": {
+     "uses": "pooled"
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_saints2_b3e": {
+    "sample": {
+     "halves": 8,
+     "official_halves": 0,
+     "multikills": 61,
+     "caps": 85,
+     "capouts": 0
+    },
+    "momentum_curves": {
+     "uses": "pooled"
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_saints2_b4e": {
+    "sample": {
+     "halves": 2,
+     "official_halves": 0,
+     "multikills": 34,
+     "caps": 90,
+     "capouts": 3
+    },
+    "momentum_curves": {
+     "uses": "pooled"
+    },
+    "scoring": {
+     "uses": "fallback",
+     "fallback": {
+      "cap": 1.0,
+      "capout": 1.0
+     }
+    }
+   },
+   "dod_thunder2": {
+    "sample": {
+     "halves": 72,
+     "official_halves": 16,
+     "multikills": 723,
+     "caps": 887,
+     "capouts": 21
+    },
+    "momentum_curves": {
+     "cap": {
+      "A": 10.0227,
+      "lam": 0.24853,
+      "n_multikills": 723,
+      "half_life_s": 2.8
+     },
+     "capout": {
+      "A": 1.4424,
+      "lam": 0.01948,
+      "n_multikills": 723,
+      "half_life_s": 35.6
+     }
+    },
+    "scoring": {
+     "coef": {
+      "cap": 2.8149,
+      "hold3": 0.0565,
+      "hold4": 0.3296,
+      "capout": 18.2604
+     },
+     "r2": 0.887,
+     "n_team_halves": 32
+    }
+   }
+  }
+ },
+ "source_report_count": 16,
+ "report_schema_version": 9
+}
