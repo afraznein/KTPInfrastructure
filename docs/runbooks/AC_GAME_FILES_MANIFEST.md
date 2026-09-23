@@ -156,31 +156,46 @@ you turn it off.
 counts; re-run with them:
 
 ```bash
-    --accept-added N --accept-removed N --accept-widened N --accept-narrowed N
+    --accept-added N --accept-removed N \
+    --accept-widened N --accept-narrowed N \
+    --accept-alternates-dropped N --accept-alternates-gained N
 ```
 
-Four separate counts rather than one total, because they are four different
+Six separate counts rather than one total, because they are six different
 decisions and a single net figure lets an addition and a removal cancel to zero.
 Pass only the ones the refusal asked for — a count for a change that is no longer
 in the diff refuses too, since that is the same staleness as a count that is too
 low. `--dry-run` stops after the verdict if you want to see it without installing.
 
-⚠️ **`--accept-widened` is the one with no equivalent upstream.** `review` →
-`violation` widens what a player is *scored* on without adding a path, so the
-generator's membership gate passes it and so does `_meta.version`. Six paths
-(`p_garand_l.mdl` and friends) made exactly that flip between the 2026-05-07
-manifest and the installed one.
+⚠️ **Two of them have no equivalent upstream, and they are the two that matter.**
+
+`--accept-widened` — `review` → `violation` widens what a player is *scored* on
+without adding a path, so the generator's membership gate passes it and so does
+`_meta.version`. Six paths (`p_garand_l.mdl` and friends) made exactly that flip
+between the 2026-05-07 manifest and the installed one.
+
+`--accept-alternates-dropped` — 🔴 **the worst one.** An operator-curated
+`allowed_alternate_hashes` entry is what stops a legitimate community file
+scoring. Remove one and every holder of that file becomes a violation: no path
+added, no severity moved, no hash changed. The generator's diff does not compare
+alternates at all, so such an install prints *"no change: same paths, same
+severities, same hashes"* — the single worst case, described in reassuring words.
 
 What the script does that the old `scp` + `cp` pair did not:
 
 - **Resolves the target from the API's own config.** `GameFilesManifestPath` in
   `appsettings.json` overrides the compiled-in default, and installing to the
   documented path while the API reads another one is an install that changed
-  nothing and reported success.
+  nothing and reported success. Passing `--installed-path` skips that lookup and
+  says so in the output.
+- **Refuses a file that is there but unreadable.** It cannot be copied aside, so
+  replacing it would destroy the only copy — and `--no-gate` does not cover it.
 - **Takes the backup itself**, named `…json.bak-<reason>-<YYYYMMDD>`, before it
   writes anything. `--reason` is required and lands in that filename, so make it
-  findable in an `ls` six months from now. A second install the same day under
-  the same reason gains the time rather than overwriting the morning's copy.
+  findable in an `ls` six months from now. The create is exclusive (`O_EXCL`), so
+  a second install the same day under the same reason gains the time instead of
+  overwriting the morning's rollback copy — a guarantee from the server rather
+  than a check that could fail open.
 - **Backs up a file that no longer parses**, too. "Is there a baseline to gate
   against?" and "is there a file I am about to destroy?" are different questions,
   and a truncated manifest is the copy you would most want back.
@@ -188,19 +203,23 @@ What the script does that the old `scp` + `cp` pair did not:
   because the rename is only atomic within one filesystem. The API caches on
   mtime alone and serves whatever bytes are there, so the live path must never
   hold a partial document.
-- **Reads the file back** and compares its sha256 against what was sent.
+- **Reads the staged file back and compares its sha256 *before* publishing it.**
+  Verifying afterwards detects a bad write only once the API is already serving
+  it, and with `max-age=300` it has propagated by the time anyone reads the
+  error. paramiko swallows the errors raised when closing a remote file, so the
+  read-back is the only reliable check — and it is worth nothing one step late.
 - **Declines a byte-identical install** rather than backing a file up against its
   own twin and moving the mtime the cache keys on for no change.
 
-⛔ It writes exactly one file, and every path it writes, renames or removes is
-the manifest or a name derived from it. `/opt/ktp-ac-api/` also holds `uploads/`
-— the evidence corpus — and `releases/`. The only call that names the directory
-is a `listdir` to avoid a backup collision, and its result is filtered to
-manifest-derived names before anything uses it. Nothing here operates on a
-directory, and neither should anything you type by hand there.
+⛔ The only paths it writes are the manifest, its backup, and a staged temp
+beside it — and every one is derived from the manifest's own name. It does not
+list, glob or operate on a directory at all. `/opt/ktp-ac-api/` also holds
+`uploads/`, the evidence corpus, and `releases/`; neither should anything you
+type by hand there.
 
-It sets the file `0644` and runs as root, so the result is the `root:root 0644`
-the API wants — it only reads the file.
+It sets the file mode to `0644`; the owner is whoever `--user` connects as, so
+run it as root and the result is the `root:root 0644` the API wants — it only
+reads the file.
 
 **No restart.** The cache is keyed on mtime, so the copy is the activation.
 Responses carry `Cache-Control: max-age=300`, so allow a few minutes before
@@ -263,6 +282,13 @@ box were made with a flag that preserved the source's timestamp, so
 not sort by age. Read the name, not the timestamp. The §5 script writes a fresh
 copy, so backups it takes do carry their own time — but the older ones do not,
 and both live in the same directory.
+
+**A re-hash is printed but not gated.** A changed `sha256` on a path already in
+scope re-scores every player still on the old bytes, and neither the generator's
+gate nor the install gate refuses on it. That is inherited on purpose — files
+legitimately change on the fleet tree, and a gate that fires on every one becomes
+noise and gets rubber-stamped — but the consequence is larger at the install step
+than at the generator, so read the `RE-HASHED` line rather than skipping it.
 
 **A refused run leaves `<out>.candidate` behind.** It is a real manifest that
 nobody acknowledged. Delete it or overwrite it; do not install it because it

@@ -14,7 +14,8 @@ What it does, in order:
   2. downloads it and prints a scope diff of what the install would change, rendered
      by the generator's own `format_scope_diff` so the two steps describe a change
      the same way;
-  3. refuses, unless every enforced change is acknowledged by an exact count;
+  3. refuses, unless every change it gates on — path membership, severity, and allowed
+     alternate hashes — is acknowledged by an exact count;
   4. takes the backup itself;
   5. writes atomically and verifies the bytes that landed.
 
@@ -34,9 +35,15 @@ string untouched and every version-based identity check agrees that nothing move
 It has happened: six lowered weapon models (`p_*_l.mdl`) went review -> violation
 between the 2026-05-07 manifest and the installed one.
 
-⛔ This writes exactly one file. `/opt/ktp-ac-api/` also holds `uploads/`, the
-evidence corpus, and `releases/`, a client binary copy — so nothing here operates
-on a directory, and the temporary file it stages is named and removed by path.
+⚠️ It does NOT gate a changed sha256 on a path already in scope, which re-scores every
+player still on the old bytes. That is inherited from the generator's ruling (files
+legitimately change on the fleet tree, and a gate that fires on every one becomes noise
+and gets rubber-stamped) and it is a stated gap, not an oversight — the re-hash count is
+printed.
+
+⛔ The only paths this writes are the manifest, its backup, and a staged temp beside it.
+`/opt/ktp-ac-api/` also holds `uploads/`, the evidence corpus, and `releases/`, a client
+binary copy — so nothing here lists, globs or operates on a directory at all.
 """
 
 from __future__ import annotations
@@ -125,7 +132,9 @@ def classify_severity_change(before, after):
         return "widened"
     if SEVERITY_RANK[after] < SEVERITY_RANK[before]:
         return "narrowed"
-    return None  # equal ranks, different spellings — nothing to decide
+    # Unreachable today: no two ranks are equal, and a transition is only reported when
+    # the strings differ. Kept so a future same-rank pair is a no-op, not a surprise.
+    return None
 
 
 def severity_transitions(diff):
@@ -141,6 +150,55 @@ def severity_transitions(diff):
         if kind:
             buckets[kind].append((path, before, after))
     return buckets
+
+
+def alternate_transitions(previous, candidate, enforced_severity=None):
+    """Allowed-alternate-hash changes, the third axis neither existing control sees.
+
+    🔴 **Dropping an operator-curated alternate widens enforcement for every player
+    holding that file, with no path added, no severity moved and no hash changed.** The
+    generator attaches `allowed_alternate_hashes` and its `diff_manifests` does not
+    compare them, so such an install reports `no change: same paths, same severities,
+    same hashes` — the worst case this tool exists to catch, described in reassuring
+    words. The generator's own note on the four curated entries states the blast radius:
+    without them they surface as false-positive violations on every legitimate player.
+
+    Computed here rather than taken from the generator's diff, because the diff has no
+    field for it. A change counts when the path is enforced on either side: an alternate
+    on a `review` path never scores in either direction, and requiring enforcement on
+    BOTH sides would miss the case where severity and alternates move together.
+    """
+    enforced = enforced_severity or (lambda e: e.get("severity", "violation") != "review")
+    prev = {e["path"]: e for e in previous.get("files", [])}
+    cur = {e["path"]: e for e in candidate.get("files", [])}
+
+    dropped, gained = [], []
+    for path in sorted(set(prev) & set(cur)):
+        before, after = prev[path], cur[path]
+        if not (enforced(before) or enforced(after)):
+            continue
+        was = set(before.get("allowed_alternate_hashes") or [])
+        now = set(after.get("allowed_alternate_hashes") or [])
+        if was - now:
+            dropped.append((path, sorted(was - now)))
+        if now - was:
+            gained.append((path, sorted(now - was)))
+    return dropped, gained
+
+
+def format_alternate_verdict(dropped, gained):
+    """Spelled out per path — these are a handful of curated entries, and each one is a
+    decision about whether a legitimate community file starts failing."""
+    lines = []
+    for rows, label, effect in ((dropped, "ALTERNATES DROPPED", "now score against a holder"),
+                                (gained, "ALTERNATES ADDED", "no longer score")):
+        if not rows:
+            continue
+        lines.append(f"  {label} — {len(rows)} path(s), hashes that {effect}:")
+        for path, hashes in rows:
+            lines.append(f"    {path}")
+            lines += [f"      {h}" for h in hashes]
+    return lines
 
 
 def format_severity_verdict(buckets):
@@ -181,20 +239,24 @@ class Acknowledgements:
     A boolean would keep passing forever.
     """
 
-    def __init__(self, added=None, removed=None, widened=None, narrowed=None):
+    def __init__(self, added=None, removed=None, widened=None, narrowed=None,
+                 alternates_dropped=None, alternates_gained=None):
         self.added = added
         self.removed = removed
         self.widened = widened
         self.narrowed = narrowed
+        self.alternates_dropped = alternates_dropped
+        self.alternates_gained = alternates_gained
 
 
-def gate_install(diff, ack, enforced_changes, out=None):
+def gate_install(diff, ack, enforced_changes, alternates=((), ()), out=None):
     """True to proceed with the copy, False to refuse.
 
-    Four independent counts, each refusing on its own. They are separate flags rather
+    Six independent counts, each refusing on its own. They are separate flags rather
     than one total because they are different decisions: a path entering enforcement,
-    a path leaving it, a file starting to score, and a file stopping. Collapsing them
-    into one number would let an addition and a removal cancel out to zero.
+    a path leaving it, a file starting to score, a file stopping, and the two directions
+    of an allowed-alternate change. Collapsing them into one number would let an
+    addition and a removal cancel out to zero.
 
     `unknown` severity transitions take no accept flag at all. There is nothing to
     acknowledge a count of when the script cannot say which direction the change went;
@@ -216,6 +278,10 @@ def gate_install(diff, ack, enforced_changes, out=None):
          "path(s) whose severity now scores against a player"),
         ("--accept-narrowed", len(sev["narrowed"]), ack.narrowed,
          "path(s) whose severity no longer scores"),
+        ("--accept-alternates-dropped", len(alternates[0]), ack.alternates_dropped,
+         "enforced path(s) losing an allowed alternate hash"),
+        ("--accept-alternates-gained", len(alternates[1]), ack.alternates_gained,
+         "enforced path(s) gaining an allowed alternate hash"),
     )
 
     for flag, observed, accepted, noun in checks:
@@ -243,8 +309,8 @@ def gate_install(diff, ack, enforced_changes, out=None):
         ok = False
 
     if ok and not any(observed for _, observed, _, _ in checks):
-        print("  gate: nothing enforced entered or left scope, and no severity moved.",
-              file=out)
+        print("  gate: nothing enforced entered or left scope, no severity moved, and no "
+              "allowed alternate changed.", file=out)
     return ok
 
 
@@ -266,9 +332,15 @@ def resolve_installed_path(ssh, appsettings_path=DEFAULT_APPSETTINGS,
     out = sys.stderr if out is None else out
     program = ("import json;"
                f"print(json.load(open({appsettings_path!r})).get('GameFilesManifestPath') or '')")
-    _, stdout, stderr = ssh.exec_command("python3 -c " + shlex.quote(program))
+    # Timeout, like every remote call in the generator: without one a wedged host hangs
+    # the install at its first remote call, with nothing printed to say where.
+    _, stdout, stderr = ssh.exec_command("python3 -c " + shlex.quote(program), timeout=30)
     value = stdout.read().decode("utf-8", "replace").strip()
     err = stderr.read().decode("utf-8", "replace").strip()
+    if value and (not value.startswith("/") or value.endswith("/")):
+        print(f"  installed path: {fallback} (GameFilesManifestPath is {value!r}, which is "
+              "not an absolute file path — ignoring it)", file=out)
+        return fallback
     if value:
         if value != fallback:
             print(f"  installed path: {value} (from GameFilesManifestPath, NOT the "
@@ -308,7 +380,7 @@ def read_remote_manifest(sftp, path):
 SAFE_REASON = re.compile(r"[^A-Za-z0-9._-]+")
 
 
-def backup_name(installed_path, reason, when=None, taken=()):
+def backup_name(installed_path, reason, when=None, attempt=0):
     """`<installed>.bak-<reason>-<YYYYMMDD>`, matching what is already on the box.
 
     The reason is squeezed to a safe token because it lands in a shell-free SFTP path
@@ -317,91 +389,100 @@ def backup_name(installed_path, reason, when=None, taken=()):
     the manifest.
 
     A day-granular name collides on the second install of a day under the same reason,
-    and the collision would overwrite the only copy of what was live this morning with
-    a copy of what has been live since lunchtime — the rollback target quietly becoming
-    the thing you are rolling back from. A taken name gains the time, which is a shape
-    already on the box.
+    and the collision would overwrite the only copy of what was live this morning with a
+    copy of what has been live since lunchtime — the rollback target quietly becoming the
+    thing you are rolling back from. `attempt` gains the time, a shape already on the box.
     """
     when = when or datetime.now(timezone.utc)
     token = SAFE_REASON.sub("-", reason).strip("-").lower() or "install"
     name = f"{installed_path}.bak-{token}-{when.strftime('%Y%m%d')}"
-    if name in taken:
-        name = f"{name}-{when.strftime('%H%M%S')}"
-    return name
-
-
-def existing_backup_names(sftp, installed_path):
-    """Backup names already beside the manifest, for collision avoidance only.
-
-    `listdir` on the containing directory reads names; it opens, moves and deletes
-    nothing. It is also the one place this needs to know what else is in there, and
-    `uploads/` and `releases/` are exactly the entries it must keep its hands off —
-    so the result is filtered to names derived from the manifest before it is used.
-    """
-    directory, _, base = installed_path.rpartition("/")
-    try:
-        names = sftp.listdir(directory or ".")
-    except OSError:
-        return set()
-    prefix = base + ".bak-"
-    return {f"{directory}/{n}" for n in names if n.startswith(prefix)}
+    return name if attempt == 0 else f"{name}-{when.strftime('%H%M%S')}"
 
 
 def sha256_bytes(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def take_backup(sftp, installed_path, reason, out=None):
+    """Copy the live manifest aside, refusing to clobber an existing backup.
+
+    🔑 The exclusive create is the whole guarantee. A listing-then-choose would be a
+    CHECK, and a check that cannot list the directory has to either refuse or fail open
+    — and failing open silently re-enables the overwrite it was added to prevent. `"wx"`
+    is O_EXCL: the server refuses the create, so no answer from us is needed and no
+    directory has to be read. That is also why nothing here lists, globs or touches a
+    directory; the manifest's neighbours are `uploads/` (the evidence corpus) and
+    `releases/`.
+    """
+    out = sys.stderr if out is None else out
+    for attempt in (0, 1):
+        backup = backup_name(installed_path, reason, attempt=attempt)
+        try:
+            with sftp.open(installed_path, "rb") as src, sftp.open(backup, "wx") as dst:
+                dst.write(src.read())
+        except OSError as exc:
+            if attempt == 0:
+                print(f"  backup:    {backup} exists ({exc}); adding the time", file=out)
+                continue
+            raise
+        sftp.chmod(backup, 0o644)
+        print(f"  backup:    {backup}", file=out)
+        return backup
+    raise RuntimeError("unreachable")
+
+
 def install(sftp, installed_path, payload, reason, had_previous, out=None):
-    """Back up, write atomically, verify. Returns the backup path, or None on a first install.
+    """Back up, verify, then publish. Returns the backup path, or None on a first install.
 
-    The staged temp file sits in the manifest's own directory rather than /tmp because
-    the rename that publishes it is only atomic within one filesystem. The API caches
-    the parsed manifest keyed on the file's mtime alone, so a partially written file
-    would be read and served as gospel; a rename means the path never holds anything
-    but a complete document.
+    🔴 The read-back happens BEFORE the rename, not after. Verifying afterwards detects a
+    bad write only once the API is already serving it, and with `max-age=300` on the
+    responses it has propagated by the time anyone reads the error. It is not theoretical:
+    paramiko's `SFTPFile._close()` swallows the errors raised by the CMD_CLOSE round-trip,
+    so a server-side failure at flush time need not raise at all — the read-back is the
+    only reliable check, and it is worth nothing one step too late. Verifying the staged
+    copy turns this from detection into prevention, which is what the staging is for.
 
-    Named files throughout. Nothing here globs, lists or removes a directory: the
-    manifest's neighbours are `uploads/` (the evidence corpus) and `releases/`.
+    The staged file sits in the manifest's own directory rather than /tmp because the
+    rename that publishes it is only atomic within one filesystem, and it carries the pid
+    so two runs cannot interleave on one temp path.
     """
     out = sys.stderr if out is None else out
     backup = None
     if had_previous:
-        backup = backup_name(installed_path, reason,
-                             taken=existing_backup_names(sftp, installed_path))
-        with sftp.open(installed_path, "rb") as src, sftp.open(backup, "wb") as dst:
-            dst.write(src.read())
-        sftp.chmod(backup, 0o644)
-        print(f"  backup:    {backup}", file=out)
+        backup = take_backup(sftp, installed_path, reason, out=out)
     else:
         print("  backup:    none taken — nothing was installed there", file=out)
 
-    # posix_rename, not rename: plain SFTP rename is specified to FAIL when the target
-    # exists, and the target always exists here. A server without the OpenSSH extension
-    # raises, which is the right outcome — the alternative is an unlink-then-write with a
-    # window where the API 404s.
-    staged = f"{installed_path}.installing"
+    staged = f"{installed_path}.installing.{os.getpid()}"
     try:
         with sftp.open(staged, "wb") as f:
             f.write(payload)
         sftp.chmod(staged, 0o644)
+
+        with sftp.open(staged, "rb") as f:
+            landed = f.read()
+        if sha256_bytes(landed) != sha256_bytes(payload):
+            raise RuntimeError(
+                f"{staged} does not match what was sent, so it was not published. "
+                f"{installed_path} is untouched and still live.")
+
+        # posix_rename, not rename: plain SFTP rename is specified to FAIL when the target
+        # exists, and the target always exists here. A server without the OpenSSH extension
+        # raises, which is the right outcome — the alternative is an unlink-then-write with
+        # a window where the API 404s.
         sftp.posix_rename(staged, installed_path)
     except Exception:
+        # Broad on purpose: a dead channel raises SSHException, not an OSError, and
+        # letting that escape here would leave the staged file behind AND mask the
+        # original failure with a second one.
         try:
             sftp.remove(staged)
-        except IOError:
-            pass
+        except Exception:
+            print(f"  WARNING: could not remove the staged file {staged}; delete it by "
+                  "hand. It is not live and the API never reads it.", file=out)
         raise
-
-    with sftp.open(installed_path, "rb") as f:
-        landed = f.read()
-    if sha256_bytes(landed) != sha256_bytes(payload):
-        raise RuntimeError(
-            f"{installed_path} does not match what was sent. The file on the box is NOT the "
-            f"manifest you built; restore {backup} before anything else.")
     return backup
 
-
-# --------------------------------------------------------------------------
 
 def load_local_manifest(path):
     raw = Path(path).read_bytes()
@@ -446,11 +527,21 @@ def build_arg_parser():
                     help="Acknowledge exactly N paths whose severity now scores (review -> violation).")
     ap.add_argument("--accept-narrowed", type=int, default=None, metavar="N",
                     help="Acknowledge exactly N paths whose severity no longer scores.")
+    ap.add_argument("--accept-alternates-dropped", type=int, default=None, metavar="N",
+                    help="Acknowledge exactly N enforced paths losing an allowed alternate "
+                         "hash. Dropping one makes a legitimate community file score.")
+    ap.add_argument("--accept-alternates-gained", type=int, default=None, metavar="N",
+                    help="Acknowledge exactly N enforced paths gaining an allowed alternate hash.")
     return ap
 
 
 def connect(server, user, key_path):
     ssh = paramiko.SSHClient()
+    # Loaded before the policy so AutoAdd only ever covers a genuinely unknown host: a
+    # CHANGED key then raises BadHostKeyException instead of being accepted in silence,
+    # which for the script that replaces what every client is checked against is the
+    # difference between a warning and none.
+    ssh.load_system_host_keys()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.connect(server, username=user, key_filename=key_path)
     return ssh
@@ -472,8 +563,10 @@ def main(argv=None):
     if not args.server:
         sys.exit("--server is required (or set $KTP_AC_API_HOST). No host is compiled in: "
                  "this script writes to whatever it is pointed at.")
-    if args.no_gate and (args.accept_added is not None or args.accept_removed is not None
-                         or args.accept_widened is not None or args.accept_narrowed is not None):
+    if args.no_gate and any(v is not None for v in
+                            (args.accept_added, args.accept_removed, args.accept_widened,
+                             args.accept_narrowed, args.accept_alternates_dropped,
+                             args.accept_alternates_gained)):
         sys.exit("--no-gate with an --accept count is contradictory: the counts ARE the "
                  "acknowledgement. Drop --no-gate and let them be checked.")
 
@@ -487,9 +580,31 @@ def main(argv=None):
     ssh = connect(args.server, args.user, key_path)
     try:
         sftp = ssh.open_sftp()
-        installed_path = args.installed_path or resolve_installed_path(
-            ssh, args.appsettings, DEFAULT_MANIFEST_PATH, out=err)
+        if args.installed_path:
+            installed_path = args.installed_path
+            print(f"  installed path: {installed_path} (--installed-path; the API's "
+                  "configuration was NOT consulted)", file=err)
+        else:
+            installed_path = resolve_installed_path(ssh, args.appsettings,
+                                                    DEFAULT_MANIFEST_PATH, out=err)
         previous, previous_raw, unavailable = read_remote_manifest(sftp, installed_path)
+
+        # A file that is THERE but cannot be read is not a first install and must never
+        # be treated as one: there is no way to copy it aside, so replacing it destroys
+        # the only copy. Separated from ENOENT by a stat, because the read failure alone
+        # cannot tell the two apart and the refusal below would otherwise point an
+        # operator at --no-gate — the one flag that overwrites without a backup.
+        if previous_raw is None:
+            try:
+                sftp.stat(installed_path)
+            except OSError:
+                pass
+            else:
+                print(f"\nREFUSED: {installed_path} exists but could not be read "
+                      f"({unavailable}). It cannot be backed up, so it must not be "
+                      "replaced. --no-gate does not cover this: fix the file first.",
+                      file=err)
+                return 2
 
         # Byte-identical installs are the one case worth short-circuiting: they would
         # otherwise take a backup of a file against its own twin and move the mtime,
@@ -505,8 +620,12 @@ def main(argv=None):
                                          limit, diff=diff):
             print(line, file=err)
 
+        alternates = (alternate_transitions(previous, candidate)
+                      if previous is not None else ((), ()))
         if diff is not None:
             for line in format_severity_verdict(severity_transitions(diff)):
+                print(line, file=err)
+            for line in format_alternate_verdict(*alternates):
                 print(line, file=err)
 
         print("\n=== Install gate ===", file=err)
@@ -526,8 +645,10 @@ def main(argv=None):
             return 2
         else:
             ack = Acknowledgements(args.accept_added, args.accept_removed,
-                                   args.accept_widened, args.accept_narrowed)
-            if not gate_install(diff, ack, gen.enforced_changes, out=err):
+                                   args.accept_widened, args.accept_narrowed,
+                                   args.accept_alternates_dropped,
+                                   args.accept_alternates_gained)
+            if not gate_install(diff, ack, gen.enforced_changes, alternates, out=err):
                 print(f"  {installed_path} left UNCHANGED.", file=err)
                 return 2
 
@@ -549,6 +670,8 @@ def main(argv=None):
         print(f"  sha256:    {sha256_bytes(payload)}", file=err)
         if backup:
             print(f"  rollback:  cp {backup} {installed_path}", file=err)
+        else:
+            print("  rollback:  none — there was nothing installed to keep", file=err)
         print("  No restart: the API re-reads on mtime change. Responses carry "
               "max-age=300, so allow a few minutes.", file=err)
         return 0
