@@ -470,6 +470,22 @@ def test_an_existing_backup_is_never_clobbered(mod):
     assert sftp.files[backup] == b"live"
 
 
+def test_an_unreadable_live_file_is_not_reported_as_a_name_collision(mod):
+    """Reading the source inside the retry would make a failed read indistinguishable
+    from a taken name, and the run would say "exists; adding the time" about a file that
+    is fine and a read that is not."""
+    sftp = FakeSFTP({LIVE: b"live"})
+    real_open = sftp.open
+    sftp.open = lambda p, m="r": (_ for _ in ()).throw(OSError("denied")) \
+        if p == LIVE and "r" in m else real_open(p, m)
+
+    out = io.StringIO()
+    with pytest.raises(OSError, match="denied"):
+        mod.take_backup(sftp, LIVE, "fix", out=out)
+    assert "adding the time" not in out.getvalue()
+    assert backups(sftp) == []
+
+
 def test_the_backup_is_chmodded_to_0644(mod):
     sftp = FakeSFTP({LIVE: b"live"})
     backup = mod.install(sftp, LIVE, b"new", "r", had_previous=True, out=io.StringIO())

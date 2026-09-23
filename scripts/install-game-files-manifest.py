@@ -415,11 +415,18 @@ def take_backup(sftp, installed_path, reason, out=None):
     `releases/`.
     """
     out = sys.stderr if out is None else out
+
+    # Read the source ONCE, outside the retry. Inside it, a failure to read the live
+    # manifest would be indistinguishable from a name collision, and the run would
+    # report "exists; adding the time" about a file that is fine and a read that is not.
+    with sftp.open(installed_path, "rb") as src:
+        live = src.read()
+
     for attempt in (0, 1):
         backup = backup_name(installed_path, reason, attempt=attempt)
         try:
-            with sftp.open(installed_path, "rb") as src, sftp.open(backup, "wx") as dst:
-                dst.write(src.read())
+            with sftp.open(backup, "wx") as dst:
+                dst.write(live)
         except OSError as exc:
             if attempt == 0:
                 print(f"  backup:    {backup} exists ({exc}); adding the time", file=out)
