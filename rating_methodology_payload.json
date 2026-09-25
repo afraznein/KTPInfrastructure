@@ -314,6 +314,28 @@
    }
   }
  },
+ "version_history": [
+  {
+   "week": 1,
+   "date": "2026-09-16",
+   "accuracy_pct": 55.6,
+   "log_loss": 0.6931,
+   "completed_matches": 9,
+   "upsets": 0,
+   "upsets_pct": 0.0,
+   "headline": "9 matches rated, 56% accuracy"
+  },
+  {
+   "week": 2,
+   "date": "2026-09-22",
+   "accuracy_pct": 56.2,
+   "log_loss": 0.6908,
+   "completed_matches": 16,
+   "upsets": 0,
+   "upsets_pct": 0.0,
+   "headline": "16 matches rated, 56% accuracy"
+  }
+ ],
  "source_report_count": 16,
  "report_schema_version": 9
 }
