@@ -3,7 +3,7 @@
  "provisional": true,
  "notice": "Provisional rating: recomputed from the whole season every week, so published values change retroactively.",
  "method_version": "openskill_pl_v1",
- "generated_at": "2026-09-22T12:47:35+00:00",
+ "generated_at": "2026-09-26T00:10:34+00:00",
  "min_matches": 3,
  "players": [
   {
@@ -119,6 +119,34 @@
    "conservative": 2.54
   },
   {
+   "name": "bro_Oks",
+   "matches": 2,
+   "rating": 27.16,
+   "uncertainty": 8.22,
+   "conservative": 2.5
+  },
+  {
+   "name": "Gz",
+   "matches": 2,
+   "rating": 27.16,
+   "uncertainty": 8.22,
+   "conservative": 2.5
+  },
+  {
+   "name": "topknot",
+   "matches": 2,
+   "rating": 27.16,
+   "uncertainty": 8.22,
+   "conservative": 2.5
+  },
+  {
+   "name": "XZIST",
+   "matches": 2,
+   "rating": 27.16,
+   "uncertainty": 8.22,
+   "conservative": 2.5
+  },
+  {
    "name": "BitchX",
    "matches": 2,
    "rating": 27.12,
@@ -175,13 +203,6 @@
    "conservative": 1.34
   },
   {
-   "name": "bro_Oks",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
    "name": "faradayvzla",
    "matches": 1,
    "rating": 26.18,
@@ -190,13 +211,6 @@
   },
   {
    "name": "gaul",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "Gz",
    "matches": 1,
    "rating": 26.18,
    "uncertainty": 8.28,
@@ -308,21 +322,7 @@
    "conservative": 1.34
   },
   {
-   "name": "topknot",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
    "name": "unk",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "XZIST",
    "matches": 1,
    "rating": 26.18,
    "uncertainty": 8.28,
@@ -334,6 +334,20 @@
    "rating": 26.06,
    "uncertainty": 8.28,
    "conservative": 1.22
+  },
+  {
+   "name": "n8",
+   "matches": 1,
+   "rating": 26.0,
+   "uncertainty": 8.28,
+   "conservative": 1.16
+  },
+  {
+   "name": "Yorel",
+   "matches": 1,
+   "rating": 26.0,
+   "uncertainty": 8.28,
+   "conservative": 1.16
   },
   {
    "name": "bud",
@@ -383,6 +397,48 @@
    "rating": 25.72,
    "uncertainty": 8.28,
    "conservative": 0.88
+  },
+  {
+   "name": "bayko",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
+  },
+  {
+   "name": "chi",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
+  },
+  {
+   "name": "kAFRE",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
+  },
+  {
+   "name": "nightmare",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
+  },
+  {
+   "name": "NoName",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
+  },
+  {
+   "name": "Sz",
+   "matches": 1,
+   "rating": 25.64,
+   "uncertainty": 8.28,
+   "conservative": 0.8
   },
   {
    "name": "Allen",
@@ -532,6 +588,13 @@
    "conservative": 0.35
   },
   {
+   "name": "Suricato",
+   "matches": 1,
+   "rating": 24.36,
+   "uncertainty": 8.29,
+   "conservative": -0.51
+  },
+  {
    "name": "baron",
    "matches": 1,
    "rating": 24.28,
@@ -572,6 +635,20 @@
    "rating": 24.05,
    "uncertainty": 8.28,
    "conservative": -0.79
+  },
+  {
+   "name": "BurN",
+   "matches": 1,
+   "rating": 24.0,
+   "uncertainty": 8.28,
+   "conservative": -0.84
+  },
+  {
+   "name": "Ryan",
+   "matches": 1,
+   "rating": 24.0,
+   "uncertainty": 8.28,
+   "conservative": -0.84
   },
   {
    "name": "dyelife",
@@ -637,21 +714,7 @@
    "conservative": -0.99
   },
   {
-   "name": "Adam",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
    "name": "Az",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "Beirinha",
    "matches": 1,
    "rating": 23.82,
    "uncertainty": 8.28,
@@ -666,13 +729,6 @@
   },
   {
    "name": "Chuave1",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "crick",
    "matches": 1,
    "rating": 23.82,
    "uncertainty": 8.28,
@@ -700,20 +756,6 @@
    "conservative": -1.02
   },
   {
-   "name": "Ho0li",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "Jiraiya",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
    "name": "Jonski",
    "matches": 1,
    "rating": 23.82,
@@ -735,13 +777,6 @@
    "conservative": -1.02
   },
   {
-   "name": "Red",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
    "name": "rolly",
    "matches": 1,
    "rating": 23.82,
@@ -757,20 +792,6 @@
   },
   {
    "name": "Shreddies",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "Sq",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "SuecoZ",
    "matches": 1,
    "rating": 23.82,
    "uncertainty": 8.28,
@@ -840,6 +861,34 @@
    "conservative": -1.16
   },
   {
+   "name": "Adam",
+   "matches": 2,
+   "rating": 23.19,
+   "uncertainty": 8.23,
+   "conservative": -1.5
+  },
+  {
+   "name": "crick",
+   "matches": 2,
+   "rating": 23.19,
+   "uncertainty": 8.23,
+   "conservative": -1.5
+  },
+  {
+   "name": "Ho0li",
+   "matches": 2,
+   "rating": 23.19,
+   "uncertainty": 8.23,
+   "conservative": -1.5
+  },
+  {
+   "name": "Sq",
+   "matches": 2,
+   "rating": 23.19,
+   "uncertainty": 8.23,
+   "conservative": -1.5
+  },
+  {
    "name": "epyon",
    "matches": 2,
    "rating": 22.88,
@@ -873,6 +922,34 @@
    "rating": 22.88,
    "uncertainty": 8.22,
    "conservative": -1.78
+  },
+  {
+   "name": "Beirinha",
+   "matches": 2,
+   "rating": 22.84,
+   "uncertainty": 8.22,
+   "conservative": -1.82
+  },
+  {
+   "name": "Jiraiya",
+   "matches": 2,
+   "rating": 22.84,
+   "uncertainty": 8.22,
+   "conservative": -1.82
+  },
+  {
+   "name": "RED",
+   "matches": 2,
+   "rating": 22.84,
+   "uncertainty": 8.22,
+   "conservative": -1.82
+  },
+  {
+   "name": "SuecoZ",
+   "matches": 2,
+   "rating": 22.84,
+   "uncertainty": 8.22,
+   "conservative": -1.82
   },
   {
    "name": "kHORGA",
@@ -945,6 +1022,6 @@
    "conservative": -2.03
   }
  ],
- "source_report_count": 16,
+ "source_report_count": 18,
  "report_schema_version": 9
 }
