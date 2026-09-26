@@ -314,7 +314,9 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             )
         else:
             assert player["damage_per_life"] is None
-    assert report["schema_version"] == 20
+    # Literal on purpose: a bump regenerates the whole corpus, so it should
+    # cost a deliberate edit here rather than tracking the constant silently.
+    assert report["schema_version"] == 21
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []
