@@ -110,6 +110,10 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_034_grenade_throw_events.sql",
     "sql/migrate_035_capture_health_repaired.sql",
     "sql/migrate_036_hitreg_quality.sql",
+    # Applied here even though it is still PROPOSED for production: the daemon
+    # INSERTs into ktp_move_census, so a lane without the table exercises the
+    # new handler as a no-op and reports clean either way.
+    "sql/migrate_038_move_census.sql",
 )
 
 DEFAULT_SEED_FILES = (

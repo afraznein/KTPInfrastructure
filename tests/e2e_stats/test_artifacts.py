@@ -111,7 +111,7 @@ def daemon_repo(tmp_path):
         (23, "headshot_observed_provenance"),
         (24, "team_membership_intervals"),
         (25, "position_state_map_revision"),
-        # Upstream also carries 002 and 026; Lane B never applies them.
+        # Upstream also carries 002, 026 and 037; Lane B never applies them.
         (27, "shot_events"),
         (28, "shot_events_dedup"),
         (29, "shot_target_state"),
@@ -122,6 +122,7 @@ def daemon_repo(tmp_path):
         (34, "grenade_throw_events"),
         (35, "capture_health_repaired"),
         (36, "hitreg_quality"),
+        (38, "move_census"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -167,7 +168,7 @@ def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
 
 
 def test_default_schema_sequence_includes_retention_through_shot_events():
-    assert DEFAULT_SCHEMA_FILES[-21:] == (
+    assert DEFAULT_SCHEMA_FILES[-22:] == (
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
@@ -192,6 +193,7 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_034_grenade_throw_events.sql",
         "sql/migrate_035_capture_health_repaired.sql",
         "sql/migrate_036_hitreg_quality.sql",
+        "sql/migrate_038_move_census.sql",
     )
 
 
