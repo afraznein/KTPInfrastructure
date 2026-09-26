@@ -1,0 +1,27 @@
+{
+  "_comment": [
+    "Copy to the path in $KTP_CASTER_CASTS (default caster/casts.json), OUTSIDE this repo, and fill",
+    "it in. One entry per cast. 'start' is the recording's start time as a unix epoch. 'matches'",
+    "maps each match covered by that cast to its map name; a cast can cover more than one.",
+    "A LIVE cast (started while the match was played) aligns with --offset 60. A DELAYED cast",
+    "(the match re-cast later from a recording) has no epoch relationship and needs --anchor MM:SS",
+    "pointing at the half end, which commentary marks out loud.",
+    "This file is data about real broadcasts, so it is not committed here."
+  ],
+  "<cast-id>": {
+    "start": 1700000000,
+    "kind": "live",
+    "matches": {
+      "<match-id>": "dod_<map>"
+    }
+  },
+  "<another-cast-id>": {
+    "start": 1700009999,
+    "kind": "delayed",
+    "anchor": "26:01",
+    "matches": {
+      "<match-id>": "dod_<map>",
+      "<second-match-id>": "dod_<map>"
+    }
+  }
+}
