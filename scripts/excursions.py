@@ -15,10 +15,15 @@ of them and the rear line is the shallower of those. This handled every map
 in the pool, neutral-authored ones included.
 
 Isolation is the one parameter that does not generalise: the same distance
-is "alone" on lennon and "standing near someone" on harrington. The default
-is the flat 1200 the sweep used; callers with a per-map percentile pass it
-in. Private input: raw coordinates never leave this module -- only distances,
-depths and times do.
+is "alone" on lennon and "standing near someone" on harrington. It is now
+per map -- ISOLATION_BY_MAP, the p80 of each map's OWN distribution of
+nearest-teammate distance measured while past the enemy rear line, over
+87,958 samples from 260 matches (2026-09-22). The flat 1200 it replaces was
+measuring the map rather than the player: 1200 is exceeded by 18% of those
+samples on lennon5 and 58% on railroad2, so the same rule was far too tight
+on the most-played map and far too loose on the widest ones. Private input:
+raw coordinates never leave this module -- only distances, depths and times
+do.
 
 The window rule alone misses the FAST deep push: a player who goes in with
 the team, breaks off for the last few seconds and takes the flag ahead of
@@ -40,10 +45,26 @@ from typing import Any
 DEFINITION = "excursions_v1"
 DEFINITION_VERSION = 1
 
+# p80 of each map's own distribution of nearest-living-teammate distance,
+# sampled only while past the enemy rear line (87,958 samples, 260 matches,
+# 2026-09-22). Keyed by map_name exactly as ktp_matches stores it. A map that
+# is not here falls back to ExcursionConfig.isolation_units, so a new map in
+# the pool degrades to the old league-wide behaviour instead of failing.
+# Re-derive rather than hand-tune: coordination review/hidden-value.
+ISOLATION_BY_MAP: dict[str, float] = {
+    "dod_anzio": 1497.0,
+    "dod_harrington": 1570.0,
+    "dod_lennon2": 1111.0,
+    "dod_lennon5_b1": 1145.0,
+    "dod_railroad2_s9a": 2292.0,
+    "dod_saints2_b3e": 1620.0,
+    "dod_thunder2": 1591.0,
+}
+
 
 @dataclass(frozen=True)
 class ExcursionConfig:
-    isolation_units: float = 1200.0   # nearest living teammate must be farther than this
+    isolation_units: float = 1200.0   # fallback when the map has no measured threshold
     min_seconds: float = 10.0         # shorter runs are just routing
     sample_tolerance: float = 2.5     # a teammate sample counts if within this of the runner's
     gap_tolerance: int = 1            # violating samples allowed inside one window
@@ -53,6 +74,17 @@ class ExcursionConfig:
     def validate(self) -> None:
         if self.isolation_units <= 0 or self.min_seconds <= 0:
             raise ValueError("isolation_units and min_seconds must be positive")
+
+    def isolation_for(self, map_name: str | None) -> float:
+        """The measured threshold for this map, or the league-wide fallback.
+
+        A caller that sets `isolation_units` explicitly is overriding the
+        rule, so its value wins over the table -- that is how the sweep
+        tooling pins one distance across every map to compare them.
+        """
+        if self.isolation_units != ExcursionConfig.isolation_units:
+            return self.isolation_units
+        return ISOLATION_BY_MAP.get(str(map_name or ""), self.isolation_units)
 
 
 def _f(value: Any) -> float | None:
@@ -96,6 +128,7 @@ def build_excursions(
     config: ExcursionConfig | None = None,
     capture_credits: Sequence[dict[str, Any]] | None = None,
     *,
+    map_name: str | None = None,
     source_available: bool = True,
 ) -> dict[str, Any]:
     """Per-half solo deep runs, plus every rear-flag touch measured.
@@ -112,17 +145,21 @@ def build_excursions(
     it) -- the fast-push signature the window rule cannot see."""
     cfg = config or ExcursionConfig()
     cfg.validate()
+    isolation = cfg.isolation_for(map_name)
     envelope: dict[str, Any] = {
         "definition": DEFINITION,
         "definition_version": DEFINITION_VERSION,
-        "parameters": asdict(cfg),
+        # The resolved distance, not just the config default: a reader of the
+        # report should not have to know the table to know what was applied.
+        "parameters": asdict(cfg) | {"isolation_units_applied": isolation},
         "status": "available",
         "visibility": "private_shadow_only",
         "writes": False,
         "rating_effect": False,
         "caveats": [
-            "Isolation distance is a flat league-wide prior; per-map "
-            "calibration is pending (coordination: infra-hidden-value-plays).",
+            f"Isolation distance {isolation:.0f} units"
+            + (f" (p80 measured for {map_name})." if str(map_name or "") in ISOLATION_BY_MAP
+               else " (league-wide fallback; this map has no measured p80)."),
         ],
         "rows": [],
         "touches": [],
@@ -263,7 +300,7 @@ def build_excursions(
                     i += 1
                     continue
                 mate = nearest_mate(pid, t, x, y)
-                if mate is not None and mate <= cfg.isolation_units:
+                if mate is not None and mate <= isolation:
                     i += 1
                     continue
                 j, bad, last_good = i, 0, i
@@ -274,7 +311,7 @@ def build_excursions(
                         break
                     d2 = depth(x2, y2, team)
                     m2 = nearest_mate(pid, t2, x2, y2)
-                    if d2 > rear_line[team] and (m2 is None or m2 > cfg.isolation_units):
+                    if d2 > rear_line[team] and (m2 is None or m2 > isolation):
                         last_good, bad = j, 0
                         good.append((t2, x2, y2, d2, m2 if m2 is not None else float("inf")))
                     else:

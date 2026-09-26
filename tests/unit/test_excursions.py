@@ -1,7 +1,8 @@
 """Excursions: solo runs behind the enemy's lines, from positions alone."""
 from __future__ import annotations
 
-from scripts.excursions import ExcursionConfig, build_excursions
+from scripts.excursions import (ISOLATION_BY_MAP, ExcursionConfig,
+                                build_excursions)
 
 # A straight map: Allies spawn at y=-2400, Axis at y=+2400, five flags on the line.
 FLAGS = [
@@ -51,8 +52,9 @@ def base_tracks():
     return tr
 
 
-def run(tracks, flag_states=None, cfg=None):
-    return build_excursions(samples(tracks), FLAGS, spawns(), flag_states or [], cfg)
+def run(tracks, flag_states=None, cfg=None, map_name=None):
+    return build_excursions(samples(tracks), FLAGS, spawns(), flag_states or [], cfg,
+                            map_name=map_name)
 
 
 def test_solo_deep_run_is_an_excursion_with_closest_flag():
@@ -101,6 +103,54 @@ def test_isolation_is_configurable():
     tr[2] = tr[2][:3] + [(t, 900, 200 + (t - 300) * 40) for t in range(300, 362, 2)]  # 900 u beside
     assert run(tr)["rows"] == []
     assert len(run(tr, cfg=ExcursionConfig(isolation_units=800))["rows"]) == 2
+
+
+def beside(distance):
+    """Two players walking the same line, `distance` apart, deep in enemy ground."""
+    tr = base_tracks()
+    tr[1] = tr[1][:3] + [(t, 0, 200 + (t - 300) * 40) for t in range(300, 362, 2)]
+    tr[2] = (tr[2][:3]
+             + [(t, distance, 200 + (t - 300) * 40) for t in range(300, 362, 2)])
+    return tr
+
+
+def test_a_tight_map_keeps_a_run_the_flat_rule_dropped():
+    # 1170 units apart. The flat 1200 calls that "standing near someone" and
+    # drops the run; on lennon5, where p80 is 1145, it is genuinely alone.
+    # This is the +13% direction on the most-played map in the pool.
+    tr = beside(1170)
+    assert run(tr)["rows"] == []                           # no map: flat 1200 fallback
+    assert len(run(tr, map_name="dod_lennon5_b1")["rows"]) == 2
+
+
+def test_a_wide_map_drops_a_run_the_flat_rule_kept():
+    # The other direction: 1800 units reads as isolated under the flat rule,
+    # but on railroad2 (p80 2292) that is still beside a teammate -- which is
+    # why the flat rule over-reported there by more than half.
+    tr = beside(1800)
+    assert len(run(tr)["rows"]) == 2
+    assert run(tr, map_name="dod_railroad2_s9a")["rows"] == []
+
+
+def test_an_unmeasured_map_falls_back_to_the_league_wide_distance():
+    out = run(beside(1300), map_name="dod_some_new_map_b2")
+    assert len(out["rows"]) == 2
+    assert out["parameters"]["isolation_units_applied"] == 1200.0
+    assert "league-wide fallback" in out["caveats"][0]
+
+
+def test_an_explicit_distance_still_overrides_the_table():
+    # The sweep tooling pins one distance across every map to compare them.
+    out = run(beside(1300), cfg=ExcursionConfig(isolation_units=900),
+              map_name="dod_lennon5_b1")
+    assert len(out["rows"]) == 2
+    assert out["parameters"]["isolation_units_applied"] == 900.0
+
+
+def test_the_applied_distance_is_reported():
+    out = run(base_tracks(), map_name="dod_harrington")
+    assert out["parameters"]["isolation_units_applied"] == ISOLATION_BY_MAP["dod_harrington"]
+    assert "p80 measured for dod_harrington" in out["caveats"][0]
 
 
 def credit(pid, flag, t, half=1):
