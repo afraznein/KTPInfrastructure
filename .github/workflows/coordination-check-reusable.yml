@@ -94,18 +94,57 @@ jobs:
             exit 1
           fi
 
-      - name: Verify any Blocked-by PR is merged
+      - name: Verify any Blocked-by entry is cleared
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # A blocked_by cell holds two different kinds of reference and they resolve
+          # differently. A dpl- id is a DEPLOY, recorded in NEIN-DEPLOY.md; looking one
+          # up with `gh pr view` can only ever return "unknown", so every PR in the
+          # workstream failed with a message naming the PR -- reading as a fault in the
+          # PR rather than a deploy nobody has run yet.
           row=$(grep -E "^\| *${{ inputs.repo_name }} *\|" "${{ steps.state.outputs.path }}" | head -1)
           blocked_by=$(echo "$row" | awk -F'|' '{print $6}' | xargs)
+          ledger="coord/NEIN-DEPLOY.md"
           if [ -n "$blocked_by" ] && [ "$blocked_by" != "—" ] && [ "$blocked_by" != "-" ]; then
-            for pr_url in $blocked_by; do
-              merged=$(gh pr view "$pr_url" --json merged --jq .merged 2>/dev/null || echo "unknown")
-              if [ "$merged" != "true" ]; then
-                echo "::error::Blocked by $pr_url, which is not merged yet (status: $merged)."
-                exit 1
-              fi
+            for ref in $blocked_by; do
+              case "$ref" in
+                dpl-*)
+                  if [ ! -f "$ledger" ]; then
+                    echo "::error::Blocked by deploy $ref, but $ledger is missing, so the block cannot be resolved. Refusing rather than passing."
+                    exit 1
+                  fi
+                  # The section runs from its own heading to the next deploy heading.
+                  # index() rather than a dynamic regex: a bracketed id has to survive YAML,
+                  # shell and awk escaping, and when it does not it becomes a character class
+                  # -- "[dpl-bd55]" parses as an invalid range and awk dies rather than
+                  # matching nothing, which is a hard failure wearing a lookup's clothes.
+                  section=$(awk -v id="$ref" '
+                    index($0, "### [" id "]") == 1 { inside = 1; next }
+                    inside && index($0, "### [dpl-") == 1 { exit }
+                    inside { print }
+                  ' "$ledger")
+                  if [ -z "$section" ]; then
+                    echo "::error::Blocked by deploy $ref, which has no section in $ledger. Either add the deploy row or correct the blocked_by cell -- an unresolvable id must not pass silently."
+                    exit 1
+                  fi
+                  # grep -c prints 0 and exits 1 when nothing matches; `|| true` keeps the
+                  # zero without appending a second value to the capture.
+                  outstanding=$(printf '%s\n' "$section" | grep -cE '^[[:space:]]*- \[ \]' || true)
+                  if [ "$outstanding" != "0" ]; then
+                    echo "::error::Blocked by DEPLOY $ref, which still has $outstanding step(s) outstanding in NEIN-DEPLOY.md. This is a deploy nobody has finished, not a problem with this pull request."
+                    exit 1
+                  fi
+                  echo "deploy $ref is complete -- not blocking"
+                  ;;
+                *)
+                  merged=$(gh pr view "$ref" --json merged --jq .merged 2>/dev/null || echo "unknown")
+                  if [ "$merged" != "true" ]; then
+                    echo "::error::Blocked by PR $ref, which is not merged yet (status: $merged)."
+                    exit 1
+                  fi
+                  echo "PR $ref is merged -- not blocking"
+                  ;;
+              esac
             done
           fi
