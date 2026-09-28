@@ -6,20 +6,33 @@ many were priced plays -- found mostly multi-kills, and concluded the signal was
 measures precision, and precision on the loud cases says nothing about whether a quiet play gets
 noticed. Scored the right way round on the same 25 plays, the answer is specific:
 
-  deep collapse / spawn pressure   lift 1.77   n=3
-  attempt, reached the flag        lift 1.78   n=2
-  solo run-through cap             lift 0.98   n=8
+  cap-out denial                   lift 0.00   n=10   (median reaction exactly zero)
+  solo run-through cap             lift 1.10   n=9
+  deep collapse / spawn pressure   lift 1.06   n=6    (was 1.77 at n=3 -- retracted)
+  attempt, reached the flag        lift 0.00   n=6    (was 1.78 at n=2 -- retracted)
   sneak cap                        lift 1.01   n=5
-  cap-out denial                   median reaction ZERO, lift 0.00   n=7
 
-A human watching registers a player bleeding into the enemy spawn, and does not register a cap-out
-denial at all. That zero is the finding rather than the absence of one: low salience is why these
-plays need pricing, not a reason to discount them. Class-specific language -- someone arriving
-unseen, someone holding alone -- fires on 9 of 25 including 4 of the 7 silent denials, so denials
-get narrated calmly rather than shouted. The sample is small: treat every number here as existence,
-not rate.
+The denial zero has held across both samples and is now on n=10: a human watching does not register
+these at all, which is why they need pricing rather than discounting. The two classes that looked
+strong at n=3 and n=2 did NOT survive reaching n=6 -- which is the whole argument for --record, since
+a number nobody wrote down cannot be seen to move. CLASS-SPECIFIC LANGUAGE IS ALSO A DEAD END, measured 2026-09-27. Phrases like "on his own",
+"quietly" or "in behind" looked discriminating in-sample (9 of 36 priced windows against a 16%
+baseline, lift 1.56) -- but those phrases were chosen by looking at the same 36 windows they were
+then scored on, which is circular. Evaluated leave-one-cast-out (choose the phrases on four casts,
+score them on the fifth), the list fires on 0% of held-out priced windows against a 10% baseline:
+lift 0.00. The apparently strong phrases were single occurrences; only "cap out" clears selection
+at all, and it does not generalise. `ninja_hits` is kept because printing what was said around a
+play is useful for reading, NOT because it is a signal. Treat every number here as existence, not
+rate.
 
   caster_recall.py [--class-only <substring>]
+  caster_recall.py --record <path.tsv>    append this run's per-class lift and report what moved
+
+WHY --record EXISTS. The stopping rule for this work is "when the numbers stop moving", not a
+sample size -- with only cast matches to draw on, a target n could be a season away. A stopping
+rule like that is worthless from memory: nobody can say whether a lift of 1.7 is where it has sat
+for three weeks or where it landed this morning. So every run appends a row per class, and the run
+prints the movement since the previous recording and whether the stability condition holds.
 
 Output: per priced play the reaction score in its window, the same statistic over 400 random
 windows in the same match as a baseline, the lift, and the class-language hits.
@@ -30,6 +43,8 @@ import json
 import random
 import re
 import statistics
+import csv as _csv
+import datetime as _dt
 import json
 import os
 import sys
@@ -82,14 +97,19 @@ def ninja_hits(segs, t, lo=WIN[0], hi=WIN[1]):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--class-only", default="")
+    ap.add_argument("--record", default="", help="append this run's per-class lift to this TSV")
+    ap.add_argument("--stable-delta", type=float, default=0.15,
+                    help="a class counts as settled when its lift moves less than this between runs")
     a = ap.parse_args()
     random.seed(7)
     rows_out, by_class = [], defaultdict(list)
     global BASE_NIN
     BASE_NIN = []
 
+    # Keys beginning with _ are store configuration (_consent, _channels), not casts.
     casts = {k: (v["start"], v["matches"]) for k, v in
-             json.loads(Path(CASTS_FILE).read_text(encoding="utf-8")).items()}
+             json.loads(Path(CASTS_FILE).read_text(encoding="utf-8")).items()
+             if not k.startswith("_") and v.get("matches")}
     for vod_id, (vod_start, matches) in casts.items():
         segs = align.load_segments(vod_id)
         for match_id, _map in matches.items():
@@ -134,10 +154,13 @@ def main():
               f"{', '.join(sorted(set(nin))[:4])}")
 
     print("\n-- by class --")
+    current = {}
     for cls, vals in sorted(by_class.items(), key=lambda kv: -len(kv[1])):
         scs = [v[0] for v in vals]
         bms = [v[1] for v in vals]
         nin = sum(1 for v in vals if v[2])
+        current[cls] = (len(vals), statistics.median(scs), statistics.mean(bms),
+                        statistics.median(scs) / statistics.mean(bms) if statistics.mean(bms) else 0.0)
         print(f"{cls:38} n={len(vals):2}  median react {statistics.median(scs):5.1f}  "
               f"baseline {statistics.mean(bms):5.1f}  lift {statistics.median(scs)/statistics.mean(bms):4.2f}  "
               f"ninja-language on {nin}/{len(vals)}")
@@ -152,6 +175,56 @@ def main():
     print(f"PLAY LANGUAGE (ninja/denial/positional, not excitement): fires in {hit}/{len(rows_out)} "
           f"= {hit/len(rows_out):.0%} of priced windows vs {bn:.0%} of random windows in the same "
           f"matches — lift {(hit/len(rows_out))/bn if bn else 0:.2f}")
+
+    if a.record:
+        record_history(a.record, current, a.stable_delta)
+
+
+WEIGHTED = ("cap-out denial", "solo run-through cap", "deep collapse")
+
+
+def record_history(path, current, stable_delta):
+    """Append one row per class, then say what moved since the last recording.
+
+    The file is append-only on purpose: a history you can rewrite cannot answer "has this
+    settled". Columns: run date, class, n, median reaction, baseline, lift."""
+    p = Path(path)
+    prev = {}
+    if p.exists():
+        with p.open(encoding="utf-8", newline="") as f:
+            for row in _csv.DictReader(f, delimiter="\t"):
+                prev[row["class"]] = (row["run"], float(row["lift"]), int(row["n"]))
+    else:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("run\tclass\tn\tmedian_react\tbaseline\tlift\n", encoding="utf-8", newline="\n")
+
+    today = _dt.date.today().isoformat()
+    with p.open("a", encoding="utf-8", newline="\n") as f:
+        for cls, (n, med, base, lift) in sorted(current.items()):
+            f.write(f"{today}\t{cls}\t{n}\t{med:.2f}\t{base:.2f}\t{lift:.3f}\n")
+    print(f"\n-- recorded to {p} --")
+
+    if not prev:
+        print("first recording: nothing to compare against yet")
+        return
+    settled = []
+    for cls, (n, med, base, lift) in sorted(current.items()):
+        was_run, was_lift, was_n = prev.get(cls, (None, None, None))
+        if was_lift is None:
+            print(f"{cls:38} new class this run (lift {lift:.2f}, n={n})")
+            continue
+        moved = lift - was_lift
+        crossed = (was_lift - 1.0) * (lift - 1.0) < 0
+        ok = abs(moved) < stable_delta and not crossed
+        note = "settled" if ok else ("CROSSED 1.0" if crossed else f"moved {moved:+.2f}")
+        print(f"{cls:38} lift {was_lift:.2f} -> {lift:.2f} ({was_run} -> {today}, n {was_n}->{n})  {note}")
+        if cls in WEIGHTED:
+            settled.append(ok)
+    if settled:
+        print("\nSTABILITY, the three weighted classes: "
+              + ("all settled since the previous run — a verdict can be declared"
+                 if all(settled) and len(settled) == len(WEIGHTED)
+                 else f"{sum(settled)}/{len(WEIGHTED)} settled — keep going"))
 
 
 if __name__ == "__main__":

@@ -1,16 +1,25 @@
 {
   "_comment": [
-    "Copy to the path in $KTP_CASTER_CASTS (default caster/casts.json), OUTSIDE this repo, and fill",
-    "it in. One entry per cast. 'start' is the recording's start time as a unix epoch. 'matches'",
-    "maps each match covered by that cast to its map name; a cast can cover more than one.",
-    "A LIVE cast (started while the match was played) aligns with --offset 60. A DELAYED cast",
-    "(the match re-cast later from a recording) has no epoch relationship and needs --anchor MM:SS",
-    "pointing at the half end, which commentary marks out loud.",
-    "This file is data about real broadcasts, so it is not committed here."
+    "Copy to $KTP_CASTER_CASTS (default caster/casts.json), OUTSIDE this repo, and fill it in.",
+    "_consent is REQUIRED: caster_weekly.py refuses to download anything until it says who",
+    "agreed to being transcribed and when. Recordings are transcribed once and deleted in the",
+    "same step. One entry per cast. 'start' is the recording's start as a unix epoch.",
+    "'matches' maps each match the cast covers to its map; a cast can cover more than one.",
+    "A LIVE cast (started while the match was played) aligns at a fixed +60 s. A DELAYED cast",
+    "(re-cast later from a recording) has no epoch relationship: set kind to 'delayed' and",
+    "'anchor' to the MM:SS where the half-end score is read aloud. 'scan' writes stubs with",
+    "empty matches; a human places them."
+  ],
+  "_consent": "<who agreed, and when>",
+  "_channels": [
+    "<channel url>",
+    "<another channel url>"
   ],
   "<cast-id>": {
     "start": 1700000000,
     "kind": "live",
+    "title": "<as listed>",
+    "url": "<watch url>",
     "matches": {
       "<match-id>": "dod_<map>"
     }
@@ -19,6 +28,8 @@
     "start": 1700009999,
     "kind": "delayed",
     "anchor": "26:01",
+    "title": "<as listed>",
+    "url": "<watch url>",
     "matches": {
       "<match-id>": "dod_<map>",
       "<second-match-id>": "dod_<map>"
