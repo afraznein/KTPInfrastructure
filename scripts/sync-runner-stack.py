@@ -27,9 +27,12 @@ WHAT IT REFUSES TO TOUCH, and this is the point of the tool rather than an
   - KTPMatchHandler / KTPPracticeMode are KTP_TEST_MODE builds. Byte-equal
     to the fleet is WRONG for them; md5 says nothing.
   - KTPHudObserver is rebuilt from upstream by the workflow on every run.
-  - Configs are runner-specific. `hud_observer.cfg` is absent ON PURPOSE --
-    it carries the live ingest URL and a production key, and restoring it
-    points the test harness at the real HUD ingest.
+  - Configs. ktp-tier2-stack-drift.py now REPORTS config drift against the
+    fleet, and this tool still does not write it: which configs the harness
+    should mirror is a judgement, not a mirror, and `hud_observer.cfg` is
+    absent ON PURPOSE -- it carries the live ingest URL and a production key,
+    and restoring it points the test harness at the real HUD ingest. Copy a
+    reported config across deliberately, by hand.
 
 GUARDS, each of which is a way a hand-run `scp` has gone wrong here:
 

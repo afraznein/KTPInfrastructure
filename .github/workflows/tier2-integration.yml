@@ -346,6 +346,54 @@ jobs:
           echo "KTP_EXPECTED_HUDOBSERVER_VERSION=$VER" >> "$GITHUB_ENV"
           echo "Staged KTPHudObserver.amxx ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPHudObserver.amxx") bytes, v$VER, sha $GIT_SHA)"
 
+      # KTPWitness's source lives in THIS repo, so it is the one staged artifact
+      # whose staleness nothing could ever detect: it is test-only, has no fleet
+      # counterpart, and ktp-tier2-stack-drift.py therefore has nothing to compare
+      # it against. Measured 2026-09-28: the runner held 1.7.0, built by hand on
+      # 2026-07-04, while this ref's source had been 1.8.0 since 2026-08-25 — the
+      # schema-22 telemetry assertions were being made by a plugin that predates
+      # them, and every run was green. Building it per run makes that impossible
+      # rather than detectable, the same reasoning as the two steps above.
+      #
+      # It compiles against the reviewed KTPAMXX includes checked out above, not
+      # the runner's toolchain includes alone: the witness calls the
+      # dodx_test_dispatch_* natives, and the toolchain bundle is refreshed by hand.
+      - name: Build + install KTPWitness from this ref's source
+        if: steps.changes.outputs.run == '1'
+        env:
+          TOOLCHAIN: /opt/ktp-tier2-runner/toolchain
+        run: |
+          set -euo pipefail
+          SRC="$GITHUB_WORKSPACE/tests/integration/witness"
+          SF="$KTP_HLDS_SERVERFILES"
+          WORK="$(mktemp -d)"
+          trap 'rm -rf "$WORK"' EXIT
+
+          mkdir -p "$WORK/include"
+          cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
+          cp "$GITHUB_WORKSPACE/.tier2/KTPAMXX/plugins/include/"*.inc "$WORK/include/"
+          tr -d '\r' < "$SRC/KTPWitness.sma" > "$WORK/KTPWitness.sma"
+
+          ( cd "$WORK" && \
+            LD_LIBRARY_PATH="$TOOLCHAIN" "$TOOLCHAIN/amxxpc" \
+              KTPWitness.sma -i"$WORK/include" -i"$WORK" -oKTPWitness.amxx )
+          install -D "$WORK/KTPWitness.amxx" \
+            "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx"
+
+          # Assert the installed artifact IS the source just compiled, decoded out
+          # of the .amxx rather than assumed. `strings` on a compiled plugin finds
+          # nothing (XXMA container, zlib, one char per 32-bit cell), so an empty
+          # read is a FAILED decode and fails here — it must never read as a pass.
+          NAME="$(sed -n 's/.*#define PLUGIN_NAME  *"\([^"]*\)".*/\1/p' "$SRC/KTPWitness.sma" | head -1)"
+          WANT="$(sed -n 's/.*#define PLUGIN_VERSION  *"\([^"]*\)".*/\1/p' "$SRC/KTPWitness.sma" | head -1)"
+          GOT="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import amxx_version; print(amxx_version.extract_version(sys.argv[2], sys.argv[3]) or "")' \
+                 "$GITHUB_WORKSPACE/scripts" "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx" "$NAME")"
+          if [ -z "$WANT" ] || [ -z "$GOT" ] || [ "$GOT" != "$WANT" ]; then
+            echo "::error::KTPWitness version check failed - source says '${WANT:-<unreadable>}', artifact decodes to '${GOT:-<undecodable>}'"
+            exit 1
+          fi
+          echo "Built KTPWitness $GOT ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPWitness.amxx") bytes)."
+
       - name: Verify test artifacts present in serverfiles
         if: steps.changes.outputs.run == '1'
         run: |
