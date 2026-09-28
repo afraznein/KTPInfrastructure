@@ -231,7 +231,13 @@ def main(argv: list[str] | None = None) -> int:
         official: dict[str, list] = defaultdict(list)
         practice: dict[str, list] = defaultdict(list)
         cache: dict[str, Any] = {}
-        for (match_id, half), meta in sorted(labels.items()):
+        # Loading dominates the runtime -- four report queries per match over
+        # every type -- and an unattended weekly job that prints nothing for
+        # twenty minutes reads as hung. Say where it is.
+        print(f"loading {len(labels)} labelled halves", flush=True)
+        for done, ((match_id, half), meta) in enumerate(sorted(labels.items()), 1):
+            if done % 25 == 0:
+                print(f"  {done}/{len(labels)} halves loaded", flush=True)
             if match_id not in cache:
                 cache[match_id] = load_inputs(ma, db, match_id, sources)
             inputs = cache[match_id]
@@ -251,6 +257,7 @@ def main(argv: list[str] | None = None) -> int:
         return dict(official), dict(practice)
 
     payload = build(collect, args.since, prior_halves=args.prior_halves)
+    print("fit complete", flush=True)
     old = json.loads(args.out.read_text(encoding="utf-8")) if args.out.exists() else {}
     changes = diff(old, payload)
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -138,22 +139,31 @@ def fit_logistic(
     """
     if not samples:
         raise ValueError("no samples to fit")
+    # Collapse identical rows first. A half emits a sample per event, and the
+    # state space is small -- flag_term is a multiple of 1/flags, alive_term of
+    # 1/roster -- so tens of thousands of samples carry a few hundred distinct
+    # rows. Weighting the duplicates is EXACT, not an approximation, and it is
+    # what makes per-map cross-validation finish: without it the weekly refit
+    # runs pooled fits over ~150k rows inside every fold and does not complete.
+    counts = Counter(samples)
+    rows = [(flag_term, alive_term, label, float(count))
+            for (flag_term, alive_term, label), count in counts.items()]
     a, b = 1.0, 1.0
     n = float(len(samples))
     for step in range(iterations):
         grad_a = grad_b = 0.0
-        for flag_term, alive_term, label in samples:
-            error = _sigmoid(a * flag_term + b * alive_term) - label
+        for flag_term, alive_term, label, weight in rows:
+            error = (_sigmoid(a * flag_term + b * alive_term) - label) * weight
             grad_a += error * flag_term
             grad_b += error * alive_term
         a -= learning_rate * (grad_a / n + l2 * a)
         b -= learning_rate * (grad_b / n + l2 * b)
         a, b = max(a, 0.0), max(b, 0.0)
     loss = 0.0
-    for flag_term, alive_term, label in samples:
+    for flag_term, alive_term, label, weight in rows:
         p = min(max(_sigmoid(a * flag_term + b * alive_term), 1e-12),
                 1.0 - 1e-12)
-        loss -= label * math.log(p) + (1 - label) * math.log(1.0 - p)
+        loss -= weight * (label * math.log(p) + (1 - label) * math.log(1.0 - p))
     return FitResult(a, b, len(samples), halves, round(loss / n, 6),
                      iterations)
 
