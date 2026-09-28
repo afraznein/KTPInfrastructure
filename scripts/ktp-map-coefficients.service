@@ -1,0 +1,22 @@
+[Unit]
+Description=Refit per-map flag_swing coefficients and open a pull request
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ktpreports
+WorkingDirectory=/opt/ktp-reports/KTPInfrastructure
+# Never commits to main and never merges: the whole point is that a human
+# reads the diff. A run that changes nothing exits 0 having opened nothing.
+ExecStart=/usr/local/bin/ktp-map-coefficients-refit.sh
+Nice=10
+IOSchedulingClass=idle
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/ktp-reports/KTPInfrastructure /var/log
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -22,13 +22,47 @@ state machine starts the next round clean.
 """
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 CREDIT_JOIN_TOLERANCE_SECONDS = 3.0
+
+# Per-map coefficients, shrunk toward the league fit, written here from
+# scripts/fit_team_score_labels.py output. EMPTY means every map uses the
+# league-wide prior, which is exactly the behaviour before this table existed
+# -- so an unfitted map, or an unfitted league, changes nothing.
+#
+# The league plays one map a week, and the maps are not the same game: fitted
+# on 54 labelled S10 halves, the flag coefficient comes out 1.76 on harrington,
+# 1.51 on lennon5_b1 and 4.52 on thunder2 against a pooled 1.99. Held out over
+# halves, pooled wins narrowly on the first two (they overfit their own 16-20
+# halves) and per-map wins decisively on thunder2. That is why these are
+# SHRUNK per-map values and not independent fits: a map has to earn its
+# distance from the league. The alive coefficient is stable across maps
+# (0.92-0.96); it is the flag term that is map-specific.
+def _load_map_coefficients() -> dict[str, tuple[float, float]]:
+    """Read the reviewed table, or fall back to the league-wide prior.
+
+    A missing, unreadable or malformed file yields an empty table, which is
+    the pre-existing behaviour -- the report pipeline must never fail to build
+    because a calibration artifact is absent.
+    """
+    path = Path(__file__).resolve().parents[1] / "config" / "map_coefficients.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): (float(row["flag_coefficient"]),
+                            float(row["alive_coefficient"]))
+                for name, row in payload.get("maps", {}).items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
 
 
 @dataclass
@@ -48,6 +82,24 @@ class FlagSwingConfig:
     def validate(self) -> None:
         if self.flag_coefficient < 0 or self.alive_coefficient < 0:
             raise ValueError("flag-swing coefficients must be >= 0")
+
+    def for_map(self, map_name: str | None) -> "FlagSwingConfig":
+        """This config, with the map's fitted coefficients if we have them.
+
+        A caller that set coefficients explicitly is overriding the model, so
+        its values win over the table -- that is how the fit driver scores one
+        vector across every map, and how a test pins a value.
+        """
+        default = (FlagSwingConfig.flag_coefficient,
+                   FlagSwingConfig.alive_coefficient)
+        if (self.flag_coefficient, self.alive_coefficient) != default:
+            return self
+        fitted = MAP_COEFFICIENTS.get(str(map_name or ""))
+        if fitted is None:
+            return self
+        return replace(self, flag_coefficient=fitted[0],
+                       alive_coefficient=fitted[1],
+                       calibration=f"fitted_per_map:{map_name}")
 
 
 def _sigmoid(x: float) -> float:
@@ -167,6 +219,7 @@ def build_flag_swing_shadow(
     breaks: Sequence[dict[str, Any]] | None = None,
     config: FlagSwingConfig | None = None,
     *,
+    map_name: str | None = None,
     source_available: bool = True,
     temporal_valid: bool = True,
     spawn_ownership: dict[int, int] | None = None,
@@ -191,7 +244,7 @@ def build_flag_swing_shadow(
     from ``flag_states`` still override the seed the moment they arrive;
     this only fills the gap before the first one.
     """
-    config = config or FlagSwingConfig()
+    config = (config or FlagSwingConfig()).for_map(map_name)
     config.validate()
     envelope: dict[str, Any] = {
         "definition": "flag_swing_v1",

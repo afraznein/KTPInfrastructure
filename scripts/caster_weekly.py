@@ -264,8 +264,23 @@ def export_events(match_ids, dry):
     if dry:
         print("    would refresh halves.tsv")
         return
+    # halves.tsv is corpus-wide, not per-run: a delayed cast anchors on a half end that may have
+    # been exported weeks ago. Writing only this run's matches silently dropped every earlier one
+    # and broke their alignment with "no h1end in halves.tsv", so merge rather than overwrite.
     ids = ", ".join(f"'{m}'" for m in match_ids)
-    (EVENTS / "halves.tsv").write_text(sql(HALVES_Q.format(ids=ids)), encoding="utf-8", newline="\n")
+    fresh = [l for l in sql(HALVES_Q.format(ids=ids)).splitlines() if l.strip()]
+    dest = EVENTS / "halves.tsv"
+    header = fresh[0] if fresh else "match_id\thalf\tstart_epoch\tend_epoch"
+    keep = {}
+    if dest.exists():
+        old_lines = [l for l in dest.read_text(encoding="utf-8").splitlines() if l.strip()]
+        for line in old_lines[1:]:
+            keep[tuple(line.split("\t")[:2])] = line
+    for line in fresh[1:]:
+        keep[tuple(line.split("\t")[:2])] = line
+    dest.write_text("\n".join([header] + [keep[k] for k in sorted(keep)]) + "\n",
+                    encoding="utf-8", newline="\n")
+    print(f"    halves.tsv: {len(keep)} half row(s) across the corpus")
 
 
 def align(cast_id, c, dry):
@@ -274,6 +289,13 @@ def align(cast_id, c, dry):
         cmd = [sys.executable, str(here / "caster_align.py"), match_id, cast_id,
                "--vod-start", str(c["start"]), "--map", map_name]
         cmd += (["--anchor", c["anchor"]] if c.get("kind") == "delayed" else ["--offset", LIVE_OFFSET])
+        # The commentary index is the lane's product for everyone else, so the weekly job emits it
+        # alongside the readable report rather than leaving it to a second command.
+        idx = EVENTS / f"{match_id}.commentary.tsv"
+        if not dry:
+            ix = run(cmd + ["--emit-index", str(idx)])
+            print("    " + (ix.stdout.strip().splitlines()[-1] if ix.returncode == 0 and ix.stdout.strip()
+                            else f"! index failed for {match_id}"))
         dest = TEXT / f"v{cast_id}.{match_id}.align.md"
         if dry:
             print(f"    would run: {' '.join(cmd[1:])}")
