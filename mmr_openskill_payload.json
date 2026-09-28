@@ -3,43 +3,141 @@
  "provisional": true,
  "notice": "Provisional rating: recomputed from the whole season every week, so published values change retroactively.",
  "method_version": "openskill_pl_v1",
- "generated_at": "2026-09-26T00:10:34+00:00",
+ "generated_at": "2026-09-28T20:17:37+00:00",
  "min_matches": 3,
  "players": [
   {
    "name": "arachnid",
-   "matches": 2,
-   "rating": 27.35,
-   "uncertainty": 8.22,
-   "conservative": 2.69
+   "matches": 3,
+   "rating": 28.46,
+   "uncertainty": 8.16,
+   "conservative": 3.98
   },
   {
    "name": "firo",
-   "matches": 2,
-   "rating": 27.35,
-   "uncertainty": 8.22,
-   "conservative": 2.69
+   "matches": 3,
+   "rating": 28.46,
+   "uncertainty": 8.16,
+   "conservative": 3.98
   },
   {
    "name": "genne",
-   "matches": 2,
-   "rating": 27.35,
-   "uncertainty": 8.22,
-   "conservative": 2.69
+   "matches": 3,
+   "rating": 28.46,
+   "uncertainty": 8.16,
+   "conservative": 3.98
   },
   {
    "name": "InSaNe",
+   "matches": 3,
+   "rating": 28.46,
+   "uncertainty": 8.16,
+   "conservative": 3.98
+  },
+  {
+   "name": "Riley",
+   "matches": 3,
+   "rating": 28.46,
+   "uncertainty": 8.16,
+   "conservative": 3.98
+  },
+  {
+   "name": "gaul",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "JaGGoN",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "milo",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "motiv",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "rolyat",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "teamowner",
+   "matches": 3,
+   "rating": 28.24,
+   "uncertainty": 8.16,
+   "conservative": 3.76
+  },
+  {
+   "name": "faradayvzla",
+   "matches": 2,
+   "rating": 27.37,
+   "uncertainty": 8.22,
+   "conservative": 2.71
+  },
+  {
+   "name": "bigbird",
    "matches": 2,
    "rating": 27.35,
    "uncertainty": 8.22,
    "conservative": 2.69
   },
   {
-   "name": "Riley",
+   "name": "hopper",
    "matches": 2,
    "rating": 27.35,
    "uncertainty": 8.22,
    "conservative": 2.69
+  },
+  {
+   "name": "Monty",
+   "matches": 2,
+   "rating": 27.35,
+   "uncertainty": 8.22,
+   "conservative": 2.69
+  },
+  {
+   "name": "piff",
+   "matches": 2,
+   "rating": 27.35,
+   "uncertainty": 8.22,
+   "conservative": 2.69
+  },
+  {
+   "name": "reptaR",
+   "matches": 2,
+   "rating": 27.35,
+   "uncertainty": 8.22,
+   "conservative": 2.69
+  },
+  {
+   "name": "Pizzahut",
+   "matches": 2,
+   "rating": 27.33,
+   "uncertainty": 8.22,
+   "conservative": 2.67
+  },
+  {
+   "name": "PkLl",
+   "matches": 2,
+   "rating": 27.31,
+   "uncertainty": 8.22,
+   "conservative": 2.65
   },
   {
    "name": "kanguhhh",
@@ -119,34 +217,6 @@
    "conservative": 2.54
   },
   {
-   "name": "bro_Oks",
-   "matches": 2,
-   "rating": 27.16,
-   "uncertainty": 8.22,
-   "conservative": 2.5
-  },
-  {
-   "name": "Gz",
-   "matches": 2,
-   "rating": 27.16,
-   "uncertainty": 8.22,
-   "conservative": 2.5
-  },
-  {
-   "name": "topknot",
-   "matches": 2,
-   "rating": 27.16,
-   "uncertainty": 8.22,
-   "conservative": 2.5
-  },
-  {
-   "name": "XZIST",
-   "matches": 2,
-   "rating": 27.16,
-   "uncertainty": 8.22,
-   "conservative": 2.5
-  },
-  {
    "name": "BitchX",
    "matches": 2,
    "rating": 27.12,
@@ -182,6 +252,104 @@
    "conservative": 2.46
   },
   {
+   "name": "3sidedquarter",
+   "matches": 3,
+   "rating": 26.21,
+   "uncertainty": 8.16,
+   "conservative": 1.73
+  },
+  {
+   "name": "pb",
+   "matches": 3,
+   "rating": 26.21,
+   "uncertainty": 8.16,
+   "conservative": 1.73
+  },
+  {
+   "name": "tEa",
+   "matches": 3,
+   "rating": 26.21,
+   "uncertainty": 8.16,
+   "conservative": 1.73
+  },
+  {
+   "name": "Ana",
+   "matches": 3,
+   "rating": 26.14,
+   "uncertainty": 8.16,
+   "conservative": 1.66
+  },
+  {
+   "name": "Manga",
+   "matches": 3,
+   "rating": 26.14,
+   "uncertainty": 8.16,
+   "conservative": 1.66
+  },
+  {
+   "name": "wUa",
+   "matches": 3,
+   "rating": 26.14,
+   "uncertainty": 8.16,
+   "conservative": 1.66
+  },
+  {
+   "name": "bro_Oks",
+   "matches": 3,
+   "rating": 26.05,
+   "uncertainty": 8.16,
+   "conservative": 1.57
+  },
+  {
+   "name": "Gz",
+   "matches": 3,
+   "rating": 26.05,
+   "uncertainty": 8.16,
+   "conservative": 1.57
+  },
+  {
+   "name": "topknot",
+   "matches": 3,
+   "rating": 26.05,
+   "uncertainty": 8.16,
+   "conservative": 1.57
+  },
+  {
+   "name": "XZIST",
+   "matches": 3,
+   "rating": 26.05,
+   "uncertainty": 8.16,
+   "conservative": 1.57
+  },
+  {
+   "name": "defrag",
+   "matches": 1,
+   "rating": 26.2,
+   "uncertainty": 8.27,
+   "conservative": 1.39
+  },
+  {
+   "name": "bromley",
+   "matches": 1,
+   "rating": 26.19,
+   "uncertainty": 8.28,
+   "conservative": 1.35
+  },
+  {
+   "name": "Jee",
+   "matches": 1,
+   "rating": 26.16,
+   "uncertainty": 8.27,
+   "conservative": 1.35
+  },
+  {
+   "name": "jonnhy_v",
+   "matches": 1,
+   "rating": 26.16,
+   "uncertainty": 8.27,
+   "conservative": 1.35
+  },
+  {
    "name": "mj",
    "matches": 1,
    "rating": 26.19,
@@ -190,41 +358,6 @@
   },
   {
    "name": "1l.bb",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "bigbird",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "faradayvzla",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "gaul",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "hopper",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "JaGGoN",
    "matches": 1,
    "rating": 26.18,
    "uncertainty": 8.28,
@@ -245,70 +378,7 @@
    "conservative": 1.34
   },
   {
-   "name": "milo",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "Monty",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "motiv",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "piff",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "Pizzahut",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "PkLl",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "reptaR",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "rolyat",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
    "name": "Shmaltz",
-   "matches": 1,
-   "rating": 26.18,
-   "uncertainty": 8.28,
-   "conservative": 1.34
-  },
-  {
-   "name": "teamowner",
    "matches": 1,
    "rating": 26.18,
    "uncertainty": 8.28,
@@ -336,88 +406,11 @@
    "conservative": 1.22
   },
   {
-   "name": "n8",
-   "matches": 1,
-   "rating": 26.0,
-   "uncertainty": 8.28,
-   "conservative": 1.16
-  },
-  {
-   "name": "Yorel",
-   "matches": 1,
-   "rating": 26.0,
-   "uncertainty": 8.28,
-   "conservative": 1.16
-  },
-  {
    "name": "bud",
    "matches": 1,
    "rating": 25.95,
    "uncertainty": 8.28,
    "conservative": 1.11
-  },
-  {
-   "name": "dorito",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "ianmang",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "jarrod",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "jules",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "ryanemo",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "toxinator",
-   "matches": 1,
-   "rating": 25.72,
-   "uncertainty": 8.28,
-   "conservative": 0.88
-  },
-  {
-   "name": "bayko",
-   "matches": 1,
-   "rating": 25.64,
-   "uncertainty": 8.28,
-   "conservative": 0.8
-  },
-  {
-   "name": "chi",
-   "matches": 1,
-   "rating": 25.64,
-   "uncertainty": 8.28,
-   "conservative": 0.8
-  },
-  {
-   "name": "kAFRE",
-   "matches": 1,
-   "rating": 25.64,
-   "uncertainty": 8.28,
-   "conservative": 0.8
   },
   {
    "name": "nightmare",
@@ -427,67 +420,88 @@
    "conservative": 0.8
   },
   {
-   "name": "NoName",
-   "matches": 1,
-   "rating": 25.64,
-   "uncertainty": 8.28,
-   "conservative": 0.8
-  },
-  {
-   "name": "Sz",
-   "matches": 1,
-   "rating": 25.64,
-   "uncertainty": 8.28,
-   "conservative": 0.8
-  },
-  {
-   "name": "Allen",
+   "name": "dyelife",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "bsod",
+   "name": "element",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "Cory",
+   "name": "GorillaBC",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "Nacho",
+   "name": "m00cat",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "nomis",
+   "name": "stealth",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "sTarK",
+   "name": "warchyld",
    "matches": 2,
-   "rating": 25.13,
+   "rating": 25.17,
    "uncertainty": 8.22,
-   "conservative": 0.47
+   "conservative": 0.51
   },
   {
-   "name": "3sidedquarter",
+   "name": "berty",
    "matches": 2,
-   "rating": 25.04,
+   "rating": 25.09,
    "uncertainty": 8.22,
-   "conservative": 0.38
+   "conservative": 0.43
+  },
+  {
+   "name": "Ecl1ps3",
+   "matches": 2,
+   "rating": 25.09,
+   "uncertainty": 8.22,
+   "conservative": 0.43
+  },
+  {
+   "name": "Jonski",
+   "matches": 2,
+   "rating": 25.09,
+   "uncertainty": 8.22,
+   "conservative": 0.43
+  },
+  {
+   "name": "KumKum",
+   "matches": 2,
+   "rating": 25.09,
+   "uncertainty": 8.22,
+   "conservative": 0.43
+  },
+  {
+   "name": "njr",
+   "matches": 2,
+   "rating": 25.09,
+   "uncertainty": 8.22,
+   "conservative": 0.43
+  },
+  {
+   "name": "saca",
+   "matches": 2,
+   "rating": 25.09,
+   "uncertainty": 8.22,
+   "conservative": 0.43
   },
   {
    "name": "Bojanglers",
@@ -497,25 +511,11 @@
    "conservative": 0.38
   },
   {
-   "name": "pb",
+   "name": "cK",
    "matches": 2,
    "rating": 25.04,
    "uncertainty": 8.22,
    "conservative": 0.38
-  },
-  {
-   "name": "tEa",
-   "matches": 2,
-   "rating": 25.04,
-   "uncertainty": 8.22,
-   "conservative": 0.38
-  },
-  {
-   "name": "Ana",
-   "matches": 2,
-   "rating": 25.01,
-   "uncertainty": 8.22,
-   "conservative": 0.35
   },
   {
    "name": "CLT",
@@ -539,27 +539,6 @@
    "conservative": 0.35
   },
   {
-   "name": "Lucky",
-   "matches": 2,
-   "rating": 25.01,
-   "uncertainty": 8.22,
-   "conservative": 0.35
-  },
-  {
-   "name": "Manga",
-   "matches": 2,
-   "rating": 25.01,
-   "uncertainty": 8.22,
-   "conservative": 0.35
-  },
-  {
-   "name": "pGiiskuuu",
-   "matches": 2,
-   "rating": 25.01,
-   "uncertainty": 8.22,
-   "conservative": 0.35
-  },
-  {
    "name": "revalz",
    "matches": 2,
    "rating": 25.01,
@@ -567,25 +546,95 @@
    "conservative": 0.35
   },
   {
-   "name": "Sango",
+   "name": "n8",
    "matches": 2,
-   "rating": 25.01,
+   "rating": 24.87,
    "uncertainty": 8.22,
-   "conservative": 0.35
+   "conservative": 0.21
   },
   {
-   "name": "wUa",
+   "name": "Yorel",
    "matches": 2,
-   "rating": 25.01,
+   "rating": 24.87,
    "uncertainty": 8.22,
-   "conservative": 0.35
+   "conservative": 0.21
   },
   {
-   "name": "zibougnoule",
+   "name": "hypnotik",
    "matches": 2,
-   "rating": 25.01,
+   "rating": 24.81,
    "uncertainty": 8.22,
-   "conservative": 0.35
+   "conservative": 0.15
+  },
+  {
+   "name": "incite",
+   "matches": 2,
+   "rating": 24.81,
+   "uncertainty": 8.22,
+   "conservative": 0.15
+  },
+  {
+   "name": "nein",
+   "matches": 2,
+   "rating": 24.81,
+   "uncertainty": 8.22,
+   "conservative": 0.15
+  },
+  {
+   "name": "Pib",
+   "matches": 2,
+   "rating": 24.81,
+   "uncertainty": 8.22,
+   "conservative": 0.15
+  },
+  {
+   "name": "Polak",
+   "matches": 2,
+   "rating": 24.81,
+   "uncertainty": 8.22,
+   "conservative": 0.15
+  },
+  {
+   "name": "riveroyster",
+   "matches": 2,
+   "rating": 24.81,
+   "uncertainty": 8.22,
+   "conservative": 0.15
+  },
+  {
+   "name": "bayko",
+   "matches": 2,
+   "rating": 24.67,
+   "uncertainty": 8.23,
+   "conservative": -0.02
+  },
+  {
+   "name": "chi",
+   "matches": 2,
+   "rating": 24.67,
+   "uncertainty": 8.23,
+   "conservative": -0.02
+  },
+  {
+   "name": "kAFRE",
+   "matches": 2,
+   "rating": 24.67,
+   "uncertainty": 8.23,
+   "conservative": -0.02
+  },
+  {
+   "name": "NoName",
+   "matches": 2,
+   "rating": 24.67,
+   "uncertainty": 8.23,
+   "conservative": -0.02
+  },
+  {
+   "name": "Sz",
+   "matches": 2,
+   "rating": 24.67,
+   "uncertainty": 8.23,
+   "conservative": -0.02
   },
   {
    "name": "Suricato",
@@ -595,25 +644,46 @@
    "conservative": -0.51
   },
   {
-   "name": "baron",
-   "matches": 1,
-   "rating": 24.28,
-   "uncertainty": 8.28,
-   "conservative": -0.56
+   "name": "Allen",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
   },
   {
-   "name": "kroD",
-   "matches": 1,
-   "rating": 24.28,
-   "uncertainty": 8.28,
-   "conservative": -0.56
+   "name": "bsod",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
   },
   {
-   "name": "Leoo",
-   "matches": 1,
-   "rating": 24.28,
-   "uncertainty": 8.28,
-   "conservative": -0.56
+   "name": "Cory",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
+  },
+  {
+   "name": "Nacho",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
+  },
+  {
+   "name": "nomis",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
+  },
+  {
+   "name": "sTarK",
+   "matches": 3,
+   "rating": 23.96,
+   "uncertainty": 8.16,
+   "conservative": -0.52
   },
   {
    "name": "ProstaR",
@@ -623,11 +693,32 @@
    "conservative": -0.56
   },
   {
-   "name": "tilljim",
-   "matches": 1,
-   "rating": 24.28,
-   "uncertainty": 8.28,
-   "conservative": -0.56
+   "name": "Lucky",
+   "matches": 3,
+   "rating": 23.88,
+   "uncertainty": 8.16,
+   "conservative": -0.6
+  },
+  {
+   "name": "pGiiskuuu",
+   "matches": 3,
+   "rating": 23.88,
+   "uncertainty": 8.16,
+   "conservative": -0.6
+  },
+  {
+   "name": "Sango",
+   "matches": 3,
+   "rating": 23.88,
+   "uncertainty": 8.16,
+   "conservative": -0.6
+  },
+  {
+   "name": "zibougnoule",
+   "matches": 3,
+   "rating": 23.88,
+   "uncertainty": 8.16,
+   "conservative": -0.6
   },
   {
    "name": "Bewton",
@@ -635,6 +726,20 @@
    "rating": 24.05,
    "uncertainty": 8.28,
    "conservative": -0.79
+  },
+  {
+   "name": "king_yo",
+   "matches": 1,
+   "rating": 24.02,
+   "uncertainty": 8.28,
+   "conservative": -0.82
+  },
+  {
+   "name": "svelty",
+   "matches": 1,
+   "rating": 24.02,
+   "uncertainty": 8.28,
+   "conservative": -0.82
   },
   {
    "name": "BurN",
@@ -651,60 +756,18 @@
    "conservative": -0.84
   },
   {
-   "name": "dyelife",
+   "name": "Nakk",
    "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
+   "rating": 23.84,
+   "uncertainty": 8.27,
+   "conservative": -0.97
   },
   {
-   "name": "element",
+   "name": "notijew",
    "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "Empy",
-   "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "GorillaBC",
-   "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "m00cat",
-   "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "stealth",
-   "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "warchyld",
-   "matches": 1,
-   "rating": 23.94,
-   "uncertainty": 8.28,
-   "conservative": -0.9
-  },
-  {
-   "name": "cK",
-   "matches": 1,
-   "rating": 23.85,
-   "uncertainty": 8.28,
-   "conservative": -0.99
+   "rating": 23.84,
+   "uncertainty": 8.27,
+   "conservative": -0.97
   },
   {
    "name": "eman",
@@ -721,21 +784,7 @@
    "conservative": -1.02
   },
   {
-   "name": "berty",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
    "name": "Chuave1",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "Ecl1ps3",
    "matches": 1,
    "rating": 23.82,
    "uncertainty": 8.28,
@@ -756,35 +805,7 @@
    "conservative": -1.02
   },
   {
-   "name": "Jonski",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "KumKum",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "njr",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
    "name": "rolly",
-   "matches": 1,
-   "rating": 23.82,
-   "uncertainty": 8.28,
-   "conservative": -1.02
-  },
-  {
-   "name": "saca",
    "matches": 1,
    "rating": 23.82,
    "uncertainty": 8.28,
@@ -819,6 +840,20 @@
    "conservative": -1.05
   },
   {
+   "name": "nicholson",
+   "matches": 1,
+   "rating": 23.74,
+   "uncertainty": 8.28,
+   "conservative": -1.1
+  },
+  {
+   "name": "r3c0i1",
+   "matches": 1,
+   "rating": 23.74,
+   "uncertainty": 8.28,
+   "conservative": -1.1
+  },
+  {
    "name": "bausch",
    "matches": 1,
    "rating": 23.68,
@@ -840,6 +875,34 @@
    "conservative": -1.16
   },
   {
+   "name": "dorito",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
+   "conservative": -1.16
+  },
+  {
+   "name": "ianmang",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
+   "conservative": -1.16
+  },
+  {
+   "name": "jarrod",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
+   "conservative": -1.16
+  },
+  {
+   "name": "jules",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
+   "conservative": -1.16
+  },
+  {
    "name": "Khoi",
    "matches": 1,
    "rating": 23.68,
@@ -851,6 +914,20 @@
    "matches": 1,
    "rating": 23.68,
    "uncertainty": 8.28,
+   "conservative": -1.16
+  },
+  {
+   "name": "ryanemo",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
+   "conservative": -1.16
+  },
+  {
+   "name": "toxinator",
+   "matches": 3,
+   "rating": 23.35,
+   "uncertainty": 8.17,
    "conservative": -1.16
   },
   {
@@ -887,6 +964,41 @@
    "rating": 23.19,
    "uncertainty": 8.23,
    "conservative": -1.5
+  },
+  {
+   "name": "baron",
+   "matches": 2,
+   "rating": 23.04,
+   "uncertainty": 8.23,
+   "conservative": -1.65
+  },
+  {
+   "name": "kroD",
+   "matches": 2,
+   "rating": 23.04,
+   "uncertainty": 8.23,
+   "conservative": -1.65
+  },
+  {
+   "name": "Leoo",
+   "matches": 2,
+   "rating": 23.04,
+   "uncertainty": 8.23,
+   "conservative": -1.65
+  },
+  {
+   "name": "tilljim",
+   "matches": 2,
+   "rating": 23.04,
+   "uncertainty": 8.23,
+   "conservative": -1.65
+  },
+  {
+   "name": "Empy",
+   "matches": 2,
+   "rating": 22.96,
+   "uncertainty": 8.22,
+   "conservative": -1.7
   },
   {
    "name": "epyon",
@@ -952,35 +1064,7 @@
    "conservative": -1.82
   },
   {
-   "name": "kHORGA",
-   "matches": 2,
-   "rating": 22.77,
-   "uncertainty": 8.22,
-   "conservative": -1.89
-  },
-  {
    "name": "Manner",
-   "matches": 2,
-   "rating": 22.77,
-   "uncertainty": 8.22,
-   "conservative": -1.89
-  },
-  {
-   "name": "mataenanos",
-   "matches": 2,
-   "rating": 22.77,
-   "uncertainty": 8.22,
-   "conservative": -1.89
-  },
-  {
-   "name": "RaiveN",
-   "matches": 2,
-   "rating": 22.77,
-   "uncertainty": 8.22,
-   "conservative": -1.89
-  },
-  {
-   "name": "Su",
    "matches": 2,
    "rating": 22.77,
    "uncertainty": 8.22,
@@ -1020,8 +1104,36 @@
    "rating": 22.63,
    "uncertainty": 8.22,
    "conservative": -2.03
+  },
+  {
+   "name": "kHORGA",
+   "matches": 3,
+   "rating": 21.81,
+   "uncertainty": 8.17,
+   "conservative": -2.7
+  },
+  {
+   "name": "mataenanos",
+   "matches": 3,
+   "rating": 21.81,
+   "uncertainty": 8.17,
+   "conservative": -2.7
+  },
+  {
+   "name": "RaiveN",
+   "matches": 3,
+   "rating": 21.81,
+   "uncertainty": 8.17,
+   "conservative": -2.7
+  },
+  {
+   "name": "Su",
+   "matches": 3,
+   "rating": 21.81,
+   "uncertainty": 8.17,
+   "conservative": -2.7
   }
  ],
- "source_report_count": 18,
+ "source_report_count": 27,
  "report_schema_version": 9
 }

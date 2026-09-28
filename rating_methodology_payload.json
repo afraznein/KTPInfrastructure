@@ -1,7 +1,7 @@
 {
  "kind": "rating_methodology",
  "method_version": "rating_methodology_v1",
- "generated_at": "2026-09-26T00:10:34+00:00",
+ "generated_at": "2026-09-28T20:17:37+00:00",
  "provisional": true,
  "notice": "All values are refit as matches land and may change week to week. Sample sizes and fit quality are shown so the reader can judge each number.",
  "ktpr_v2": {
@@ -334,8 +334,18 @@
    "upsets": 0,
    "upsets_pct": 0.0,
    "headline": "18 matches rated, 56% accuracy"
+  },
+  {
+   "week": 3,
+   "date": "2026-09-28",
+   "accuracy_pct": 51.9,
+   "log_loss": 0.6896,
+   "completed_matches": 27,
+   "upsets": 0,
+   "upsets_pct": 0.0,
+   "headline": "27 matches rated, 52% accuracy, challenger beat champion"
   }
  ],
- "source_report_count": 18,
+ "source_report_count": 27,
  "report_schema_version": 9
 }
