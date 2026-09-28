@@ -689,9 +689,17 @@ def cmd_import_mmr(args: argparse.Namespace) -> int:
     network, and it refuses anything that is not already the right shape.
     Same revision/sha convention as cmd_aggregate, so an unchanged payload is
     a no-op rather than a new revision every week.
+
+    That the ladder never runs here is a property of what this imports, not a
+    promise in prose: both modules below are stdlib-only, and
+    test_import_mmr_needs_no_solver imports whatever this function imports with
+    the solver blocked.
     """
     sys.path.insert(0, str(Path(args.repo) / "scripts" / "mmr"))
-    import methodology as METH
+    # The schema module, not methodology itself -- that one builds the document
+    # out of the ladder's own constants and so imports the OpenSkill solver,
+    # which this box has never had and needs none of to insert a finished file.
+    import methodology_schema as METH
     import mmr_payload as MMRP
 
     payload = json.loads(Path(args.payload).read_text(encoding="utf-8"))
