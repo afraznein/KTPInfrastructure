@@ -83,6 +83,9 @@ EXEMPT = {
         "library; no entry point to gate",
     "build-game-files-manifest.py":
         "builds a local manifest; its remote reads do not change fleet state",
+    "audit-distribute-drift.py":
+        "read-only drift probe; also runs as a fleet-audit step, where the "
+        "checkout IS the reviewed commit",
     "ktp-lan-web-drift.py": "read-only drift probe",
     "ktp-net-profile.py": "read-only netcode probe",
     "ktp-restart-drift.py": "read-only drift probe",

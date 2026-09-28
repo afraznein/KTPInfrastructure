@@ -32,12 +32,14 @@ WORKFLOW = ROOT / ".github/workflows/fleet-audit.yml"
 
 AUDIT_STEP = "Fleet drift audit"
 RESTART_STEP = "Restart-script drift"
+DISTRIBUTE_STEP = "Distribute-tree drift"
 
 # Every named `run:` step in the file. Asserted as a set below so a renamed or
 # added step fails here rather than slipping past the shape check unexamined.
 EXPECTED_RUN_STEPS = {
     AUDIT_STEP,
     RESTART_STEP,
+    DISTRIBUTE_STEP,
     "Data-server health state",
     "Decide whether a human needs to look",
     "Open or update the issue",
@@ -259,3 +261,24 @@ def test_the_step_comment_states_that_errexit_arrives_already_on() -> None:
     assert "bash -e {0}" in script
     assert "34864628747" in script
     assert "the same trap that kept the wrapper's" not in script
+
+
+def test_the_distribute_step_survives_its_own_drift_exit() -> None:
+    """The check exits 1 on drift, which is its normal reportable outcome. The
+    step must still hand the report to the gate rather than dying under
+    `bash -e {0}` -- the exact failure run 34864628747 hit on the audit step.
+    """
+    script = _run_blocks()[DISTRIBUTE_STEP]
+    for rc in (0, 1, 2):
+        assert _exec_step(script, stub_rc=rc).returncode == rc, (
+            "the step's own status is the pipeline's; continue-on-error in the "
+            "workflow is what keeps a drift exit from failing the job")
+
+
+def test_the_distribute_step_captures_stderr() -> None:
+    """The gate diffs the DRIFT: lines, and the check prints those to stderr
+    while the markdown goes to stdout. A `| tee` without 2>&1 hands the gate an
+    empty finding list on a fleet full of drift."""
+    script = _run_blocks()[DISTRIBUTE_STEP]
+    assert "2>&1" in script
+    assert "tee distribute-drift.txt" in script
