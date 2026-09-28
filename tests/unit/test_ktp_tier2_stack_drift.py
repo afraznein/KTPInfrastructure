@@ -8,10 +8,18 @@ re-synced the runner in nine days" printed identically. That trains people to
 skim past the alert. These tests guard the two things that matter:
 
   * the comparison itself still classifies runner-behind vs missing vs error
-    correctly (unchanged from before this patch), and
+    correctly, and
   * the age tracker reports elapsed time honestly — carrying an unchanged
     mismatch forward, resetting the clock the instant the mismatch's shape
     changes, and forgetting a mismatch once it resolves.
+
+The test-mode plugins used to be compared by mtime, and these tests now pin why
+they are not. On 2026-09-28 the fleet's KTPPracticeMode had been re-copied by a
+routine redistribute — mtime 17 days newer, source byte-identical, 1.4.9 on the
+runner, on the fleet and on origin/main — and this checker had been reporting
+"restage it" every six hours for days. `test_same_version_is_not_drift_however
+_old_the_runner_copy_is` is that case, and it must keep failing if anyone
+reintroduces a time-based trigger.
 
 Loaded by path, with `paramiko` stubbed: the script imports paramiko at import
 time but none of the functions under test touch it.
@@ -48,7 +56,8 @@ def drift():
 def test_module_exposes_the_functions_under_test(drift):
     """If the loader silently produced a stub, every assertion below passes
     vacuously. Fail here instead."""
-    for name in ("parse_md5sum", "parse_mtime", "compute_drift",
+    for name in ("parse_md5sum", "compute_drift", "compute_config_drift",
+                 "parse_version", "version_is_behind", "is_config_backup",
                  "update_drift_ages", "format_age", "annotate_drift"):
         assert callable(getattr(drift, name, None)), f"{name} missing from module"
 
@@ -65,19 +74,13 @@ def test_parse_md5sum_matches_on_path_suffix(drift):
     assert out["dod/addons/ktpamx/modules/dodx_ktp_i386.so"] == "fca6648909887e6298e1b81e8679002f"
 
 
-def test_parse_mtime_ignores_non_numeric_lines(drift):
-    raw = "1787000000 /home/dodserver/dod-27015/serverfiles/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx\nnot a stat line\n"
-    out = drift.parse_mtime(raw, ["dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"])
-    assert out["dod/addons/ktpamx/plugins/KTPMatchHandler.amxx"] == 1787000000
-
-
 # ------------------------------------------------------------------- compute_drift
 
-def _fake_fs(md5_map=None, mtime_map=None, present=None):
-    """Build md5_fn/exists_fn/mtime_fn stand-ins over an in-memory {path: value} map."""
+def _fake_fs(md5_map=None, version_map=None, present=None):
+    """md5_fn/exists_fn/version_fn stand-ins over in-memory {path: value} maps."""
     md5_map = md5_map or {}
-    mtime_map = mtime_map or {}
-    present = present if present is not None else set(md5_map) | set(mtime_map)
+    version_map = version_map or {}
+    present = present if present is not None else set(md5_map) | set(version_map)
 
     def exists_fn(path):
         return any(path.endswith(p) for p in present)
@@ -88,21 +91,21 @@ def _fake_fs(md5_map=None, mtime_map=None, present=None):
                 return v
         raise AssertionError(f"no fake md5 for {path}")
 
-    def mtime_fn(path):
-        for p, v in mtime_map.items():
+    def version_fn(path):
+        for p, v in version_map.items():
             if path.endswith(p):
                 return v
-        raise AssertionError(f"no fake mtime for {path}")
+        return None
 
-    return md5_fn, exists_fn, mtime_fn
+    return md5_fn, exists_fn, version_fn
 
 
 def test_matching_stack_reports_no_drift(drift):
-    md5_fn, exists_fn, mtime_fn = _fake_fs(md5_map={"engine_i486.so": "aaaa"})
+    md5_fn, exists_fn, version_fn = _fake_fs(md5_map={"engine_i486.so": "aaaa"})
     drifts, errors = drift.compute_drift(
         ["engine_i486.so"], [], {"engine_i486.so": "aaaa"}, {},
-        "/opt/runner", 3 * 86400, "1.2.3.4",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
     )
     assert drifts == []
     assert errors == []
@@ -111,11 +114,11 @@ def test_matching_stack_reports_no_drift(drift):
 def test_mismatched_stack_file_names_runner_then_fleet(drift):
     """Direction matters: a reader must be able to tell which side is which
     without cross-referencing anything else."""
-    md5_fn, exists_fn, mtime_fn = _fake_fs(md5_map={"engine_i486.so": "eedfc99e97652b3e"})
+    md5_fn, exists_fn, version_fn = _fake_fs(md5_map={"engine_i486.so": "eedfc99e97652b3e"})
     drifts, errors = drift.compute_drift(
         ["engine_i486.so"], [], {"engine_i486.so": "da27ce9eaa112233"}, {},
-        "/opt/runner", 3 * 86400, "74.91.121.9",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
     )
     assert not errors
     [(path, msg, sig)] = drifts
@@ -128,53 +131,196 @@ def test_missing_on_reference_host_is_an_error_not_a_drift(drift):
     """A path absent from the fleet reference means the check couldn't run,
     not that the runner disagrees with it — these must stay separate so a
     transient SSH/glob miss can't be read as drift."""
-    md5_fn, exists_fn, mtime_fn = _fake_fs()
+    md5_fn, exists_fn, version_fn = _fake_fs()
     drifts, errors = drift.compute_drift(
         ["engine_i486.so"], [], {}, {},
-        "/opt/runner", 3 * 86400, "74.91.121.9",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
     )
     assert drifts == []
-    assert errors == ["engine_i486.so: missing on reference host 74.91.121.9"]
+    assert errors == ["engine_i486.so: missing on reference host reference-host"]
 
 
 def test_missing_on_runner_is_drift(drift):
-    md5_fn, exists_fn, mtime_fn = _fake_fs(present=set())
+    md5_fn, exists_fn, version_fn = _fake_fs(present=set())
     drifts, errors = drift.compute_drift(
         ["engine_i486.so"], [], {"engine_i486.so": "aaaa"}, {},
-        "/opt/runner", 3 * 86400, "74.91.121.9",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
     )
     assert not errors
     assert drifts == [("engine_i486.so", "engine_i486.so: missing on runner", "missing")]
 
 
-def test_testmode_plugin_within_grace_is_not_drift(drift):
-    """A test-mode plugin whose fleet copy is newer by less than the grace
-    window is a normal wave lag, not staleness."""
-    md5_fn, exists_fn, mtime_fn = _fake_fs(mtime_map={"KTPMatchHandler.amxx": 1_000_000})
-    drifts, errors = drift.compute_drift(
-        [], ["KTPMatchHandler.amxx"], {}, {"KTPMatchHandler.amxx": 1_000_000 + 86400},
-        "/opt/runner", 3 * 86400, "74.91.121.9",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+# ----------------------------------------- test-mode plugins: version, not elapsed time
+
+def _testmode(drift, runner_v, fleet_v, path="KTPPracticeMode.amxx"):
+    md5_fn, exists_fn, version_fn = _fake_fs(version_map={path: runner_v})
+    return drift.compute_drift(
+        [], [path], {}, {path: fleet_v},
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
     )
+
+
+def test_same_version_is_not_drift_however_old_the_runner_copy_is(drift):
+    """The measured false positive, 2026-09-28. The fleet's copy had been
+    re-copied by a routine redistribute -- 17 days of mtime, not one line of
+    source -- and the old time-based check reported "restage it" every six
+    hours for days while runner, fleet and origin/main all held 1.4.9. Nothing
+    about elapsed time may reach this verdict."""
+    drifts, errors = _testmode(drift, "1.4.9", "1.4.9")
     assert drifts == []
     assert errors == []
 
 
-def test_testmode_plugin_beyond_grace_is_drift_with_day_count(drift):
-    md5_fn, exists_fn, mtime_fn = _fake_fs(mtime_map={"KTPPracticeMode.amxx": 1_000_000})
-    fleet_mtime = 1_000_000 + 15 * 86400
+def test_runner_behind_the_fleet_is_drift(drift):
+    """The shape of the 2026-08-03 incident: a green suite certifying plugin
+    behaviour production does not have."""
+    drifts, errors = _testmode(drift, "0.10.147", "0.10.149", path="KTPMatchHandler.amxx")
+    assert not errors
+    [(path, msg, sig)] = drifts
+    assert path == "KTPMatchHandler.amxx"
+    assert "runner holds 0.10.147" in msg and "fleet runs 0.10.149" in msg
+    assert sig == "0.10.147:0.10.149"
+
+
+def test_runner_ahead_of_the_fleet_is_not_drift(drift):
+    """A pre-activation gate is SUPPOSED to lead, and KTPHudObserver is rebuilt
+    from upstream master every run so it leads routinely. Flagging that trains
+    people to dismiss the alert."""
+    drifts, errors = _testmode(drift, "2.9.3", "2.9.1", path="KTPHudObserver.amxx")
+    assert drifts == []
+    assert errors == []
+
+
+def test_unreadable_version_is_inconclusive_never_green(drift):
+    """A decode that produced nothing is not evidence the runner is fine. It
+    must land in errors (exit 2, "couldn't check"), not in a silent pass --
+    that silence is the whole gap this check exists to close."""
+    drifts, errors = _testmode(drift, None, "1.4.9")
+    assert drifts == []
+    assert len(errors) == 1 and "cannot order versions" in errors[0]
+
+
+def test_testmode_plugin_missing_on_runner_is_drift(drift):
+    md5_fn, exists_fn, version_fn = _fake_fs(present=set())
     drifts, errors = drift.compute_drift(
-        [], ["KTPPracticeMode.amxx"], {}, {"KTPPracticeMode.amxx": fleet_mtime},
-        "/opt/runner", 3 * 86400, "74.91.121.9",
-        md5_fn=md5_fn, exists_fn=exists_fn, mtime_fn=mtime_fn,
+        [], ["KTPMatchHandler.amxx"], {}, {"KTPMatchHandler.amxx": "0.10.173"},
+        "/opt/runner", "reference-host",
+        md5_fn=md5_fn, exists_fn=exists_fn, version_fn=version_fn,
+    )
+    assert not errors
+    assert drifts == [("KTPMatchHandler.amxx",
+                       "KTPMatchHandler.amxx: missing on runner", "missing")]
+
+
+@pytest.mark.parametrize(
+    "runner, fleet, expected",
+    [
+        ("0.10.9", "0.10.10", True),    # not a string compare: "9" > "1" lexically
+        ("0.10.10", "0.10.9", False),
+        ("1.4", "1.4.0", False),        # unequal component counts are level
+        ("1.4.0", "1.4", False),
+        ("2.9.3", "2.10.0", True),
+        (None, "1.0.0", None),
+        ("1.0.0", None, None),
+        ("dev", "1.0.0", None),
+    ],
+)
+def test_version_ordering(drift, runner, fleet, expected):
+    assert drift.version_is_behind(runner, fleet) is expected
+
+
+# ------------------------------------------------------------------- configs
+
+def test_config_matching_the_fleet_is_not_drift(drift):
+    md5_fn, exists_fn, _ = _fake_fs(md5_map={"ktp_maps.ini": "aaaa"})
+    drifts, errors = drift.compute_config_drift(
+        {"ktp_maps.ini": "aaaa"}, "/opt/runner", "configs", {},
+        md5_fn=md5_fn, exists_fn=exists_fn,
+    )
+    assert drifts == [] and errors == []
+
+
+def test_config_differing_from_the_fleet_is_drift(drift):
+    """ktp_maps.ini feeds match-handler map handling and sat 60 days behind the
+    fleet with nothing watching it."""
+    md5_fn, exists_fn, _ = _fake_fs(md5_map={"ktp_maps.ini": "1111aaaabbbbcccc"})
+    drifts, errors = drift.compute_config_drift(
+        {"ktp_maps.ini": "2222ddddeeeeffff"}, "/opt/runner", "configs", {},
+        md5_fn=md5_fn, exists_fn=exists_fn,
     )
     assert not errors
     [(path, msg, sig)] = drifts
-    assert path == "KTPPracticeMode.amxx"
-    assert "15d older" in msg
-    assert sig == f"1000000:{fleet_mtime}"
+    assert path == "configs/ktp_maps.ini"
+    assert msg.index("runner 1111aaaa") < msg.index("fleet 2222dddd")
+    assert sig == "1111aaaabbbbcccc:2222ddddeeeeffff"
+
+
+def test_config_present_on_the_fleet_and_absent_on_the_runner_is_drift(drift):
+    """Unlike a binary, a config the harness simply does not have changes what
+    the suite exercises -- dodx.ini was never copied across at all."""
+    md5_fn, exists_fn, _ = _fake_fs(present=set())
+    drifts, errors = drift.compute_config_drift(
+        {"dodx.ini": "aaaa"}, "/opt/runner", "configs", {},
+        md5_fn=md5_fn, exists_fn=exists_fn,
+    )
+    assert not errors
+    assert drifts == [("configs/dodx.ini",
+                       "configs/dodx.ini: on the fleet, absent on the runner", "missing")]
+
+
+def test_runner_local_config_absent_on_the_runner_is_not_drift(drift):
+    """hud_observer.cfg is absent ON PURPOSE -- it carries the live HUD ingest
+    URL and key, and restoring it points the harness at the real ingest. An
+    automated sweep has already tried to "fix" it once; this is the guard that
+    keeps the next one from firing."""
+    md5_fn, exists_fn, _ = _fake_fs(present=set())
+    drifts, errors = drift.compute_config_drift(
+        {"hud_observer.cfg": "aaaa"}, "/opt/runner", "configs",
+        {"hud_observer.cfg": "absent on purpose"},
+        md5_fn=md5_fn, exists_fn=exists_fn,
+    )
+    assert drifts == [] and errors == []
+
+
+def test_hud_observer_cfg_is_actually_in_the_shipped_allowlist(drift):
+    """The test above proves the MECHANISM. This proves the shipped list uses
+    it -- a guard exercised only against a fixture protects nothing."""
+    assert "hud_observer.cfg" in drift.CONFIGS_RUNNER_LOCAL
+
+
+def test_every_runner_local_config_carries_a_reason(drift):
+    """An unexplained exemption is how a real staleness gets parked here."""
+    for name, reason in drift.CONFIGS_RUNNER_LOCAL.items():
+        assert isinstance(reason, str) and reason.strip(), f"{name} has no reason"
+
+
+@pytest.mark.parametrize(
+    "name, ignored",
+    [
+        ("ktp_maps.ini", False),
+        ("amxx.cfg", False),
+        ("hud_observer.cfg", False),                   # a real name, not a backup
+        ("plugins.ini.bak-20260421-202333", True),
+        ("ktp_maps.ini.pre069", True),
+        ("hud_observer.cfg.prod-stale-bak", True),
+        ("users.ini.bak-preresync-20260714", True),
+        ("KTPMatchHandler.amxx.0.10.112.backup", True),
+    ],
+)
+def test_backup_filter(drift, name, ignored):
+    """The estate puts the marker at the END of the name, so an extension-based
+    filter would let every one of these through."""
+    assert drift.is_config_backup(name) is ignored
+
+
+def test_testmode_plugins_and_strict_plugins_do_not_overlap(drift):
+    """A plugin in both lists would be md5-compared against a fleet build it is
+    SUPPOSED to differ from -- a permanent false alarm. sync-runner-stack.py
+    makes the same assertion before it writes; this catches it at test time."""
+    assert not set(drift.PLUGINS_STRICT) & set(drift.PLUGINS_TESTMODE)
 
 
 # ------------------------------------------------------------------- age tracking

@@ -41,11 +41,33 @@ KNOWN_DRIFT = (
 )
 
 
-def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT, health=None) -> None:
+CLEAN_DISTRIBUTE = (
+    "# Distribute-tree drift\n\n"
+    "No divergence: every watched path matches on every target.\n\n"
+    "targets reached: 24/24  paths with drift: 0  per-instance hazards: 0\n"
+)
+
+# The shape the tree actually had on 2026-09-28: long-standing source-vs-fleet
+# divergence, plus one file carrying per-instance data that nothing declares.
+# Known on the second sighting -- except the hazard, which is a level by design.
+STANDING_DISTRIBUTE = (
+    "DRIFT: configs/ktpbasic.cfg shape=uniform targets=24 src=0123456789abcdef\n"
+    "DRIFT: configs/servernamedefault.cfg shape=per-instance targets=24 src=fedcba9876543210\n"
+    "targets reached: 24/24  paths with drift: 2  per-instance hazards: 1\n"
+)
+
+
+def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT,
+         health=None, distribute=CLEAN_DISTRIBUTE) -> None:
     work.mkdir(parents=True, exist_ok=True)
     (work / "audit-stdout.txt").write_text(stdout, newline="\n")
     (work / "audit-report.md").write_text(report, newline="\n")
     (work / "restart-drift.txt").write_text(drift, newline="\n")
+    dd = work / "distribute-drift.txt"
+    if distribute is not None:
+        dd.write_text(distribute, newline="\n")
+    elif dd.exists():
+        dd.unlink()
     hs = work / "health-state.json"
     if health is not None:
         hs.write_text(json.dumps(health), newline="\n")
@@ -284,3 +306,53 @@ def test_a_junk_onset_does_not_take_the_item_out_of_the_reckoning(tmp_path):
     doc["fault_since"] = {"failed-unit:x.service": "not a timestamp"}
     _lay(work, health=doc)
     assert _run(work, state)["needs_triage"] == "true"
+
+
+# --------------------------------------------------------- distribute-tree leg
+def test_clean_distribute_tree_is_quiet(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work)
+    assert _run(work, state)["needs_triage"] == "false"
+
+
+def test_standing_distribute_drift_is_not_news_twice_but_its_hazard_is(tmp_path):
+    """The transition leg goes quiet on the second sighting; the per-instance
+    hazard leg does not, and that asymmetry is the point of having both."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, distribute=STANDING_DISTRIBUTE)
+    first = _run(work, state)
+    second = _run(work, state)
+    assert "changed since last run" not in second["reason"]
+    assert "undeclared per-instance data" in first["reason"]
+    assert "undeclared per-instance data" in second["reason"]
+    assert second["needs_triage"] == "true"
+
+
+def test_a_new_distribute_finding_is_news(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    hazardless = STANDING_DISTRIBUTE.replace(
+        "DRIFT: configs/servernamedefault.cfg shape=per-instance targets=24 src=fedcba9876543210\n", ""
+    ).replace("paths with drift: 2  per-instance hazards: 1",
+              "paths with drift: 1  per-instance hazards: 0")
+    _lay(work, distribute=hazardless)
+    assert _run(work, state)["needs_triage"] == "false"      # baseline seeded, hazard-free
+    _lay(work, distribute=hazardless + "DRIFT: addons/ktpamx/configs/ktp.ini shape=uniform targets=24 src=aaaabbbbccccdddd\n")
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Distribute-tree drift changed since last run" in out["reason"]
+
+
+def test_a_distribute_check_that_did_not_finish_is_always_news(tmp_path):
+    """A sweep that died renders identically to a clean fleet. The completion
+    marker is what tells them apart."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, distribute="Traceback (most recent call last):\nOSError\n")
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Distribute-drift check did not complete" in out["reason"]
+
+
+def test_a_missing_distribute_report_is_news_not_silence(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, distribute=None)
+    assert "Distribute-drift check did not complete" in _run(work, state)["reason"]

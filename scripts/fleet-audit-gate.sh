@@ -37,9 +37,22 @@
 #      the two dates being equal says they were ever checked against anything.
 #   6. The health check itself not having written for KTP_GATE_HEALTH_STALE_H
 #      (default 6) hours. Nothing else watches the watcher.
+#   7. A CHANGE in what the distribute-tree check reports, and that check
+#      failing to complete. Same transition rule and same reasoning as 3 and 4:
+#      the fleet carries long-standing source-vs-instance divergence, and
+#      reporting the level every week would make this wallpaper within a month.
+#   8. Any per-instance hazard, on every run -- a level, not a transition, and
+#      the only one here. A path carrying per-instance data that no
+#      excludePatterns declares is armed: one touch of the source overwrites
+#      every instance's copy with a single one, within ~15s, with nothing
+#      reporting it. That does not depend on state, the same argument leg 2
+#      makes for the monitor patch, and it nags weekly exactly as leg 5 does --
+#      deliberately, because one line in servers.json retires it for good.
 #
-# Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt  health-state.json
+# Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt
+#                distribute-drift.txt  health-state.json
 # State:         $KTP_GATE_STATE_DIR/ktp-restart-drift-ci.txt (default /var/lib)
+#                $KTP_GATE_STATE_DIR/ktp-distribute-drift-ci.txt
 # Output:        needs_triage=true|false and reason=... on stdout, one per line,
 #                in GITHUB_OUTPUT form. Exit 0 always; a gate that crashes
 #                would skip triage silently, which is the worst outcome here.
@@ -82,6 +95,30 @@ else
     # Save the baseline whether or not it changed. The write can fail on a
     # read-only checkout (tests, a dry local run); that must not fail the gate.
     printf '%s\n' "$cur" > "$prev" 2>/dev/null || true
+fi
+
+# 7 and 8. Distribute-tree drift. Same transition shape as 3 and 4, plus the one
+#    level leg in this file. `targets reached:` is the completion marker: the
+#    check prints it on every run that finished, and its absence means the sweep
+#    died -- which renders identically to a clean fleet if nobody asks.
+if ! grep -q 'targets reached:' distribute-drift.txt 2>/dev/null; then
+    reasons="${reasons}Distribute-drift check did not complete. "
+else
+    dist_prev="$state_dir/ktp-distribute-drift-ci.txt"
+    dist_cur="$(grep -E '^DRIFT:|^Unreachable:' distribute-drift.txt | sort || true)"
+    if [ -f "$dist_prev" ] && [ "$dist_cur" != "$(cat "$dist_prev")" ]; then
+        reasons="${reasons}Distribute-tree drift changed since last run. "
+    fi
+    printf '%s\n' "$dist_cur" > "$dist_prev" 2>/dev/null || true
+
+    # A level, deliberately. Parsed off the check's own summary line rather than
+    # counted here, so the gate and the report can never disagree about how many
+    # there are.
+    hazards="$(sed -n 's/.*per-instance hazards: \([0-9]\+\).*/\1/p' distribute-drift.txt | tail -1)"
+    hazards="${hazards:-0}"
+    if [ "$hazards" -gt 0 ]; then
+        reasons="${reasons}${hazards} distribute path(s) carry undeclared per-instance data. "
+    fi
 fi
 
 # 5 and 6. Long-open health items, and a health check that stopped writing.

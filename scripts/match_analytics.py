@@ -2038,6 +2038,7 @@ def build_report(
         credit_timeline,
         players_public,
         None,
+        map_name=(match or {}).get("map_name"),
         source_available=bool(
             sources.get("flag_ownership", False)
             and enriched_frag_available

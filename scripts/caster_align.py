@@ -6,12 +6,20 @@ says whether a human watching thought those mattered, or how much. A cast does -
 continuous human judgement over the same timeline -- so this attaches one to the other and the
 pricing can be checked against it.
 
+THE COMMENTARY INDEX is what this produces for everyone else (`--emit-index`): one row per spoken
+segment, carrying the half and game_time it lands on. It makes no judgement and depends on no
+detector row -- commentary is a PARALLEL label channel, not a consumer of one (ruled 2026-09-28).
+Two humans then describe the same timeline without coordinating: a player files what happened
+(solicited, `ktp.play_report`) and the caster narrates it live (unsolicited, with no idea what is
+priced). Whatever reads both can ask what neither answers alone -- did anyone notice.
+
 Inputs are TEXT ONLY and live outside this repo. Audio is not an input and is not kept: a
 transcript is produced once and the recording is deleted. Nothing here names a caster, a stream or
 a player. Stdlib only, no network.
 
   caster_align.py <match_id> <cast_id> --vod-start <epoch> --offset 60      # live cast
   caster_align.py <match_id> <cast_id> --vod-start <epoch> --anchor MM:SS   # delayed cast
+  caster_align.py ... --emit-index <out.tsv>    # the commentary index, and nothing else
 
 Inputs:
   $KTP_CASTER_TEXT_DIR/v<cast_id>.json             whisper.cpp -oj output (segments, ms offsets)
@@ -206,6 +214,51 @@ def reaction_bursts(segs, lo, hi, gap=12.0):
     return bursts
 
 
+def emit_index(a, segs, anchor, at):
+    """One row per spoken segment, placed on the match clock.
+
+    A segment belongs to the half whose EPOCH WINDOW contains it, read from halves.tsv -- not to the
+    first half whose game_time range happens to fit. Those ranges overlap between halves, so
+    range-matching assigns by iteration order and put most of one match in the wrong half.
+
+    A LIVE cast runs on continuous real time, so one offset places both halves. A DELAYED cast does
+    not: the operator seeks between demos and between halves, so an anchor fits the half it was read
+    from and little else. Segments outside every half window are dropped and counted -- for a
+    delayed cast that legitimately includes the other half, which needs its own anchor.
+    """
+    halves = {}
+    for r in load_tsv(EVENTS / "halves.tsv"):
+        if r.get("match_id") == a.match_id:
+            halves[r["half"]] = (int(r["start_epoch"]), int(r["end_epoch"]))
+    if not halves:
+        raise SystemExit("no rows for " + a.match_id + " in " + str(EVENTS / "halves.tsv"))
+    offset = at(a.vod_start)                       # at(e) = e - vod_start + offset, so at(vod_start) IS the offset
+    rows, dropped = [], 0
+    for s in segs:
+        epoch = s["t0"] + a.vod_start - offset
+        placed = False
+        for h, (lo, hi) in sorted(halves.items()):
+            # A delayed cast pauses between halves, so one anchor places only the half it was read
+            # from; mapping the rest would invent times. Emit that half and count the others out.
+            if a.anchor and h != a.anchor_what[1]:
+                continue
+            if lo - 60 <= epoch <= hi + 60:
+                rows.append((h, epoch - (anchor.get(h) or lo), s["t1"] - s["t0"], s["text"]))
+                placed = True
+                break
+        dropped += not placed
+    out = Path(a.emit_index)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["match_id\tcast_id\thalf\tgame_time\tseconds\ttext"]
+    for h, gt, dur, text in rows:
+        lines.append("\t".join([a.match_id, a.vod_id, h, "%.1f" % gt, "%.1f" % dur,
+                                " ".join(text.split())]))
+    out.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    per_half = " · ".join("half %s: %d" % (h, sum(1 for r in rows if r[0] == h)) for h in sorted(halves))
+    print("%s: %d segments placed · %s · %d outside every half window — dropped, not guessed"
+          % (out, len(rows), per_half, dropped))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("match_id")
@@ -215,6 +268,8 @@ def main():
     ap.add_argument("--window", type=float, default=20.0)
     ap.add_argument("--map", default="dod_lennon5_b1")
     ap.add_argument("--min-burst", type=int, default=4, help="reaction score a burst needs to be listed")
+    ap.add_argument("--emit-index", default="", metavar="TSV",
+                    help="write the commentary index (half, game_time, text) and skip the report")
     ap.add_argument("--min-frags", type=int, default=2, help="frags within +-20 s for a burst to count as match talk")
     ap.add_argument("--multikill", type=int, default=2, help="frags by one killer that explain a burst as a highlight")
     ap.add_argument("--demo", action="store_true", help="re-cast from a demo: find the offset by name/frag correlation")
@@ -266,6 +321,10 @@ def main():
              if r["half"] == h and r["game_time"]]
         if d:
             anchor[h] = statistics.median(d)
+
+    if a.emit_index:
+        emit_index(a, segs, anchor, at)
+        return
 
     if priced:
         print("\n## Priced moments (hv_detect) and what he said")
