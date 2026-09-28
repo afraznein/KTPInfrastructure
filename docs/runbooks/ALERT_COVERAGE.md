@@ -59,6 +59,9 @@ alerted but not remediated is fine, and is most of this estate.
 | Configuration drift between hosts | yes | yes | no | `ktp-fleet-audit.sh`, Monday 05:00 ET, posts only NEW items |
 | `~/restart-all-servers.sh` / `~/status.sh` drift | yes | no | no | `ktp-restart-drift.py` — read-only, **run by hand only, on no schedule** |
 | Binary md5 drift from the repo baseline | yes | yes | no | fleet audit; **15 items open as of 2026-09-07** |
+| A config set on the instances and never mirrored into `/home/dod/distribute` — reverted fleet-wide by the next push of that file, silently | **yes, new** | **yes, new** | no | `audit-distribute-drift.py`, weekly via the fleet audit. Nothing watched this before: the distributor is event-driven with no startup sync, so tree and fleet were compared only by hand. This is the 2026-08-19 `discord.ini` shape, and `ktp_maps.ini` / `users.ini` before it — see [`DISTRIBUTE_DRIFT.md`](DISTRIBUTE_DRIFT.md) |
+| A deploy-tree file carrying per-instance data that no `excludePatterns` declares | **yes, new** | **yes, new** | no | same check, hazard leg — reported on every run, not only on a change |
+| A push that reached part of the fleet and was never retried | **yes, new** | **yes, new** | no | same check, `partial` / `absent` shapes |
 
 ## Data server — services
 
