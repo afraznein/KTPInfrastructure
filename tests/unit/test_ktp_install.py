@@ -258,3 +258,90 @@ def test_non_root_default_is_the_home_manifest_and_report_reads_it(env):
     assert not env["manifest"].exists()
     p = run(env, "--report", extra_env=e)
     assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+
+
+# --- --against-ref: "untouched since install" is not "current" --------------
+#
+# The gap these hold open: a file nobody has edited reports OK forever while the
+# repo merges past it. Both directions, on the same manifest, in one test -- a
+# freshness check that cannot say CURRENT proves nothing either.
+
+
+def test_report_alone_says_ok_while_against_ref_says_stale(env):
+    install(env, env["c1"], "-")
+    p = run(env, "--report")
+    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", env["c2"])
+    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+    assert md5(V2)[:12] in p.stdout and env["c1"][:12] in p.stdout
+
+
+def test_against_ref_says_current_when_the_installed_bytes_are_the_refs(env):
+    install(env, env["c2"], "-")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", env["c2"])
+    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+
+
+def test_against_ref_accepts_a_symbolic_ref(env):
+    install(env, env["c1"], "-")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+
+
+def test_an_unresolvable_ref_is_untrusted_not_fresh(env):
+    install(env, env["c2"], "-")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "no/such/ref")
+    assert p.returncode == 2 and p.stdout.startswith("UNTRUSTED"), p.stdout
+
+
+def test_against_ref_without_repo_is_untrusted(env):
+    install(env, env["c2"], "-")
+    p = run(env, "--report", "--against-ref", "HEAD")
+    assert p.returncode == 2 and p.stdout.startswith("UNTRUSTED"), p.stdout
+
+
+def test_a_source_path_the_ref_no_longer_holds_is_not_fresh(env):
+    install(env, env["c2"], "-")
+    git(env["repo"], "rm", "-q", "scripts/tool.sh")
+    git(env["repo"], "commit", "-q", "-m", "drop it")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 1 and p.stdout.startswith("SOURCE-GONE"), p.stdout
+
+
+def test_a_row_from_another_repo_is_not_compared_and_does_not_fail(env):
+    install(env, env["c2"], "-")
+    env["manifest"].write_text(env["manifest"].read_text().replace("\trepo\t", "\tKTPElsewhere\t"))
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 0 and p.stdout.startswith("OTHER-REPO"), p.stdout
+
+
+def test_owner_qualified_source_repo_still_compares(env):
+    install(env, env["c1"], "-")
+    env["manifest"].write_text(env["manifest"].read_text().replace("\trepo\t", "\tafraznein/repo\t"))
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+
+
+def test_freshness_never_masks_drift(env):
+    install(env, env["c2"], "-")
+    (env["dest"] / "tool.sh").write_bytes(b"#!/bin/bash\necho hotfix\n")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 1 and p.stdout.startswith("DRIFT"), p.stdout
+
+
+def test_against_ref_is_refused_on_an_install(env):
+    p = install(env, env["c1"], "-", "--against-ref", "HEAD")
+    assert p.returncode == 2 and "--report flag" in p.stderr, p.stderr
+
+
+def test_a_recorded_commit_this_checkout_lacks_is_not_an_indictment(env, tmp_path):
+    """A shallow clone cannot see old commits. Saying SOURCE-MISMATCH there turns
+    'I cannot check' into 'it is wrong' -- and CI checks out shallow by default."""
+    install(env, env["c2"], "-")
+    env["manifest"].write_text(env["manifest"].read_text().replace(env["c2"], "b" * 40))
+    p = run(env, "--report", "--repo", str(env["repo"]))
+    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert "not in this checkout" in p.stdout, p.stdout
+    # and it still reaches a freshness verdict rather than stopping there
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout

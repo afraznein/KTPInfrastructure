@@ -4,7 +4,7 @@
     ktp-install --repo DIR --commit SHA --src PATH --dest PATH --expect-md5 MD5|-
     ktp-install --file F --source-repo NAME --commit SHA --src PATH --blob-md5 MD5 --dest PATH --expect-md5 MD5|-
     ktp-install --file F --template --source-repo NAME --commit SHA --src PATH.example --dest PATH --expect-md5 MD5|-
-    ktp-install --report [--repo DIR]
+    ktp-install --report [--repo DIR] [--against-ref REF]
 
 The installed bytes are the git blob, so a file's md5 alone identifies the commit
 it came from; the manifest records which one. No version string is written into
@@ -23,6 +23,25 @@ install; a path's current state is its LAST row.
 --report reads every manifest that applies on the host. It exits 0 when every
 recorded file still has the md5 of its last row, 1 on drift or a missing file,
 and 2 when there is no manifest or one cannot be parsed.
+
+⚠️ --report ALONE ANSWERS "UNTOUCHED SINCE INSTALL", NOT "CURRENT". Those read
+identically in the output and are not the same question. A file nobody has
+touched since the day it was installed reports OK forever while the repo merges
+past it, because the bytes still match the row and the row is what went stale.
+That is how the tier-2 stack-drift checker ran superseded logic for weeks with
+this report calling it healthy -- and the same gap covers most of the installed
+estate, not one script. Nothing in /usr/local/bin is deployed by anything but a
+person remembering to copy it, so "merged" and "running" drift by default.
+
+--against-ref REF closes that. It resolves each row's source_path at REF and
+compares the INSTALLED bytes to what REF holds, so an untouched file reports
+STALE once the repo moves past it. Needs --repo (the ref is resolved there).
+Rows naming a different source_repo print OTHER-REPO and are not compared --
+one manifest may carry several repos. A ref that does not resolve exits 2
+rather than passing: a freshness check that could not run must not read as
+fresh, and neither may a source_path the ref no longer holds (SOURCE-GONE).
+A recorded commit the checkout does not carry is noted, not indicted: shallow
+clones are the normal CI checkout, so that must not read as a mismatch.
 """
 
 import argparse
@@ -230,7 +249,31 @@ def install(a):
              " [templated]" if a.template else "", manifest))
 
 
+FRESH_OK = ("OK", "TEMPLATED", "CURRENT", "OTHER-REPO")
+
+
+def blob_at(repo, ref, path):
+    """(md5, present). present=False when ref does not hold that path at all."""
+    p = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (ref, path)], capture_output=True)
+    if p.returncode != 0:
+        return None, False
+    return md5_bytes(p.stdout), True
+
+
 def report(a):
+    ref_commit = this_repo = None
+    if a.against_ref:
+        if not a.repo:
+            print("UNTRUSTED  --against-ref needs --repo: the ref is resolved there")
+            return 2
+        p = subprocess.run(["git", "-C", a.repo, "rev-parse", "--verify", a.against_ref + "^{commit}"],
+                           capture_output=True)
+        if p.returncode != 0:
+            print("UNTRUSTED  %s does not resolve in %s" % (a.against_ref, a.repo))
+            return 2
+        ref_commit = p.stdout.decode().strip()
+        this_repo = repo_name(a.repo)
+
     paths = [p for p in manifests_for_report() if os.path.exists(p)]
     if not paths:
         print("UNTRUSTED  no manifest at %s" % " or ".join(manifests_for_report()))
@@ -259,13 +302,38 @@ def report(a):
             state = "TEMPLATED" if is_template(r["source_path"]) else "OK"
         extra = ""
         if a.repo and state in ("OK", "TEMPLATED"):
-            p = subprocess.run(["git", "-C", a.repo, "show", "%s:%s" % (r["source_commit"], r["source_path"])],
-                               capture_output=True)
-            if p.returncode != 0:
-                state, extra = "SOURCE-MISMATCH", "  (recorded commit has no such path)"
-            elif state == "OK" and md5_bytes(p.stdout) != r["md5"]:
-                state, extra = "SOURCE-MISMATCH", "  (recorded commit does not hold these bytes)"
-        if state not in ("OK", "TEMPLATED"):
+            # A commit this checkout does not carry cannot indict the row. Shallow
+            # clones and rows from other repos both land here, and calling either
+            # SOURCE-MISMATCH turns "I cannot check" into "it is wrong".
+            have = subprocess.run(["git", "-C", a.repo, "cat-file", "-e", r["source_commit"] + "^{commit}"],
+                                  capture_output=True)
+            if have.returncode != 0:
+                extra = "  (recorded commit not in this checkout; provenance not compared)"
+            else:
+                p = subprocess.run(["git", "-C", a.repo, "show", "%s:%s" % (r["source_commit"], r["source_path"])],
+                                   capture_output=True)
+                if p.returncode != 0:
+                    state, extra = "SOURCE-MISMATCH", "  (recorded commit has no such path)"
+                elif state == "OK" and md5_bytes(p.stdout) != r["md5"]:
+                    state, extra = "SOURCE-MISMATCH", "  (recorded commit does not hold these bytes)"
+        if ref_commit and state in ("OK", "TEMPLATED"):
+            # Row names its repo as a bare name or owner/name; compare the tail.
+            if r["source_repo"].rsplit("/", 1)[-1] != this_repo:
+                state, extra = "OTHER-REPO", "  (not %s; freshness not compared)" % this_repo
+            elif state == "TEMPLATED":
+                extra = "  (filled template; its bytes cannot equal any blob)"
+            else:
+                want, present = blob_at(a.repo, ref_commit, r["source_path"])
+                if not present:
+                    state = "SOURCE-GONE"
+                    extra = "  (%s no longer holds %s)" % (a.against_ref, r["source_path"])
+                elif want != r["md5"]:
+                    state = "STALE"
+                    extra = "  (%s holds %s, installed %s)" % (a.against_ref, want[:12],
+                                                               r["source_commit"][:12])
+                else:
+                    state = "CURRENT"
+        if state not in FRESH_OK:
             bad += 1
         print("%-15s %s  %s  %s@%s:%s%s" % (state, path, now, r["source_repo"], r["source_commit"][:12],
                                             r["source_path"], extra))
@@ -285,9 +353,14 @@ def main(argv=None):
     ap.add_argument("--expect-md5")
     ap.add_argument("--mode", type=lambda s: int(s, 8))
     ap.add_argument("--source-repo")
+    ap.add_argument("--against-ref",
+                    help="with --report --repo: compare installed bytes to this ref, "
+                         "not just to the row they were installed from")
     a = ap.parse_args(argv)
     if a.report:
         return report(a)
+    if a.against_ref:
+        ap.error("--against-ref is a --report flag; an install already knows its commit")
     missing = [n for n in ("commit", "src", "dest", "expect_md5") if getattr(a, n) is None]
     if missing:
         ap.error("install needs --" + ", --".join(m.replace("_", "-") for m in missing))
