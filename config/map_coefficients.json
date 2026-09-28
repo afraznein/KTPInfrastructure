@@ -1,0 +1,68 @@
+{
+  "corpus_candidates": {
+    "officials_only": {
+      "extra_halves": 0,
+      "held_out_loss_on_officials": 0.647696
+    },
+    "officials_plus_12man": {
+      "extra_halves": 122,
+      "held_out_loss_on_officials": 0.649587
+    },
+    "officials_plus_all_practice": {
+      "extra_halves": 206,
+      "held_out_loss_on_officials": 0.650112
+    }
+  },
+  "corpus_selected": "officials_only",
+  "corpus_since": "2026-09-13",
+  "definition": "flag_swing_map_coefficients_v1",
+  "fitted_at": "2026-09-28T17:32:10Z",
+  "label_mix": {
+    "engine": 242,
+    "ledger": 18
+  },
+  "label_source": "ktp_score_events, falling back to the demo ledger where the engine feed does not reach (see the module docstring)",
+  "maps": {
+    "dod_harrington": {
+      "alive_coefficient": 0.9766,
+      "flag_coefficient": 1.6727,
+      "log_loss": 0.641457,
+      "official_halves": 16,
+      "own_alive_coefficient": 0.9282,
+      "own_flag_coefficient": 1.7731,
+      "samples": 13345,
+      "shrinkage_weight": 0.4444,
+      "training_halves": 16
+    },
+    "dod_lennon5_b1": {
+      "alive_coefficient": 1.0492,
+      "flag_coefficient": 1.2401,
+      "log_loss": 0.674777,
+      "official_halves": 20,
+      "own_alive_coefficient": 1.0831,
+      "own_flag_coefficient": 0.8879,
+      "samples": 14859,
+      "shrinkage_weight": 0.5,
+      "training_halves": 20
+    },
+    "dod_thunder2": {
+      "alive_coefficient": 0.9577,
+      "flag_coefficient": 2.7789,
+      "log_loss": 0.596864,
+      "official_halves": 18,
+      "own_alive_coefficient": 0.8936,
+      "own_flag_coefficient": 4.0974,
+      "samples": 10832,
+      "shrinkage_weight": 0.4737,
+      "training_halves": 18
+    }
+  },
+  "pooled": {
+    "alive_coefficient": 1.0153,
+    "flag_coefficient": 1.5923,
+    "halves": 54,
+    "log_loss": 0.65186,
+    "samples": 39036
+  },
+  "prior_halves": 20.0
+}

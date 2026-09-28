@@ -129,3 +129,34 @@ class ReviewDiff(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerFallback(unittest.TestCase):
+    """The engine feed starts 2026-09-17; the ledger covers what came before."""
+
+    def setUp(self):
+        from scripts.fit_map_coefficients import merge_ledger_fallback
+        self.merge = merge_ledger_fallback
+        self.shape = {("m1", 1): ("dod_thunder2", 0), ("m1", 2): ("dod_thunder2", 0)}
+
+    def test_a_half_the_engine_labelled_is_not_overwritten(self):
+        engine = {("m1", 1): {"winner": 1, "map_name": "dod_thunder2",
+                              "match_type": 0, "label_source": "engine"}}
+        got = self.merge(engine, {"m1": {1: 2}}, self.shape)
+        self.assertEqual(got[("m1", 1)]["winner"], 1)
+        self.assertEqual(got[("m1", 1)]["label_source"], "engine")
+
+    def test_a_half_the_engine_missed_is_filled_and_marked(self):
+        got = self.merge({}, {"m1": {2: 2}}, self.shape)
+        self.assertEqual(got[("m1", 2)]["winner"], 2)
+        self.assertEqual(got[("m1", 2)]["label_source"], "ledger")
+        self.assertEqual(got[("m1", 2)]["map_name"], "dod_thunder2")
+
+    def test_a_half_with_no_shape_is_skipped_rather_than_guessed(self):
+        self.assertEqual(self.merge({}, {"unknown": {1: 1}}, self.shape), {})
+
+    def test_the_mix_is_reported_in_the_payload(self):
+        official = {"dod_x": [half(0.3, 1), half(-0.3, 0)] * 4}
+        out = build(lambda: (official, {}), "2026-09-13",
+                    extra={"label_mix": {"engine": 20, "ledger": 16}})
+        self.assertEqual(out["label_mix"], {"engine": 20, "ledger": 16})
