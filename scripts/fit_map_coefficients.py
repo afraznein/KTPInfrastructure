@@ -41,7 +41,8 @@ from typing import Any
 
 from scripts.fit_flag_swing import (PRIOR_HALVES, extract_half_samples, fit_by_map,
                                     fit_logistic, _sigmoid)
-from scripts.fit_team_score_labels import load_inputs
+from scripts.fit_team_score_labels import (LEDGER_FINALS_SQL, load_inputs,
+                                           half_winners as ledger_half_winners)
 from scripts.report_scope import OFFICIAL_MATCH_TYPES
 
 REPO = Path(__file__).resolve().parents[1]
@@ -66,6 +67,34 @@ GROUP BY 1, 2, 3, 4
 """
 
 
+def merge_ledger_fallback(engine: dict[tuple[str, int], dict[str, Any]],
+                          ledger: dict[str, dict[int, int]],
+                          maps: dict[str, tuple[str, int]]) -> dict[tuple[str, int], dict[str, Any]]:
+    """Fill halves the engine feed cannot label from the demo ledger.
+
+    `ktp_score_events` only exists from 2026-09-17 (migration 033), so every
+    half before that is unlabelled by the engine -- which cost 16 of
+    dod_thunder2's 18 official halves and left that map fitted on two, shrunk
+    all the way back to the league value. The ledger reaches further back.
+
+    The ledger is the WEAKER source: the demo stops ~45 s before a half ends,
+    and on 3 of 38 halves carrying both it names a different winner. But for
+    FITTING, an occasionally wrong label costs far less than discarding 89% of
+    a map, so it is used only where the engine is silent, and every half
+    records which source labelled it.
+    """
+    out = dict(engine)
+    for match_id, by_half in ledger.items():
+        for half, winner in by_half.items():
+            key = (match_id, half)
+            if key in out or key not in maps:
+                continue
+            map_name, match_type = maps[key]
+            out[key] = {"winner": winner, "map_name": map_name,
+                        "match_type": match_type, "label_source": "ledger"}
+    return out
+
+
 def half_winners(rows: list[dict[str, Any]]) -> dict[tuple[str, int], dict[str, Any]]:
     out: dict[tuple[str, int], dict[str, Any]] = {}
     for row in rows:
@@ -76,6 +105,7 @@ def half_winners(rows: list[dict[str, Any]]) -> dict[tuple[str, int], dict[str, 
             "winner": 1 if allies > axis else 2,
             "map_name": str(row["map_name"]),
             "match_type": int(row["match_type"]),
+            "label_source": "engine",
         }
     return out
 
@@ -118,7 +148,7 @@ def held_out_loss(official: dict[str, list[list[tuple[float, float, int]]]],
 
 
 def build(collect, since: str, *, prior_halves: float = PRIOR_HALVES,
-          score=None) -> dict[str, Any]:
+          score=None, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     """Fit every candidate corpus, keep the one that predicts officials best.
 
     `score` is the held-out scorer; injectable so the selection rule can be
@@ -138,12 +168,14 @@ def build(collect, since: str, *, prior_halves: float = PRIOR_HALVES,
                                         for m, hs in practice.items()},
     }
     scored = {}
-    for name, extra in candidates.items():
-        extra = {m: hs for m, hs in extra.items() if hs}
+    for name, candidate in candidates.items():
+        # NOT `extra`: that is the caller's provenance dict, and shadowing it
+        # here silently replaced the payload's label_mix with a pile of halves.
+        candidate = {m: hs for m, hs in candidate.items() if hs}
         scored[name] = {
             "held_out_loss_on_officials": round(
-                score(official, extra, prior_halves=prior_halves), 6),
-            "extra_halves": sum(len(hs) for hs in extra.values()),
+                score(official, candidate, prior_halves=prior_halves), 6),
+            "extra_halves": sum(len(hs) for hs in candidate.values()),
         }
     # Tie-break toward LESS data, not more: if practice does not measurably
     # improve the prediction of official halves, it does not go in. Ordered
@@ -163,10 +195,12 @@ def build(collect, since: str, *, prior_halves: float = PRIOR_HALVES,
     pooled, fits = fit_by_map(training, prior_halves=prior_halves)
 
     return {
+        **(extra or {}),          # provenance the caller measured, e.g. the label mix
         "definition": "flag_swing_map_coefficients_v1",
         "fitted_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "corpus_since": since,
-        "label_source": "ktp_score_events (engine feed; see module docstring)",
+        "label_source": "ktp_score_events, falling back to the demo ledger "
+                        "where the engine feed does not reach (see the module docstring)",
         "prior_halves": prior_halves,
         "corpus_selected": best,
         "corpus_candidates": scored,
@@ -215,6 +249,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--since", default="2026-09-13", help="corpus floor (season start)")
     ap.add_argument("--out", type=Path, default=CONFIG)
     ap.add_argument("--prior-halves", type=float, default=PRIOR_HALVES)
+    ap.add_argument("--no-ledger-fallback", action="store_true",
+                    help="engine labels only; drops halves before 2026-09-17, "
+                         "when ktp_score_events began")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--write", action="store_true", help="refit and write the table")
     mode.add_argument("--check", action="store_true",
@@ -226,8 +263,21 @@ def main(argv: list[str] | None = None) -> int:
     db = LocalMysql()
     sources = ma.source_capabilities(db)
 
+    mix: dict[str, int] = {}
+
     def collect():
         labels = half_winners(ma.tsv_rows(db.sql(LABEL_SQL.format(since=args.since))))
+        engine_only = len(labels)
+        if not args.no_ledger_fallback:
+            finals = ma.tsv_rows(db.sql(LEDGER_FINALS_SQL.format(
+                types=", ".join(str(int(t)) for t in OFFICIAL_MATCH_TYPES))))
+            shape = {(str(r["match_id"]), int(r["half"])):
+                     (str(r["map_name"]), int(r["match_type"])) for r in finals}
+            labels = merge_ledger_fallback(labels, ledger_half_winners(finals), shape)
+        mix["engine"] = engine_only
+        mix["ledger"] = len(labels) - engine_only
+        print(f"labels: {mix['engine']} from the engine feed, "
+              f"{mix['ledger']} filled from the demo ledger", flush=True)
         official: dict[str, list] = defaultdict(list)
         practice: dict[str, list] = defaultdict(list)
         cache: dict[str, Any] = {}
@@ -256,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
                 practice[meta["map_name"]].append((samples, meta["match_type"]))
         return dict(official), dict(practice)
 
-    payload = build(collect, args.since, prior_halves=args.prior_halves)
+    payload = build(collect, args.since, prior_halves=args.prior_halves,
+                    extra={"label_mix": mix})
     print("fit complete", flush=True)
     old = json.loads(args.out.read_text(encoding="utf-8")) if args.out.exists() else {}
     changes = diff(old, payload)

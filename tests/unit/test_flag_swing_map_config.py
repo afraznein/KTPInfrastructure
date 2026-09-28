@@ -10,11 +10,26 @@ from scripts.fit_flag_swing import fit_by_map
 
 
 class ForMap(unittest.TestCase):
-    def test_no_table_means_the_league_prior_untouched(self):
-        # The shipped table is empty, so today's behaviour must be identical.
-        cfg = FlagSwingConfig().for_map("dod_thunder2")
+    def test_an_empty_table_leaves_the_league_prior_untouched(self):
+        # An unfitted league, or a calibration file that failed to load, must
+        # behave exactly as before per-map coefficients existed.
+        with mock.patch.dict(flag_swing.MAP_COEFFICIENTS, {}, clear=True):
+            cfg = FlagSwingConfig().for_map("dod_thunder2")
         self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient), (2.0, 1.0))
         self.assertEqual(cfg.calibration, "uncalibrated_baseline")
+
+    def test_the_shipped_table_loads_and_is_usable(self):
+        # The committed artifact is the thing production reads, so a malformed
+        # or empty one should fail here rather than silently flatten every map
+        # back to the league prior in a report nobody re-checks.
+        self.assertTrue(flag_swing.MAP_COEFFICIENTS,
+                        "config/map_coefficients.json did not load")
+        for name, (flag, alive) in flag_swing.MAP_COEFFICIENTS.items():
+            self.assertTrue(name.startswith("dod_"), name)
+            self.assertGreater(flag, 0.0, name)
+            self.assertGreater(alive, 0.0, name)
+            FlagSwingConfig(flag_coefficient=flag,
+                            alive_coefficient=alive).validate()
 
     def test_a_fitted_map_gets_its_own_coefficients(self):
         with mock.patch.dict(flag_swing.MAP_COEFFICIENTS,
