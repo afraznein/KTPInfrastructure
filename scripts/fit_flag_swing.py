@@ -156,3 +156,77 @@ def fit_logistic(
         loss -= label * math.log(p) + (1 - label) * math.log(1.0 - p)
     return FitResult(a, b, len(samples), halves, round(loss / n, 6),
                      iterations)
+
+
+# How many labelled halves a map needs before its own fit carries half the
+# weight. The league plays one map a week, so a map arrives with 16-20 halves
+# and an independent fit on that much data OVERFITS: measured on S10, per-map
+# fits lost to pooled out of sample on harrington (by 0.0038) and lennon5 (by
+# 0.0029) while winning on thunder2 (by 0.0347), whose flag coefficient is
+# genuinely ~3x the league's. Shrinkage is what lets the third case through
+# without the first two doing damage. Raise it to trust maps less.
+PRIOR_HALVES = 20.0
+
+
+@dataclass
+class MapFitResult:
+    map_name: str
+    flag_coefficient: float      # shrunk toward the pooled fit -- what to ship
+    alive_coefficient: float
+    own_flag_coefficient: float  # the map's unshrunk fit, for inspection
+    own_alive_coefficient: float
+    halves: int
+    samples: int
+    weight: float                # how much of its own fit the map earned
+    log_loss: float
+
+    def as_entry(self) -> tuple[str, tuple[float, float]]:
+        return self.map_name, (round(self.flag_coefficient, 4),
+                               round(self.alive_coefficient, 4))
+
+
+def fit_by_map(
+    halves_by_map: dict[str, Sequence[Sequence[tuple[float, float, int]]]],
+    *,
+    prior_halves: float = PRIOR_HALVES,
+    **fit_kwargs: Any,
+) -> tuple[FitResult, list[MapFitResult]]:
+    """Pooled fit, plus each map's fit shrunk toward it.
+
+    `halves_by_map` is map -> halves -> samples; the halves matter because
+    shrinkage weighs a map by how many HALVES it has, not how many samples.
+    Samples within a half share one label and are strongly correlated, so
+    counting them would let a single long half look like independent evidence.
+    """
+    pooled_samples = [s for halves in halves_by_map.values()
+                      for half in halves for s in half]
+    if not pooled_samples:
+        raise ValueError("no samples to fit")
+    pooled = fit_logistic(
+        pooled_samples,
+        halves=sum(len(h) for h in halves_by_map.values()),
+        **fit_kwargs)
+
+    out: list[MapFitResult] = []
+    for map_name in sorted(halves_by_map):
+        halves = [h for h in halves_by_map[map_name] if h]
+        samples = [s for half in halves for s in half]
+        if not samples:
+            continue
+        own = fit_logistic(samples, halves=len(halves), **fit_kwargs)
+        weight = len(halves) / (len(halves) + prior_halves) if prior_halves >= 0 else 1.0
+        flag = weight * own.flag_coefficient + (1.0 - weight) * pooled.flag_coefficient
+        alive = weight * own.alive_coefficient + (1.0 - weight) * pooled.alive_coefficient
+        loss = 0.0
+        for flag_term, alive_term, label in samples:
+            p = min(max(_sigmoid(flag * flag_term + alive * alive_term), 1e-12),
+                    1.0 - 1e-12)
+            loss -= label * math.log(p) + (1 - label) * math.log(1.0 - p)
+        out.append(MapFitResult(
+            map_name=map_name,
+            flag_coefficient=flag, alive_coefficient=alive,
+            own_flag_coefficient=own.flag_coefficient,
+            own_alive_coefficient=own.alive_coefficient,
+            halves=len(halves), samples=len(samples), weight=round(weight, 4),
+            log_loss=round(loss / len(samples), 6)))
+    return pooled, out
