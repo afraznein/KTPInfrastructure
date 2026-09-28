@@ -114,6 +114,10 @@ DEFAULT_SCHEMA_FILES = (
     # INSERTs into ktp_move_census, so a lane without the table exercises the
     # new handler as a no-op and reports clean either way.
     "sql/migrate_038_move_census.sql",
+    # Applied here even though it is still PROPOSED for production: the daemon's
+    # score INSERT names ktp_score_events.round_time_left, so a lane without it
+    # fails every score row.
+    "sql/migrate_039_score_round_time_left.sql",
 )
 
 DEFAULT_SEED_FILES = (
