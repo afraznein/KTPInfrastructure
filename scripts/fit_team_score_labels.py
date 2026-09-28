@@ -22,7 +22,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
-from scripts.fit_flag_swing import _sigmoid, extract_half_samples, fit_logistic
+from scripts.fit_flag_swing import (_sigmoid, extract_half_samples, fit_by_map,
+                                    fit_logistic)
 from scripts.report_scope import OFFICIAL_MATCH_TYPES
 
 REPO = Path(__file__).resolve().parents[1]
@@ -88,6 +89,9 @@ def fit_labeled_halves(
 ) -> dict[str, Any]:
     samples: list[tuple[float, float, int]] = []
     table: list[dict[str, Any]] = []
+    # Kept per map AND per half: the league plays one map a week, so the map
+    # is the natural unit of a fit, and shrinkage weighs halves not samples.
+    halves_by_map: dict[str, list[list[tuple[float, float, int]]]] = defaultdict(list)
     for match_id in sorted(winners):
         inputs = inputs_for(match_id)
         if inputs is None or not inputs["flag_states"] or not inputs["roster"]:
@@ -99,6 +103,8 @@ def fit_labeled_halves(
                 inputs["flag_states"], inputs["frags"], inputs["life_boundaries"],
                 inputs["roster"], half, side, initial_owners=initial)
             samples += half_samples
+            if half_samples:
+                halves_by_map[map_names.get(match_id, "")].append(half_samples)
             table.append({"match_id": match_id, "half": half, "winner_side": side,
                           "samples": len(half_samples),
                           "final_flag_term": round(half_samples[-1][0], 3) if half_samples else None,
@@ -116,9 +122,19 @@ def fit_labeled_halves(
         row["end_agrees_with_label"] = (p > 0.5) == (row["winner_side"] == 1)
         agree += row["end_agrees_with_label"]
     labeled = sum(1 for r in table if r.get("samples"))
+    per_map: list[dict[str, Any]] = []
+    if halves_by_map:
+        _pooled, map_fits = fit_by_map(dict(halves_by_map))
+        per_map = [asdict(m) for m in map_fits]
     return {
         "config": json.loads(fitted.as_config_json()),
         "fit": asdict(fitted),
+        # Paste into flag_swing.MAP_COEFFICIENTS. Shrunk toward the pooled fit,
+        # so a map that has not earned its distance stays at the league value.
+        "map_coefficients": {m["map_name"]: [round(m["flag_coefficient"], 4),
+                                             round(m["alive_coefficient"], 4)]
+                             for m in per_map},
+        "per_map": per_map,
         "halves_labeled": labeled,
         "halves_end_state_agrees": agree,
         "halves": table,

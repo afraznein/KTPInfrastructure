@@ -1,0 +1,14 @@
+[Unit]
+Description=Weekly per-map flag_swing refit, proposed for review
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+# Monday 10:00 ET, after Sunday's officials have settled and been reported.
+# Weekly because the league plays one map a week: a mid-week run would refit
+# on the same corpus and propose a diff nobody needs to read.
+OnCalendar=Mon *-*-* 14:00:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
