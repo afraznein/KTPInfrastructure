@@ -25,10 +25,12 @@
 #
 # Trigger model:
 #   - Manually via workflow_dispatch (operator-driven, with timeout multiplier)
-#   - On every PR to main or preprod — required status check per branch
-#     protection on `main` (flipped from warn-only after 2 weeks green-on-main,
-#     original design decision 2026-04-24, applied 2026-05-18) and, since the
-#     preprod/prod gate was introduced, on `preprod` too.
+#   - On every PR to main — required status check per branch protection on
+#     `main` (flipped from warn-only after 2 weeks green-on-main, original
+#     design decision 2026-04-24, applied 2026-05-18). The `preprod` entry in
+#     the branch list below is inert since that branch was retired; nothing can
+#     target it, and it is left in place only to keep this change to the leg
+#     that was actually failing.
 #   - On every push to main — the post-merge signal. A PR run self-skips pytest
 #     whenever the diff misses the relevance filter, so a change that breaks the
 #     suite indirectly merges green and nothing re-checks it until the nightly.
@@ -37,15 +39,14 @@
 #     a push run that cancels the nightly's main leg via the shared concurrency
 #     group must also write the last-run marker the heartbeat watches, or
 #     silencing the nightly would look like a dead runner.
-#   - Nightly via schedule (09:00 UTC), targeting preprod only while the staged
-#     stack is being proven. The main leg remains paused until production
-#     enablement; paired
-#     with scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
+#   - Nightly via schedule (09:00 UTC), main only — this repo retired `preprod`
+#     on 2026-09-19 (see the strategy.matrix comment). Paired with
+#     scripts/ktp-tier2-heartbeat.sh (data-server cron) which alerts on a
 #     missing/stale/failed last-run marker so a dead runner is not silently
 #     green. Schedule triggers always fire from the default branch's copy of
 #     this file (a GitHub Actions constraint — schedules can't run from a
-#     non-default branch), so preprod coverage comes from the matrix explicitly
-#     checking out that ref, not from the trigger itself.
+#     non-default branch), so a matrix leg's coverage comes from it explicitly
+#     checking out its ref, not from the trigger itself.
 #
 # No `paths:` filter on `pull_request:` — workflow fires on every PR to main
 # so the required status check `Tier 2 Integration / integration` always
@@ -85,9 +86,9 @@ on:
   push:
     # Post-merge only. No `paths:` filter, for the same reason `pull_request:`
     # has none — the job decides whether to run, so the decision stays in one
-    # place. preprod is deliberately absent: its coverage is the nightly's
-    # preprod leg, and doubling it here would put a second series of runs on a
-    # runner that shares the production data server.
+    # place. main is the only branch there is now; keeping this single-branch
+    # matters because the runner shares the production data server and a second
+    # series of runs would contend with it.
     branches: [main]
 
 jobs:
@@ -101,24 +102,34 @@ jobs:
 
     strategy:
       fail-fast: false
-      # Only the nightly schedule uses an explicit target matrix. It runs BOTH
-      # legs: preprod (staged testing) and main (what the fleet actually runs).
-      # PR and manual dispatch runs stay single-leg against whatever ref
-      # triggered them.
+      # Only the nightly schedule uses an explicit target matrix; PR and manual
+      # dispatch runs stay single-leg against whatever ref triggered them.
       #
-      # main is here because the heartbeat watches tier2-last-run.json, which
-      # ONLY the main leg writes -- see the marker step below. With the nightly
-      # preprod-only, that marker went 69h stale (threshold 36h) and alerted
-      # daily while the runner was healthy and the schedule was working. The
-      # alert was correct that main was unexercised and wrong about why, and an
-      # alarm that always fires is one people learn to discount. Restoring this
-      # leg fixes the coverage gap and the false alert with one change, rather
-      # than silencing the watcher.
+      # main is the only leg because KTPInfrastructure retired `preprod` (ruled
+      # 2026-09-19) — promoted into main, then deleted. THIS repo only; every
+      # other repo's preprod is live, so the pinned component refs further down
+      # and the sibling corpus-regression callers stay as they are. A blanket
+      # preprod->main sweep would break four working lanes.
+      #
+      # The leg outlived the branch: checkout resolves matrix.target_ref against
+      # this repo, so it died at step 2 every night on "A branch or tag with the
+      # name 'preprod' could not be found", skipped the marker step, and left
+      # tier2-last-run-preprod.json frozen at the last pre-deletion run. An alarm
+      # that always fires is one people learn to discount — the same lesson the
+      # 69h main-marker false alarm taught, which is why this matrix grew a
+      # second leg in the first place.
+      #
+      # Deleting the leg does NOT clear that alert by itself: the preprod marker
+      # can never be rewritten now, so ktp-tier2-heartbeat.sh keeps reporting it
+      # stale until KTP_TIER2_WATCH_PREPROD=0 is set on the data-server cron.
+      # That is the remedy the script's own header prescribes — one config line,
+      # no code edit, and specifically NOT repointing KTP_TIER2_MARKER_PREPROD
+      # at the main marker, which would make both checks watch one file.
       # max-parallel: 1 — one hlds_linux port on the self-hosted runner, see
       # the concurrency block below for why that also needs matrix.target_ref.
       max-parallel: 1
       matrix:
-        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["preprod","main"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main"]') || fromJSON(format('["{0}"]', github.ref_name)) }}
 
     # Concurrency: only one Tier 2 run at a time per (triggering ref, matrix
     # target). Job-level (not workflow-level) because it needs `matrix`,
@@ -161,9 +172,10 @@ jobs:
         uses: actions/checkout@v4
         with:
           # matrix.target_ref is always the triggering ref except on schedule,
-          # where it is explicitly preprod (see strategy.matrix above). The
-          # schedule always *fires* from the default branch's copy of this
-          # file, but each matrix leg checks out its own target content).
+          # where it is explicitly main (see strategy.matrix above). This step
+          # is what made the retired preprod leg fatal rather than cosmetic: the
+          # ref resolves against THIS repo, so a target_ref naming a branch that
+          # no longer exists fails the job here, before anything else runs.
           # Leave PR/manual checkout at the action's event-aware default. In a
           # PR, github.ref_name is `N/merge`, which is not a branch or tag and
           # cannot be resolved when supplied explicitly. Only schedules need
@@ -508,18 +520,13 @@ jobs:
         # a self-skipped docs-only PR doesn't stamp an empty-outcome marker
         # over the last real run.
         #
-        # Only the `main` leg writes the canonical filename the existing
-        # heartbeat cron already watches — left untouched so that monitoring
-        # doesn't regress. The `preprod` leg writes a second, parallel marker
-        # so preprod health is visible too, without the heartbeat script
-        # needing to change (it doesn't need to, yet — see
-        # docs/handover/PREPROD_BRANCHING.md).
+        # One marker now: the second filename existed for the preprod leg, which
+        # this repo no longer has (strategy.matrix above). The dead branch is
+        # removed rather than left in — an unreachable writer reads like proof
+        # that tier2-last-run-preprod.json is still being produced, and that
+        # file is exactly the one the heartbeat is currently stuck on.
         run: |
-          if [ "${{ matrix.target_ref }}" = "preprod" ]; then
-            MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run-preprod.json"
-          else
-            MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
-          fi
+          MARKER="$(dirname "$KTP_HLDS_SERVERFILES")/tier2-last-run.json"
           printf '{"ts": %s, "outcome": "%s", "run_id": "%s", "event": "%s", "ref": "%s"}\n' \
             "$(date +%s)" "${{ steps.pytest.outcome }}" "${{ github.run_id }}" "${{ github.event_name }}" "${{ matrix.target_ref }}" \
             > "$MARKER"
