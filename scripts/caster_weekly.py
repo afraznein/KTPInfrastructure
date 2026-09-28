@@ -80,6 +80,14 @@ HALVES_Q = ("SELECT match_id, half, UNIX_TIMESTAMP(start_time) AS start_epoch, "
             "ORDER BY match_id, half")
 
 
+def watch_url(cid, channel_url):
+    """Twitch ids come out of a listing as "v2885964510" but the watch URL takes the bare number;
+    leaving the v on gives a page that resolves to nothing and looks like a cast with no start."""
+    if "twitch" in channel_url:
+        return f"https://www.twitch.tv/videos/{cid.lstrip('v')}"
+    return f"https://www.youtube.com/watch?v={cid}"
+
+
 def as_int(v):
     """yt-dlp prints numbers as floats ("6922.0") and "NA" when it has none."""
     try:
@@ -165,12 +173,17 @@ def cmd_scan(a):
     if not channels:
         die("no channels — set KTP_CASTER_CHANNELS or a `_channels` list in the store")
     known = set(casts(data))
+    # The same cast is often on two channels under different ids. Matching title plus a duration
+    # within a minute catches the mirror, so a week's scan does not propose transcribing a cast
+    # already sitting in the store under its other id.
+    fingerprints = {(c.get("title", "").strip().lower(), round(c.get("duration", 0) / 60))
+                    for c in casts(data).values() if c.get("title")}
     # "Newer than the store knows": default the floor to the newest cast already placed, so a
     # channel's whole back catalogue is not proposed every week. A channel that lists no start
     # time (YouTube's flat listing does not) cannot be placed OR aligned, so those are skipped
     # and counted rather than written as stubs nobody can use.
     floor = a.since_epoch or max([c.get("start", 0) for c in casts(data).values()] or [0])
-    found = undated = old = 0
+    found = undated = old = mirrored = 0
     for url in channels:
         cmd = [*shlex.split(YTDLP), "--flat-playlist", "--print",
                "%(id)s|%(timestamp)s|%(duration)s|%(title)s", url]
@@ -189,14 +202,28 @@ def cmd_scan(a):
                 continue
             start, dur_s = as_int(ts), as_int(dur)
             if not start:
+                # A flat playlist listing carries no timestamp on Twitch OR YouTube -- every entry
+                # comes back "NA". Skipping those silently discarded real casts and reported "0 new"
+                # for a week. Resolve per candidate instead: one metadata call, no download, and
+                # only for ids the store has never seen.
+                meta = run([*shlex.split(YTDLP), "--skip-download", "--no-warnings",
+                            "--print", "%(timestamp)s|%(duration)s", watch_url(cid, url)])
+                if meta.returncode == 0 and meta.stdout.strip():
+                    mt = meta.stdout.strip().splitlines()[-1].split("|")
+                    start, dur_s = as_int(mt[0]), as_int(mt[1]) or dur_s
+            if not start:
                 undated += 1
                 continue
             if start <= floor:
                 old += 1
                 continue
+            fp = (title.strip().lower(), round(dur_s / 60))
+            if fp in fingerprints or any(fp[0] == f[0] and abs(fp[1] - f[1]) <= 1 for f in fingerprints):
+                mirrored += 1
+                continue
+            fingerprints.add(fp)
             data[cid] = {"start": start, "kind": "", "title": title, "duration": dur_s,
-                         "url": (f"https://www.twitch.tv/videos/{cid}" if "twitch" in url
-                                 else f"https://www.youtube.com/watch?v={cid}"),
+                         "url": watch_url(cid, url),
                          "source": url, "matches": {}}
             found += 1
             when = (datetime.fromtimestamp(start, timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -207,6 +234,7 @@ def cmd_scan(a):
     when = (datetime.fromtimestamp(floor, timezone.utc).strftime("%Y-%m-%d") if floor else "the beginning")
     print(f"{found} new cast(s) since {when}"
           + (f"; {old} older skipped" if old else "")
+          + (f"; {mirrored} mirror(s) of a cast already in the store skipped" if mirrored else "")
           + (f"; {undated} with no start time skipped (cannot be placed or aligned)" if undated else "")
           + ("" if a.dry_run else f" — written to {STORE}") +
           ("\nFill in `matches` (and `kind`/`anchor` for a delayed re-cast), then `run`."
