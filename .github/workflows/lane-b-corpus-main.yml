@@ -98,9 +98,15 @@ jobs:
     with:
       lane: corpus
       # PR: the head SHA (github.sha is the throwaway merge commit). Push: the
-      # merged SHA. Sibling refs track the PR's base so lineage stays uniform.
+      # merged SHA.
       infrastructure_ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      amxx_ref: ${{ github.base_ref || 'main' }}
-      daemon_ref: ${{ github.base_ref || 'main' }}
-      matchhandler_ref: ${{ github.base_ref || 'main' }}
+      # Sibling refs track the PR's base so lineage stays uniform -- but ONLY
+      # for the long-lived branches, because the base of a STACKED pull request
+      # is a feature branch that exists in this repo and nowhere else. Tracking
+      # it blindly fails the checkout of KTPAMXX in twelve seconds with "a
+      # branch or tag with the name ... could not be found", which reads as the
+      # PR being broken when it is the lineage rule that does not apply.
+      amxx_ref: ${{ github.base_ref == 'preprod' && 'preprod' || 'main' }}
+      daemon_ref: ${{ github.base_ref == 'preprod' && 'preprod' || 'main' }}
+      matchhandler_ref: ${{ github.base_ref == 'preprod' && 'preprod' || 'main' }}
     secrets: inherit

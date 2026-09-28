@@ -102,3 +102,9 @@ jobs:
       # jq, no network, nothing posted.
       - name: Tier 2 heartbeat state machine
         run: bash scripts/test-tier2-heartbeat.sh scripts/ktp-tier2-heartbeat.sh
+
+      # Unconditional for the same reason as the heartbeat harness above: this one
+      # guards a workflow file, and a path filter would let an edit to that workflow
+      # skip the only thing that checks it.
+      - name: Coordination gate row selection
+        run: bash scripts/test-coordination-row-select.sh .github/workflows/coordination-check-reusable.yml
