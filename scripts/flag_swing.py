@@ -22,10 +22,12 @@ state machine starts the next round clean.
 """
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 CREDIT_JOIN_TOLERANCE_SECONDS = 3.0
@@ -43,7 +45,24 @@ CREDIT_JOIN_TOLERANCE_SECONDS = 3.0
 # SHRUNK per-map values and not independent fits: a map has to earn its
 # distance from the league. The alive coefficient is stable across maps
 # (0.92-0.96); it is the flag term that is map-specific.
-MAP_COEFFICIENTS: dict[str, tuple[float, float]] = {}
+def _load_map_coefficients() -> dict[str, tuple[float, float]]:
+    """Read the reviewed table, or fall back to the league-wide prior.
+
+    A missing, unreadable or malformed file yields an empty table, which is
+    the pre-existing behaviour -- the report pipeline must never fail to build
+    because a calibration artifact is absent.
+    """
+    path = Path(__file__).resolve().parents[1] / "config" / "map_coefficients.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): (float(row["flag_coefficient"]),
+                            float(row["alive_coefficient"]))
+                for name, row in payload.get("maps", {}).items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
 
 
 @dataclass
