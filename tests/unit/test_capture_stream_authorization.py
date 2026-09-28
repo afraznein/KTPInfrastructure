@@ -260,7 +260,7 @@ def _pre_change_verdict(observed, manifests, health):
     for row in manifests:
         capabilities = {item.strip() for item
                         in str(row.get("capabilities") or "").split(",") if item.strip()}
-        if (int(row.get("schema_version") or 0) not in {22, 23, 24}
+        if (int(row.get("schema_version") or 0) not in {22, 23, 24, 25}
                 or abs(float(row.get("position_interval") or 0) - 2.0) > 0.01
                 or not {"objective_attempt", "grenade_entity"}.issubset(capabilities)):
             errors.append(1)
@@ -293,7 +293,7 @@ def _pre_change_verdict(observed, manifests, health):
 def _random_evidence(rng):
     halves = rng.choice([{1}, {1, 2}])
     manifests = [{
-        "half": half, "schema_version": rng.choice([22, 23, 24, 21]),
+        "half": half, "schema_version": rng.choice([22, 23, 24, 25, 21]),
         "capabilities": CAPABILITIES,
         "position_interval": rng.choice([2.0, 2.0, 2.0, 1.0]),
     } for half in sorted(halves)]
@@ -331,3 +331,28 @@ def test_match_level_authorized_still_means_what_it_meant():
         halves, manifests, health = _random_evidence(rng)
         result = analytics.evaluate_capture_authorization(halves, manifests, health)
         assert result["authorized"] is _pre_change_verdict(halves, manifests, health)
+
+
+def _with_schema(version):
+    manifests, health, positions = _schema23_position_evidence()
+    manifests[0]["schema_version"] = version
+    return manifests, health, positions
+
+
+def test_schema_25_authorizes_capture_and_position_like_24():
+    for version in (24, 25):
+        manifests, health, positions = _with_schema(version)
+        capture = analytics.evaluate_capture_authorization({1}, manifests, health)
+        position = analytics.evaluate_position_provenance(
+            {1}, manifests, health, positions)
+        assert capture["authorized"] is True, (version, capture["errors"])
+        assert position["authorized"] is True, (version, position["errors"])
+
+
+def test_schemas_outside_the_accepted_set_are_still_refused():
+    for version in (20, 26):
+        manifests, health, positions = _with_schema(version)
+        assert analytics.evaluate_capture_authorization(
+            {1}, manifests, health)["authorized"] is False
+        assert analytics.evaluate_position_provenance(
+            {1}, manifests, health, positions)["authorized"] is False
