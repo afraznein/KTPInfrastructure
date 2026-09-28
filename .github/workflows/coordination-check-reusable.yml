@@ -97,16 +97,87 @@ jobs:
       - name: Verify any Blocked-by entry is cleared
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # A blocked_by cell holds two different kinds of reference and they resolve
           # differently. A dpl- id is a DEPLOY, recorded in NEIN-DEPLOY.md; looking one
           # up with `gh pr view` can only ever return "unknown", so every PR in the
           # workstream failed with a message naming the PR -- reading as a fault in the
           # PR rather than a deploy nobody has run yet.
-          row=$(grep -E "^\| *${{ inputs.repo_name }} *\|" "${{ steps.state.outputs.path }}" | head -1)
-          blocked_by=$(echo "$row" | awk -F'|' '{print $6}' | xargs)
+          #
+          # Selecting that row by repo name alone and taking `head -1` made a stacked
+          # workstream block every one of its own PRs on whichever happened to be listed
+          # first -- #547 read #548's row and was told it was blocked by #547. Match the
+          # PR under test against the PR CELL only; a blocked_by cell holds PR urls too,
+          # so a whole-row match finds the blocker's row instead of the blocked one.
+          #
+          # scripts/test-coordination-row-select.sh extracts the awk between the markers
+          # below and runs it against fixtures; move the markers and the test fails loudly.
+          # --- BEGIN row-select ---
+          selection=$(awk -v want="${{ inputs.repo_name }}" -v pr="${{ github.event.pull_request.number }}" '
+            BEGIN { FS = "|"; insec = 0; n = 0; hit = 0
+                    # pr reaches a dynamic regex below, so anything but digits is refused
+                    # rather than compiled -- an unanchored id becomes a character class.
+                    if (pr !~ /^[0-9]+$/) pr = "" }
+            /^## / { insec = ($0 ~ /^## Repos in scope[ \t]*$/); next }
+            insec && /^\|/ {
+              repo = $2; sub(/^[ \t]+/, "", repo); sub(/[ \t]+$/, "", repo)
+              if (repo != want) next
+              n++
+              if (n == 1) first = $6
+              cell = $6; sub(/^[ \t]+/, "", cell); sub(/[ \t]+$/, "", cell)
+              if (cell != "" && cell != "\342\200\224" && cell != "-") blockers++
+              if (pr != "" && !hit && ($4 ~ ("(^|[^0-9])#" pr "([^0-9]|$)") || $4 ~ ("/pull/" pr "([^0-9]|$)"))) {
+                hit = 1; sel = $6
+              }
+            }
+            END {
+              # Ambiguity only matters when it could HIDE a block: with several rows and
+              # no match, refuse if any of them carries a blocker, pass if none does.
+              if (hit)            { mode = "row";       out = sel }
+              else if (n == 1)    { mode = "single";    out = first }
+              else if (n == 0)    { mode = "none";      out = "" }
+              else if (blockers)  { mode = "ambiguous"; out = "" }
+              else                { mode = "clear";     out = "" }
+              sub(/^[ \t]+/, "", out); sub(/[ \t]+$/, "", out)
+              printf "%s\n%s\n", mode, out
+            }
+          ' "${{ steps.state.outputs.path }}")
+          # --- END row-select ---
+          mode=$(printf '%s\n' "$selection" | sed -n 1p)
+          blocked_by=$(printf '%s\n' "$selection" | sed -n 2p)
+          pr_num="${{ github.event.pull_request.number }}"
+          case "$mode" in
+            row)
+              echo "Using the Repos-in-scope row for PR #${pr_num}." ;;
+            single)
+              echo "PR #${pr_num} has no row yet; '${{ inputs.repo_name }}' has exactly one row in this workstream, so that row applies." ;;
+            clear)
+              echo "PR #${pr_num} has no row yet, and no '${{ inputs.repo_name }}' row in this workstream carries a Blocked-by entry -- nothing to enforce." ;;
+            none)
+              echo "::error::Repo '${{ inputs.repo_name }}' has no row under '## Repos in scope' in ${{ steps.state.outputs.path }}. Refusing rather than passing an unresolvable block."
+              exit 1 ;;
+            ambiguous)
+              echo "::error::'${{ inputs.repo_name }}' has several rows in workstream '${{ steps.slug.outputs.slug }}', at least one carries a Blocked-by entry, and none names PR #${pr_num} -- which block applies is undecidable. Add this PR to its Repos-in-scope row (or add a row for it); guessing a row is how #547 ended up blocked on itself."
+              exit 1 ;;
+            *)
+              echo "::error::Row selection produced no verdict for '${{ inputs.repo_name }}' (mode: '${mode}'). Refusing rather than continuing with an unknown Blocked-by state."
+              exit 1 ;;
+          esac
           ledger="coord/NEIN-DEPLOY.md"
           if [ -n "$blocked_by" ] && [ "$blocked_by" != "—" ] && [ "$blocked_by" != "-" ]; then
+            # Some cells hold a sentence rather than a reference ("the operator's
+            # retail-client confirmation..."). Word-splitting one into gh lookups reported
+            # "Blocked by PR the, which is not merged yet" -- the same nonsense the dpl-
+            # ids produced before they got their own arm. Judge the WHOLE cell once: a
+            # per-word test would pass the sentence's stray number through to gh.
+            # --- BEGIN refs-only ---
+            refs_only='^([[:space:]]*(dpl-[A-Za-z0-9._-]+|#?[0-9]+|https?://[^[:space:]]+/pull/[0-9]+))+[[:space:]]*$'
+            # --- END refs-only ---
+            if ! printf '%s' "$blocked_by" | grep -qE "$refs_only"; then
+              echo "::error::Blocked by a human-stated condition, not a reference this gate can resolve: \"$blocked_by\". Clear it in ktp-coordination, or restate the cell as a PR ref or dpl- id."
+              exit 1
+            fi
             for ref in $blocked_by; do
               case "$ref" in
                 dpl-*)
@@ -137,13 +208,25 @@ jobs:
                   fi
                   echo "deploy $ref is complete -- not blocking"
                   ;;
-                *)
-                  merged=$(gh pr view "$ref" --json merged --jq .merged 2>/dev/null || echo "unknown")
-                  if [ "$merged" != "true" ]; then
-                    echo "::error::Blocked by PR $ref, which is not merged yet (status: $merged)."
+                \#[0-9]*|[0-9]*|*/pull/[0-9]*)
+                  # `--json merged` is not a gh field (the list has mergedAt/mergedBy, no
+                  # bare merged), so this branch answered "unknown" for every PR ref ever
+                  # passed to it and no PR block could clear. `state` is the real field.
+                  # GH_REPO is what makes a bare "547" or "#547" resolvable: nothing checks
+                  # the caller out, so gh has no remote to infer a repo from. A full URL
+                  # still wins over GH_REPO, which is how a cross-repo blocker resolves.
+                  state=$(gh pr view "${ref#\#}" --json state --jq .state 2>/dev/null || echo "unknown")
+                  if [ "$state" != "MERGED" ]; then
+                    echo "::error::Blocked by PR $ref, which is not merged yet (state: $state)."
                     exit 1
                   fi
                   echo "PR $ref is merged -- not blocking"
+                  ;;
+                *)
+                  # Unreachable while the refs_only guard above holds; if the two ever
+                  # disagree, refuse rather than fall out of the case having checked nothing.
+                  echo "::error::Blocked by '$ref', which is neither a deploy id nor a PR reference. Refusing rather than passing an unresolvable block."
+                  exit 1
                   ;;
               esac
             done
