@@ -90,3 +90,41 @@ reported as clean.
 ⚠️ **A clean report covers only what has been recorded.** A script installed by
 hand, without `ktp-install`, is in no manifest and is invisible to `--report`.
 `docs/LIVE_SCRIPT_INVENTORY.md` lists what is live and not yet recorded.
+
+## Freshness: `ktp-install --report --repo DIR --against-ref REF`
+
+🔴 **The table above answers "untouched since install", not "current".** They read
+identically -- both print `OK` -- and only one of them is the question anybody
+means. A file nobody has edited reports `OK` forever while the repo merges past
+it, because the bytes still match the row and the *row* is what went stale. That
+is how the Tier 2 stack-drift checker ran superseded logic for weeks with this
+report calling it healthy, and it is the ordinary state of `/usr/local/bin`:
+nothing installs these files, a person copies them.
+
+`--against-ref` resolves each row's `source_path` at REF and compares the
+**installed bytes** to what REF holds.
+
+| state | meaning | exit |
+|---|---|---|
+| `CURRENT` | the installed bytes are REF's bytes | 0 |
+| `STALE` | untouched since install, and REF has moved past it | 1 |
+| `SOURCE-GONE` | REF no longer holds that `source_path` (renamed or deleted) | 1 |
+| `OTHER-REPO` | the row names a different `source_repo`; not compared | 0 |
+
+`DRIFT` and `MISSING` outrank freshness -- a file edited in place is reported as
+edited, not as stale. A ref that does not resolve, or `--against-ref` without
+`--repo`, is `UNTRUSTED` (2): a freshness check that could not run must not read
+as fresh.
+
+⚠️ **A shallow clone cannot answer the provenance leg.** `--repo` also re-checks
+each row against its *recorded* commit, and a commit the checkout does not carry
+is noted rather than counted -- `actions/checkout` is shallow by default, so
+treating "I do not have that commit" as a mismatch would fail every run for the
+wrong reason. Use `fetch-depth: 0` when you want the provenance leg to mean
+something.
+
+**This is the destination-side twin of `scripts/ktp_script_freshness.py`.** That
+one refuses to touch the fleet *from* a checkout behind `origin/main`; this one
+asks whether what is already installed *on* a host equals `origin/main`. Neither
+sees the other's failure, and both exist because a rule applied from memory is a
+rule applied sometimes.
