@@ -14,3 +14,9 @@
   than proposing a transcription of something already in the corpus.
 - Verified against the live channels: 3 genuinely new casts found, 4 mirrors
   skipped, 5 older than the store's newest skipped.
+- Three more found by running it for real: Twitch ids are now normalised to the
+  bare number at the door (files were coming out doubled, `vv2885964510`); the
+  anchor gate moved AFTER transcription, because a delayed cast’s anchor is read
+  out of the transcript that the gate was preventing; and `anchors` may be a
+  per-match map, since a cast covering two matches has two half ends and one
+  per-cast anchor is wrong for everything after the first.

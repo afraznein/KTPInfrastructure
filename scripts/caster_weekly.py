@@ -152,10 +152,15 @@ def state_of(cast_id, c):
     """What this cast is waiting for. The two human states are the point of the whole design."""
     if not c.get("matches"):
         return "needs placing"
-    if c.get("kind") == "delayed" and not c.get("anchor"):
-        return "needs an anchor"
     if not (TEXT / f"v{cast_id}.json").exists():
         return "ready to transcribe"
+    # The anchor gate belongs HERE, not before transcription: a delayed cast's anchor is read out
+    # of its own transcript (the moment the halftime score is called), so demanding it first made
+    # the one thing that produces it unreachable.
+    if c.get("kind") == "delayed":
+        anchors = c.get("anchors") or ({m: c["anchor"] for m in c["matches"]} if c.get("anchor") else {})
+        if any(m not in anchors for m in c["matches"]):
+            return "needs an anchor"
     missing = [m for m in c["matches"] if not (EVENTS / f"{m}.frags.tsv").exists()]
     if missing:
         return "ready to export events"
@@ -198,6 +203,10 @@ def cmd_scan(a):
             if len(parts) != 4:
                 continue
             cid, ts, dur, title = parts
+            # A Twitch listing id is "v2885964510"; the watch URL and every filename here use the
+            # bare number, so normalise once at the door rather than stripping it in five places.
+            if "twitch" in url and re.fullmatch(r"v\d+", cid):
+                cid = cid[1:]
             if cid in known:
                 continue
             start, dur_s = as_int(ts), as_int(dur)
@@ -301,7 +310,11 @@ def align(cast_id, c, dry):
     for match_id, map_name in c["matches"].items():
         cmd = [sys.executable, str(here / "caster_align.py"), match_id, cast_id,
                "--vod-start", str(c["start"]), "--map", map_name]
-        cmd += (["--anchor", c["anchor"]] if c.get("kind") == "delayed" else ["--offset", LIVE_OFFSET])
+        if c.get("kind") == "delayed":
+            anchors = c.get("anchors") or {m: c.get("anchor") for m in c["matches"]}
+            cmd += ["--anchor", anchors[match_id]]
+        else:
+            cmd += ["--offset", LIVE_OFFSET]
         dest = TEXT / f"v{cast_id}.{match_id}.align.md"
         if dry:
             print(f"    would run: {' '.join(cmd[1:])}")
@@ -323,7 +336,7 @@ def cmd_run(a):
     waiting, worked = [], 0
     for cast_id, c in sorted(todo.items(), key=lambda kv: kv[1].get("start", 0)):
         st = state_of(cast_id, c)
-        if st in ("needs placing", "needs an anchor"):
+        if st == "needs placing":
             waiting.append((cast_id, st, c.get("title", "")))
             continue
         if st == "done":
@@ -334,6 +347,11 @@ def cmd_run(a):
         if not (TEXT / f"v{cast_id}.json").exists():
             transcribe(cast_id, c, a.dry_run)
         export_events(list(c["matches"]), a.dry_run)
+        if state_of(cast_id, c) == "needs an anchor":
+            waiting.append((cast_id, "needs an anchor", c.get("title", "")))
+            print("    transcribed and exported; alignment waits on the anchor — read the transcript "
+                  "for where the halftime score is called and set `anchor`")
+            continue
         align(cast_id, c, a.dry_run)
         worked += 1
         if a.table and not a.dry_run:
@@ -350,7 +368,8 @@ def cmd_run(a):
         print(f"WAITING ON YOU: {cast_id} {st} — {title[:60]}")
     if waiting:
         print("Place a cast by filling `matches` ({match_id: map_name}); for a delayed re-cast set "
-              "`kind` to \"delayed\" and `anchor` to the MM:SS where the half-end score is read.")
+              "`kind` to \"delayed\", then after it transcribes read the transcript for where the "
+              "halftime score is called and set `anchor` to that MM:SS.")
 
 
 OFFICIALS_Q = ("SELECT COUNT(DISTINCT match_id) FROM ktp_matches "
