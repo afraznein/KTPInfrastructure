@@ -144,6 +144,27 @@ jobs:
           set -uo pipefail
           python3 scripts/ktp-restart-drift.py | tee restart-drift.txt
 
+      - name: Distribute-tree drift
+        id: distribute_drift
+        continue-on-error: true
+        env:
+          # Its own state file, for the same reason the audit has one: the delta
+          # is "+N new since the last run of THIS check", and a shared file would
+          # mean whichever ran first ate it.
+          STATE_FILE: /var/lib/ktp-distribute-drift-ci.json
+        run: |
+          # Read-only against /home/dod/distribute and the 24 instances: it
+          # hashes, it does not push, and it writes nothing into the deploy tree.
+          # Same `bash -e {0}` note as the two steps above.
+          #
+          # 2>&1 because the markdown report goes to stdout while the stable
+          # one-line-per-finding block the gate diffs goes to stderr, and the
+          # gate reads one file.
+          set +e
+          set -uo pipefail
+          python3 scripts/audit-distribute-drift.py \
+            --state "$STATE_FILE" 2>&1 | tee distribute-drift.txt
+
       - name: Data-server health state
         run: |
           # The hourly health check's own state file: what is down and since
@@ -175,6 +196,7 @@ jobs:
             audit-report.md
             audit-stdout.txt
             restart-drift.txt
+            distribute-drift.txt
             health-state.json
           retention-days: 90
 
@@ -227,8 +249,17 @@ jobs:
             data server. Season 10 is live, so matches are being played on this
             hardware while you read.
 
-            Read `audit-report.md`, `audit-stdout.txt`, `restart-drift.txt` and
-            `health-state.json` in the working directory. The last is the
+            Read `audit-report.md`, `audit-stdout.txt`, `restart-drift.txt`,
+            `distribute-drift.txt` and `health-state.json` in the working
+            directory. `distribute-drift.txt` compares `/home/dod/distribute`
+            against what the 24 instances hold: the file distributor pushes on a
+            filesystem event and never reconciles, so a `uniform` finding there
+            means the fleet is right and the SOURCE is stale -- the next touch of
+            that file reverts all 24, silently. A `per-instance` finding is a file
+            carrying per-instance data that nothing has declared, which the next
+            touch would flatten to one copy. Read
+            `docs/runbooks/DISTRIBUTE_DRIFT.md` before explaining either.
+            `health-state.json` is the
             hourly data-server health check's own state: what is down, when the
             check first saw it (`since`), and when the fault actually started
             where anything durable knows (`fault_since`, sparse). Those are

@@ -27,9 +27,12 @@ import ladder                                  # noqa: E402
 import mmr_payload as MMRP                     # noqa: E402
 import performance as PF                       # noqa: E402
 from ktpr_v2 import KtprV2Config               # noqa: E402
+# Re-exported, never redefined. They live in a module of their own because the
+# import command must reach them without importing this one, which drags the
+# OpenSkill solver in through `ladder`.
+from methodology_schema import (AGGREGATE_KIND, FORBIDDEN_KEYS,  # noqa: E402,F401
+                                METHOD_VERSION, validate_for_import)
 
-AGGREGATE_KIND = "rating_methodology"
-METHOD_VERSION = "rating_methodology_v1"
 PARAMS = HERE / "momentum_params.json"
 
 # Every number below is read from the code that uses it, never retyped, so
@@ -263,28 +266,6 @@ def load_prior_history(path=PAYLOAD):
         return []
     history = prior.get("version_history") if isinstance(prior, dict) else None
     return history if isinstance(history, list) else []
-
-
-FORBIDDEN_KEYS = ("players", "player_id", "steam_id", "steam_id64", "alias")
-
-
-def validate_for_import(payload):
-    """Problems that should stop this payload being written. [] means fine."""
-    if not isinstance(payload, dict):
-        return ["payload is not an object"]
-    problems = []
-    if payload.get("kind") != AGGREGATE_KIND:
-        problems.append(f"kind is {payload.get('kind')!r}, expected {AGGREGATE_KIND!r}")
-    for section in ("ktpr_v2", "mmr", "momentum"):
-        if not isinstance(payload.get(section), dict):
-            problems.append(f"missing section {section!r}")
-    if not isinstance((payload.get("momentum") or {}).get("maps"), dict):
-        problems.append("momentum.maps missing")
-    body = json.dumps(payload)
-    leaked = [k for k in FORBIDDEN_KEYS if f'"{k}"' in body]
-    if leaked:
-        problems.append(f"payload carries player-shaped keys {leaked}; this document is about nobody")
-    return problems
 
 
 if __name__ == "__main__":
