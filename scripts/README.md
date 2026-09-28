@@ -259,6 +259,28 @@ python3 ktp_script_freshness.py stage-wave.py   # report without running anythin
 out of `/opt/ktp-infra`, which is never auto-pulled, and failing closed there would replace stale data with
 no data.
 
+⚠️ **The gate is Python-only, and the shell scripts are where that bites.** `require_current()` is wired
+into the Python fleet writers; a `.sh` in this directory has no equivalent, so a stale copy of one is still a
+live hazard with nothing standing in front of it.
+
+**Measured instance (2026-09-27) — `scripts/ktp-ac-retention.sh`.** The project-root checkout on this
+workstation holds that file byte-identical to a blob that predates the commits which *widened* the windows, so
+its env defaults declare shorter retention than the current ones: shorter for weapon rows and for expired
+tokens, and it sweeps the evidence bundles `origin/main` now deliberately retains by default. Redeploying it
+from that tree, or running it there with the env unset, quietly reinstates the window the current comments
+exist to argue against — and **nothing reports that**. The script prints the same closing line either way,
+and `ktp-ac-retention` carries no alert coverage (`docs/runbooks/ALERT_COVERAGE.md`).
+
+➡️ **Read and install these from the ref, never from the working copy**
+(`git show origin/main:scripts/<name>`), and diff the two before anything is installed. ⛔ Do not settle it
+with the figures in either file — whichever number you remember is the one that has rotted. Ask git which
+blob you are holding.
+
+⚠️ **A green test run says nothing about `origin/main` here.** The retention tests that do exist
+(`tests/unit/test_demo_retention.py`, `tests/unit/test_match_retention.py`) resolve their script by a fixed
+relative walk-up from the test file, so they exercise whichever checkout they happen to sit in: a stale tree
+tests its own stale script and passes. `ktp-ac-retention.sh` has no test at all.
+
 ### deploy-to-fleet.py
 Raw push, no gates — `stage-wave.py` (above) is the normal entry point. Local-to-fleet artifact push as `.new` files; nightly `ktp-scheduled-restart.sh` (above) auto-swaps them in. Closes the local-build → fleet-SCP gap discovered 2026-05-20. No `.example` template needed — the SSH password is resolved from `$KTP_FLEET_SSH_PASSWORD` or `~/.ktp_fleet_ssh_password` (never hardcoded; the pre-2026-05-31 `ktp` value was leaked in this public repo and rotated — do not document credential values here).
 
