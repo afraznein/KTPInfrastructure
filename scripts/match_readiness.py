@@ -26,6 +26,7 @@ from typing import Any, Iterable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.match_analytics import (  # noqa: E402
+    CAPTURE_SCHEMAS,
     MATCH_ID_RE,
     capture_stream_authorized,
     capture_stream_status,
@@ -557,10 +558,7 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         and set(cadence_manifest_halves) == observed_halves
         and len(cadence_manifest_halves) == len(observed_halves)
         and all(
-            # 24 added 2026-09-10 (ENGINE_STATS_EXPANSION_PLAN_20260909.md wave
-            # 0): additive over 23, same 2.00s position contract -- see the
-            # matching fix in match_analytics.evaluate_capture_authorization.
-            integer(row.get("schema_version")) in {22, 23, 24}
+            integer(row.get("schema_version")) in CAPTURE_SCHEMAS
             and abs(floating(row.get("position_interval")) - 2.0) <= 0.01
             for row in manifests
         )
