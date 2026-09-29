@@ -35,13 +35,13 @@
    "A": 1.8309,
    "lam": 0.10592,
    "n_multikills": 1757,
-   "half_life_s": 6.5
+   "t_half_s": 6.5
   },
   "capout": {
    "A": 2.8958,
    "lam": 0.04551,
    "n_multikills": 1757,
-   "half_life_s": 15.2
+   "t_half_s": 15.2
   }
  },
  "maps": {
@@ -65,13 +65,13 @@
      "A": 0.3717,
      "lam": 0.02665,
      "n_multikills": 210,
-     "half_life_s": 26.0
+     "t_half_s": 26.0
     },
     "capout": {
      "A": 1.5168,
      "lam": 0.0321,
      "n_multikills": 210,
-     "half_life_s": 21.6
+     "t_half_s": 21.6
     }
    },
    "scoring": null
@@ -96,13 +96,13 @@
      "A": 1.3409,
      "lam": 0.08454,
      "n_multikills": 666,
-     "half_life_s": 8.2
+     "t_half_s": 8.2
     },
     "capout": {
      "A": 2.3854,
      "lam": 0.03459,
      "n_multikills": 666,
-     "half_life_s": 20.0
+     "t_half_s": 20.0
     }
    },
    "scoring": null
@@ -145,13 +145,13 @@
      "A": 10.0227,
      "lam": 0.24853,
      "n_multikills": 723,
-     "half_life_s": 2.8
+     "t_half_s": 2.8
     },
     "capout": {
      "A": 1.4424,
      "lam": 0.01948,
      "n_multikills": 723,
-     "half_life_s": 35.6
+     "t_half_s": 35.6
     }
    },
    "scoring": {

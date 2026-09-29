@@ -15,10 +15,10 @@ PARAMS = {
     "definitions": {"fallback": {"curves": "pooled", "scoring": {"cap": 1.0, "capout": 1.0}}},
     "corpus": {"halves": 174, "multikills": 1757},
     "rho": {"value": 0.324},
-    "pooled": {"cap": {"A": 1.83, "lam": 0.106, "n_multikills": 1757, "half_life_s": 6.5}},
+    "pooled": {"cap": {"A": 1.83, "lam": 0.106, "n_multikills": 1757, "t_half_s": 6.5}},
     "maps": {
         "dod_thunder2": {"halves": 72, "official_halves": 16, "multikills": 723, "caps": 887, "capouts": 21,
-                         "curves": {"cap": {"A": 10.0, "lam": 0.25, "n_multikills": 723, "half_life_s": 2.8}},
+                         "curves": {"cap": {"A": 10.0, "lam": 0.25, "n_multikills": 723, "t_half_s": 2.8}},
                          "scoring": {"coef": {"cap": 2.8, "hold3": 0.06, "hold4": 0.33, "capout": 18.3},
                                      "r2": 0.887, "n_team_halves": 32}},
         "dod_armory_b6": {"halves": 2, "official_halves": 0, "multikills": 9, "caps": 20, "capouts": 0,
@@ -43,7 +43,7 @@ class Contract(unittest.TestCase):
     def test_a_fitted_map_carries_its_values_sample_and_fit_quality(self):
         m = build()["momentum"]["maps"]["dod_thunder2"]
         self.assertEqual(m["sample"]["official_halves"], 16)
-        self.assertEqual(m["momentum_curves"]["cap"]["half_life_s"], 2.8)
+        self.assertEqual(m["momentum_curves"]["cap"]["t_half_s"], 2.8)
         self.assertEqual(m["scoring"]["r2"], 0.887)
         self.assertEqual(m["scoring"]["n_team_halves"], 32)
 
@@ -241,6 +241,50 @@ class PinnedToSource(unittest.TestCase):
         d = build()["ktpr_v2"]["display"]
         self.assertEqual((d["floor"], d["center"], d["scale"]), (50, 100, 15))
         self.assertIn("max(50, 100 + 15", d["equation"])
+
+
+class PassesThePublishGate(unittest.TestCase):
+    """`validate_for_import` is NOT the gate that decides publication.
+
+    There are two, and the payload has to satisfy both. `import-mmr` runs
+    `methodology_schema.validate_for_import` (player-shaped keys). `report_sync`
+    then runs `analytics_report_dto.assert_sanitized`, which rejects any key
+    CONTAINING one of `FORBIDDEN_KEY_PARTS` as a substring, and fails the whole
+    sync run -- match reports included -- when one does.
+
+    Nothing tested the second gate, so `rating_methodology` shipped in #495 with
+    a `half_life_s` key that `life_` matched. It could never have synced. The
+    defect only surfaced on 2026-09-29 when the payload was first imported for
+    real, and it then failed ktp-reports.service every 15 minutes until the row
+    was removed by hand. Hence this test, against the REAL fitted params rather
+    than the toy fixture above -- the toy fixture would not have caught it.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+    def test_the_payload_built_from_the_real_params_survives_report_sync(self):
+        import methodology as X
+        from analytics_report_dto import assert_sanitized
+        doc = X.build(X.load_params(), generated_at="2026-09-29T00:00:00+00:00",
+                      summary=WK2, prior_history=[{"week": 1, "accuracy_pct": 44.4}])
+        assert_sanitized(doc)          # raises ValueError naming the key and path
+
+    def test_the_toy_fixture_payload_survives_it_too(self):
+        from analytics_report_dto import assert_sanitized
+        assert_sanitized(build(summary=WK2))
+
+    def test_the_gate_is_a_substring_match_which_is_the_trap(self):
+        # Named keys that read as innocuous but are rejected, so the next person
+        # renaming a field can see the shape of the rule rather than rediscover it.
+        from analytics_report_dto import FORBIDDEN_KEY_PARTS, assert_sanitized
+        self.assertIn("life_", FORBIDDEN_KEY_PARTS)
+        for doomed in ("half_life_s", "halflife_s", "decay_life_seconds"):
+            with self.assertRaises(ValueError):
+                assert_sanitized({"momentum": {"cap": {doomed: 1.0}}})
+        # `t_half_s` is what the curves actually use, and it is clean.
+        assert_sanitized({"momentum": {"cap": {"t_half_s": 1.0}}})
 
 
 class Privacy(unittest.TestCase):
