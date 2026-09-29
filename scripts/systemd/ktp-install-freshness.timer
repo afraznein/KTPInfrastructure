@@ -1,0 +1,17 @@
+# ⛔ NOT INSTALLED OR ENABLED — proposal. docs/runbooks/INSTALL_FRESHNESS.md.
+[Unit]
+Description=Daily install-freshness check
+
+[Timer]
+# 06:20 ET: after the 03:00 nightly restarts and clear of the 04:30 perf
+# rollup, so a morning reader has the answer before anyone deploys anything.
+OnCalendar=*-*-* 06:20:00 America/New_York
+# The check is a git fetch and ~120 md5s; the jitter is only to keep it off a
+# round minute, not for load.
+RandomizedDelaySec=300
+# A box that was down at 06:20 still gets the answer, and the "did not run"
+# leg then reports the gap rather than the gap passing unnoticed.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

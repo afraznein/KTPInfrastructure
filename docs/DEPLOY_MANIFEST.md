@@ -70,6 +70,35 @@ What it does, in order, and why each step is there:
 - **Appends the manifest row** under a file lock, and refuses to append under a
   header it does not recognise.
 
+## Recording what is already right: `ktp-install --record-only`
+
+An install is a copy, so it refuses a no-op. That guard is correct and it left
+one state unreachable: a file that is **already the right bytes but was never
+recorded** could not be recorded, because the only way into the manifest was
+through a copy that would not happen. `--report` went on indicting it and
+nothing could clear it.
+
+```bash
+ktp-install --record-only --repo /opt/ktp-infra             --commit <sha> --src scripts/foo.sh --dest /usr/local/bin/foo.sh
+```
+
+It hashes what is on disk, resolves the blob at that commit, and appends the row
+**only if they are equal**. It writes no file, banks no backup and changes no
+mode. It refuses: bytes that are not that blob; no `--repo` (without the blob
+here the row would be your word rather than a check); `--template` (a filled
+template cannot equal any blob, so there is nothing to verify against); `--file`,
+`--blob-md5` or `--mode` (each names something other than the file being
+recorded); a missing file; an `--expect-md5` that does not match; a duplicate of
+the path's existing last row; and a manifest that does not parse.
+
+A recorded row carries `previous_md5` **equal to** `md5`. The install path
+refuses a no-op, so it can never write one — that is how a recorded row is told
+from an installed one, with no new column.
+
+⚠️ **Recording says which blob these bytes are, not that they are the newest.**
+Record an old commit and `--against-ref` still reports `STALE`. The row is
+honest; the file is still behind.
+
 ## Checking: `ktp-install --report`
 
 Reads every manifest that applies on the host and compares each recorded path's
