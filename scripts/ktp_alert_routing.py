@@ -127,6 +127,7 @@ PRODUCER_LANE: dict[str, Lane] = {
     "ktp-tier2-heartbeat": Lane.OPS_WEEKLY,
     "post-tier2-result": Lane.OPS_WEEKLY,
     "precache-audit": Lane.OPS_WEEKLY,
+    "ktp-install-freshness": Lane.OPS_DAILY,
 }
 
 

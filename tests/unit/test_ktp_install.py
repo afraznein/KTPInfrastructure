@@ -345,3 +345,178 @@ def test_a_recorded_commit_this_checkout_lacks_is_not_an_indictment(env, tmp_pat
     # and it still reaches a freshness verdict rather than stopping there
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
     assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+
+
+# --- --record-only: a file that is correct but unrecorded ------------------
+#
+# The install path refuses a no-op, so a correct-but-unrecorded file could never
+# be reconciled -- --report indicted it and nothing could clear it, which is how
+# a daily alert becomes a muted one. These hold the mode to the only property
+# that makes it safe: it records what it checked, and refuses everything else.
+
+
+def record(env, commit, *extra, dest_name="tool.sh", src="scripts/tool.sh", repo=True):
+    args = ["--record-only", "--commit", commit, "--src", src, "--dest", str(env["dest"] / dest_name)]
+    if repo:
+        args[1:1] = ["--repo", str(env["repo"])]
+    return run(env, *args, *extra)
+
+
+def place(env, content, name="tool.sh"):
+    (env["dest"] / name).write_bytes(content)
+
+
+def test_record_only_writes_the_row_and_copies_nothing(env):
+    place(env, V2)
+    before = os.stat(env["dest"] / "tool.sh")
+    p = record(env, env["c2"])
+    assert p.returncode == 0, p.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == V2
+    assert os.stat(env["dest"] / "tool.sh").st_mtime_ns == before.st_mtime_ns
+    assert not (env["dest"] / "tool.sh.new").exists()
+    assert not (env["tmp"] / "backups").exists()
+    r = rows(env)
+    assert len(r) == 1
+    assert r[0][0] == str(env["dest"] / "tool.sh")
+    assert r[0][1] == md5(V2)
+    assert r[0][3] == env["c2"] and r[0][4] == "scripts/tool.sh"
+    # previous_md5 == md5 is the mark of a recorded row; an install cannot write one.
+    assert r[0][6] == md5(V2)
+
+
+def test_record_only_refuses_when_the_bytes_are_not_that_blob(env):
+    """The one that matters. A mode that trusts its caller launders drift into a
+    clean report, so this asserts the refusal, the silence of the manifest, and
+    that the file was not touched on the way out."""
+    place(env, V1)
+    p = record(env, env["c2"])
+    assert p.returncode != 0
+    assert "refusing to record" in p.stderr, p.stderr
+    assert md5(V1) in p.stderr and md5(V2) in p.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == V1
+    assert not env["manifest"].exists()
+
+
+def test_record_only_then_report_says_ok_and_against_ref_says_current(env):
+    place(env, V2)
+    assert record(env, env["c2"]).returncode == 0
+    p = run(env, "--report")
+    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+
+
+def test_recording_an_old_commit_is_reported_stale_not_current(env):
+    """Recording states which blob these bytes are, not that they are the newest.
+    A record must not be able to buy CURRENT for a file the repo has moved past."""
+    place(env, V1)
+    assert record(env, env["c1"]).returncode == 0
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+
+
+def test_record_only_refuses_a_missing_file(env):
+    p = record(env, env["c2"])
+    assert p.returncode != 0 and "nothing installed to record" in p.stderr
+    assert not env["manifest"].exists()
+
+
+def test_record_only_refuses_a_template(env):
+    filled = env["dest"] / "conf.sh"
+    filled.write_bytes(b"SECRET=\"real\"\n")
+    p = record(env, env["c2"], "--template", dest_name="conf.sh", src="scripts/conf.sh.example")
+    assert p.returncode != 0 and "cannot check a filled template" in p.stderr
+    assert not env["manifest"].exists()
+
+
+def test_record_only_refuses_without_a_repo(env):
+    place(env, V2)
+    p = record(env, env["c2"], "--source-repo", "KTPInfrastructure", repo=False)
+    assert p.returncode != 0 and "needs --repo" in p.stderr
+    assert not env["manifest"].exists()
+
+
+def test_record_only_refuses_the_flags_that_would_make_it_a_claim(env):
+    place(env, V2)
+    other = env["tmp"] / "other.sh"
+    other.write_bytes(V2)
+    for extra, want in (
+        (["--file", str(other)], "copies nothing"),
+        (["--blob-md5", md5(V2)], "restate it as a claim"),
+        (["--mode", "755"], "writes no file"),
+    ):
+        p = record(env, env["c2"], *extra)
+        assert p.returncode != 0 and want in p.stderr, (extra, p.stderr)
+    assert not env["manifest"].exists()
+
+
+def test_record_only_honours_expect_md5_when_given(env):
+    place(env, V2)
+    p = record(env, env["c2"], "--expect-md5", md5(V1))
+    assert p.returncode != 0 and "not recording it" in p.stderr
+    assert not env["manifest"].exists()
+    p = record(env, env["c2"], "--expect-md5", md5(V2))
+    assert p.returncode == 0, p.stderr
+
+
+def test_record_only_refuses_an_unresolvable_commit_or_path(env):
+    place(env, V2)
+    p = record(env, "0" * 40)
+    assert p.returncode != 0 and not env["manifest"].exists()
+    p = record(env, env["c2"], src="scripts/no-such-file.sh")
+    assert p.returncode != 0 and not env["manifest"].exists()
+
+
+def test_record_only_refuses_a_duplicate_row(env):
+    place(env, V2)
+    assert record(env, env["c2"]).returncode == 0
+    p = record(env, env["c2"])
+    assert p.returncode != 0 and "already recorded" in p.stderr
+    assert len(rows(env)) == 1
+
+
+def test_record_only_re_records_the_same_bytes_at_a_newer_commit(env):
+    """Bytes unchanged, row stale: the reconciliation that clears STALE without a copy."""
+    place(env, V2)
+    assert record(env, env["c2"]).returncode == 0
+    git(env["repo"], "commit", "-q", "--allow-empty", "-m", "unrelated")
+    c3 = git(env["repo"], "rev-parse", "HEAD")
+    p = record(env, c3)
+    assert p.returncode == 0, p.stderr
+    assert [r[3] for r in rows(env)] == [env["c2"], c3]
+
+
+def test_record_only_clears_a_drift_row_only_when_the_bytes_are_the_blob(env):
+    """The reconciliation this mode exists for, in both directions on one manifest."""
+    install(env, env["c1"], "-")
+    (env["dest"] / "tool.sh").write_bytes(V2)
+    assert run(env, "--report").returncode == 1
+    p = record(env, env["c1"])
+    assert p.returncode != 0 and "refusing to record" in p.stderr
+    assert run(env, "--report").returncode == 1
+    assert record(env, env["c2"]).returncode == 0
+    p = run(env, "--report")
+    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+
+
+def test_record_only_refuses_an_unreadable_manifest(env):
+    place(env, V2)
+    env["manifest"].parent.mkdir(parents=True, exist_ok=True)
+    env["manifest"].write_text(HEADER + "\n/x\tshort\n")
+    p = record(env, env["c2"])
+    assert p.returncode != 0 and "cannot read back" in p.stderr
+    assert env["manifest"].read_text() == HEADER + "\n/x\tshort\n"
+
+
+def test_record_only_is_not_a_report_flag(env):
+    p = run(env, "--report", "--record-only")
+    assert p.returncode == 2 and "different jobs" in p.stderr, p.stderr
+    p = record(env, env["c2"], "--against-ref", "HEAD")
+    assert p.returncode == 2 and "--report flag" in p.stderr
+
+
+def test_record_only_does_not_weaken_the_install_no_op_refusal(env):
+    install(env, env["c1"], "-")
+    p = install(env, env["c1"], md5(V1))
+    assert p.returncode != 0 and "nothing to install" in p.stderr
+    assert len(rows(env)) == 1
