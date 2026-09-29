@@ -9,6 +9,7 @@ from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                  match_epoch_interval,
                                  persist_preflight_failure,
                                 replay_boot_flag_positions, run_match,
+                                wait_for_match_start_log,
                                 stage_objective_wire_witness, stage_tree)
 
 
@@ -406,6 +407,23 @@ def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path)
     assert _preflight(
         tmp_path, marker, crc_path="/opt/hlds/metamod/metamod.so"
     )["status"] == "pipeline"
+
+
+def test_wait_for_match_start_log_matches_only_this_match(tmp_path):
+    log = tmp_path / "server.log"
+    log.write_text(
+        'L 09/29/2026 - 16:58:01: KTP_MATCH_START (matchid "other-TEST") '
+        '(map "dod_anzio")\n')
+    assert not wait_for_match_start_log(log, "mine-TEST", timeout=0.2, poll=0.05)
+    with log.open("a") as fh:
+        fh.write('L 09/29/2026 - 16:58:09: KTP_MATCH_START (matchid "mine-TEST") '
+                 '(map "dod_anzio")\n')
+    assert wait_for_match_start_log(log, "mine-TEST", timeout=0.2, poll=0.05)
+
+
+def test_run_match_waits_on_go_live_before_the_after_live_hook():
+    source = inspect.getsource(run_match)
+    assert source.index("wait_for_match_start_log(") < source.index("after_live()")
 
 
 def test_clock_preflight_runs_after_config_settle_and_before_play_hooks():
