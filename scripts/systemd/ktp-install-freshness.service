@@ -1,0 +1,21 @@
+# ⛔ NOT INSTALLED OR ENABLED — proposal. docs/runbooks/INSTALL_FRESHNESS.md.
+[Unit]
+Description=Compare what is installed on this host to what the repo holds
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/ktp-install-freshness.sh
+# A dirty estate is NOT a unit failure. `ktp-install --report` exits 1 whenever
+# anything is stale, and 10 paths are stale today; failing the unit on that
+# would fire the OnFailure alert every single run until someone muted it.
+# Non-zero here means the check could not run -- no mirror, no manifest, an
+# unresolvable ref -- which is the only thing worth waking a drop-in for.
+SuccessExitStatus=0
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

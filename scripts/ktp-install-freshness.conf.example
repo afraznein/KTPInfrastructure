@@ -1,0 +1,25 @@
+# /etc/ktp/install-freshness.conf — sourced by ktp-install-freshness.sh.
+# Copy, fill, chmod 600, root:root. Every value here has a working default in
+# the script; this file exists for the two that are host decisions.
+
+# The read-only mirror the check resolves AGAINST_REF in. It fetches this, so
+# it must NOT be a deploy checkout -- the script refuses /opt/ktp-infra.
+#   git clone --bare https://github.com/afraznein/KTPInfrastructure \
+#       /var/lib/ktp-install-freshness/mirror.git
+#   git -C /var/lib/ktp-install-freshness/mirror.git config \
+#       remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+# Not `clone --mirror`: that maps branches straight into refs/heads, where
+# origin/main does not resolve, and the check exits 2 on every run.
+#FRESHNESS_REPO="/var/lib/ktp-install-freshness/mirror.git"
+
+# What "current" means. origin/main is the merged tree; a release tag would be
+# a different and defensible answer on a host that deliberately lags.
+#AGAINST_REF="origin/main"
+
+# Channel fallback, used only until an operator maps the ops-daily lane in
+# /etc/ktp/discord-relay.conf. Unmapped and unset, the script exits 2 rather
+# than guessing an id. No id is written into this repo; it is public.
+#ALERT_CHANNEL=""
+
+# How long a gap counts as "did not run". Default 172800 (two daily intervals).
+#MAX_GAP_SEC=172800

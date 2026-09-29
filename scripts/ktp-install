@@ -4,6 +4,7 @@
     ktp-install --repo DIR --commit SHA --src PATH --dest PATH --expect-md5 MD5|-
     ktp-install --file F --source-repo NAME --commit SHA --src PATH --blob-md5 MD5 --dest PATH --expect-md5 MD5|-
     ktp-install --file F --template --source-repo NAME --commit SHA --src PATH.example --dest PATH --expect-md5 MD5|-
+    ktp-install --record-only --repo DIR --commit SHA --src PATH --dest PATH
     ktp-install --report [--repo DIR] [--against-ref REF]
 
 The installed bytes are the git blob, so a file's md5 alone identifies the commit
@@ -14,6 +15,16 @@ Where there is no checkout (the game hosts), push the bytes and pass --file with
 --blob-md5, taken from `git show SHA:PATH | md5sum` where the repo is. A filled
 template cannot equal any blob: pass --template, and the row records the
 template's commit and path with the filled file's md5.
+
+An install is a copy, so it refuses a no-op: a file that is already correct but
+was never recorded could not be reconciled at all, and --report had no way to
+stop indicting it. --record-only closes that. It writes the manifest row for a
+file already in place and copies nothing, but only after hashing the bytes on
+disk and finding them equal to the blob at that commit -- so it can state a
+thing it checked and nothing else. It needs --repo, because without the blob
+here the row would rest on the caller's word, which is the drift it exists to
+clear. A row it writes carries previous_md5 == md5; the install path refuses a
+no-op, so it can never write one, and that is how the two are told apart.
 
 Manifest, one format in two places: /usr/local/share/ktp-infra/DEPLOYED.tsv when
 run as root, ~/.ktp/DEPLOYED.tsv otherwise, so dodserver never needs sudo.
@@ -190,6 +201,86 @@ def resolve_content(a):
     return content, a.commit, a.source_repo
 
 
+def deployed_by():
+    return os.environ.get("KTP_DEPLOYED_BY") or "%s@%s" % (os.environ.get("SUDO_USER") or getpass.getuser(),
+                                                           socket.gethostname())
+
+
+def last_row_for(path, manifest):
+    """The path's last manifest row, or None. Raises if the manifest exists and does not parse."""
+    if not os.path.exists(manifest):
+        return None
+    rows = read_manifest(manifest)
+    for row in reversed(rows):
+        if row["installed_path"] == path:
+            return row
+    return None
+
+
+def record_only(a):
+    """Record that the file already at --dest IS the blob at --commit, copying nothing.
+
+    The whole value of this mode is that it cannot record a claim it did not
+    check, so every path in here ends either at a verified row or at a refusal.
+    It hashes the bytes on disk and compares them to the blob before the row is
+    written; a caller's assertion is never the evidence.
+    """
+    if a.template:
+        raise SystemExit("--record-only cannot check a filled template: its bytes cannot equal any blob, "
+                         "so the row would rest on your word. Install it with --template instead.")
+    if not a.repo:
+        raise SystemExit("--record-only needs --repo: without the blob here there is nothing to compare "
+                         "the file against, and an unchecked row is the drift it is meant to clear")
+    if a.file:
+        raise SystemExit("--record-only records the file already at --dest and copies nothing; --file "
+                         "would name a second file that is not the one being recorded")
+    if a.blob_md5:
+        raise SystemExit("--record-only takes the blob from --repo; --blob-md5 would restate it as a claim")
+    if a.mode is not None:
+        raise SystemExit("--record-only writes no file, so --mode would change nothing")
+
+    repo = os.path.abspath(a.repo)
+    commit = git(repo, "rev-parse", "--verify", a.commit + "^{commit}").decode().strip()
+    blob = git(repo, "show", "%s:%s" % (commit, a.src))
+    blob_md5 = md5_bytes(blob)
+    source_repo = a.source_repo or repo_name(repo)
+
+    dest = os.path.abspath(a.dest)
+    current = md5_file(dest)
+    if current == "-":
+        raise SystemExit("%s does not exist; there is nothing installed to record" % dest)
+    if a.expect_md5 is not None and current != a.expect_md5:
+        raise SystemExit("%s is %s, expected %s; not recording it" % (dest, current, a.expect_md5))
+    if current != blob_md5:
+        raise SystemExit("%s is %s, but %s@%s:%s is %s; refusing to record a file that is not that blob"
+                         % (dest, current, source_repo, commit[:12], a.src, blob_md5))
+
+    manifest = manifest_for_writes()
+    try:
+        previous = last_row_for(dest, manifest)
+    except ManifestError as e:
+        raise SystemExit("%s; not recording into a manifest we cannot read back" % e)
+    if previous and (previous["md5"], previous["source_commit"], previous["source_path"],
+                     previous["source_repo"]) == (current, commit, a.src, source_repo):
+        raise SystemExit("%s is already recorded as %s@%s:%s; nothing to record"
+                         % (dest, source_repo, commit[:12], a.src))
+
+    # previous_md5 == md5 is what marks a row as recorded rather than installed:
+    # the install path refuses a no-op, so it can never write one.
+    append_row({
+        "installed_path": dest,
+        "md5": current,
+        "source_repo": source_repo,
+        "source_commit": commit,
+        "source_path": a.src,
+        "deployed_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "previous_md5": current,
+        "deployed_by": deployed_by(),
+    }, manifest)
+    print("recorded %s  %s  is %s@%s:%s  (nothing copied; recorded in %s)"
+          % (dest, current, source_repo, commit[:12], a.src, manifest))
+
+
 def install(a):
     content, commit, source_repo = resolve_content(a)
     new_md5 = md5_bytes(content)
@@ -231,8 +322,7 @@ def install(a):
     if md5_file(a.dest) != new_md5:
         raise SystemExit("%s does not read back as %s after the swap" % (a.dest, new_md5))
 
-    who = os.environ.get("KTP_DEPLOYED_BY") or "%s@%s" % (os.environ.get("SUDO_USER") or getpass.getuser(),
-                                                          socket.gethostname())
+    who = deployed_by()
     manifest = manifest_for_writes()
     append_row({
         "installed_path": os.path.abspath(a.dest),
@@ -356,11 +446,22 @@ def main(argv=None):
     ap.add_argument("--against-ref",
                     help="with --report --repo: compare installed bytes to this ref, "
                          "not just to the row they were installed from")
+    ap.add_argument("--record-only", action="store_true",
+                    help="record that the file already at --dest is the blob at --commit, copying "
+                         "nothing; refuses unless the bytes on disk are that blob")
     a = ap.parse_args(argv)
     if a.report:
+        if a.record_only:
+            ap.error("--report and --record-only are different jobs; run them separately")
         return report(a)
     if a.against_ref:
-        ap.error("--against-ref is a --report flag; an install already knows its commit")
+        ap.error("--against-ref is a --report flag; an install or a record already names its commit")
+    if a.record_only:
+        missing = [n for n in ("commit", "src", "dest") if getattr(a, n) is None]
+        if missing:
+            ap.error("--record-only needs --" + ", --".join(m.replace("_", "-") for m in missing))
+        record_only(a)
+        return 0
     missing = [n for n in ("commit", "src", "dest", "expect_md5") if getattr(a, n) is None]
     if missing:
         ap.error("install needs --" + ", --".join(m.replace("_", "-") for m in missing))
