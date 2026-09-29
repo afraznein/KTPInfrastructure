@@ -143,6 +143,10 @@ Cheap, and it de-risks S3:
 
 ## Done when
 
-- [ ] T1–T3 pass, or the failure is recorded precisely enough to choose a fallback
-- [ ] T4 mismatch rate measured on ≥2 maps and written down
-- [ ] a one-paragraph verdict appended to `KTPR_SPATIAL_PLAN.md` §1
+- [x] T1–T3 pass, or the failure is recorded precisely enough to choose a fallback
+- [x] T4 mismatch rate measured on ≥2 maps and written down
+- [x] a one-paragraph verdict appended to `KTPR_SPATIAL_PLAN.md` §1
+
+**Results (2026-09-29): `SPIKE_ENTVAR_GEOMETRY_RESULTS.md`.** T1 and T3 pass. T2 fails
+its criterion because the engine never gives entity 0 bounds, not because the native is
+broken. T4 measured on dod_anzio, dod_avalanche and dod_kalt.
