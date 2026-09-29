@@ -193,6 +193,9 @@ CONFIGS_RUNNER_LOCAL = {
     "ac.ini": "test stub; the suite rewrites it per run",
     "discord.ini": "test stub; the fleet's holds live relay creds",
     "hltv_recorder.ini": "holds the HLTV API key; the runner has no HLTV pair",
+    # Identical to the fleet's but for one line, so mirroring it to silence this
+    # check would park a production credential in the CI tree permanently.
+    "ktp.ini": "holds the live season match password; the harness needs its own",
     "ktp_ac_bans.ini": "live ban list, irrelevant to the harness and always moving",
     "users.ini": "admin credentials; the harness needs its own",
     # The runner loads KTPWitness, which must never appear on a fleet instance.
