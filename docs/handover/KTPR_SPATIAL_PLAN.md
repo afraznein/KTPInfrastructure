@@ -46,6 +46,21 @@ known-bad data. The geometry floats sit in the same unvalidated region.
 **Residual risk: `get_entvar` has zero in-tree callers on DoD.** See
 `SPIKE_ENTVAR_GEOMETRY.md` — one afternoon, and it gates everything below.
 
+**Spike verdict (S0, 2026-09-29, local Docker): proceed. No C++ change is needed.**
+`get_entvar` works in extension mode. A live player's origin matches `dodx_get_user_origin`
+exactly (12/12), and every capture-area box read (18 areas, 9 maps) is bit-identical to
+`dodx_area_get_bounds`, the C++ read of the same field that has existed since KTPAMXX
+`cd58f0e6a`. Three corrections to the premise. Entity 0 has no bounds in GoldSrc, so map
+extents come from BSP model 0 or observed positions, not `get_entvar(0, …)`. 25 of the 43
+CPs sampled have no `dod_capture_area` at all, so zone attribution (S7) only exists for
+area-captured flags, and a multi-area flag needs a classname scan, not `CA_edict`. And a
+flag's origin is not a valid check that its box is right. Against the engine's own
+`CA_num_*` count, player-bbox-vs-AABB membership mismatches **0.0% (anzio), 6.1%
+(avalanche), 3.4% (kalt)** of occupied samples with a 2 s lag tolerance. Only
+avalanche's error is geometric. Kalt's is a stale engine count with nobody present. Gate
+per flag on that lag-tolerant rate, and never use an origin point test. Details and log
+evidence: `SPIKE_ENTVAR_GEOMETRY_RESULTS.md`.
+
 ### 2. A BSP entity-lump parser already exists
 
 `modules/dod/dodx/moduleconfig.cpp:1689-1897` — `DODX_LoadBSPEntityLump()` and
