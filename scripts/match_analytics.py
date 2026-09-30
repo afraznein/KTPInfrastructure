@@ -140,6 +140,9 @@ CAPTURE_EVENT_TYPES_OPTIONAL = (
     "player_state",
     # Grenade throw (migration 034, KTPAMXX 1.23.0).
     "grenade_throw",
+    # Movement census (KTPAMXX #142). Capability-gated in the daemon, so a
+    # producer that does not announce it simply emits no row.
+    "move",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}

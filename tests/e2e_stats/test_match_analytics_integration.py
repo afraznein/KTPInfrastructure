@@ -86,6 +86,12 @@ def test_a_newer_producer_emitting_an_optional_health_type_is_accepted():
     assert _health_errors(types) == []
 
 
+def test_the_move_census_health_type_is_accepted_as_optional():
+    """KTPAMXX #142 emits a `move` health row; it must not read as unknown."""
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("move",)
+    assert _health_errors(types) == []
+
+
 def test_a_missing_required_health_type_is_still_an_error():
     """The point of the list: a stream that went dark must be caught."""
     types = tuple(t for t in analytics.CAPTURE_EVENT_TYPES if t != "damage")

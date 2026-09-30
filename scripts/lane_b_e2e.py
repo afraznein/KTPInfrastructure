@@ -719,6 +719,30 @@ def judge_capture_context_isolation(
     }
 
 
+GO_LIVE_WAIT_SECS = 45.0
+GO_LIVE_SETTLE_SECS = 3.0
+
+
+def wait_for_match_start_log(log_path: Path, match_id: str, *,
+                             timeout: float = GO_LIVE_WAIT_SECS,
+                             poll: float = 0.5) -> bool:
+    """Block until the plugin logs this match's real go-live line.
+
+    KTPMatchHandler emits KTP_MATCH_START only after it has applied the match's
+    shot detail, so returning here means any later harness rcon override wins.
+    False on timeout (a plugin that never logs it); the caller decides.
+    """
+    identity = f'(matchid "{match_id}")'
+    deadline = time.monotonic() + timeout
+    while True:
+        for line in log_path.read_text(errors="replace").splitlines():
+            if "KTP_MATCH_START" in line and identity in line:
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+
 def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
               per_team: int = 8, before_play=None, during_play=None,
               after_match=None, after_live=None) -> dict:
@@ -749,7 +773,16 @@ def run_match(driver, *, half: int, play_seconds: int, log_path: Path,
     # applies the timed map config on a deferred task after setting match_live.
     # The strict callback therefore runs after setup has completed but before
     # the kill-switch/play/scenario windows begin.
-    time.sleep(5.0)
+    # Go-live is the plugin's real round start (clan countdown plus ~5s), so a
+    # fixed sleep can fire before it and lose the shot-detail override to the
+    # plugin's own activation. Older plugins log the same line earlier.
+    if wait_for_match_start_log(log_path, out["match_id"]):
+        print("  go-live path: KTP_MATCH_START observed", flush=True)
+        time.sleep(GO_LIVE_SETTLE_SECS)
+    else:
+        print(f"  go-live path: no KTP_MATCH_START within {GO_LIVE_WAIT_SECS:.0f}s, "
+              "falling back to fixed 5s settle", flush=True)
+        time.sleep(5.0)
     if after_live is not None:
         after_live()
     if before_play is not None:
@@ -1389,10 +1422,11 @@ def main() -> int:
                         def _shot_detail_then_preflight():
                             # -1 means DO NOT TOUCH the cvar. Anything else
                             # overrides whatever KTPMatchHandler decided from
-                            # the match type: the plugin applies its gate ~1.5s
-                            # after the round restart and this hook runs later,
-                            # so an unconditional rcon here silently wins and
-                            # makes a gate test measure the harness instead.
+                            # the match type. The plugin applies its gate at
+                            # go-live, before it logs KTP_MATCH_START, and
+                            # run_match waits for that line, so an
+                            # unconditional rcon here wins and makes a gate
+                            # test measure the harness instead.
                             if args.shot_detail >= 0:
                                 handle.rcon(
                                     f'ktp_stats_shot_detail {int(args.shot_detail)}')
