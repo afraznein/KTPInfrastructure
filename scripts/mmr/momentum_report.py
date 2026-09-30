@@ -69,7 +69,7 @@ def write_params(by_map, fits, rho, rho_evidence, mk, ob, side, mmap, mtype):
     """
     def curve(A, lam, n):
         return {"A": round(A, 4), "lam": round(lam, 5), "n_multikills": n,
-                "half_life_s": round(math.log(2) / lam, 1) if lam > 0 else None}
+                "t_half_s": round(math.log(2) / lam, 1) if lam > 0 else None}
     p_with, p_without, n_with, n_without = rho_evidence
     maps = {}
     for mp in sorted({mmap[m] for m, _ in side}):
