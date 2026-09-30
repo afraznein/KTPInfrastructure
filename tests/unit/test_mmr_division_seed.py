@@ -121,5 +121,45 @@ class OffsetsFile(unittest.TestCase):
                             f"{name} moved too much between eras: {eras}")
 
 
+class PublishedHonestly(unittest.TestCase):
+    """Seeding changes what the rating MEANS, so the payload has to say so.
+
+    A reader comparing bottom-gold against mid-silver is entitled to know
+    whether the ordering they are looking at was measured or assumed.
+    """
+
+    def setUp(self):
+        sys.path.insert(0, str(MMR.parents[1] / "scripts"))
+        sys.path.insert(0, str(MMR.parents[1]))
+        import methodology
+        self.M = methodology
+        self.params = methodology.load_params()
+
+    def _doc(self, seed):
+        return self.M.build(self.params, generated_at="2026-09-30T00:00:00+00:00",
+                            division_seed=seed)
+
+    def test_a_seeded_run_declares_the_prior_and_the_circularity(self):
+        d = self._doc({"enabled": True, "offsets": OFFSETS, "labelled_players": 120})
+        ds = d["mmr"]["division_seeding"]
+        self.assertTrue(ds["enabled"])
+        self.assertEqual(ds["offsets_mu"], OFFSETS)
+        self.assertIn("prior", ds["status"])
+        self.assertIn("circular", ds["caveat"])
+
+    def test_an_unseeded_run_warns_the_scales_are_not_comparable(self):
+        ds = self._doc(None)["mmr"]["division_seeding"]
+        self.assertFalse(ds["enabled"])
+        self.assertIn("NOT on a common scale", ds["what"])
+        self.assertIsNone(ds["caveat"])
+
+    def test_it_still_passes_the_publish_gate(self):
+        # `life_` once made this whole aggregate unpublishable (#559); any new
+        # field has to clear assert_sanitized, not just validate_for_import.
+        from analytics_report_dto import assert_sanitized
+        assert_sanitized(self._doc({"enabled": True, "offsets": OFFSETS,
+                                    "labelled_players": 120}))
+
+
 if __name__ == "__main__":
     unittest.main()

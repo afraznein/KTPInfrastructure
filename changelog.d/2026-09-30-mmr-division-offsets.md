@@ -37,3 +37,32 @@ is switched on, and the transparency page then has to say the ordering is a prio
 One deliberate asymmetry: a missing `division_offsets.json` or `division_history.json` is a hard
 error, not a silent no-op. A seeding run that quietly seeded nobody would publish unseeded
 ratings while the digest claimed otherwise.
+
+---
+
+**Update, same day — seeding is now ON by default** (drew's ruling: *"this is just seeding, as
+matches proceed and seasons finish this will become more and more accurate"*). `--no-division-seed`
+turns it off, and that flag is how you get the un-seeded ladder for validating promotion and
+relegation, which a seeded one cannot do without circularity.
+
+Two things changed to make enabling it safe:
+
+**The labels are built in the ladder's own player-id space.** The first cut read
+`division_history.json`, which keys on **hlstatsx** ids and needs the data server's identity
+bridge — but in CI the ladder keys on the **website's** player_id, so seeding would have matched
+nobody and silently done nothing. Labels are now built inside the roster loop in
+`build_league_matches`, from `season_team.division_id` the run already fetches, using whichever
+pid that loop resolved. Most recent season wins, so a promoted player is seeded where they play
+now.
+
+**Whether a run was seeded is a published fact.** `weekly_summary.json` carries
+`division_seeded` and `division_offsets`, and the `rating_methodology` payload carries
+`mmr.division_seeding` — enabled, the offsets, how many players were labelled, and a plain-English
+caveat. Seeded, it says the ordering is *"a prior, not a measurement of this player"* and that
+these ratings cannot serve as independent evidence for promotion. Unseeded, it says ratings from
+different divisions are **not on a common scale** and should not be compared. A reader looking at
+bottom-gold against mid-silver is entitled to know which of those they are seeing.
+
+Missing offsets now skip seeding rather than failing the run — the file is committed, so absence
+means an old tree, not a misconfigured season — and the skip is visible in the published summary
+rather than only in a log line.
