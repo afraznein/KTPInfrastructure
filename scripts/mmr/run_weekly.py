@@ -334,10 +334,49 @@ def season_rosters(key: str, season_number: int):
     return dict(rosters), current, sizes
 
 
-def run(matches, model_factory):
+def load_division_seed():
+    """(player_id -> division, division -> mu_offset), or (None, None).
+
+    Both files are generated rather than hand-written: `division_offsets.json`
+    by `division_fit.py` on the data server (12-mans are the only thing that
+    bridges divisions, and CI cannot see them), `division_history.json` by
+    `division_history.py` from the website pull. Missing either one is a hard
+    error rather than a silent no-op -- a seeding run that quietly seeds nobody
+    would publish unseeded ratings while the digest claimed otherwise.
+    """
+    off_path = HERE / "division_offsets.json"
+    hist_path = HERE / "division_history.json"
+    for pth in (off_path, hist_path):
+        if not pth.exists():
+            raise RuntimeError(
+                f"--use-division-seed needs {pth.name}; run "
+                f"{'division_fit.py (on the data server)' if pth is off_path else 'division_history.py'}")
+    offsets = {k: v["mu_offset"]
+               for k, v in json.loads(off_path.read_text(encoding="utf-8"))["divisions"].items()}
+    history = json.loads(hist_path.read_text(encoding="utf-8"))
+    # Most recent season with a division wins -- a promoted player is seeded
+    # where they play now, not where they came from.
+    labels = {}
+    for pid, seasons in history.items():
+        seen = [e for e in seasons if e.get("division")]
+        if seen:
+            labels[int(pid)] = max(seen, key=lambda e: e.get("season") or 0)["division"]
+    return labels, offsets
+
+
+def run(matches, model_factory, division_seed=None):
     """Predict each match before applying it, then update. Returns per-match
-    rows and the metrics over all predictions made."""
+    rows and the metrics over all predictions made.
+
+    `division_seed` is (labels, offsets) and seeds starting mu BEFORE any match
+    is applied, so the prior is in place for the first prediction rather than
+    arriving after the pool has already drifted.
+    """
     model = model_factory()
+    if division_seed:
+        labels, offsets = division_seed
+        model.seed_from_divisions(labels, offsets)
+        print(f"division seeding ON: {len(labels)} players labelled, offsets {offsets}")
     rows, preds, ys = [], [], []
     for m in matches:
         p = model.predict(m["t1"], m["t2"])
@@ -397,6 +436,15 @@ def main():
                          "held-out comparison says it helps.")
     ap.add_argument("--performance-strength", type=float, default=PF.DEFAULT_STRENGTH,
                     help="how hard performance tilts the split (0 = even, today's behaviour)")
+    ap.add_argument("--use-division-seed", action="store_true",
+                    help="seed each player's starting mu by their division, from "
+                         "division_offsets.json. OFF by default, and the reason is not "
+                         "tuning: divisions never play each other, so seeding from division "
+                         "makes MMR partly an ECHO of the division it was seeded from. That "
+                         "is fine if MMR is a common-scale skill number, and circular if MMR "
+                         "is also the evidence for promotion and relegation. Turn it on only "
+                         "once that has been ruled on, and say on the transparency page that "
+                         "the ordering is a prior.")
     args = ap.parse_args()
     if not args.key:
         raise SystemExit("No key. Pass --key or set NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.")
@@ -427,7 +475,8 @@ def main():
         print("wrote weekly_digest.md (no matches yet)")
         return
 
-    model, rows, metrics = run(matches, L.OpenSkill)
+    seed = load_division_seed() if args.use_division_seed else None
+    model, rows, metrics = run(matches, L.OpenSkill, division_seed=seed)
     ratings = model.ratings()
     (HERE / "ratings_current.json").write_text(json.dumps(
         {str(p): r for p, r in sorted(ratings.items(), key=lambda kv: -kv[1]["ordinal"])}, indent=1), encoding="utf-8")
