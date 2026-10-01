@@ -1253,22 +1253,22 @@
           "initial_owner": 2
         }
       ],
-      "map_config": "saints_b1",
+      "map_config": "saints",
       "map_name": "dod_saints2_b3e",
       "scoring_delay_seconds": 30,
       "tick_value_allies": [
-        2,
+        1,
+        1,
         0,
-        2,
         0,
-        1
+        2
       ],
       "tick_value_axis": [
         0,
-        2,
         0,
-        2,
-        1
+        1,
+        1,
+        2
       ]
     },
     {
@@ -1307,22 +1307,76 @@
           "initial_owner": 2
         }
       ],
-      "map_config": "saints_b1",
+      "map_config": "saints",
       "map_name": "dod_saints2_b4e",
       "scoring_delay_seconds": 30,
       "tick_value_allies": [
-        2,
+        1,
+        1,
         0,
-        2,
         0,
-        1
+        2
       ],
       "tick_value_axis": [
         0,
-        2,
         0,
-        2,
-        1
+        1,
+        1,
+        2
+      ]
+    },
+    {
+      "capout_bonus_allies": 40,
+      "capout_bonus_axis": 40,
+      "flag_facts_source": "observed 2026-10-01",
+      "flags": [
+        {
+          "cap_points": 1,
+          "flag_index": 0,
+          "flag_name": "Allied 1st",
+          "initial_owner": 1
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 1,
+          "flag_name": "Allied 2nd",
+          "initial_owner": 1
+        },
+        {
+          "cap_points": 2,
+          "flag_index": 2,
+          "flag_name": "The Bridge",
+          "initial_owner": 0
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 3,
+          "flag_name": "Axis 2nd",
+          "initial_owner": 2
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 4,
+          "flag_name": "Axis 1st",
+          "initial_owner": 2
+        }
+      ],
+      "map_config": "saints",
+      "map_name": "dod_saints2_b5e",
+      "scoring_delay_seconds": 30,
+      "tick_value_allies": [
+        1,
+        1,
+        0,
+        0,
+        2
+      ],
+      "tick_value_axis": [
+        0,
+        0,
+        1,
+        1,
+        2
       ]
     },
     {
@@ -1428,5 +1482,5 @@
   ],
   "note": "tick values are HUD order; the configs store them reversed",
   "source": "KTPDoDServerConfig/serverfiles/dod/configs",
-  "source_revision": "fcda30a2bef6a9ec99ce66171ded03c384573476"
+  "source_revision": "699ce33f7e612dbd978c4a74034a6132742e75ae"
 }
