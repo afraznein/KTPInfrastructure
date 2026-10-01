@@ -21,18 +21,28 @@ imported from that module rather than restated here. A second copy of the
 list is a second thing to forget: the runner already carries three lists
 of test-mode plugins that must be kept in step by hand.
 
+That includes CONFIGS. The checker enumerates the fleet's configs dir and
+md5-compares everything outside CONFIGS_RUNNER_LOCAL, so this tool does the
+same, from the same allowlist. It used to sync binaries only and leave
+configs "to a judgement, by hand" -- but that judgement is the allowlist,
+written down with a reason per entry. Leaving the rest to hand meant the
+2026-09-30 ktp_maps.ini change paged every heartbeat while a fresh --apply
+reported the runner synced.
+
+A config the fleet has and the runner LACKS is reported, not written, unless
+--add-missing-configs is passed. Updating a file the runner already mirrors
+is a mirror; adding one nobody has looked at is the judgement call, because
+a new fleet config may carry a credential that belongs in the allowlist.
+
 WHAT IT REFUSES TO TOUCH, and this is the point of the tool rather than an
 `rsync` one-liner:
 
   - KTPMatchHandler / KTPPracticeMode are KTP_TEST_MODE builds. Byte-equal
     to the fleet is WRONG for them; md5 says nothing.
   - KTPHudObserver is rebuilt from upstream by the workflow on every run.
-  - Configs. ktp-tier2-stack-drift.py now REPORTS config drift against the
-    fleet, and this tool still does not write it: which configs the harness
-    should mirror is a judgement, not a mirror, and `hud_observer.cfg` is
-    absent ON PURPOSE -- it carries the live ingest URL and a production key,
-    and restoring it points the test harness at the real HUD ingest. Copy a
-    reported config across deliberately, by hand.
+  - Every config in CONFIGS_RUNNER_LOCAL. `hud_observer.cfg` above all: it
+    is absent ON PURPOSE -- it carries the live ingest URL and a production
+    key, and restoring it points the test harness at the real HUD ingest.
 
 GUARDS, each of which is a way a hand-run `scp` has gone wrong here:
 
@@ -148,6 +158,38 @@ def sync_set():
         sys.exit("FATAL: the drift checker now lists a build-locally artifact as fleet-strict: "
                  + ", ".join(clash) + "\nRefusing to overwrite it. Reconcile the lists first.")
     return paths, excluded
+
+
+MISSING = "missing"
+
+
+def plan_config_sync(fleet_cfg, runner_cfg, config_dir, runner_local, add_missing=False):
+    """Configs to write, and fleet configs the runner lacks that were left alone.
+
+    Both maps are basename -> md5, as the drift checker's fetch_fleet_configs
+    returns them. The allowlist is skipped before anything else, so no flag
+    can bring hud_observer.cfg back. Returns (write, skipped_missing), as
+    paths relative to the serverfiles root.
+    """
+    write, skipped = [], []
+    for name in sorted(fleet_cfg):
+        if name in runner_local:
+            continue
+        rel = f"{config_dir}/{name}"
+        if name not in runner_cfg:
+            (write if add_missing else skipped).append(rel)
+        elif runner_cfg[name] != fleet_cfg[name]:
+            write.append(rel)
+    return write, skipped
+
+
+def list_configs(drift, ssh, root, label):
+    """basename -> md5 of the configs dir under `root`. Empty is a failed probe:
+    every tree this runs against holds amxx.cfg."""
+    got = drift.fetch_fleet_configs(ssh, root)
+    if not got:
+        sys.exit(f"FATAL: no configs listed on {label} -- the probe failed. Nothing was changed.")
+    return got
 
 
 def connect(host, user, password=None, key=None, label=""):
@@ -305,17 +347,23 @@ def main():
                     help="Proceed although the reference instance is holding staged .new files.")
     ap.add_argument("--ignore-running", action="store_true",
                     help="Proceed although a test server is live in the runner tree.")
+    ap.add_argument("--add-missing-configs", action="store_true",
+                    help="Also copy configs the fleet has and the runner lacks. Check each one "
+                         "for a credential first; one that holds one belongs in "
+                         "CONFIGS_RUNNER_LOCAL instead.")
     args = ap.parse_args()
     require_current(__file__,
                     purpose="overwrite the Tier-2 runner stack")
 
     paths, excluded = sync_set()
+    drift = _load_drift_module()
 
     ref = connect(REF_HOST, REF_USER, password=REF_PASSWORD, label="the fleet reference")
     try:
         ref_tree = ref_root(ref)
         blockers = [b for b in (check_pending_wave(ref, ref_tree),) if b]
         fleet = remote_md5s(ref, ref_tree, paths, f"the reference {REF_USER}@{REF_HOST}")
+        fleet_cfg = list_configs(drift, ref, ref_tree, f"the reference {REF_USER}@{REF_HOST}")
     except SystemExit:
         ref.close()
         raise
@@ -326,19 +374,39 @@ def main():
     try:
         blockers += [b for b in (check_runner_idle(runner),) if b]
         held = remote_md5s(runner, RUNNER_TREE, paths, f"the runner {RUNNER_USER}@{RUNNER_HOST}")
+        runner_cfg = list_configs(drift, runner, RUNNER_TREE,
+                                  f"the runner {RUNNER_USER}@{RUNNER_HOST}")
 
-        drifted = [p for p in paths if held[p] != fleet[p]]
+        cfg_write, cfg_skipped = plan_config_sync(
+            fleet_cfg, runner_cfg, drift.CONFIG_DIR, drift.CONFIGS_RUNNER_LOCAL,
+            add_missing=args.add_missing_configs)
+        cfg_paths = [f"{drift.CONFIG_DIR}/{n}" for n in sorted(fleet_cfg)
+                     if n not in drift.CONFIGS_RUNNER_LOCAL]
+        for name, md5 in fleet_cfg.items():
+            fleet[f"{drift.CONFIG_DIR}/{name}"] = md5
+            held[f"{drift.CONFIG_DIR}/{name}"] = runner_cfg.get(name, MISSING)
+
+        drifted = [p for p in paths if held[p] != fleet[p]] + cfg_write
         print(f"Reference {REF_USER}@{REF_HOST}:{ref_tree}")
         print(f"Runner    {RUNNER_USER}@{RUNNER_HOST}:{RUNNER_TREE}\n")
-        for p in paths:
+        for p in paths + cfg_paths:
+            if p in cfg_skipped:
+                print(f"  [SKIP ] {p}  on the fleet, absent on the runner (--add-missing-configs)")
+                continue
             mark = "DRIFT" if p in drifted else "ok   "
             detail = f"  runner {held[p][:8]}… vs fleet {fleet[p][:8]}…" if p in drifted else ""
             print(f"  [{mark}] {p}{detail}")
         print("\nLeft alone by design (test-mode or built per run): "
               + ", ".join(posixpath.basename(p) for p in sorted(excluded)))
+        print("Runner-local configs, never written: "
+              + ", ".join(sorted(drift.CONFIGS_RUNNER_LOCAL)))
+        if cfg_skipped:
+            print(f"\n{len(cfg_skipped)} fleet config(s) absent on the runner were NOT written, "
+                  "and the heartbeat keeps reporting them until each is copied with "
+                  "--add-missing-configs or given a reason in CONFIGS_RUNNER_LOCAL.")
 
         if not drifted:
-            print("\nRunner stack already matches the reference. Nothing to do.")
+            print("\nNothing to write: every synced path already matches the reference.")
             return 0
         print(f"\n{len(drifted)} file(s) would be replaced.")
         acked = {"--ack-pending-wave": args.ack_pending_wave,
@@ -361,8 +429,11 @@ def main():
         synced = {}
         try:
             for p in drifted:
-                out, err = run(runner, f"mkdir -p '{backup}/{posixpath.dirname(p)}' && "
-                                       f"cp -p '{RUNNER_TREE}/{p}' '{backup}/{p}' && echo OK")
+                if held[p] == MISSING:
+                    out, err = "OK", ""  # nothing on the runner to back up
+                else:
+                    out, err = run(runner, f"mkdir -p '{backup}/{posixpath.dirname(p)}' && "
+                                           f"cp -p '{RUNNER_TREE}/{p}' '{backup}/{p}' && echo OK")
                 if out != "OK":
                     sys.exit(f"FATAL: could not back up {p} to {backup}: {err or out}\n"
                              "       Nothing further was written.")
