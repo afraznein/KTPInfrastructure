@@ -352,7 +352,7 @@
       ]
     },
     "dod_saints2_b3e": {
-      "config": "saints_b1",
+      "config": "saints",
       "source": "observed 2026-09-22",
       "flags": [
         {
@@ -388,8 +388,44 @@
       ]
     },
     "dod_saints2_b4e": {
-      "config": "saints_b1",
+      "config": "saints",
       "source": "observed 2026-09-22",
+      "flags": [
+        {
+          "flag_index": 0,
+          "flag_name": "Allied 1st",
+          "initial_owner": 1,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 1,
+          "flag_name": "Allied 2nd",
+          "initial_owner": 1,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 2,
+          "flag_name": "The Bridge",
+          "initial_owner": 0,
+          "cap_points": 2
+        },
+        {
+          "flag_index": 3,
+          "flag_name": "Axis 2nd",
+          "initial_owner": 2,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 4,
+          "flag_name": "Axis 1st",
+          "initial_owner": 2,
+          "cap_points": 1
+        }
+      ]
+    },
+    "dod_saints2_b5e": {
+      "config": "saints",
+      "source": "observed 2026-10-01",
       "flags": [
         {
           "flag_index": 0,
