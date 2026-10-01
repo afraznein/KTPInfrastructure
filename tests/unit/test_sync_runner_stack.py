@@ -9,6 +9,7 @@ failure looks like a broken harness rather than a bad sync.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -66,6 +67,73 @@ def test_no_duplicate_paths():
     overwrites the first -- so the pre-sync artifact is silently lost."""
     paths, _ = sync.sync_set()
     assert len(paths) == len(set(paths))
+
+
+
+# --- configs ------------------------------------------------------------------
+
+CFG = "dod/addons/ktpamx/configs"
+
+
+def test_a_drifted_mirrored_config_is_written():
+    """The 2026-09-30 case: the fleet changed ktp_maps.ini, the runner held the
+    old copy, and the heartbeat paged while --apply reported the runner synced."""
+    write, skipped = sync.plan_config_sync(
+        {"ktp_maps.ini": "da41"}, {"ktp_maps.ini": "ce14"}, CFG, drift.CONFIGS_RUNNER_LOCAL)
+    assert write == [f"{CFG}/ktp_maps.ini"]
+    assert skipped == []
+
+
+def test_a_matching_config_is_not_written():
+    write, skipped = sync.plan_config_sync(
+        {"ktp_maps.ini": "da41"}, {"ktp_maps.ini": "da41"}, CFG, drift.CONFIGS_RUNNER_LOCAL)
+    assert write == [] and skipped == []
+
+
+def test_the_synced_configs_are_the_alerted_configs():
+    """Whatever compute_config_drift reports for a drifted-in-place file, the
+    planner writes; otherwise the alert names something no tool clears."""
+    fleet = {"ktp_maps.ini": "a", "dodx.ini": "b", "amxx.cfg": "c", "ktp.ini": "d"}
+    runner = {"ktp_maps.ini": "x", "dodx.ini": "b", "amxx.cfg": "y", "ktp.ini": "z"}
+    alerted, _ = drift.compute_config_drift(
+        fleet, "/runner", CFG, drift.CONFIGS_RUNNER_LOCAL,
+        md5_fn=lambda path: runner[os.path.basename(path)], exists_fn=lambda path: True)
+    write, _ = sync.plan_config_sync(fleet, runner, CFG, drift.CONFIGS_RUNNER_LOCAL)
+    assert sorted(a[0] for a in alerted) == sorted(write)
+    assert f"{CFG}/ktp.ini" not in write
+
+
+def test_a_config_the_runner_lacks_is_skipped_without_the_flag():
+    """Adding a file is the judgement call: a new fleet config may carry a
+    credential that belongs in the allowlist instead."""
+    write, skipped = sync.plan_config_sync({"new.ini": "a"}, {}, CFG, drift.CONFIGS_RUNNER_LOCAL)
+    assert write == []
+    assert skipped == [f"{CFG}/new.ini"]
+    write, skipped = sync.plan_config_sync({"new.ini": "a"}, {}, CFG, drift.CONFIGS_RUNNER_LOCAL,
+                                           add_missing=True)
+    assert write == [f"{CFG}/new.ini"] and skipped == []
+
+
+@pytest.mark.parametrize("add_missing", [False, True])
+def test_runner_local_configs_are_never_written(add_missing):
+    """hud_observer.cfg is absent from the runner ON PURPOSE; restoring it points
+    the harness at the live HUD ingest with the live key. No flag may bring it,
+    or any other allowlisted config, across."""
+    assert "hud_observer.cfg" in drift.CONFIGS_RUNNER_LOCAL
+    fleet = {name: "fleet" for name in drift.CONFIGS_RUNNER_LOCAL}
+    runner = {name: "runner" for name in drift.CONFIGS_RUNNER_LOCAL if name != "hud_observer.cfg"}
+    write, skipped = sync.plan_config_sync(fleet, runner, CFG, drift.CONFIGS_RUNNER_LOCAL,
+                                           add_missing=add_missing)
+    assert write == [] and skipped == []
+
+
+def test_an_empty_config_listing_is_a_failed_probe(monkeypatch):
+    class _Drift:
+        @staticmethod
+        def fetch_fleet_configs(ssh, root):
+            return {}
+    with pytest.raises(SystemExit):
+        sync.list_configs(_Drift, object(), "/tree", "the runner")
 
 
 # --- runner-idle guard --------------------------------------------------------
