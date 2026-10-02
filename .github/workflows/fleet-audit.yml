@@ -101,13 +101,22 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Seed candidate state
+        run: |
+          # Every baseline below is read from and written to this run's candidate
+          # copy. The `promote` job copies them over /var/lib only once the
+          # reporting succeeded, so a failed notify leaves the delta unspent.
+          set -euo pipefail
+          bash scripts/fleet-audit-state.sh seed "$GITHUB_RUN_ID"
+
       - name: Fleet drift audit
         id: audit
         env:
           # Its own state file. The Monday cron owns /var/lib/ktp-audit-state.json,
           # and sharing it would mean whichever ran first consumed the delta and
-          # the other reported a clean fleet.
-          STATE_FILE: /var/lib/ktp-audit-state-ci.json
+          # the other reported a clean fleet. This is the candidate copy of
+          # the committed ktp-audit-state-ci.json; see scripts/fleet-audit-state.sh.
+          STATE_FILE: /var/lib/ktp-fleet-audit-ci-pending/${{ github.run_id }}/ktp-audit-state-ci.json
         run: |
           # GitHub runs every `run:` under `shell: /usr/bin/bash -e {0}`, so errexit
           # is ALREADY ON before line one. `set -uo pipefail` adds to that; omitting
@@ -151,7 +160,7 @@ jobs:
           # Its own state file, for the same reason the audit has one: the delta
           # is "+N new since the last run of THIS check", and a shared file would
           # mean whichever ran first ate it.
-          STATE_FILE: /var/lib/ktp-distribute-drift-ci.json
+          STATE_FILE: /var/lib/ktp-fleet-audit-ci-pending/${{ github.run_id }}/ktp-distribute-drift-ci.json
         run: |
           # Read-only against /home/dod/distribute and the 24 instances: it
           # hashes, it does not push, and it writes nothing into the deploy tree.
@@ -178,12 +187,14 @@ jobs:
 
       - name: Decide whether a human needs to look
         id: gate
+        env:
+          KTP_GATE_STATE_DIR: /var/lib/ktp-fleet-audit-ci-pending/${{ github.run_id }}
         # The decision lives in scripts/fleet-audit-gate.sh so it can be tested
         # (tests/unit/test_fleet_audit_gate.py). Its restart-drift leg is a
         # state transition, not a level: the .example running ahead of the fleet
         # is DIVERGES every week until a redeploy, and that was waking the model
-        # every Monday to be told "known, no action". The gate keeps its baseline
-        # in /var/lib beside the audit's own state file.
+        # every Monday to be told "known, no action". Its baselines live in the
+        # run's candidate directory like the audit's, and `promote` advances them.
         run: |
           set -euo pipefail
           bash scripts/fleet-audit-gate.sh | tee -a "$GITHUB_OUTPUT"
@@ -384,3 +395,28 @@ jobs:
             -H 'Content-Type: application/json' \
             -d "$payload" >/dev/null
           echo "Posted: $ISSUE_URL"
+
+  promote:
+    name: Advance the baselines
+    needs: [collect, triage, notify]
+    # Only once the run told someone, or had nothing to tell. A dry run posts
+    # nothing, so it spends nothing either.
+    if: >-
+      always()
+      && needs.collect.result == 'success'
+      && (github.event_name == 'schedule' || inputs.dry_run == false)
+      && (needs.collect.outputs.needs_triage != 'true'
+      || (needs.triage.result == 'success' && needs.notify.result == 'success'))
+    runs-on: [self-hosted, ktp-tier2]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Promote candidate state
+        run: |
+          set -euo pipefail
+          bash scripts/fleet-audit-state.sh promote "$GITHUB_RUN_ID"
