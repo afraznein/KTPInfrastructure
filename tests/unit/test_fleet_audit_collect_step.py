@@ -38,6 +38,7 @@ CONFIG_KEY_STEP = "Config key drift"
 # Every named `run:` step in the file. Asserted as a set below so a renamed or
 # added step fails here rather than slipping past the shape check unexamined.
 EXPECTED_RUN_STEPS = {
+    "Seed candidate state",
     AUDIT_STEP,
     RESTART_STEP,
     DISTRIBUTE_STEP,
@@ -46,6 +47,7 @@ EXPECTED_RUN_STEPS = {
     "Decide whether a human needs to look",
     "Open or update the issue",
     "Post the pointer",
+    "Promote candidate state",
 }
 
 _RUN_BLOCK = re.compile(r"^(\s*)run: \|\s*$")
