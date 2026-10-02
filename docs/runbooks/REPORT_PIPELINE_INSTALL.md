@@ -168,6 +168,10 @@ under `/opt/ktp-tier2-runner`, which is CI scratch and gets wiped. Not
 `/opt/ktp-infra` either — that is a separate, deliberately stale copy that the
 weekly fleet audit runs from and that never pulls.
 
+To inspect this checkout, run git as its owner: `sudo runuser -u ktpreports -- git -C /opt/ktp-reports/KTPInfrastructure log -1`.
+Root's git refuses a repository it does not own and prints an empty remote, which reads as
+"there is no checkout here".
+
 ```bash
 sudo install -d -o ktpreports -g ktpreports /opt/ktp-reports
 sudo -u ktpreports git clone https://github.com/afraznein/KTPInfrastructure.git \
