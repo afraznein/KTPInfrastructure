@@ -150,6 +150,8 @@ STACK_FILES = [
 # Plugins the runner should hold BYTE-IDENTICAL to the fleet. A mismatch here
 # is unambiguous drift.
 PLUGINS_STRICT = [
+    "dod/addons/ktpamx/plugins/admin.amxx",
+    "dod/addons/ktpamx/plugins/stats_logging.amxx",
     "dod/addons/ktpamx/plugins/KTPAdminAudit.amxx",
     "dod/addons/ktpamx/plugins/ktp_cvar.amxx",
     "dod/addons/ktpamx/plugins/ktp_file.amxx",
