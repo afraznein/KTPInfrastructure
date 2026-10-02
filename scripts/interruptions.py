@@ -61,11 +61,25 @@ DEFINITION_VERSION = 2
 # following up a stopped capture, or noise, and these samples cannot tell the
 # two apart.
 #
-# So a consumer must not read one lift as the effect. Price on the 12-man
-# column, the largest clean sample, and treat officials as the optimistic bound
-# until official weeks accumulate. Re-measure with
+# The apparent ordering across match types is NOT real (checked 2026-10-02 by
+# holding the map fixed, which is the only way to separate a match-type effect
+# from map mix -- officials play one map a week while practice sprawls across
+# many, and cap-out rates differ ~12x by map). On harrington, the one map all
+# three types share, the strong-band lift reads 0.76 official / 0.35 12-man /
+# 1.16 scrim: the three types in the WRONG order for the pooled story. Across
+# eight map-by-type cells the lift ranges 0.35 to 1.92, and every one of them
+# sits within 1.3 sigma of what a single pooled suppression of ~0.80 predicts,
+# bar one cell at 2.1 which is what testing eight cells buys you.
+#
+# So one number fits everything we have. Do NOT build per-map or per-type
+# interruption pricing: at 20-120 events a cell there is no signal to fit, and
+# this is not in tension with the per-map flag COEFFICIENTS, which are fit on
+# thousands of samples a map.
+#
+# Price on the 12-man column, the largest clean sample, and treat officials as
+# the optimistic bound until official weeks accumulate. Re-measure with
 # review/hidden-value/tools/hv_interrupt.py, which takes the match types as its
-# third argument.
+# third argument and `--by-map` for the per-map cut.
 SUPPRESSION_BANDS: tuple[tuple[str, int, dict[str, tuple[float, int]]], ...] = (
     ("negligible", 0, {"official": (0.99, 186), "twelve_man": (0.97, 923),
                        "scrim": (0.82, 667)}),
