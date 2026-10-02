@@ -51,6 +51,9 @@ THREE COMPARISONS, because one invariant does not fit every artifact:
   a hardcoded list cannot see a config the fleet ADDS, and that is how the
   runner ended up with no dodx.ini at all. ktp_maps.ini feeds match-handler
   map handling and had been 60 days behind the fleet, invisible to everything.
+  sync-runner-stack.py writes this same set from this same allowlist, so a
+  config alert here has a tool that clears it (a config the runner LACKS
+  needs its --add-missing-configs).
 
 ⛔ hud_observer.cfg is ABSENT ON PURPOSE and its absence is CORRECT. It holds
 the live HUD ingest URL and key; restoring it points the test harness at the
@@ -147,6 +150,8 @@ STACK_FILES = [
 # Plugins the runner should hold BYTE-IDENTICAL to the fleet. A mismatch here
 # is unambiguous drift.
 PLUGINS_STRICT = [
+    "dod/addons/ktpamx/plugins/admin.amxx",
+    "dod/addons/ktpamx/plugins/stats_logging.amxx",
     "dod/addons/ktpamx/plugins/KTPAdminAudit.amxx",
     "dod/addons/ktpamx/plugins/ktp_cvar.amxx",
     "dod/addons/ktpamx/plugins/ktp_file.amxx",
@@ -185,6 +190,7 @@ CONFIG_DIR = "dod/addons/ktpamx/configs"
 # enumerated from the fleet and md5-compared, so a config the fleet gains later
 # is covered without anyone editing this file. Each entry needs a reason; an
 # unexplained exemption is how a real staleness gets parked here forever.
+# sync-runner-stack.py never writes anything named here.
 CONFIGS_RUNNER_LOCAL = {
     # ⛔ ABSENT ON PURPOSE, and its absence is CORRECT — not an oversight to fix.
     # It carries the live HUD ingest URL and key; restoring it points the test

@@ -110,6 +110,10 @@ SCHEMA_VERSION = 23  # 9: spatial_layers; 10: in_game_result + player_halves; 11
 # a field this code reads must not be added here without checking that read.
 CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25})
 POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25})
+# From schema 24 the producer numbers each stream from its own sequence and the
+# daemon tracks gaps per stream, so a row's gap counter describes that stream
+# alone. Older producers shared one sequence and every row carried the half's.
+PER_STREAM_SEQUENCE_SCHEMA = 24
 # The health streams EVERY producer contract emits, schema 21 onward. All of
 # these must appear exactly once per half; a missing one means that stream went
 # dark, which is the defect this list exists to catch.
@@ -433,13 +437,10 @@ def _half_scoped(rows: list[dict[str, Any]], key: str) -> int:
 def _half_sequence_errors(
     half: int, rows: list[dict[str, Any]], intake_shortfall: int,
 ) -> list[str]:
-    """Half-wide sequence evidence that no single stream can own.
+    """Pre-schema-24 halves: one shared sequence, its gap stamped into every row.
 
-    Both counters are HALF-scoped -- the daemon stamps one per-half value into
-    every event type's row, so a gap is non-zero even on a stream that emitted
-    nothing. A gap is intake loss already charged to the stream whose `emitted`
-    exceeds its `daemon_received`; only the unaccounted residual is match-level.
-    """
+    A gap is intake loss already charged to the stream whose `emitted` exceeds
+    its `daemon_received`; only the unaccounted residual is match-level."""
     errors = []
     duplicates = _half_scoped(rows, "duplicate_or_reordered_count")
     if duplicates:
@@ -451,6 +452,27 @@ def _half_sequence_errors(
         errors.append(
             f"half {half} has {residual} sequence-gap line(s) no stream's "
             "emitted/received shortfall accounts for")
+    return errors
+
+
+def _stream_sequence_errors(half: int, row: dict[str, Any]) -> list[str]:
+    """Schema 24 onward: a lost line is both a gap and a shortfall, so only the
+    gap its own shortfall cannot explain is new evidence. Tail loss leaves no
+    gap, hence a clipped residual rather than an equality."""
+    event_type = str(row.get("event_type") or "") or "<empty>"
+    errors = []
+    duplicates = int(row.get("duplicate_or_reordered_count") or 0)
+    if duplicates:
+        errors.append(
+            f"half {half} {event_type} reports {duplicates} duplicate or "
+            "reordered line(s) on its sequence")
+    shortfall = max(0, int(row.get("emitted") or 0)
+                    - int(row.get("daemon_received") or 0))
+    residual = int(row.get("sequence_gap_count") or 0) - shortfall
+    if residual > 0:
+        errors.append(
+            f"half {half} {event_type} has {residual} sequence-gap line(s) its "
+            "own emitted/received shortfall does not account for")
     return errors
 
 
@@ -563,6 +585,12 @@ def evaluate_capture_authorization(
                             "receipt latency "
                             f"{latency}s is outside inclusive 0..3s policy"
                         )
+    # A half with no manifest already fails the match, so its mode is moot.
+    per_stream_sequence: dict[int, bool] = {}
+    for row in manifests:
+        half = int(row.get("half") or 0)
+        per_stream_sequence[half] = per_stream_sequence.get(half, True) and (
+            int(row.get("schema_version") or 0) >= PER_STREAM_SEQUENCE_SCHEMA)
     streams: dict[str, dict[str, int]] = {}
     for half in sorted(observed):
         rows = [row for row in health if int(row.get("half") or 0) == half]
@@ -623,12 +651,17 @@ def evaluate_capture_authorization(
                 ("accepted", "daemon_accepted"),
             ):
                 stream[target] += counters[source]
-        # A repeated or unknown type means the half's rows cannot be trusted to
-        # account for its gaps, so credit nothing and let the residual stand.
-        match_errors += _half_sequence_errors(
-            half, rows,
-            0 if unknown or len(types) != len(observed_types)
-            else sum(shortfall_by_type.values()))
+        if per_stream_sequence.get(half):
+            for row in rows:
+                for message in _stream_sequence_errors(half, row):
+                    stream_error(str(row.get("event_type") or ""), message)
+        else:
+            # A repeated or unknown type means the half's rows cannot be trusted
+            # to account for its gaps, so credit nothing and let the residual stand.
+            match_errors += _half_sequence_errors(
+                half, rows,
+                0 if unknown or len(types) != len(observed_types)
+                else sum(shortfall_by_type.values()))
     match_ok = not match_errors and bool(observed)
     # Every contracted stream gets a verdict, plus any optional stream the
     # producer actually emitted. An unknown type is already a match error, so

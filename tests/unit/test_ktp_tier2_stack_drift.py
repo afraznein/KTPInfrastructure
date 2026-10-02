@@ -387,3 +387,15 @@ def test_resolved_drift_is_dropped_from_state(drift):
 )
 def test_format_age_buckets(drift, age_seconds, expect_substring):
     assert drift.format_age(age_seconds) == expect_substring
+
+
+def test_every_plugin_the_fleet_loads_is_compared(drift):
+    """A fleet plugin in neither list is never compared, so the runner can hold
+    any build of it and stay green. stats_logging.amxx sat stale on the runner
+    that way. The online plugins.ini is the shipped prod load list."""
+    from tests.config_parse.parsers import parse_plugins_ini
+
+    fleet = {e.filename for e in parse_plugins_ini(REPO / "config" / "online" / "plugins.ini")}
+    assert "stats_logging.amxx" in fleet, "positive control: the parser read the load list"
+    covered = {Path(p).name for p in drift.PLUGINS_STRICT + drift.PLUGINS_TESTMODE}
+    assert sorted(fleet - covered) == []
