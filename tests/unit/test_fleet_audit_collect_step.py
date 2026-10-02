@@ -33,6 +33,7 @@ WORKFLOW = ROOT / ".github/workflows/fleet-audit.yml"
 AUDIT_STEP = "Fleet drift audit"
 RESTART_STEP = "Restart-script drift"
 DISTRIBUTE_STEP = "Distribute-tree drift"
+CONFIG_KEY_STEP = "Config key drift"
 
 # Every named `run:` step in the file. Asserted as a set below so a renamed or
 # added step fails here rather than slipping past the shape check unexamined.
@@ -40,6 +41,7 @@ EXPECTED_RUN_STEPS = {
     AUDIT_STEP,
     RESTART_STEP,
     DISTRIBUTE_STEP,
+    CONFIG_KEY_STEP,
     "Data-server health state",
     "Decide whether a human needs to look",
     "Open or update the issue",
@@ -250,6 +252,51 @@ def test_the_pre_fix_restart_step_reproduces_nothing() -> None:
     for rc in (0, 2, 1):
         assert _exec_step(script, stub_rc=rc).returncode == rc
         assert _exec_step(broken, stub_rc=rc).returncode == rc
+
+
+# --- the config-key step ----------------------------------------------------
+
+
+def test_config_key_step_captures_stderr_into_the_file_the_gate_reads() -> None:
+    """The gate greps `KEYDRIFT:` lines and the `instances compared:` headline,
+    and the check prints both to STDERR while the markdown goes to stdout. The
+    `2>&1` is load-bearing: without it the gate reads a file with no completion
+    marker and reports the check as having not finished, every week."""
+    script = _run_blocks()[CONFIG_KEY_STEP]
+    assert "2>&1 | tee config-key-drift.txt" in script
+
+
+def test_config_key_step_survives_every_documented_exit() -> None:
+    """0 ok, 1 findings, 2 could-not-run are all reportable outcomes. None of
+    them may kill the collect job before the gate has read the file -- the gate
+    is the thing that decides whether a 2 wakes a human."""
+    script = _run_blocks()[CONFIG_KEY_STEP]
+    for rc in (0, 1, 2):
+        result = _exec_step(script, stub_rc=rc)
+        assert result.returncode == rc, result.stderr
+        assert "stub audit output" in result.stdout, (
+            "tee did not run on rc=%d, so the gate would see no file" % rc
+        )
+
+
+def test_config_key_step_is_continue_on_error() -> None:
+    """Belt to the braces above: the step's own non-zero must not fail the job.
+    Asserted on the YAML because that is where the behaviour lives."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index("- name: %s" % CONFIG_KEY_STEP)
+    head = text[start:start + 400]
+    assert "continue-on-error: true" in head, head
+
+
+def test_config_key_step_has_its_own_state_file() -> None:
+    """A shared state file would mean whichever check ran first ate the delta --
+    and this one also keeps `last_clean_utc` and the per-finding first-seen
+    stamps the report ages findings from, so sharing corrupts the timeline, not
+    just the delta."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index("- name: %s" % CONFIG_KEY_STEP)
+    head = text[start:start + 800]
+    assert "ktp-config-key-drift-ci.json" in head, head
 
 
 # --- the comment that sent the last reader wrong -----------------------------
