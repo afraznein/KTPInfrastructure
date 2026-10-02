@@ -187,7 +187,7 @@ def merge_history(prior, entry):
 
 
 def build(params, *, generated_at, source_report_count=0, report_schema_version=9,
-          summary=None, prior_history=None):
+          summary=None, prior_history=None, division_seed=None):
     """The payload. `params` is momentum_params.json as a dict.
 
     `summary` is this run's `weekly_summary.json` as a dict, and `prior_history`
@@ -212,7 +212,7 @@ def build(params, *, generated_at, source_report_count=0, report_schema_version=
         "notice": "All values are refit as matches land and may change week to week. "
                   "Sample sizes and fit quality are shown so the reader can judge each number.",
         "ktpr_v2": KTPR_V2,
-        "mmr": MMR,
+        "mmr": {**MMR, "division_seeding": _division_seeding(division_seed)},
         "momentum": {
             **MOMENTUM,
             "definitions": params.get("definitions", {}),
@@ -225,6 +225,39 @@ def build(params, *, generated_at, source_report_count=0, report_schema_version=
         "version_history": merge_history(prior_history, week_entry(summary)),
         "source_report_count": int(source_report_count),
         "report_schema_version": int(report_schema_version),
+    }
+
+
+def _division_seeding(seed):
+    """How the published ratings describe their own division prior.
+
+    This has to be on the page, and it has to be honest, because seeding
+    changes what the number MEANS: league divisions never play each other, so
+    without a prior their rating pools are ordered only by chance -- and WITH
+    one, a rating is partly an echo of the division it was seeded from. A
+    reader comparing a bottom-gold player against a mid-silver player is
+    entitled to know which of those two situations they are looking at.
+    """
+    seed = seed or {}
+    enabled = bool(seed.get("enabled"))
+    return {
+        "enabled": enabled,
+        "offsets_mu": seed.get("offsets") or {},
+        "labelled_players": seed.get("labelled_players") or 0,
+        "what": ("Starting rating is offset by the player's division, because divisions "
+                 "do not play each other and so their rating pools cannot otherwise be "
+                 "compared. The offset is measured on 12-mans, which do mix divisions."
+                 if enabled else
+                 "Starting rating is the same for every player regardless of division. "
+                 "Divisions do not play each other, so ratings from different divisions "
+                 "are NOT on a common scale and should not be compared directly."),
+        "status": ("prior, not a measurement of this player -- it is an assumption about "
+                   "their division that a handful of results will override"
+                   if enabled else "no division prior applied"),
+        "caveat": ("Because the prior comes from division, these ratings cannot be used as "
+                   "independent evidence for promotion or relegation -- that would be "
+                   "circular. Re-run with --no-division-seed for that comparison."
+                   if enabled else None),
     }
 
 
