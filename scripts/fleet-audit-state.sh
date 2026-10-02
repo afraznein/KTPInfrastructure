@@ -33,6 +33,8 @@ STATE_FILES=(
     ktp-distribute-drift-ci.json
     ktp-restart-drift-ci.txt
     ktp-distribute-drift-ci.txt
+    ktp-config-key-drift-ci.json
+    ktp-config-key-drift-ci.txt
 )
 
 state_dir="${KTP_AUDIT_STATE_DIR:-/var/lib}"

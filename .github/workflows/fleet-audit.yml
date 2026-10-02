@@ -182,7 +182,7 @@ jobs:
           # one. It also carries `last_clean_utc` and the per-finding
           # first-seen stamps the report ages findings from, so sharing it with
           # another check would corrupt the timeline, not just the delta.
-          STATE_FILE: /var/lib/ktp-config-key-drift-ci.json
+          STATE_FILE: /var/lib/ktp-fleet-audit-ci-pending/${{ github.run_id }}/ktp-config-key-drift-ci.json
         run: |
           # The key-level half of the distribute invariant: which config KEY on
           # the fleet is not mirrored into the source. The step above compares

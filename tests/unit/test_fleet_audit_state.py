@@ -34,6 +34,8 @@ COMMITTED = (
     "ktp-distribute-drift-ci.json",
     "ktp-restart-drift-ci.txt",
     "ktp-distribute-drift-ci.txt",
+    "ktp-config-key-drift-ci.json",
+    "ktp-config-key-drift-ci.txt",
 )
 
 DRIFT_A = "Atlanta:\n  DRIFT: x DIVERGES\n\nhosts reached: 5/5  clean: 4  drifted: 1\n"
@@ -59,6 +61,9 @@ def _gate(work: Path, gate_state: Path, drift: str) -> dict[str, str]:
     (work / "restart-drift.txt").write_text(drift, newline="\n")
     (work / "distribute-drift.txt").write_text(
         "targets reached: 24/24  paths with drift: 0  per-instance hazards: 0\n", newline="\n")
+    (work / "config-key-drift.txt").write_text(
+        "No key drift.\n\ninstances compared: 24/24  paths compared: 1/1  keys compared: 1  "
+        "findings: 0  inconclusive: 0  nothing-to-compare: 0\n", newline="\n")
     r = subprocess.run(
         [BASH, GATE.as_posix()], cwd=work, capture_output=True, text=True, timeout=60,
         env=dict(os.environ, KTP_GATE_STATE_DIR=gate_state.as_posix()),
