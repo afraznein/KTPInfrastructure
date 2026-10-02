@@ -118,7 +118,7 @@ def test_a_stream_authorizes_across_halves_not_per_half():
 
 
 def test_a_sequence_gap_is_charged_to_the_stream_that_lost_the_line():
-    """`sequence_gap_count` is HALF-scoped: the daemon stamps one value into
+    """Before schema 24 the gap is half-wide: the daemon stamps one value into
     every stream's row. Charging it per stream would re-couple the match."""
     manifests, health = _two_half_evidence()
     for row in health:
@@ -356,3 +356,126 @@ def test_schemas_outside_the_accepted_set_are_still_refused():
             {1}, manifests, health)["authorized"] is False
         assert analytics.evaluate_position_provenance(
             {1}, manifests, health, positions)["authorized"] is False
+
+
+# Counts in the shape the schema-24 daemon writes: every stream on its own
+# sequence, so a half's rows carry different gap counters.
+_PER_STREAM_COUNTS = {
+    "life": 770, "damage": 655, "position": 5763, "frag": 334, "assist": 42,
+    "break": 6, "flag_state": 135, "flag_position": 15,
+    "objective_attempt": 64, "team_membership": 0, "grenade_entity": 588,
+    "shot": 2913, "score": 117, "duel": 9, "player_state": 649,
+    "grenade_throw": 287,
+}
+
+
+def _per_stream_half(half, schema=24):
+    manifest = {
+        "half": half, "schema_version": schema, "capabilities": CAPABILITIES,
+        "position_interval": 2.0,
+    }
+    rows = []
+    for event_type, emitted in _PER_STREAM_COUNTS.items():
+        rows.append({
+            "half": half, "event_type": event_type, "attempted": emitted,
+            "enqueued": emitted, "dropped": 0, "emitted": emitted,
+            "daemon_received": emitted, "daemon_accepted": emitted,
+            "daemon_rejected": 0, "correlation_failure_count": 0,
+            "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+        })
+    return manifest, rows
+
+
+def _per_stream_evidence(schema=24):
+    m1, h1 = _per_stream_half(1, schema)
+    m2, h2 = _per_stream_half(2, schema)
+    return [m1, m2], h1 + h2
+
+
+def _lose(health, event_type, half, lost, gap):
+    row = next(r for r in health
+               if r["event_type"] == event_type and r["half"] == half)
+    row["daemon_received"] -= lost
+    row["daemon_accepted"] -= lost
+    row["sequence_gap_count"] = gap
+
+
+def test_per_stream_gaps_explained_by_their_own_loss_withhold_only_those_streams():
+    """Measured shape: damage lost 9 and shows 8 gaps (one lost at the tail),
+    player_state lost 16 and shows 13."""
+    manifests, health = _per_stream_evidence()
+    _lose(health, "damage", 2, lost=9, gap=8)
+    _lose(health, "player_state", 2, lost=16, gap=13)
+    result = _authorize_two_halves(manifests, health)
+
+    assert result["match_errors"] == []
+    assert analytics.capture_stream_authorized(result, "damage") is False
+    assert analytics.capture_stream_authorized(result, "player_state") is False
+    assert analytics.capture_stream_authorized(result, "frag") is True
+    assert analytics.capture_stream_authorized(result, "objective_attempt") is True
+
+
+def test_a_stream_whose_gap_its_own_counters_cannot_explain_is_withheld():
+    """Measured shape: a context re-activated mid-half, so life's sequence
+    resumed past numbers its reset `emitted` never counted. emitted equals
+    received, so nothing else marks the stream; the old half-wide residual let
+    it publish whenever a sibling's larger shortfall absorbed the gap."""
+    manifests, health = _per_stream_evidence()
+    _lose(health, "life", 1, lost=0, gap=9)
+    _lose(health, "position", 1, lost=23, gap=11)
+    result = _authorize_two_halves(manifests, health)
+
+    state = analytics.capture_stream_status(result, "life")
+    assert state["authorized"] is False
+    assert result["stream_authorization"]["life"]["scope"] == "stream"
+    assert "half 1 life has 9 sequence-gap line(s)" in state["reason"]
+    assert analytics.capture_stream_authorized(result, "frag") is True
+
+
+def test_one_streams_unexplained_gap_no_longer_withholds_every_stream():
+    """Per-stream counters make a gap attributable, so it must not be charged
+    to the match the way an unattributable half-wide gap was."""
+    manifests, health = _per_stream_evidence()
+    for event_type, gap in (("life", 9), ("position", 36), ("flag_state", 10),
+                            ("flag_position", 10), ("player_state", 1)):
+        _lose(health, event_type, 1, lost=0, gap=gap)
+    result = _authorize_two_halves(manifests, health)
+
+    assert result["match_errors"] == []
+    assert result["authorized"] is False
+    for event_type in ("life", "position", "flag_state", "flag_position",
+                       "player_state"):
+        assert analytics.capture_stream_authorized(result, event_type) is False
+    for event_type in ("frag", "damage", "objective_attempt", "grenade_entity"):
+        assert analytics.capture_stream_authorized(result, event_type) is True
+
+
+def test_a_per_stream_duplicate_withholds_only_its_own_stream():
+    manifests, health = _per_stream_evidence()
+    row = next(r for r in health
+               if r["event_type"] == "shot" and r["half"] == 2)
+    row["duplicate_or_reordered_count"] = 2
+    result = _authorize_two_halves(manifests, health)
+
+    assert result["match_errors"] == []
+    assert analytics.capture_stream_authorized(result, "shot") is False
+    assert "duplicate or reordered" in analytics.capture_stream_status(
+        result, "shot")["reason"]
+    assert analytics.capture_stream_authorized(result, "frag") is True
+
+
+def test_schema_25_reads_gaps_per_stream_like_24():
+    manifests, health = _per_stream_evidence(schema=25)
+    _lose(health, "duel", 2, lost=0, gap=2)
+    result = _authorize_two_halves(manifests, health)
+
+    assert result["match_errors"] == []
+    assert analytics.capture_stream_authorized(result, "duel") is False
+    assert analytics.capture_stream_authorized(result, "frag") is True
+
+
+def test_a_clean_per_stream_capture_authorizes_every_stream():
+    manifests, health = _per_stream_evidence()
+    result = _authorize_two_halves(manifests, health)
+
+    assert result["authorized"] is True, result["errors"]
