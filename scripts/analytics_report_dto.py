@@ -86,6 +86,16 @@ KTPR_DISPLAY_SCALE = {
         "note": "Already scaled for display: max(floor, center + per_z * z). "
                 "Render as published; do not transform again.",
     },
+    "kast_f_pct": {
+        "kind": "percent",
+        "note": "KAST-F in its own units: the share of flag fights where the "
+                "player got a kill, got an assist, survived, or had their death "
+                "traded. 0-100. Show THIS as the KAST figure. "
+                "components.kast_f is the same quantity on the index below, "
+                "useful only as a comparison against the match average -- it is "
+                "not a percentage and reads as a nonsensical one (a KAST of 125 "
+                "is +1.67 sigma, not 125%). null means not measured.",
+    },
     "components": {
         "kind": "floored_index",
         "center": KTPR_DISPLAY_CENTER,
@@ -114,6 +124,20 @@ def ktpr_display(z, *, floor: float = KTPR_DISPLAY_FLOOR,
     if value is None:
         return None
     return round(max(floor, center + per_z * value), 2)
+
+
+def _kast_pct(share):
+    """KAST-F as a percentage, 0-100, or None if it was not measured.
+
+    `flag_fights` suppresses kast_f entirely when the assist or trade source is
+    unavailable, rather than emitting a lower number -- an absent trade feed
+    would otherwise look like "never got traded", which is a real penalty
+    rather than missing data. None must therefore stay None here and render as
+    "not measured", not as 0%.
+    """
+    if share is None:
+        return None
+    return round(float(share) * 100.0, 1)
 
 
 def _name(value):
@@ -223,6 +247,14 @@ def sanitize_report(report: dict) -> dict:
     ta = st.get("trade_analysis") or {}
     rs = se.get("recap_speed") or {}
     ktpr = se.get("ktpr_v2") or {}
+    # KAST-F's natural unit is a SHARE, and publishing it only on the z-score
+    # display index actively misleads: a KAST of 125 reads as "125%", which is
+    # impossible for a share. Carried through in its own units alongside the
+    # index so the page can show "86.5%" and keep the index as the comparison.
+    # Keyed by player_id, which both blocks carry.
+    _ff = ((se.get("flag_fights") or {}).get("players")) or []
+    kast_share_by_pid = {r.get("player_id"): r.get("kast_f") for r in _ff
+                         if r.get("kast_f") is not None}
     swing = se.get("flag_swing") or {}
     # flag_swing players carry no name; join on the internal id here so
     # only the name crosses.
@@ -346,7 +378,11 @@ def sanitize_report(report: dict) -> dict:
                      "team": p.get("team"),
                      "rating": ktpr_display(p.get("rating")),
                      "components": {k: ktpr_display(v) for k, v in
-                                    (p.get("components") or {}).items()}}
+                                    (p.get("components") or {}).items()},
+                     # Natural units, NOT on the display index. Render this as
+                     # the KAST figure; the index belongs next to it as "vs
+                     # match average", never on its own.
+                     "kast_f_pct": _kast_pct(kast_share_by_pid.get(p.get("player_id")))}
                     for p in ktpr.get("players") or []
                 ],
             },

@@ -606,3 +606,60 @@ class Corpus(unittest.TestCase):
             self.assertTrue(dto["ratings"]["ktpr_v2"]["players"])
             n += 1
         self.assertGreater(n, 0)
+
+
+class KastInNaturalUnits(unittest.TestCase):
+    """KAST-F is a SHARE, and publishing it only on the z-score index misleads.
+
+    drew read a displayed KAST of 125 as a percentage, which is the obvious
+    reading and an impossible one for a share: 125 is +1.67 sigma on the
+    `max(50, 100 + 15z)` index. The same scale had already caused an outage
+    when a consumer applied a second z-transform to it (keep-the-prac
+    #679/#691), so this is the second time the index has been mistaken for the
+    quantity. The share is now published in its own units.
+    """
+
+    def setUp(self):
+        from scripts import analytics_report_dto as D
+        self.D = D
+
+    def test_a_share_becomes_a_percentage(self):
+        self.assertEqual(self.D._kast_pct(0.8649), 86.5)
+        self.assertEqual(self.D._kast_pct(0.9412), 94.1)
+        self.assertEqual(self.D._kast_pct(1.0), 100.0)
+        self.assertEqual(self.D._kast_pct(0.0), 0.0)
+
+    def test_not_measured_stays_null_rather_than_zero(self):
+        """flag_fights SUPPRESSES kast_f when the assist or trade source is
+        unavailable, instead of emitting a smaller number -- an absent trade
+        feed would otherwise read as "never got traded", a real penalty rather
+        than missing data. 0% would re-introduce exactly that lie."""
+        self.assertIsNone(self.D._kast_pct(None))
+
+    def test_the_percentage_reaches_the_published_player_row(self):
+        report = {"shadow_explorations": {
+            "ktpr_v2": {"components_used": ["kast_f"],
+                        "players": [{"player_id": 123, "player_name_at_match": "kroD-",
+                                     "team": 1, "rating": 1.1,
+                                     "components": {"kast_f": 1.67}}]},
+            "flag_fights": {"players": [{"player_id": 123, "kast_f": 0.8649}]}}}
+        body = json.dumps(self.D.sanitize_report(report))
+        self.assertIn('"kast_f_pct": 86.5', body)
+        # The index is still there, for comparison against the match average.
+        self.assertIn('"kast_f"', body)
+
+    def test_the_scale_metadata_tells_a_consumer_which_is_which(self):
+        meta = self.D.KTPR_DISPLAY_SCALE
+        self.assertEqual(meta["kast_f_pct"]["kind"], "percent")
+        self.assertEqual(meta["components"]["kind"], "floored_index")
+        # The note has to say the index is NOT a percentage, because that is the
+        # mistake it exists to prevent.
+        self.assertIn("not a percentage", meta["kast_f_pct"]["note"])
+
+    def test_it_still_passes_the_publish_gate(self):
+        report = {"shadow_explorations": {
+            "ktpr_v2": {"components_used": ["kast_f"],
+                        "players": [{"player_id": 9, "player_name_at_match": "a",
+                                     "team": 1, "rating": 0.0, "components": {}}]},
+            "flag_fights": {"players": [{"player_id": 9, "kast_f": 0.5}]}}}
+        self.D.assert_sanitized(self.D.sanitize_report(report))
