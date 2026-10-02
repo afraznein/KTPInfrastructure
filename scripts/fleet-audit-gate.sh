@@ -48,11 +48,22 @@
 #      reporting it. That does not depend on state, the same argument leg 2
 #      makes for the monitor patch, and it nags weekly exactly as leg 5 does --
 #      deliberately, because one line in servers.json retires it for good.
+#   9. A CHANGE in what the config-KEY check reports. Leg 7 one level down: it
+#      names the key rather than the file, which is what the August 2026
+#      discord.ini revert needed -- `discord_channel_id_default` was DELETED
+#      from the source, and an md5 comparison can only say the file differs.
+#  10. Config key drift reaching fewer instances than expected, or not
+#      finishing. A level. A partial sweep reported as clean is exactly how
+#      that incident stayed invisible for six weeks.
+#  11. A config path the key check could not PARSE, on every run -- a level.
+#      Nothing was compared for it, which is not the same as it agreeing, and
+#      the fix (a reader, or an excludePatterns entry) retires it for good.
 #
 # Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt
-#                distribute-drift.txt  health-state.json
+#                distribute-drift.txt  config-key-drift.txt  health-state.json
 # State:         $KTP_GATE_STATE_DIR/ktp-restart-drift-ci.txt (default /var/lib)
 #                $KTP_GATE_STATE_DIR/ktp-distribute-drift-ci.txt
+#                $KTP_GATE_STATE_DIR/ktp-config-key-drift-ci.txt
 # Output:        needs_triage=true|false and reason=... on stdout, one per line,
 #                in GITHUB_OUTPUT form. Exit 0 always; a gate that crashes
 #                would skip triage silently, which is the worst outcome here.
@@ -118,6 +129,45 @@ else
     hazards="${hazards:-0}"
     if [ "$hazards" -gt 0 ]; then
         reasons="${reasons}${hazards} distribute path(s) carry undeclared per-instance data. "
+    fi
+fi
+
+# 9, 10 and 11. Config key drift -- the key-level half of leg 7. The findings are
+#    a TRANSITION, for the same reason: the fleet carries long-standing
+#    source-vs-instance divergence, and reporting the level weekly would make
+#    this wallpaper inside a month. Two LEVELS alongside it, both deliberate:
+#      * coverage short of the expected instances, or the check not finishing at
+#        all. A sweep that quietly dropped hosts renders identically to a clean
+#        fleet, and that is this incident's own failure mode -- the alert that
+#        missed it was a count of failures, and it read zero because the code
+#        path never ran. `instances compared:` is the completion marker.
+#      * a path that could not be PARSED. That is a question left open, not
+#        drift, and it stays open until someone gives the file a reader or takes
+#        it out of scope in servers.json. Finite and actionable, so it nags.
+if ! grep -q 'instances compared:' config-key-drift.txt 2>/dev/null; then
+    reasons="${reasons}Config-key-drift check did not complete. "
+else
+    key_prev="$state_dir/ktp-config-key-drift-ci.txt"
+    key_cur="$(grep -E '^KEYDRIFT:|^KEYDRIFT-UNREACHABLE:' config-key-drift.txt | sort || true)"
+    if [ -f "$key_prev" ] && [ "$key_cur" != "$(cat "$key_prev")" ]; then
+        reasons="${reasons}Config key drift changed since last run. "
+    fi
+    printf '%s\n' "$key_cur" > "$key_prev" 2>/dev/null || true
+
+    # Both parsed off the check's own headline rather than recounted here, so
+    # the gate and the report can never disagree about the numbers.
+    coverage="$(sed -n 's/.*instances compared: \([0-9]\+\)\/\([0-9]\+\).*/\1 \2/p' config-key-drift.txt | tail -1)"
+    if [ -n "$coverage" ]; then
+        got="${coverage%% *}"
+        want="${coverage##* }"
+        if [ "$got" != "$want" ]; then
+            reasons="${reasons}Config key drift reached only ${got} of ${want} instances -- a partial sweep, not a clean fleet. "
+        fi
+    fi
+    key_unparsed="$(sed -n 's/.*inconclusive: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
+    key_unparsed="${key_unparsed:-0}"
+    if [ "$key_unparsed" -gt 0 ]; then
+        reasons="${reasons}${key_unparsed} config path(s) could not be parsed, so nothing was compared for them. "
     fi
 fi
 

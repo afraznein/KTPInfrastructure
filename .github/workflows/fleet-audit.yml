@@ -174,6 +174,31 @@ jobs:
           python3 scripts/audit-distribute-drift.py \
             --state "$STATE_FILE" 2>&1 | tee distribute-drift.txt
 
+      - name: Config key drift
+        id: config_key_drift
+        continue-on-error: true
+        env:
+          # Its own state file, for the same reason the two steps above have
+          # one. It also carries `last_clean_utc` and the per-finding
+          # first-seen stamps the report ages findings from, so sharing it with
+          # another check would corrupt the timeline, not just the delta.
+          STATE_FILE: /var/lib/ktp-config-key-drift-ci.json
+        run: |
+          # The key-level half of the distribute invariant: which config KEY on
+          # the fleet is not mirrored into the source. The step above compares
+          # whole-file md5 and answers "discord.ini differs"; this one answers
+          # "discord_channel_id_default is on all 24 and in no source file", the
+          # finding that took six weeks to surface in August 2026.
+          #
+          # Read-only: it opens the distribute tree for reading, cats configs on
+          # the instances, writes no scratch file anywhere, and restarts nothing.
+          # Same `bash -e {0}` note as the steps above, and the same 2>&1 --
+          # markdown on stdout, the gate's stable lines on stderr, one file.
+          set +e
+          set -uo pipefail
+          python3 scripts/audit-config-key-drift.py \
+            --state "$STATE_FILE" 2>&1 | tee config-key-drift.txt
+
       - name: Data-server health state
         run: |
           # The hourly health check's own state file: what is down and since
@@ -208,6 +233,7 @@ jobs:
             audit-stdout.txt
             restart-drift.txt
             distribute-drift.txt
+            config-key-drift.txt
             health-state.json
           retention-days: 90
 
@@ -261,7 +287,8 @@ jobs:
             hardware while you read.
 
             Read `audit-report.md`, `audit-stdout.txt`, `restart-drift.txt`,
-            `distribute-drift.txt` and `health-state.json` in the working
+            `distribute-drift.txt`, `config-key-drift.txt` and
+            `health-state.json` in the working
             directory. `distribute-drift.txt` compares `/home/dod/distribute`
             against what the 24 instances hold: the file distributor pushes on a
             filesystem event and never reconciles, so a `uniform` finding there
@@ -270,6 +297,20 @@ jobs:
             carrying per-instance data that nothing has declared, which the next
             touch would flatten to one copy. Read
             `docs/runbooks/DISTRIBUTE_DRIFT.md` before explaining either.
+            `config-key-drift.txt` is that same comparison one level down, per
+            KEY rather than per file, and it is the one that names what would
+            break. `source-missing` means the fleet holds a key the source does
+            not, so the next touch of that file DELETES it on all 24 -- that is
+            exactly how match-start Discord embeds died silently for six weeks
+            in 2026. `instance-missing` is the opposite: a source key the next
+            touch would IMPOSE on the fleet. Read
+            `docs/runbooks/CONFIG_KEY_DRIFT.md` before explaining any of it, and
+            note two things about its headline. A run that compared fewer than
+            24 instances is not a clean fleet whatever its finding count says,
+            and `inconclusive` paths were never compared at all -- neither of
+            those is agreement. No config VALUE appears in that file by design,
+            so do not ask for one, and do not quote a key name that looks like
+            a player identity.
             `health-state.json` is the
             hourly data-server health check's own state: what is down, when the
             check first saw it (`since`), and when the fault actually started
