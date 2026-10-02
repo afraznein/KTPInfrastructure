@@ -89,6 +89,7 @@ EXEMPT = {
     "ktp-lan-web-drift.py": "read-only drift probe",
     "ktp-net-profile.py": "read-only netcode probe",
     "ktp-restart-drift.py": "read-only drift probe",
+    "ktp-row-vs-box.py": "read-only: hashes data-server files against the version rows",
     "ktp-tier2-stack-drift.py": "read-only drift probe",
     "ktp-timezone-drift.py": "read-only drift probe",
     "prep-lan-artifacts.py": "LAN box prep, run against a venue host, not the fleet",
