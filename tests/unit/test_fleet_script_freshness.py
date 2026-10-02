@@ -86,9 +86,15 @@ EXEMPT = {
     "audit-distribute-drift.py":
         "read-only drift probe; also runs as a fleet-audit step, where the "
         "checkout IS the reviewed commit",
+    "audit-config-key-drift.py":
+        "read-only drift probe, same class and same deployment as "
+        "audit-distribute-drift.py: it opens the distribute tree for reading, "
+        "cats configs on the instances, and runs as a fleet-audit step where "
+        "the checkout IS the reviewed commit",
     "ktp-lan-web-drift.py": "read-only drift probe",
     "ktp-net-profile.py": "read-only netcode probe",
     "ktp-restart-drift.py": "read-only drift probe",
+    "ktp-row-vs-box.py": "read-only: hashes data-server files against the version rows",
     "ktp-tier2-stack-drift.py": "read-only drift probe",
     "ktp-timezone-drift.py": "read-only drift probe",
     "prep-lan-artifacts.py": "LAN box prep, run against a venue host, not the fleet",

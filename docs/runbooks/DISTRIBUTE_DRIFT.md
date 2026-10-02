@@ -79,6 +79,20 @@ do about it:
 failure, not a skip** — a sweep that quietly drops a connection renders
 identically to a clean fleet.
 
+## The key-level half
+
+This check compares whole-file md5. It therefore reports `discord.ini differs`
+and cannot say *which key*, cannot tell a changed value from a **deleted** key,
+and cannot report direction per key. The 2026-08-19 incident needed all three:
+the half that broke match embeds was a routing key deleted outright, and a
+missing key is not an error anywhere in the stack.
+
+`scripts/audit-config-key-drift.py` is that half, and
+**`docs/runbooks/CONFIG_KEY_DRIFT.md`** is its runbook. Same invariant, same
+scope source (`WatchPatterns` / `excludePatterns`), same read-only posture, one
+level down. Read both when triaging a `uniform` finding on a keyed `.ini`/`.cfg`
+-- this one tells you the file is stale, that one tells you what breaks.
+
 ## Running it by hand
 
 Read-only. It hashes; it does not push, and it writes nothing into the deploy

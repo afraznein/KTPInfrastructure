@@ -54,7 +54,7 @@ for port in 27016 27017 27018 27019; do
 port="$port"
 clientport="$((port - 10))"
 ip="<SERVER_IP>"
-startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2"
+startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
 servercfg="dodserver.cfg"
 EOF
 done
