@@ -56,9 +56,29 @@ STANDING_DISTRIBUTE = (
     "targets reached: 24/24  paths with drift: 2  per-instance hazards: 1\n"
 )
 
+CLEAN_CONFIG_KEY = (
+    "No key drift: every compared key agrees with the source on every instance "
+    "compared.\n\n"
+    "instances compared: 24/24  paths compared: 100/100  keys compared: 34612  "
+    "findings: 0  inconclusive: 0  nothing-to-compare: 0\n"
+)
+
+# The shape the fleet actually had on 2026-10-01: plugins.ini loading a plugin
+# the source does not list, and mp_clan_readyrestart set in source map configs
+# and on no instance. Known on the second sighting.
+STANDING_CONFIG_KEY = (
+    "KEYDRIFT: addons/ktpamx/configs/plugins.ini key=ktphudobserver.amxx "
+    "kind=source-missing shape=uniform instances=24\n"
+    "KEYDRIFT: configs/ktp_anzio.cfg key=mp_clan_readyrestart "
+    "kind=instance-missing shape=uniform instances=24\n"
+    "instances compared: 24/24  paths compared: 97/100  keys compared: 34612  "
+    "findings: 2  inconclusive: 0  nothing-to-compare: 4\n"
+)
+
 
 def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT,
-         health=None, distribute=CLEAN_DISTRIBUTE) -> None:
+         health=None, distribute=CLEAN_DISTRIBUTE,
+         config_key=CLEAN_CONFIG_KEY) -> None:
     work.mkdir(parents=True, exist_ok=True)
     (work / "audit-stdout.txt").write_text(stdout, newline="\n")
     (work / "audit-report.md").write_text(report, newline="\n")
@@ -68,6 +88,11 @@ def _lay(work: Path, stdout=CLEAN_STDOUT, report=CLEAN_REPORT, drift=CLEAN_DRIFT
         dd.write_text(distribute, newline="\n")
     elif dd.exists():
         dd.unlink()
+    ck = work / "config-key-drift.txt"
+    if config_key is not None:
+        ck.write_text(config_key, newline="\n")
+    elif ck.exists():
+        ck.unlink()
     hs = work / "health-state.json"
     if health is not None:
         hs.write_text(json.dumps(health), newline="\n")
@@ -356,3 +381,85 @@ def test_a_missing_distribute_report_is_news_not_silence(tmp_path):
     work, state = tmp_path / "w", tmp_path / "s"
     _lay(work, distribute=None)
     assert "Distribute-drift check did not complete" in _run(work, state)["reason"]
+
+
+# ------------------------------------------------------------ config-key leg
+def test_clean_config_key_drift_is_quiet(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work)
+    assert _run(work, state)["needs_triage"] == "false"
+
+
+def test_standing_config_key_drift_is_not_news_on_any_run(tmp_path):
+    """Same transition rule as the distribute leg, and for the same reason:
+    this fleet carries long-standing source-vs-instance divergence, and
+    reporting the level weekly would make the report wallpaper.
+
+    Quiet on the FIRST run too, deliberately -- there is no baseline to differ
+    from, and the alternative is triaging every standing item at once on run
+    one. The level legs below are what stay loud; this one waits for a change.
+    """
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=STANDING_CONFIG_KEY)
+    first = _run(work, state)
+    second = _run(work, state)
+    for out in (first, second):
+        assert out["needs_triage"] == "false"
+        assert "changed since last run" not in out["reason"]
+
+
+def test_a_new_config_key_finding_is_news(tmp_path):
+    """The August 2026 shape: a key that was on all 24 stops being in the
+    source. This is the leg that would have woken someone in that window."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work)
+    assert _run(work, state)["needs_triage"] == "false"      # baseline seeded, clean
+    _lay(work, config_key=(
+        "KEYDRIFT: addons/ktpamx/configs/discord.ini key=discord_channel_id_default "
+        "kind=source-missing shape=uniform instances=24\n"
+        "instances compared: 24/24  paths compared: 100/100  keys compared: 34612  "
+        "findings: 1  inconclusive: 0  nothing-to-compare: 0\n"))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Config key drift changed since last run" in out["reason"]
+
+
+def test_a_partial_config_key_sweep_is_news_every_run(tmp_path):
+    """A level, not a transition. A sweep that reached 19 of 24 and found
+    nothing renders identically to a clean fleet, which is precisely how the
+    discord.ini revert stayed invisible for six weeks."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    partial = CLEAN_CONFIG_KEY.replace("instances compared: 24/24",
+                                       "instances compared: 19/24")
+    _lay(work, config_key=partial)
+    first = _run(work, state)
+    second = _run(work, state)
+    for out in (first, second):
+        assert out["needs_triage"] == "true"
+        assert "reached only 19 of 24 instances" in out["reason"]
+
+
+def test_an_unparsed_config_path_is_news_every_run(tmp_path):
+    """Nothing was compared for it, which is not the same as it agreeing."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=CLEAN_CONFIG_KEY.replace("inconclusive: 0",
+                                                   "inconclusive: 3"))
+    first = _run(work, state)
+    second = _run(work, state)
+    for out in (first, second):
+        assert out["needs_triage"] == "true"
+        assert "3 config path(s) could not be parsed" in out["reason"]
+
+
+def test_a_config_key_check_that_did_not_finish_is_always_news(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key="Traceback (most recent call last):\nOSError\n")
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Config-key-drift check did not complete" in out["reason"]
+
+
+def test_a_missing_config_key_report_is_news_not_silence(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=None)
+    assert "Config-key-drift check did not complete" in _run(work, state)["reason"]
