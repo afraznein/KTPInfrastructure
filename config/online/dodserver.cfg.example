@@ -141,7 +141,10 @@ ktp_grenade_dmg_reduce 0            // Reduction percentage (0 = full damage)
 //-----------------------------------------------
 //               Server Performance
 //-----------------------------------------------
-sys_ticrate 1000
+// 1500 (NOT 1000) is required with the -absgrid frame scheduler: at ticrate
+// 1000 the Host_FilterTime 1.0ms gate rejects ~31% of grid frames → ~690 fps.
+// 1500 lets the 1ms-grid frames through → ~1000 fps. Matches the live fleet.
+sys_ticrate 1500
 sv_stats 0
 max_queries_sec 3
 max_queries_sec_global 100

@@ -156,11 +156,63 @@ def test_online_example_keeps_the_anti_lockout_settings():
         )
 
 
-def test_sys_ticrate_is_1000(cfg_path):
-    """KTP fleet runs sys_ticrate 1000 — verified in CLAUDE.md and
-    KTPReHLDS Host_FilterTime fix. Anything else silently caps server FPS."""
-    cvars = parse_dodserver_cfg(cfg_path)
-    assert cvars["sys_ticrate"] == "1000", (
-        f"{cfg_path.name}: sys_ticrate should be 1000 (KTP fleet standard), "
-        f"got {cvars['sys_ticrate']!r}"
+
+# Where each profile's launch command line is declared. sys_ticrate is only
+# right or wrong relative to these flags, so the test reads both.
+INFRA_ROOT = CONFIG_ROOT.parent
+TICRATE_PROFILES: list[tuple[str, Path, list[Path]]] = [
+    # LinuxGSM instance cfgs written by the provisioner, and the cloning recipe.
+    ("online_example", CONFIG_ROOT / "online" / "dodserver.cfg.example",
+     [INFRA_ROOT / "provision" / "install-linuxgsm.sh", INFRA_ROOT / "docs" / "LINUXGSM.md"]),
+    # lan-deploy.sh provisions its instances through the same install-linuxgsm.sh.
+    ("lan_example", CONFIG_ROOT / "lan" / "dodserver.cfg.example",
+     [INFRA_ROOT / "provision" / "install-linuxgsm.sh"]),
+    # Stock-engine warmup server, installed by hand from its README.
+    ("lan_warmup", CONFIG_ROOT / "lan" / "warmup" / "dodserver.cfg",
+     [CONFIG_ROOT / "lan" / "warmup" / "README.md"]),
+    # docker-compose.local.yml mounts config/local and boots runtime/entrypoint.sh.
+    ("local", CONFIG_ROOT / "local" / "dodserver.cfg",
+     [INFRA_ROOT / "runtime" / "entrypoint.sh"]),
+]
+
+
+def _launch_lines(path: Path) -> list[list[str]]:
+    """Every hlds command line declared in `path`, as token lists. A command
+    line is any logical line (backslash continuations joined) carrying
+    `-game dod`."""
+    text = path.read_text(encoding="utf-8").replace("\\\r\n", " ").replace("\\\n", " ")
+    return [
+        [tok.strip("`\"'") for tok in line.split()]
+        for line in text.splitlines()
+        if "-game dod" in line
+    ]
+
+
+@pytest.mark.parametrize(
+    "label,cfg,sources", TICRATE_PROFILES, ids=[p[0] for p in TICRATE_PROFILES]
+)
+def test_sys_ticrate_matches_the_profiles_launch_flags(label, cfg, sources):
+    """`-absgrid` (KTP engine, 1 ms frame grid) needs sys_ticrate 1500: at 1000
+    the Host_FilterTime gate rejects ~31% of grid frames (~690 fps); at 1500
+    they all pass (~1000 fps). Without `-absgrid` the gate is the limiter and
+    1000 is the setting. Pinning one number for every profile got this wrong
+    in both directions."""
+    lines = [(src, toks) for src in sources for toks in _launch_lines(src)]
+    if not lines:
+        pytest.fail(
+            f"{label}: no `-game dod` launch line found in "
+            f"{[str(s.relative_to(INFRA_ROOT).as_posix()) for s in sources]} -- this profile's "
+            f"launch flags cannot be determined from the repo, so its sys_ticrate "
+            f"cannot be checked. Point TICRATE_PROFILES at where it is launched."
+        )
+    absgrid = {("-absgrid" in toks) for _, toks in lines}
+    assert len(absgrid) == 1, (
+        f"{label}: launch declarations disagree on -absgrid: "
+        + "; ".join(f"{s.relative_to(INFRA_ROOT).as_posix()}: {'-absgrid' in t}" for s, t in lines)
+    )
+    want = "1500" if absgrid.pop() else "1000"
+    got = parse_dodserver_cfg(cfg).get("sys_ticrate")
+    assert got == want, (
+        f"{label}: launched {'with' if want == '1500' else 'without'} -absgrid, so "
+        f"{cfg.relative_to(INFRA_ROOT).as_posix()} needs sys_ticrate {want}, got {got!r}"
     )
