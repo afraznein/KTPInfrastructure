@@ -1060,6 +1060,106 @@ else
 fi
 rm -f "$ACC_DUMP"
 
+# ---- AC weapon-context store ----
+# The API keeps each session's weapon timeline here once the database rows behind
+# it are swept, so for every old session it is the only copy. Hit records carry
+# victim SteamIDs: a root wider than 0750 hands them to the box's non-root
+# accounts, and the writer's own CreateDirectory lands 0755 if it ever has to make
+# the root itself.
+#
+# Freshness is keyed on WORK NOT DONE, never on age alone. Players only run the AC
+# on match days, so a quiet week or an off-season writes nothing and is healthy.
+# What is not healthy is session bundles continuing to arrive with no sidecar
+# following them. A single upload can legitimately produce none -- its bundle
+# brought its own timeline, or the server holds no rows for it -- so the leg waits
+# for a run of bundles, not one.
+WEAPON_CONTEXT_DIR="${WEAPON_CONTEXT_DIR:-/opt/ktp-ac-api/weapon-context}"
+AC_UPLOADS_DIR="${AC_UPLOADS_DIR:-/opt/ktp-ac-api/uploads}"
+# A write is a WriteAllText then a rename. Anything left in tmp/ this long is a
+# write that died between the two.
+WEAPON_CONTEXT_TMP_MAX_SEC="${WEAPON_CONTEXT_TMP_MAX_SEC:-3600}"
+# Both must hold. The days so one weekly match night that writes nothing cannot
+# fire it alone; the bundles because many carry their own timeline and need no
+# sidecar, and a whole run of them doing so past a working writer is not plausible.
+WEAPON_CONTEXT_STALE_DAYS="${WEAPON_CONTEXT_STALE_DAYS:-7}"
+WEAPON_CONTEXT_STALE_MIN_BUNDLES="${WEAPON_CONTEXT_STALE_MIN_BUNDLES:-20}"
+# Recompute drains an in-memory queue after the upload, so a younger bundle may
+# simply not have been processed yet.
+WEAPON_CONTEXT_GRACE_SEC="${WEAPON_CONTEXT_GRACE_SEC:-7200}"
+WEAPON_CONTEXT_OWNER_UID="${WEAPON_CONTEXT_OWNER_UID:-0}"
+
+# >>> ktp-weapon-context — extracted verbatim by tests/unit/test_health_weapon_context.py
+# weapon_context_scan <store> <uploads> <now-epoch> -> key<TAB>detail, one row per
+# fault, nothing when healthy. Keys are fixed tokens and every magnitude rides in
+# the detail, because the report is a set-diff against the previous run.
+weapon_context_scan() {
+    local store=$1 uploads=$2 now=$3
+    local stat_out mode owner stale_tmp newest anchor what bundles age_days token
+    if [ ! -d "$store" ]; then
+        printf 'weapon-context-store=absent\t%s does not exist, so no session timeline is kept once its database rows are swept\n' "$store"
+        return 0
+    fi
+    stat_out=$(stat -c '%a %u' "$store" 2>/dev/null || true)
+    mode=${stat_out% *}
+    owner=${stat_out#* }
+    # Any bit outside rwxr-x--- is wider than 0750, setuid/setgid/sticky included.
+    if ! [[ $mode =~ ^[0-7]+$ ]] || (( 8#$mode & ~8#0750 )); then
+        printf 'weapon-context-store=too-open\t%s is mode %s, wider than 0750 -- these files carry victim SteamIDs\n' "$store" "${mode:-unreadable}"
+    fi
+    if [ "$owner" != "$WEAPON_CONTEXT_OWNER_UID" ]; then
+        printf 'weapon-context-store=not-root-owned\t%s is owned by uid %s, which can change its mode\n' "$store" "${owner:-unreadable}"
+    fi
+
+    stale_tmp=$(timeout 60 find "$store/tmp" -maxdepth 1 -type f \
+        ! -newermt "@$(( now - WEAPON_CONTEXT_TMP_MAX_SEC ))" 2>/dev/null | wc -l || true)
+    if [ "${stale_tmp:-0}" -gt 0 ]; then
+        printf 'weapon-context-store=stale-tmp\t%s in-flight write(s) in %s/tmp older than %ss -- a sidecar write died before its rename\n' \
+            "$stale_tmp" "$store" "$WEAPON_CONTEXT_TMP_MAX_SEC"
+    fi
+
+    newest=$(timeout 60 find "$store" -path "$store/tmp" -prune -o -type f -name '*.weapons.json' \
+        -printf '%T@\n' 2>/dev/null | sort -n | tail -1 || true)
+    newest=${newest%%.*}
+    if [ -n "$newest" ]; then
+        anchor=$newest; what="the newest sidecar"; token=stale
+    else
+        # An enabled store that never writes reads exactly like a working one on a
+        # quiet week, so the root's own mtime stands in until the first sidecar.
+        anchor=$(stat -c %Y "$store" 2>/dev/null || true)
+        what="the store was created"; token=never-written
+    fi
+    if ! [[ $anchor =~ ^[0-9]+$ ]]; then
+        printf 'weapon-context-store=unmeasurable\tno timestamp could be read from %s\n' "$store"
+        return 0
+    fi
+    age_days=$(( (now - anchor) / 86400 ))
+    if [ "$age_days" -lt "$WEAPON_CONTEXT_STALE_DAYS" ]; then
+        return 0
+    fi
+    if [ ! -d "$uploads" ]; then
+        # Without the input, "no sidecars" cannot be told apart from "no matches".
+        printf 'weapon-context-store=unmeasurable\t%s is missing, so whether sidecars keep up with uploads is unknown -- not fine\n' "$uploads"
+        return 0
+    fi
+    bundles=$(timeout 60 find "$uploads" -type f -name '*.zip' -newermt "@$anchor" \
+        ! -newermt "@$(( now - WEAPON_CONTEXT_GRACE_SEC ))" 2>/dev/null | wc -l || true)
+    if [ "${bundles:-0}" -ge "$WEAPON_CONTEXT_STALE_MIN_BUNDLES" ]; then
+        printf 'weapon-context-store=%s\t%s session bundle(s) arrived after %s %sd ago and no sidecar followed them\n' \
+            "$token" "$bundles" "$what" "$age_days"
+    fi
+}
+# <<< ktp-weapon-context
+
+if wcs_rows=$(weapon_context_scan "$WEAPON_CONTEXT_DIR" "$AC_UPLOADS_DIR" "$now_epoch"); then
+    echo "[$now_ts] weapon-context: ${wcs_rows:-ok}"
+    while IFS=$'\t' read -r _key _note; do
+        if [ -z "${_key:-}" ]; then continue; fi
+        down+=("$_key"); detail[$_key]="$_note"
+    done <<< "$wcs_rows"
+else
+    down+=("weapon-context-store=scan-failed")
+fi
+
 # ---- Build sorted lists for set comparison ----
 # curr.list: sorted, deduplicated set of currently-down items
 # prev.list: read at the top of the run, because the disk checks latch on it
