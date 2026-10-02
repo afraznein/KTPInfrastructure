@@ -8,8 +8,17 @@ as ValueError with a clear message so test failures point at the line.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
+
+# The `key = value` reader lives in scripts/ktp_config_kv.py, because
+# scripts/audit-config-key-drift.py needs the same parse applied to text pulled
+# off a live instance over SSH. Two readers would be two definitions of "what a
+# key is" in discord.ini -- the file whose silent key loss cost six weeks of
+# match embeds -- free to disagree. Import it rather than keep a second copy.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from ktp_config_kv import parse_kv_text  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -58,22 +67,7 @@ def parse_kv_file(path: Path) -> dict[str, str]:
     """Parse a flat `key = value` config file (discord.ini, hltv_recorder.ini).
     Values may be optionally double-quoted; quotes are stripped. Keys are
     lowercased on read for case-insensitive lookup."""
-    out: dict[str, str] = {}
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.split(";", 1)[0].strip()
-        if not line:
-            continue
-        if "=" not in line:
-            raise ValueError(f"{path.name}:{lineno}: expected `key = value`, got {line!r}")
-        key, _, value = line.partition("=")
-        key = key.strip().lower()
-        value = value.strip()
-        if value.startswith('"') and value.endswith('"'):
-            value = value[1:-1]
-        if key in out:
-            raise ValueError(f"{path.name}:{lineno}: duplicate key {key!r}")
-        out[key] = value
-    return out
+    return parse_kv_text(path.read_text(encoding="utf-8"), path.name)
 
 
 _CFG_LINE_RE = re.compile(r"^\s*(\S+)(?:\s+(.*))?\s*$")
@@ -85,6 +79,13 @@ def parse_dodserver_cfg(path: Path) -> dict[str, str]:
     Returns the LAST value seen for each cvar (later sets win, matching
     engine semantics). Lines like `exec other.cfg` show up under the key
     `exec` (multiple values lost on collision; kept simple for v1).
+
+    Deliberately NOT shared with scripts/ktp_config_kv.parse_cvar_text, which
+    keys a repeated cvar positionally (`exec`, `exec#2`). The two answer
+    different questions: this one asks "does the template set the required
+    cvars", where only the effective value matters, and that one asks "is every
+    line mirrored to the fleet", where a collapse loses exactly the line someone
+    deleted. Change one and read the other before assuming they should agree.
     """
     out: dict[str, str] = {}
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
