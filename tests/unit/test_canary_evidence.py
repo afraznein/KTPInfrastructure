@@ -316,6 +316,72 @@ def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
     assert result["enqueued_emitted_mismatches"] == 1
 
 
+def _gap_rows(gaps_by_index: dict[int, int], schema_version=None):
+    """One health row per required stream, with gaps planted by index."""
+    health = [
+        {
+            "half": 1, "event_type": event_type, "dropped": 0,
+            "attempted": 2, "enqueued": 2,
+            "emitted": 2, "daemon_received": 2, "daemon_accepted": 2,
+            "daemon_rejected": 0, "correlation_failure_count": 0,
+            "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+        }
+        for event_type in canary_evidence.CAPTURE_EVENT_TYPES
+    ]
+    for index, value in gaps_by_index.items():
+        health[index]["sequence_gap_count"] = value
+        health[index]["duplicate_or_reordered_count"] = value
+    manifest = {"half": 1}
+    if schema_version is not None:
+        manifest["schema_version"] = schema_version
+    return {"manifests": [manifest], "health": health}
+
+
+def test_sequence_gaps_sum_across_streams_from_schema_24():
+    """Schema 24 numbers each stream separately, so the half's gap total is the
+    SUM. max() would report 3 -- the worst single stream -- and understate the
+    loss by four lines."""
+    rows = _gap_rows({0: 3, 1: 2, 2: 2}, schema_version=24)
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 7
+    assert result["duplicates_or_reordered"] == 7
+
+
+def test_sequence_gaps_stay_half_wide_below_schema_24():
+    """Older producers shared one sequence and the daemon stamped the half's
+    value into every row, so summing would multiply one loss by the stream
+    count. Same planted rows as the schema-24 case: 3, not 7."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3}, schema_version=22)
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
+    assert result["duplicates_or_reordered"] == 3
+
+
+def test_sequence_gaps_treat_a_schemaless_manifest_as_half_wide():
+    """A manifest with no schema_version must not be read as per-stream."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3})
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
+
+
+def test_sequence_gaps_need_every_manifest_past_the_schema():
+    """Mid-rollout a half can carry two manifests. One below the schema means
+    the half is not per-stream, or an old producer's half-wide value gets
+    summed across streams."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3}, schema_version=24)
+    rows["manifests"].append({"half": 1, "schema_version": 23})
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
+
+
 def test_position_cadence_accepts_two_second_samples_with_tolerance():
     result = canary_evidence.position_cadence_evidence([
         {"half": 1, "sample_time": value, "player_samples": 10}
