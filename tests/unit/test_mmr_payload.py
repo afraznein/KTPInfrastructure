@@ -38,7 +38,9 @@ class Contract(unittest.TestCase):
     def test_conservative_is_mu_minus_three_sigma(self):
         """Verified against the consumer's own fixture: rating 26.4,
         uncertainty 8.22, conservative 1.74."""
-        row = next(r for r in build()["players"] if r["name"] == "Ecl1ps3")
+        # Gate opened: this is about the arithmetic, not about who is shown.
+        row = next(r for r in build(min_matches=0, max_sigma=99)["players"]
+                   if r["name"] == "Ecl1ps3")
         self.assertEqual(row["rating"], 26.4)
         self.assertEqual(row["uncertainty"], 8.22)
         self.assertEqual(row["conservative"], 1.74)
@@ -67,18 +69,89 @@ class Privacy(unittest.TestCase):
 
     def test_a_player_without_an_alias_is_dropped_not_published_under_an_id(self):
         import mmr_payload as M
-        payload = M.build(RATINGS, PLAYED, {7: "Ecl1ps3", 8: None}, generated_at=WHEN)
+        payload = M.build(RATINGS, PLAYED, {7: "Ecl1ps3", 8: None}, generated_at=WHEN,
+                          min_matches=0, max_sigma=99)
         self.assertEqual([r["name"] for r in payload["players"]], ["Ecl1ps3"])
 
     def test_a_blank_alias_counts_as_absent(self):
         import mmr_payload as M
-        payload = M.build(RATINGS, PLAYED, {7: "  ", 8: "seanality"}, generated_at=WHEN)
+        payload = M.build(RATINGS, PLAYED, {7: "  ", 8: "seanality"}, generated_at=WHEN,
+                          min_matches=0, max_sigma=99)
         self.assertEqual([r["name"] for r in payload["players"]], ["seanality"])
+
+
+class DisplayGate(unittest.TestCase):
+    """Who gets a number on their profile, and why it is sigma not match count.
+
+    Measured 2026-09-29: every displayable player had exactly 3 matches and an
+    identical sigma of 8.16, so `conservative` was mu - 24.5 and NEGATIVE for
+    20 of 41. Match count says how often someone turned up; sigma says whether
+    the rating knows anything yet.
+
+    Gated in the PRODUCER on purpose. The previous design published a
+    `min_matches` threshold and trusted the consumer, and keep-the-prac's
+    findMmrEntry never applied it -- its own docstring said it did -- so 120 of
+    161 players below the threshold each got a card, 41 of them on one match.
+    """
+
+    def setUp(self):
+        import mmr_payload as M
+        self.M = M
+
+    def test_the_gate_is_half_the_models_starting_sigma(self):
+        self.assertAlmostEqual(self.M.MAX_SIGMA_FOR_DISPLAY, 25.0 / 3.0 * 0.5, places=6)
+
+    def test_start_sigma_matches_the_ladder(self):
+        """MODEL_START_SIGMA is duplicated rather than imported, because
+        report_service loads this module on the data server and `ladder` drags
+        in openskill, which is not installed there (#559). This pins the
+        duplicate so it cannot drift silently."""
+        import sys
+        from pathlib import Path as P
+        sys.path.insert(0, str(P(__file__).resolve().parents[2] / "scripts" / "mmr"))
+        import ladder
+        self.assertAlmostEqual(self.M.MODEL_START_SIGMA,
+                               ladder.OpenSkill().m.rating().sigma, places=6)
+
+    def test_an_unconverged_player_is_withheld_however_many_matches(self):
+        r = {"1": {"mu": 25.0, "sigma": 8.16}}
+        d = self.M.build(r, {1: 50}, {1: "played_fifty"}, generated_at="x")
+        self.assertEqual(d["players"], [], "50 matches must not beat a wide sigma")
+        self.assertEqual(d["rated_players"], 1)
+        self.assertEqual(d["withheld_players"], 1)
+
+    def test_a_converged_player_is_shown(self):
+        r = {"1": {"mu": 27.0, "sigma": 3.5}}
+        d = self.M.build(r, {1: 12}, {1: "converged"}, generated_at="x")
+        self.assertEqual([p["name"] for p in d["players"]], ["converged"])
+        self.assertEqual(d["withheld_players"], 0)
+
+    def test_both_gates_apply_not_either(self):
+        # Converged sigma but too few matches is still withheld.
+        r = {"1": {"mu": 27.0, "sigma": 2.0}}
+        d = self.M.build(r, {1: 1}, {1: "one_match"}, generated_at="x")
+        self.assertEqual(d["players"], [])
+
+    def test_the_thresholds_are_published_so_the_page_can_explain_itself(self):
+        d = self.M.build({"1": {"mu": 25.0, "sigma": 8.2}}, {1: 3}, {1: "a"},
+                         generated_at="x")
+        self.assertEqual(d["min_matches"], self.M.MIN_MATCHES_FOR_DISPLAY)
+        self.assertAlmostEqual(d["max_uncertainty"], self.M.MAX_SIGMA_FOR_DISPLAY, places=3)
+        self.assertEqual(d["rated_players"], 1)
+
+    def test_no_withheld_player_can_leak_through_the_published_rows(self):
+        # The point of producer-side gating: a consumer that ignores every
+        # threshold still cannot render someone it was never sent.
+        r = {str(i): {"mu": 25.0, "sigma": 8.16} for i in range(1, 20)}
+        d = self.M.build(r, {i: 3 for i in range(1, 20)},
+                         {i: f"p{i}" for i in range(1, 20)}, generated_at="x")
+        self.assertEqual(d["players"], [])
+        self.assertEqual(d["rated_players"], 19)
 
 
 class Stability(unittest.TestCase):
     def test_rows_are_ordered_best_first(self):
-        names = [r["name"] for r in build()["players"]]
+        names = [r["name"] for r in build(min_matches=0, max_sigma=99)["players"]]
         self.assertEqual(names, ["seanality", "Ecl1ps3"])
 
     def test_the_same_input_produces_the_same_payload(self):
@@ -121,9 +194,26 @@ class ImportGuards(unittest.TestCase):
         bad = {**self.good, "kind": "leaderboard_ktpr_v22"}
         self.assertIn("expected 'mmr_openskill'", " ".join(self.M.validate_for_import(bad)))
 
-    def test_an_empty_payload_is_refused(self):
-        """Publishing zero players would blank every profile card at once."""
-        self.assertIn("no players", " ".join(self.M.validate_for_import({**self.good, "players": []})))
+    def test_a_payload_that_rated_NOBODY_is_refused(self):
+        """A build that produced no ratings at all is broken, and publishing it
+        would blank every profile card at once."""
+        self.assertIn("no players", " ".join(self.M.validate_for_import(
+            {**self.good, "players": [], "rated_players": 0})))
+        # Payloads predating `rated_players` fall back to len(players).
+        bare = {k: v for k, v in self.good.items() if k != "rated_players"}
+        self.assertIn("no players", " ".join(self.M.validate_for_import(
+            {**bare, "players": []})))
+
+    def test_rating_NOBODY_CONFIDENTLY_ENOUGH_is_allowed_through(self):
+        """Distinct from the above, and the reason the guard had to be split.
+
+        Early in a season every player's sigma is still near the starting
+        value, so the display gate withholds everyone. That is the honest
+        state, not a broken build, and it has to stay publishable -- otherwise
+        the only way to ship is to show ratings that know nothing.
+        """
+        self.assertEqual(self.M.validate_for_import(
+            {**self.good, "players": [], "rated_players": 161}), [])
 
     def test_rows_missing_a_field_the_card_reads_are_refused(self):
         bad = {**self.good, "players": [{"name": "x", "matches": 1, "rating": 1.0}]}
