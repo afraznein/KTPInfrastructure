@@ -168,7 +168,7 @@ jobs:
       KTP_EXPECTED_MATCHHANDLER_VERSION: ${{ inputs.matchhandler_version || '' }}
       # The reviewed KTPMatchHandler commit. One value, read by the checkout AND
       # asserted by the build, so the build cannot certify a different tree.
-      KTP_MATCHHANDLER_SHA: 17017071f4f1a170cf28c827273db82132c0be6e
+      KTP_MATCHHANDLER_SHA: 17f2d8fd609250ad880c04bdec75cfc3ddb402b1
 
     steps:
       - name: Checkout
