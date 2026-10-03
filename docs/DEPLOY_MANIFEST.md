@@ -157,3 +157,7 @@ one refuses to touch the fleet *from* a checkout behind `origin/main`; this one
 asks whether what is already installed *on* a host equals `origin/main`. Neither
 sees the other's failure, and both exist because a rule applied from memory is a
 rule applied sometimes.
+
+`ktp-verify-deploy` imports `ktp_script_freshness` at module level, so the two install together.
+Installed alone, a verifier that gave a wrong answer becomes one that gives none: it fails at import,
+before `main()` runs.

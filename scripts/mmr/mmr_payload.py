@@ -28,6 +28,8 @@ than published under an id.
 """
 from __future__ import annotations
 
+import re
+
 AGGREGATE_KIND = "mmr_openskill"
 METHOD_VERSION = "openskill_pl_v1"
 # Below this, a rating is too thinly evidenced to show a player as fact. The
@@ -94,6 +96,46 @@ def build(ratings, matches_played, aliases, *, generated_at,
 
 REQUIRED_ROW_FIELDS = ("name", "matches", "rating", "uncertainty", "conservative")
 FORBIDDEN_ROW_FIELDS = ("player_id", "steam_id", "steam_id64", "steamid")
+# Compared after lowercasing and dropping separators, so steamId and Player-ID match too.
+_FORBIDDEN_KEY_FORMS = frozenset(
+    "".join(ch for ch in name if ch.isalnum())
+    for name in FORBIDDEN_ROW_FIELDS + ("uniqueid", "steamid2", "steamid3", "steamid32"))
+_STEAM_ID = re.compile(r"STEAM_[0-5]:[01]:\d+|\[U:1:\d+\]|7656119\d{10}", re.IGNORECASE)
+
+
+def _identifier_like_key(key):
+    # A digit-only key is an id map (run_weekly keys ratings by player id).
+    text = str(key).strip()
+    return (text.isdigit() or bool(_STEAM_ID.search(text))
+            or "".join(ch for ch in text.lower() if ch.isalnum()) in _FORBIDDEN_KEY_FORMS)
+
+
+def identifier_problems(payload):
+    """Every identifier anywhere in the payload: forbidden or id-shaped KEYS at
+    any depth, and SteamID-shaped string values. The importer writes the whole
+    document, so a field outside `players` publishes exactly as one inside it."""
+    keys, values = set(), set()
+    stack = [("", payload)]
+    while stack:
+        path, node = stack.pop()
+        if isinstance(node, dict):
+            for key, child in node.items():
+                where = f"{path}.{key}" if path else str(key)
+                if _identifier_like_key(key):
+                    keys.add(path or "<top>")
+                stack.append((where, child))
+        elif isinstance(node, list):
+            stack.extend((f"{path}[]", child) for child in node)
+        elif isinstance(node, str) and _STEAM_ID.search(node):
+            values.add(path)
+    problems = []
+    if keys:
+        problems.append(
+            f"payload carries identifiers as keys under {sorted(keys)}; aliases only")
+    if values:
+        problems.append(
+            f"payload carries SteamID-shaped values at {sorted(values)}; aliases only")
+    return problems
 
 
 def validate_for_import(payload):
@@ -104,21 +146,27 @@ def validate_for_import(payload):
     the guards on a production write are exactly the code that should not
     ship untested.
     """
-    problems = []
     if not isinstance(payload, dict):
         return ["payload is not an object"]
+    problems = []
     if payload.get("kind") != AGGREGATE_KIND:
         problems.append(f"kind is {payload.get('kind')!r}, expected {AGGREGATE_KIND!r}")
+    # Runs before the shape checks, so a refusal on shape still names a leak.
+    problems += identifier_problems(payload)
     rows = payload.get("players")
+    if isinstance(rows, dict):
+        problems.append(
+            "players is an object keyed by player; the consumer reads a list of "
+            "alias rows")
+        return problems
     if not isinstance(rows, list) or not rows:
         problems.append("payload carries no players")
+        return problems
+    if not all(isinstance(row, dict) for row in rows):
+        problems.append("player rows must all be objects")
         return problems
     missing = sorted({f for f in REQUIRED_ROW_FIELDS
                       for row in rows if f not in row})
     if missing:
         problems.append(f"player rows are missing {missing}")
-    leaked = sorted({f for f in FORBIDDEN_ROW_FIELDS
-                     for row in rows if f in row})
-    if leaked:
-        problems.append(f"payload carries identifiers {leaked}; aliases only")
     return problems

@@ -141,5 +141,72 @@ class ImportGuards(unittest.TestCase):
         self.assertTrue(self.M.validate_for_import(None))
 
 
+
+# Invented identifiers only. The pseudonym is a hash of a made-up string.
+SYNTHETIC_STEAM2 = "STEAM_0:1:1000001"
+SYNTHETIC_STEAM64 = "76561190000000001"
+PSEUDONYM = "p_" + __import__("hashlib").sha256(b"synthetic-player").hexdigest()[:16]
+
+
+def _row(name):
+    return {"name": name, "matches": 4, "rating": 25.0, "uncertainty": 3.0,
+            "conservative": 16.0}
+
+
+class ImportIdentifierKeys(unittest.TestCase):
+    """The identifier leg must see keys, not only row field names: an
+    object-keyed `players` used to be refused on shape before the leg ran."""
+
+    def setUp(self):
+        import mmr_payload as M
+        self.M = M
+        self.good = build()
+
+    def problems(self, payload):
+        return " ".join(self.M.validate_for_import(payload))
+
+    def test_players_keyed_by_steam_id_is_refused_as_an_identifier_leak(self):
+        bad = {**self.good, "players": {SYNTHETIC_STEAM2: _row("AliasOne"),
+                                        SYNTHETIC_STEAM64: _row("AliasTwo")}}
+        problems = self.problems(bad)
+        self.assertIn("identifiers as keys", problems)
+        self.assertIn("players is an object", problems)
+
+    def test_players_keyed_by_raw_player_id_is_refused_as_an_identifier_leak(self):
+        """The shape run_weekly's ratings file actually has."""
+        bad = {**self.good, "players": {"101": _row("AliasOne"), "102": _row("AliasTwo")}}
+        self.assertIn("identifiers as keys", self.problems(bad))
+
+    def test_players_keyed_by_pseudonym_is_refused_on_shape_not_as_a_leak(self):
+        bad = {**self.good, "players": {PSEUDONYM: _row("AliasOne")}}
+        problems = self.M.validate_for_import(bad)
+        self.assertIn("players is an object", " ".join(problems))
+        self.assertFalse([p for p in problems if "identifier" in p], problems)
+
+    def test_an_id_keyed_map_outside_players_is_refused(self):
+        """The importer writes the whole document, not just `players`."""
+        bad = {**self.good, "history": {SYNTHETIC_STEAM2: {"rating": 20.0}}}
+        self.assertIn("identifiers as keys under ['history']", self.problems(bad))
+
+    def test_a_pseudonym_keyed_map_outside_players_is_accepted(self):
+        ok = {**self.good, "history": {PSEUDONYM: {"rating": 20.0}}}
+        self.assertEqual(self.M.validate_for_import(ok), [])
+
+    def test_a_differently_spelled_identifier_field_is_refused(self):
+        bad = {**self.good, "players": [{**_row("AliasOne"), "steamId": SYNTHETIC_STEAM64}]}
+        self.assertIn("identifiers as keys", self.problems(bad))
+
+    def test_a_steam_id_published_as_the_alias_is_refused(self):
+        bad = {**self.good, "players": [_row(SYNTHETIC_STEAM2)]}
+        self.assertIn("SteamID-shaped values at ['players[].name']", self.problems(bad))
+
+    def test_a_non_object_row_is_refused_rather_than_crashing(self):
+        bad = {**self.good, "players": [_row("AliasOne"), 7]}
+        self.assertIn("must all be objects", self.problems(bad))
+
+    def test_the_published_list_shape_still_passes(self):
+        ok = {**self.good, "players": [_row("AliasOne"), _row("AliasTwo")]}
+        self.assertEqual(self.M.validate_for_import(ok), [])
+
 if __name__ == "__main__":
     unittest.main()
