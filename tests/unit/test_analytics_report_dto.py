@@ -476,8 +476,8 @@ class Sanitize(unittest.TestCase):
         ph = sanitize_report(internal_report())["player_halves"]
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
-    def test_contract_is_v1_8_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.8.0")
+    def test_contract_is_v1_9_0(self):
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.9.0")
 
     def test_player_halves_carry_side_and_best_streak(self):
         rep = internal_report()
@@ -606,3 +606,93 @@ class Corpus(unittest.TestCase):
             self.assertTrue(dto["ratings"]["ktpr_v2"]["players"])
             n += 1
         self.assertGreater(n, 0)
+
+
+class Glossary(unittest.TestCase):
+    """Every published number declares what it is and what unit it is in.
+
+    The site had no glossary and no unit declarations outside the ratings
+    block, which produced two misreadings of the same kind: a KAST of 125 read
+    as a percentage, and before that a 100-centred index re-z-scored into
+    flatness (keep-the-prac #679/#691). The guard that matters is the first
+    test here -- a new published field cannot ship without a definition.
+    """
+
+    UNITS = frozenset({
+        "count", "share_0_1", "percent_0_100", "ratio", "damage", "points",
+        "seconds", "per_minute", "index", "rank",
+    })
+
+    def setUp(self):
+        from scripts import analytics_report_dto as D
+        self.D = D
+
+    def test_every_published_box_score_field_is_defined(self):
+        missing = [f for f in self.D.PLAYER_FIELDS
+                   if f not in self.D.FIELD_GLOSSARY]
+        self.assertEqual(missing, [], f"undefined published fields: {missing}")
+
+    def test_every_rating_side_row_field_is_defined(self):
+        """accumulation and flag_swing rows, as sanitize_report emits them."""
+        report = internal_report()
+        # Without a scorer attachment the accumulation block is empty and this
+        # test would pass vacuously.
+        report["accumulation"] = {
+            "status": "available",
+            "players": [{"player_name_at_match": "A", "total_points": 42.0,
+                         "points_per_minute": 1.2, "deaths": 2,
+                         "impact_index": 103.4, "observed_seconds": 90,
+                         "participation_percent": 90.0, "rank": 1}],
+        }
+        dto = self.D.sanitize_report(report)
+        self.assertTrue(dto["ratings"]["accumulation"]["players"])
+        rows = ((dto["ratings"]["accumulation"].get("players") or [])
+                + (dto["ratings"]["flag_swing"].get("players") or []))
+        skip = {"name", "team"}
+        missing = sorted({k for row in rows for k in row
+                          if k not in skip and k not in self.D.FIELD_GLOSSARY})
+        self.assertEqual(missing, [], f"undefined published fields: {missing}")
+
+    def test_units_come_from_the_declared_vocabulary(self):
+        for field, entry in self.D.FIELD_GLOSSARY.items():
+            with self.subTest(field=field):
+                self.assertIn(entry["unit"], self.UNITS)
+                self.assertTrue(entry["what"].strip())
+
+    def test_a_share_is_never_declared_a_percentage(self):
+        """raw_accuracy is 0.28, not 28. Mislabelling it is the 125 bug."""
+        for field in ("raw_accuracy", "headshot_rate"):
+            self.assertEqual(
+                self.D.FIELD_GLOSSARY[field]["unit"], "share_0_1")
+        self.assertEqual(
+            self.D.FIELD_GLOSSARY["participation_percent"]["unit"],
+            "percent_0_100")
+
+    def test_the_multikill_window_is_read_off_the_report(self):
+        report = internal_report()
+        report["shadow_timelines"]["config"] = {"multikill_seconds": 10.0}
+        what = (self.D.sanitize_report(report)["glossary"]["fields"]
+                ["fast_2k"]["what"])
+        self.assertIn("10.0s", what)
+
+    def test_the_window_sentence_is_absent_when_the_config_is(self):
+        report = internal_report()
+        report["shadow_timelines"].pop("config", None)
+        what = (self.D.sanitize_report(report)["glossary"]["fields"]
+                ["fast_2k"]["what"])
+        self.assertNotIn("after its first", what)
+
+    def test_the_glossary_does_not_leak_the_window_between_reports(self):
+        """The copy is per report; a second build must not append twice."""
+        report = internal_report()
+        report["shadow_timelines"]["config"] = {"multikill_seconds": 10.0}
+        first = (self.D.sanitize_report(report)["glossary"]["fields"]
+                 ["fast_2k"]["what"])
+        second = (self.D.sanitize_report(report)["glossary"]["fields"]
+                  ["fast_2k"]["what"])
+        self.assertEqual(first, second)
+
+    def test_it_passes_the_publish_gate(self):
+        """A forbidden substring in a glossary key would fail the whole sync."""
+        self.D.assert_sanitized(
+            self.D.sanitize_report(internal_report())["glossary"])
