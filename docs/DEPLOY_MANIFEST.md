@@ -161,3 +161,9 @@ rule applied sometimes.
 `ktp-verify-deploy` imports `ktp_script_freshness` at module level, so the two install together.
 Installed alone, a verifier that gave a wrong answer becomes one that gives none: it fails at import,
 before `main()` runs.
+
+Installed, the guard reads this manifest. A copy outside any checkout is current when its bytes have the
+md5 of its last row **and** equal the blob at the fetched `origin/main` for that row's `source_path`, in
+`KTP_FRESHNESS_REPO` (default `/opt/ktp-infra`). Install the script with `ktp-install`, never `cp`, or
+the verifier refuses every run with "no deploy manifest records it"; install the guard module beside it
+from the same commit, since an older guard has no installed-copy rule at all.
