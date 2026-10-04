@@ -124,6 +124,7 @@ def daemon_repo(tmp_path):
         (36, "hitreg_quality"),
         (38, "move_census"),
         (39, "score_round_time_left"),
+        (40, "flag_captures_provenance"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -169,7 +170,7 @@ def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
 
 
 def test_default_schema_sequence_includes_retention_through_shot_events():
-    assert DEFAULT_SCHEMA_FILES[-23:] == (
+    assert DEFAULT_SCHEMA_FILES[-24:] == (
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
@@ -196,6 +197,7 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_036_hitreg_quality.sql",
         "sql/migrate_038_move_census.sql",
         "sql/migrate_039_score_round_time_left.sql",
+        "sql/migrate_040_flag_captures_provenance.sql",
     )
 
 
