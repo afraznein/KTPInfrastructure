@@ -236,6 +236,18 @@ python3 stage-wave.py --preflight-only        # is the fleet clean to stage into
 python3 stage-wave.py -f path/to/KTPMatchHandler.amxx --expect KTPMatchHandler.amxx=<md5>
 ```
 
+### ktp-deploy.py
+**The shared entry point to `stage-wave.py` and `ktp-wave-ledger.py` on the data server**, for every
+deployer rather than one workstation. It runs them from a checkout it re-proves at `origin/main` on every
+run, behind a lock that names its holder, against one shared ledger and rows file, and records who ran what.
+Install, the credential options and the open decisions: `docs/runbooks/SHARED_STAGE_WAVE.md`.
+
+```bash
+ktp-deploy stage --preflight-only
+ktp-deploy stage -f ~/X.amxx --expect X.amxx=<md5> --base X.amxx=<owner/repo@sha>
+ktp-deploy ledger reconcile
+```
+
 ### ktp_script_freshness.py
 **Not a script to run — a gate the fleet-writing scripts call on themselves.** A checkout that has fallen
 behind `origin/main` stages a wave perfectly happily: the older copy never sees the flags it lacks, so

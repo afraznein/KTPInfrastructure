@@ -118,6 +118,9 @@ DEFAULT_SCHEMA_FILES = (
     # score INSERT names ktp_score_events.round_time_left, so a lane without it
     # fails every score row.
     "sql/migrate_039_score_round_time_left.sql",
+    # Proposed for production. The daemon's flag-capture INSERT does not name
+    # either new column, so applying it here proves that INSERT still lands.
+    "sql/migrate_040_flag_captures_provenance.sql",
 )
 
 DEFAULT_SEED_FILES = (
