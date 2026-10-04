@@ -340,7 +340,7 @@ def _with_schema(version):
 
 
 def test_schema_25_authorizes_capture_and_position_like_24():
-    for version in (24, 25):
+    for version in (24, 25, 26):
         manifests, health, positions = _with_schema(version)
         capture = analytics.evaluate_capture_authorization({1}, manifests, health)
         position = analytics.evaluate_position_provenance(
@@ -350,7 +350,7 @@ def test_schema_25_authorizes_capture_and_position_like_24():
 
 
 def test_schemas_outside_the_accepted_set_are_still_refused():
-    for version in (20, 26):
+    for version in (20, 27):
         manifests, health, positions = _with_schema(version)
         assert analytics.evaluate_capture_authorization(
             {1}, manifests, health)["authorized"] is False

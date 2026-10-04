@@ -108,8 +108,8 @@ SCHEMA_VERSION = 23  # 9: spatial_layers; 10: in_game_result + player_halves; 11
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
 # a field this code reads must not be added here without checking that read.
-CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25})
-POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25})
+CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25, 26})
+POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25, 26})
 # From schema 24 the producer numbers each stream from its own sequence and the
 # daemon tracks gaps per stream, so a row's gap counter describes that stream
 # alone. Older producers shared one sequence and every row carried the half's.

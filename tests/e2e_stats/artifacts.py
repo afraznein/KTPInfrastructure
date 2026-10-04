@@ -121,6 +121,9 @@ DEFAULT_SCHEMA_FILES = (
     # Proposed for production. The daemon's flag-capture INSERT does not name
     # either new column, so applying it here proves that INSERT still lands.
     "sql/migrate_040_flag_captures_provenance.sql",
+    # Same reason: the schema-26 daemon names hitgroup/rw_* in every shot INSERT
+    # and sv_maxunlag in every manifest INSERT.
+    "sql/migrate_041_shot_hitgroup_rewind.sql",
 )
 
 DEFAULT_SEED_FILES = (
