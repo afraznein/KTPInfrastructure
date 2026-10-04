@@ -1884,6 +1884,11 @@ def main() -> int:
                 match_id=((report.get("match") or {}).get("match_id")),
                 half=((report.get("match") or {}).get("half")),
             ),
+            assertions.check_shot_hitgroup_and_rewind(
+                db,
+                match_id=((report.get("match") or {}).get("match_id")),
+                half=((report.get("match") or {}).get("half")),
+            ),
             assertions.check_flag_captures(
                 db, emitted=report["emitted"]["flag_capture"]),
             assertions.check_flag_positions(
