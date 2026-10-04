@@ -1396,7 +1396,7 @@ def test_schema26_manifest_must_carry_sv_maxunlag():
 
 def test_schema26_is_not_exercised_before_its_migration_or_producer():
     v = _s26(Schema26Db(columns=3))
-    assert v["status"] == "not_exercised" and "migrate_040" in v["detail"]
+    assert v["status"] == "not_exercised" and "migrate_041" in v["detail"]
     v = _s26(Schema26Db(schema=25, fabricated=5))
     assert v["status"] == "not_exercised" and "schema 25" in v["detail"]
     assert _s26(Schema26Db(rows=0))["status"] == "not_exercised"

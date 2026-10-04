@@ -1224,7 +1224,7 @@ def check_shot_hitgroup_and_rewind(db, *, match_id: str | None,
     A depth, clamp or hit-share assertion would be a physics claim on bots.
 
     Every column is probed before it is named, because the corpus lane replays a
-    schema list that stops long before migration 040. A producer that announced
+    schema list that stops long before migration 041. A producer that announced
     a schema below 26 leaves every new column NULL by design, so the check is not
     exercised rather than passed.
     """
@@ -1243,7 +1243,7 @@ def check_shot_hitgroup_and_rewind(db, *, match_id: str | None,
         f"AND COLUMN_NAME IN ({names})")
     if present < len(SCHEMA26_SHOT_COLUMNS):
         return {"code": code, "status": "not_exercised", "detail":
-                "ktp_shot_events lacks the schema-26 columns -- migrate_040 was "
+                "ktp_shot_events lacks the schema-26 columns -- migrate_041 was "
                 "not applied, so hitgroup and rewind were not exercised."}
     schema = db.count(
         f"SELECT COALESCE(MAX(schema_version), 0) FROM ktp_capture_manifests WHERE {scope_sql}")
