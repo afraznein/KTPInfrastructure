@@ -340,3 +340,103 @@ def test_pytest_and_ci_are_inert_but_say_so(monkeypatch, capsys):
     assert guard._inert_context() == "pytest"
     guard.require_current(os.path.join(_SCRIPTS, "stage-wave.py"))
     assert "not gating (pytest)" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------
+# An installed copy: outside any checkout, verified through the deploy manifest.
+# --------------------------------------------------------------------------
+
+def _md5(text):
+    import hashlib
+    return hashlib.md5(text.encode("utf-8")).hexdigest()
+
+
+@pytest.fixture
+def installed(repos, tmp_path, monkeypatch):
+    """`work` plays /opt/ktp-infra; the copy lives in a bin dir with a manifest row."""
+    up, work = repos
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    dest = bindir / "ktp-writer"
+    manifest = tmp_path / "DEPLOYED.tsv"
+    monkeypatch.setenv("KTP_MANIFEST", str(manifest))
+    monkeypatch.setenv("KTP_FRESHNESS_REPO", str(work))
+    monkeypatch.delenv("KTP_FRESHNESS_OFFLINE", raising=False)
+
+    def install(text, commit, md5=None):
+        dest.write_bytes(text.encode("utf-8"))
+        if not manifest.exists():
+            manifest.write_text("\t".join(guard.MANIFEST_HEADER) + "\n", encoding="utf-8")
+        row = [str(dest), md5 or _md5(text), "afraznein/upstream", commit,
+               "scripts/writer.py", "2026-10-03T03:00:00-04:00", "-", "test"]
+        with open(manifest, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write("\t".join(row) + "\n")
+        return dest
+
+    head = _git(work, "rev-parse", "origin/main").stdout.strip()
+    first = _git(work, "rev-parse", "origin/main~1").stdout.strip()
+    return up, work, install, head, first
+
+
+def test_an_installed_current_copy_passes(installed):
+    """The nightly soak's case: /usr/local/bin, KTP_FRESHNESS_REPO set, not under it."""
+    _up, _work, install, head, _first = installed
+    dest = install(_NEW, head)
+    assert guard.check(str(dest)) == []
+
+
+def test_an_installed_copy_edited_since_install_is_refused(installed):
+    _up, _work, install, head, _first = installed
+    dest = install(_NEW, head)
+    dest.write_bytes(_NEW.replace("--row-version", "--rowversion").encode("utf-8"))
+    report = guard.check(str(dest))[0]
+    assert "DIFFERS from its deploy-manifest row" in report
+    assert _md5(_NEW) in report
+
+
+def test_an_installed_copy_recorded_at_an_old_commit_is_stale(installed):
+    """An honest row about an old blob is still an old copy."""
+    _up, _work, install, _head, first = installed
+    dest = install(_OLD, first)
+    report = guard.check(str(dest))[0]
+    assert "is STALE" in report
+    assert "--pull-live" in report
+    assert "the fleet keeps no rollback copies" in report
+
+
+def test_an_installed_copy_goes_stale_when_upstream_moves(installed):
+    """The ref is fetched, so a copy current at the last fetch is not current forever."""
+    up, work, install, head, _first = installed
+    dest = install(_NEW, head)
+    (up / "scripts" / "writer.py").write_text(_NEW + "\n# --dry-run\n", encoding="utf-8")
+    _git(up, "commit", "-qam", "add --dry-run")
+    before = _git(work, "rev-parse", "HEAD").stdout.strip()
+
+    report = guard.check(str(dest))[0]
+    assert "is STALE" in report and "--dry-run" in report
+    # The fetch moved the remote-tracking ref and nothing else.
+    assert _git(work, "rev-parse", "HEAD").stdout.strip() == before
+    assert _git(work, "status", "--porcelain").stdout == ""
+
+
+def test_an_installed_copy_with_no_manifest_row_is_refused(installed):
+    _up, _work, install, head, _first = installed
+    install(_NEW, head)
+    stray = installed[1].parent / "bin" / "copied-by-hand"
+    stray.write_text(_NEW, encoding="utf-8")
+    report = guard.check(str(stray))[0]
+    assert "no deploy manifest records it" in report
+
+
+@pytest.mark.skipif(os.name != "posix", reason="ktp-install locks the manifest with fcntl")
+def test_a_row_written_by_the_real_ktp_install_is_accepted(installed, tmp_path):
+    """The manifest format is ktp-install's, so the row it writes must be one the guard reads."""
+    import sys
+    _up, work, _install, head, _first = installed
+    dest = tmp_path / "bin" / "ktp-writer-real"
+    env = dict(os.environ, KTP_INSTALL_BACKUPS=str(tmp_path / "backups"))
+    subprocess.run([sys.executable, os.path.join(_SCRIPTS, "ktp-install"),
+                    "--repo", str(work), "--commit", head, "--src", "scripts/writer.py",
+                    "--dest", str(dest), "--expect-md5", "-"],
+                   check=True, capture_output=True, text=True, env=env)
+    assert guard.check(str(dest)) == []

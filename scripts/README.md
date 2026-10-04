@@ -261,6 +261,12 @@ via `git diff`, and refuses with a report naming which flags and functions this 
 commits added them. It fails closed: drift, no checkout, the path absent from the ref, a failed git call
 and an unfetchable ref all refuse. It is inert under pytest and GitHub Actions, and says so.
 
+**An installed copy** (`/usr/local/bin/ktp-verify-deploy`, run by the soak cron) is in no checkout, so it is
+checked through the deploy manifest instead: its bytes must match the md5 of its last `DEPLOYED.tsv` row
+(untouched since `ktp-install`), and that must equal the blob at the fetched `origin/main` for the row's
+`source_path` in `KTP_FRESHNESS_REPO` (default `/opt/ktp-infra`). The fetch writes only
+`refs/remotes/origin/main`; the tree is never pulled. A copy with no row is refused as before.
+
 ```bash
 python3 ktp_script_freshness.py stage-wave.py   # report without running anything
 ```
