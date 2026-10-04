@@ -18,6 +18,7 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.6.0` | 18 | Adds top-level `plays` (each player's best plays and the match's top three; the worst play — the dunce — is computed but stays private), valued on `flag_swing_v1` with excursions from positions. `flag_swing` cap credit now joins per-credit rows within ±3 s of wall clock; caps had been uncredited in every production report before this |
 | `analytics-report-dto-v1.7.0` | 19 | `map_control` and `progression`'s `teams[]` (flag differential) are now translated to report-team convention — both were silently backwards in half 1 of every two-half match, since DoD swaps Allies/Axis at halftime and these blocks carried raw engine side. Adds top-level `capouts` (completed cap-outs: one side owning every flag, `{half, game_time, team}`) |
 | `analytics-report-dto-v1.8.0` | 20 | `progression` gains `cap_breaks` and `cap_participation` player metrics. Neither needed new capture: `hlstats_Events_PlayerActions` has carried a producer clock for cap breaks since `migrate_021_capture_observability.sql` (KTPHLStatsX), this pipeline had just never probed for it; `cap_participation` reuses `credit_timeline` (the per-credit rows `capture_credit_timeline_fact.sql` already computes for `flag_swing`'s cap-credit join, v1.6.0) — no second query |
+| `analytics-report-dto-v1.10.0` | 23 | `assists`, `cap_breaks`, `capture_credits` and `kda_ratio` are `null`, not `0`, where the match predates the producer (see below). No key is added or removed |
 
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
@@ -290,6 +291,25 @@ all_players`), not within the player's own team.
 | `max_in_match` | The bar's denominator: the largest value any player posted. A consumer's fill is `value / max_in_match`. `null` when no player has a value |
 | `higher_is_better` | `false` for `deaths`, `damage_taken`, `team_kills`, `suicides`, `grenade_damage_taken`. The bar still scales on the max (it says "how much"), but a full bar is not an achievement and the star goes the other way |
 | `best` | Names holding the match-best value — the max, or the min where `higher_is_better` is false. Ties keep every name; empty when no value. A consumer's `is_match_best` is "name in best" |
+
+## `assists`, `cap_breaks`, `capture_credits` before their producers (v1.10.0)
+
+Each of these counts comes from a producer that started partway through the
+archive. A match or half that ended before the producer's first event
+anywhere in the archive was never measured, so the column is `null` in
+`players[]` and `player_halves.rows[]`, and `kda_ratio` is `null` with
+`assists`. A `teams[]` total is `null` when every player on that team is.
+A covered match with no such events reads `0`, which is a real zero.
+
+Production producer start (first match carrying events, league-local time):
+assists, cap breaks, per-hit damage and position samples
+2026-08-21 21:10; capture credits (`ktp_flag_captures`) 2026-08-15 16:25.
+Kills, deaths, headshots, team kills, suicides, shots and hits come from
+tables that predate the whole archive and stay filled.
+
+Only a rebuilt report changes: one built before this keeps its zeros. The
+report schema did not move, and `contract_version` is stamped when the DTO is
+made, so neither tells an old build from a new one.
 
 ## Reports built before schema 11
 

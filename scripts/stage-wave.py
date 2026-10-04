@@ -114,7 +114,10 @@ Usage:
                 --expect        KTPMatchHandler.amxx=<production md5> \
                 --expect-runner KTPMatchHandler.amxx=<TEST-mode md5>
 
-Env: KTP_FLEET_SSH_PASSWORD (or ~/.ktp_fleet_ssh_password), same as deploy-to-fleet.py.
+Env: KTP_FLEET_SSH_KEY (a per-person key, no fallback), else KTP_FLEET_SSH_PASSWORD
+     (or ~/.ktp_fleet_ssh_password), same as deploy-to-fleet.py.
+     Run through ktp-deploy.py on the data server: shared ledger, rows, lock and
+     rollback dir (docs/runbooks/SHARED_STAGE_WAVE.md).
      KTP_TIER2_SSH_HOST / _USER / _PASSWORD / KTP_TIER2_TREE for --expect-runner.
      No default host: an --expect-runner that cannot reach the runner is FATAL,
      never skipped -- an unverifiable gate is not a passed gate.
@@ -260,8 +263,8 @@ def detect_build_base(local_path):
 def _connect(host_info):
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.connect(host_info["host"], username=host_info["user"],
-                password=d2f._fleet_ssh_password(), timeout=30)
+    ssh.connect(host_info["host"], username=host_info["user"], timeout=30,
+                **d2f.fleet_ssh_auth())
     return ssh
 
 

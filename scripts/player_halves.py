@@ -49,7 +49,9 @@ def build_player_halves(
     out = []
     for r in rows:
         pid = _int(r.get("player_id"))
-        values: dict[str, int | None] = {c: _int(r.get(c)) for c in ADDITIVE}
+        # None is a producer that did not exist yet; keep it apart from 0.
+        values: dict[str, int | None] = {
+            c: None if r.get(c) is None else _int(r.get(c)) for c in ADDITIVE}
         for c in ADDITIVE:
             sums[pid][c] += values[c] or 0
         # A roster member with no samples and no events in a half did not play it.

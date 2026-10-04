@@ -108,8 +108,8 @@ SCHEMA_VERSION = 23  # 9: spatial_layers; 10: in_game_result + player_halves; 11
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
 # a field this code reads must not be added here without checking that read.
-CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25})
-POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25})
+CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25, 26})
+POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25, 26})
 # From schema 24 the producer numbers each stream from its own sequence and the
 # daemon tracks gaps per stream, so a row's gap counter describes that stream
 # alone. Older producers shared one sequence and every row carried the half's.
@@ -455,6 +455,43 @@ def _half_sequence_errors(
     return errors
 
 
+def _reconcile_failures(counters: dict[str, int]) -> list[str]:
+    """Name each counter disagreement, so a withheld stream says WHERE it lost
+    data: the producer, the trip to the daemon, or the daemon's own rejection."""
+    failures = []
+    if min(counters.values()) < 0:
+        failures.append("a counter is negative")
+    if counters["dropped"]:
+        failures.append(f"producer dropped {counters['dropped']}")
+    if counters["attempted"] != counters["enqueued"] + counters["dropped"]:
+        failures.append(
+            f"attempted {counters['attempted']} != enqueued "
+            f"{counters['enqueued']} + dropped {counters['dropped']}")
+    if counters["enqueued"] != counters["emitted"]:
+        failures.append(
+            f"enqueued {counters['enqueued']} != emitted {counters['emitted']}")
+    if counters["emitted"] > counters["daemon_received"]:
+        failures.append(
+            f"{counters['emitted'] - counters['daemon_received']} of "
+            f"{counters['emitted']} emitted never reached the daemon")
+    elif counters["emitted"] < counters["daemon_received"]:
+        failures.append(
+            f"daemon received {counters['daemon_received']}, more than the "
+            f"{counters['emitted']} emitted")
+    if (counters["daemon_accepted"] + counters["daemon_rejected"]
+            != counters["daemon_received"]):
+        failures.append(
+            f"accepted {counters['daemon_accepted']} + rejected "
+            f"{counters['daemon_rejected']} != received "
+            f"{counters['daemon_received']}")
+    if counters["daemon_rejected"]:
+        failures.append(f"daemon rejected {counters['daemon_rejected']}")
+    if counters["correlation_failure_count"]:
+        failures.append(
+            f"{counters['correlation_failure_count']} correlation failure(s)")
+    return failures
+
+
 def _stream_sequence_errors(half: int, row: dict[str, Any]) -> list[str]:
     """Schema 24 onward: a lost line is both a gap and a shortfall, so only the
     gap its own shortfall cannot explain is new evidence. Tail loss leaves no
@@ -627,20 +664,12 @@ def evaluate_capture_authorization(
             shortfall_by_type.setdefault(
                 event_type,
                 max(0, counters["emitted"] - counters["daemon_received"]))
-            if (
-                min(counters.values()) < 0
-                or counters["attempted"] != counters["enqueued"] + counters["dropped"]
-                or counters["enqueued"] != counters["emitted"]
-                or counters["emitted"] != counters["daemon_received"]
-                or counters["daemon_accepted"] + counters["daemon_rejected"]
-                    != counters["daemon_received"]
-                or any(counters[key] for key in (
-                    "dropped", "daemon_rejected", "correlation_failure_count",
-                ))
-            ):
+            failures = _reconcile_failures(counters)
+            if failures:
                 stream_error(
                     event_type,
-                    f"half {half} {event_type or '<empty>'} counters do not reconcile")
+                    f"half {half} {event_type or '<empty>'} counters do not "
+                    f"reconcile: {'; '.join(failures)}")
             stream = streams.setdefault(event_type, {
                 "attempted": 0, "enqueued": 0, "emitted": 0,
                 "received": 0, "accepted": 0,
