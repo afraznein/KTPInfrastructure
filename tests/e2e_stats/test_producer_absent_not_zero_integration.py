@@ -47,6 +47,9 @@ def _facts(db: EphemeralMysql, match_id: str):
 def test_producer_dated_counts_are_null_before_the_producer_and_zero_after(tmp_path):
     with EphemeralMysql.start(parent=tmp_path) as db:
         analytics.load_fixture(db, FIXTURE)
+        # LEGACY also predates the damage ledger, so its report reads legacy
+        # damage: production's ktp_match_stats carries it, the fixture's does not.
+        db.sql("ALTER TABLE ktp_match_stats ADD COLUMN damage int")
         # The fixture's producers first fire on 2026-08-16.
         _add_match(db, LEGACY, "2026-01-20")
         _add_match(db, QUIET, "2026-09-01")
