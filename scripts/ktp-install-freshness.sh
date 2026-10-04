@@ -38,10 +38,9 @@ REPORT_FILE="${REPORT_FILE:-$STATE_DIR/last-report.txt}"
 STATE_FILE="${STATE_FILE:-$STATE_DIR/non-fresh.txt}"
 KTP_INSTALL="${KTP_INSTALL:-/usr/local/bin/ktp-install}"
 AGAINST_REF="${AGAINST_REF:-origin/main}"
-# A read-only mirror this script owns and fetches. Deliberately NOT a deploy
-# checkout: /opt/ktp-infra must not be auto-pulled, and a freshness check that
-# moves the tree someone installs from would be changing the thing it measures.
-FRESHNESS_REPO="${FRESHNESS_REPO:-$STATE_DIR/mirror.git}"
+# The deploy checkout, fetched and never pulled: the fetch below writes one
+# remote-tracking ref, so the tree someone installs from does not move.
+FRESHNESS_REPO="${FRESHNESS_REPO:-/opt/ktp-infra}"
 # Daily timer. Two intervals of slack before a gap counts as "did not run",
 # so an ordinary RandomizedDelaySec skew is not news and a missed day is.
 MAX_GAP_SEC="${MAX_GAP_SEC:-172800}"
@@ -54,10 +53,14 @@ ALERT_CHANNEL="${ALERT_CHANNEL:-}"
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 die() { echo "[$(ts)] FATAL: $*" >&2; exit "${2:-1}"; }
 
-case "$FRESHNESS_REPO" in
-    /opt/ktp-infra|/opt/ktp-infra/*)
-        die "FRESHNESS_REPO is the deploy checkout; this script fetches, and that tree must not be auto-pulled" 2 ;;
+# A bare local ref would never be refreshed by a fetch, so it would read as
+# fresh forever.
+case "$AGAINST_REF" in
+    ?*/?*) ref_remote="${AGAINST_REF%%/*}"; ref_branch="${AGAINST_REF#*/}" ;;
+    *) die "AGAINST_REF must be <remote>/<branch>, got '$AGAINST_REF'" 2 ;;
 esac
+git check-ref-format "refs/heads/$ref_branch" \
+    || die "AGAINST_REF branch '$ref_branch' is not a valid branch name" 2
 [ -x "$KTP_INSTALL" ] || die "$KTP_INSTALL is not executable" 2
 grep -q -- '--against-ref' "$KTP_INSTALL" \
     || die "$KTP_INSTALL predates --against-ref; install it before enabling this check" 2
@@ -73,16 +76,18 @@ _routing="$(dirname "${BASH_SOURCE[0]}")/ktp-alert-routing.sh"
 
 mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 
-# ── keep the mirror current ────────────────────────────────────────────────
-if [ ! -d "$FRESHNESS_REPO" ]; then
-    die "$FRESHNESS_REPO does not exist; create it once with 'git clone --bare' (see the runbook)"
-fi
-# The configured refspec, not one spelled here: the runbook sets the mirror up
-# with +refs/heads/*:refs/remotes/origin/*, so origin/main means the same thing
-# here as it does in a working checkout. A --mirror clone maps branches into
-# refs/heads instead, where origin/main does not resolve at all.
-git -C "$FRESHNESS_REPO" fetch --quiet --prune origin \
-    || die "fetch failed; a freshness check that could not update its mirror must not report freshness"
+# ── refresh the reference: fetch only, never checkout/merge/pull ───────────
+[ -d "$FRESHNESS_REPO" ] || die "$FRESHNESS_REPO does not exist"
+head_before="$(git -C "$FRESHNESS_REPO" rev-parse --verify -q HEAD)" \
+    || die "$FRESHNESS_REPO is not a git repository with a HEAD"
+# An explicit refspec, and --refmap= so git does not also apply the configured
+# one: a refspec writing refs/heads/* would otherwise move local branches.
+git -C "$FRESHNESS_REPO" fetch --quiet --no-tags --refmap= "$ref_remote" \
+        "+refs/heads/$ref_branch:refs/remotes/$ref_remote/$ref_branch" \
+    || die "fetch failed; a freshness check that could not refresh its reference must not report freshness"
+head_after="$(git -C "$FRESHNESS_REPO" rev-parse --verify -q HEAD)" || head_after=""
+[ "$head_after" = "$head_before" ] \
+    || die "HEAD of $FRESHNESS_REPO moved during the check ($head_before -> ${head_after:-none}); something else is writing that checkout"
 head_sha="$(git -C "$FRESHNESS_REPO" rev-parse --verify "$AGAINST_REF^{commit}")" \
     || die "$AGAINST_REF does not resolve in $FRESHNESS_REPO"
 

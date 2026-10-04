@@ -2,18 +2,13 @@
 # Copy, fill, chmod 600, root:root. Every value here has a working default in
 # the script; this file exists for the two that are host decisions.
 
-# The read-only mirror the check resolves AGAINST_REF in. It fetches this, so
-# it must NOT be a deploy checkout -- the script refuses /opt/ktp-infra.
-#   git clone --bare https://github.com/afraznein/KTPInfrastructure \
-#       /var/lib/ktp-install-freshness/mirror.git
-#   git -C /var/lib/ktp-install-freshness/mirror.git config \
-#       remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-# Not `clone --mirror`: that maps branches straight into refs/heads, where
-# origin/main does not resolve, and the check exits 2 on every run.
-#FRESHNESS_REPO="/var/lib/ktp-install-freshness/mirror.git"
+# The checkout AGAINST_REF is resolved in. The check runs `git fetch` here with
+# an explicit refspec that writes only refs/remotes/<remote>/<branch>, and exits 1
+# if HEAD moved, so the working tree is never checked out, merged or pulled.
+#FRESHNESS_REPO="/opt/ktp-infra"
 
-# What "current" means. origin/main is the merged tree; a release tag would be
-# a different and defensible answer on a host that deliberately lags.
+# What "current" means, as <remote>/<branch> -- a remote-tracking ref, because
+# that is what the fetch refreshes. origin/main is the merged tree.
 #AGAINST_REF="origin/main"
 
 # Channel fallback, used only until an operator maps the ops-daily lane in
