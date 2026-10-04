@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts import canary_evidence
+from scripts import match_analytics as analytics
 
 
 def test_canary_manifest_evidence_keeps_producer_and_receipt_clocks_separate():
@@ -258,6 +259,55 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
         "receipt_latency_seconds": 0,
     }]
     assert result["manifest_versions"] == ["stats_logging@1.18.0/schema-22"]
+
+
+@pytest.mark.parametrize("schema_version", sorted(analytics.CAPTURE_SCHEMAS))
+def test_manifest_authorized_accepts_every_schema_the_contract_accepts(
+    schema_version,
+):
+    """Every schema in the producer contract authorizes the manifest.
+
+    Pinned to a literal 22 this was false for all four, and the fleet has run
+    23/24/25 since 22 was retired -- so the field reported a problem that did
+    not exist and could not report one that did.
+    """
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = schema_version
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_authorized"] is True
+
+
+def test_manifest_authorized_still_rejects_a_schema_outside_the_contract():
+    """The gate must discriminate: one below the contract floor stays false.
+
+    Both other legs are healthy here, so a false can only come from the schema
+    leg -- which is what keeps the widened leg a gate rather than a constant.
+    """
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = min(analytics.CAPTURE_SCHEMAS) - 1
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_complete"] is True
+    assert result["manifest_authorized"] is False
+
+
+@pytest.mark.parametrize("leg,value", (
+    ("position_interval", 1.0),
+    ("capabilities", "life,damage,position,frag,assist,break,flag_state,"
+                     "flag_position,objective_attempt"),
+))
+def test_manifest_authorized_still_rejects_each_non_schema_leg(leg, value):
+    """A fielded schema must not launder a bad cadence or a missing stream."""
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = max(analytics.CAPTURE_SCHEMAS)
+    rows["manifests"][0][leg] = value
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_authorized"] is False
 
 
 @pytest.mark.parametrize("missing", (
