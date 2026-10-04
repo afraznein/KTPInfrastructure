@@ -17,6 +17,25 @@ match_context AS (
     WHERE match_id = {{MATCH_ID}}
     GROUP BY match_id
 ),
+producer_coverage AS (
+    -- A producer that had not fired anywhere by the time this match ended did
+    -- not exist for it: its count is unknown, not zero.
+    SELECT
+        EXISTS(SELECT 1 FROM hlstats_Events_PlayerPlayerActions e
+               JOIN hlstats_Actions a ON a.id = e.actionId
+               WHERE a.game = 'dod' AND a.code = 'assist'
+                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+            AS assists_covered,
+        EXISTS(SELECT 1 FROM hlstats_Events_PlayerActions e
+               JOIN hlstats_Actions a ON a.id = e.actionId
+               WHERE a.game = 'dod' AND a.code = 'cap_break'
+                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+            AS breaks_covered,
+        EXISTS(SELECT 1 FROM ktp_flag_captures c
+               WHERE c.event_time <= COALESCE(mc.ended_at, c.event_time))
+            AS captures_covered
+    FROM match_context mc
+),
 roster AS (
     SELECT match_id, player_id, steam_id, player_name, team
     FROM ktp_match_players
@@ -148,7 +167,7 @@ SELECT
     CASE WHEN r.match_id LIKE '%-TEST' THEN 1 ELSE 0 END AS is_test_match,
     COALESCE(k.kills, 0) AS kills,
     COALESCE(dth.deaths, 0) AS deaths,
-    COALESCE(a.assists, 0) AS assists,
+    CASE WHEN pc.assists_covered THEN COALESCE(a.assists, 0) END AS assists,
     COALESCE(k.headshots, 0) AS headshots,
     COALESCE(k.grenade_kills, 0) AS grenade_kills,
     COALESCE(dmg.grenade_damage, 0) AS grenade_damage,
@@ -163,14 +182,15 @@ SELECT
     CASE WHEN mc.duration_seconds = 0 THEN NULL
          ELSE ROUND(COALESCE(sc.score, 0) * 60.0 / mc.duration_seconds, 3)
          END AS points_per_minute,
-    COALESCE(c.capture_credits, 0) AS capture_credits,
-    COALESCE(b.cap_breaks, 0) AS cap_breaks,
+    CASE WHEN pc.captures_covered THEN COALESCE(c.capture_credits, 0) END
+        AS capture_credits,
+    CASE WHEN pc.breaks_covered THEN COALESCE(b.cap_breaks, 0) END AS cap_breaks,
     COALESCE(w.shots, 0) AS shots,
     COALESCE(w.hits, 0) AS hits,
     COALESCE(p.position_samples, 0) AS position_samples,
     CASE WHEN COALESCE(dth.deaths, 0) = 0 THEN NULL
          ELSE ROUND(COALESCE(k.kills, 0) / dth.deaths, 3) END AS kd_ratio,
-    CASE WHEN COALESCE(dth.deaths, 0) = 0 THEN NULL
+    CASE WHEN COALESCE(dth.deaths, 0) = 0 OR NOT pc.assists_covered THEN NULL
          ELSE ROUND((COALESCE(k.kills, 0) + COALESCE(a.assists, 0)) / dth.deaths, 3)
          END AS kda_ratio,
     COALESCE(dmg.damage_dealt, 0) - COALESCE(dmg.damage_taken, 0)
@@ -190,6 +210,7 @@ SELECT
          ELSE ROUND(w.hits / w.shots, 3) END AS raw_accuracy
 FROM roster r
 JOIN match_context mc ON mc.match_id = r.match_id
+CROSS JOIN producer_coverage pc
 LEFT JOIN kills k ON k.player_id = r.player_id
 LEFT JOIN deaths dth ON dth.player_id = r.player_id
 LEFT JOIN teamkills tk ON tk.player_id = r.player_id

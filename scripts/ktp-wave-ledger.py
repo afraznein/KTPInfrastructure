@@ -41,7 +41,9 @@ Three things this deliberately does NOT do:
     `md5sum` and nothing else.
 
 The ledger lives OUTSIDE this repo ($KTP_WAVE_LEDGER_DIR, default ~/.ktp/waves)
--- it is operator state, and this repo is public.
+-- it is operator state, and this repo is public. Several people staging means
+one shared directory, not one per home: ktp-deploy.py points every deployer at
+the same one, and each entry records who staged it (`staged_by`).
 
 Usage:
   ktp-wave-ledger.py status                     # what is pending, and what is due
@@ -284,6 +286,54 @@ def ledger_dir() -> str:
     return os.path.expanduser(os.environ.get("KTP_WAVE_LEDGER_DIR") or DEFAULT_LEDGER_DIR)
 
 
+def deploy_actor() -> str:
+    """Who is running this, for the record. A shared ledger with no name on an
+    entry cannot say whose wave is blocking the next stage.
+
+    $KTP_DEPLOY_ACTOR is what ktp-deploy.py sets; SUDO_USER is the person behind
+    a `sudo`, which `getuser()` would report as root.
+    """
+    for v in (os.environ.get("KTP_DEPLOY_ACTOR"), os.environ.get("SUDO_USER")):
+        if v and v.strip() and v.strip() != "root":
+            return v.strip()
+    try:
+        import getpass
+        return getpass.getuser()
+    except Exception:
+        return "unknown"
+
+
+def _write_json(path: str, entry: dict) -> str:
+    """Write beside `path`, so a reader racing the writer never sees half a file."""
+    tmp = f"{path}.tmp-{os.getpid()}-{time.monotonic_ns()}"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(entry, fh, indent=2)
+        fh.write("\n")
+    return tmp
+
+
+def _publish_new(d: str, stem: str, entry: dict) -> str:
+    """Create wave-<id>.json without ever replacing one that exists.
+
+    An exists-then-open check lets two stagers sharing a ledger both pick the
+    same id and the second silently overwrites the first. os.link refuses an
+    existing target atomically, so the loser moves on to the next suffix.
+    """
+    n = 1
+    while True:
+        wave_id = stem if n == 1 else f"{stem}-{n}"
+        entry["wave_id"] = wave_id
+        path = os.path.join(d, f"wave-{wave_id}.json")
+        tmp = _write_json(path, entry)
+        try:
+            os.link(tmp, path)
+            return path
+        except FileExistsError:
+            n += 1
+        finally:
+            os.unlink(tmp)
+
+
 def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
                 narrowed: bool = False, staged_at: float | None = None) -> str:
     """Write one wave's intent. `artifacts` items: basename, md5, remote_dir, version?, base?
@@ -310,14 +360,11 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
     # Second-resolution ids collide, and a collision would silently overwrite an
     # unreconciled wave -- the one file that must not go missing.
     stem = datetime.fromtimestamp(staged_at, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    wave_id, n = stem, 1
-    while os.path.exists(os.path.join(d, f"wave-{wave_id}.json")):
-        n += 1
-        wave_id = f"{stem}-{n}"
 
     entry = {
-        "wave_id": wave_id,
+        "wave_id": stem,
         "staged_at": int(staged_at),
+        "staged_by": deploy_actor(),
         "activates_after": next_activation(staged_at),
         "hosts": sorted(hosts),
         "targets": targets,
@@ -331,11 +378,7 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
         "reconciled_at": None,
         "reconciled_by": None,
     }
-    path = os.path.join(d, f"wave-{wave_id}.json")
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(entry, fh, indent=2)
-        fh.write("\n")
-    return path
+    return _publish_new(d, stem, entry)
 
 
 def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
@@ -362,9 +405,8 @@ def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
 def mark_reconciled(path: str, entry: dict, by: str) -> None:
     entry["reconciled_at"] = int(time.time())
     entry["reconciled_by"] = by
-    with open(path, "w", encoding="utf-8") as fh:
-        json.dump(entry, fh, indent=2)
-        fh.write("\n")
+    entry["reconciled_actor"] = deploy_actor()
+    os.replace(_write_json(path, entry), path)
 
 
 # --------------------------------------------------------------------------
@@ -453,7 +495,7 @@ def format_block(result: GateResult, claude_md: str | None = None) -> list[str]:
     for entry, bad in result.blocked:
         when = datetime.fromtimestamp(entry["activates_after"], tz=timezone.utc)
         out.append(f"  wave {entry['wave_id']} -- activated at {when:%Y-%m-%d %H:%M} UTC "
-                   f"on {entry['targets']} instance(s)")
+                   f"on {entry['targets']} instance(s), staged by {entry.get('staged_by') or 'NOT RECORDED'}")
         for f in bad:
             out.append(f"    {f.basename}: {f.detail}")
     out += [
@@ -588,8 +630,8 @@ def fleet_read(basenames: dict[str, str], hosts: list[str] | None = None) -> Fle
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            ssh.connect(info["host"], username=info["user"],
-                        password=d2f._fleet_ssh_password(), timeout=30)
+            ssh.connect(info["host"], username=info["user"], timeout=30,
+                        **d2f.fleet_ssh_auth())
             _, so, _ = ssh.exec_command(host_command(ports, basenames, info["user"]), timeout=120)
             parse_host_output(hk, ports, so.read().decode(errors="replace"), basenames, read)
         except Exception as ex:
@@ -704,6 +746,7 @@ def _cmd_status(args) -> int:
         if e.get("reconciled_at"):
             due = f"reconciled by {e['reconciled_by']}"
         print(f"{e['wave_id']}  [{due}]  {e['targets']} instance(s)"
+              f"  staged by {e.get('staged_by') or 'NOT RECORDED'}"
               f"{'  NARROWED (not a fleet wave)' if e.get('narrowed') else ''}")
         for a in e["artifacts"]:
             v = f"  {a['version']}" if a.get("version") else ""

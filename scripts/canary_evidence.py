@@ -349,8 +349,11 @@ def capture_health_evidence(
         int(row.get("correlation_failure_count") or 0) for row in health
     )
     manifest_complete = bool(expected_halves) and manifest_halves == expected_halves
+    # Schema leg reads the producer contract's own set, not a literal. Pinned
+    # to 22 it was false for every match once 22 left the fleet -- a field that
+    # cannot be true carries no information.
     manifest_authorized = manifest_complete and all(
-        int(row.get("schema_version") or 0) == 22
+        int(row.get("schema_version") or 0) in analytics.CAPTURE_SCHEMAS
         and abs(float(row.get("position_interval") or 0) - 2.0) <= 0.01
         and {"objective_attempt", "grenade_entity"}.issubset({
             item.strip() for item in str(row.get("capabilities") or "").split(",")
