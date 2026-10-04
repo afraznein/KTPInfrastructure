@@ -92,8 +92,9 @@ def build_player_halves(
             "points_per_minute": (round(score * 60.0 / duration, 3)
                                   if per_minute else None),
             "grenade_kills": _int(r.get("grenade_kills")),
-            "grenade_damage": _int(r.get("grenade_damage")),
-            "grenade_damage_taken": _int(r.get("grenade_damage_taken")),
+            "grenade_damage": _int(r.get("grenade_damage")) if per_hit_damage else None,
+            "grenade_damage_taken": (_int(r.get("grenade_damage_taken"))
+                                     if per_hit_damage else None),
         })
     mismatched = sorted({
         c for p in players for c in checked

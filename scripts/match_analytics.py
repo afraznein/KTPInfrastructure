@@ -103,7 +103,7 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 23  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band
+SCHEMA_VERSION = 25  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
@@ -880,6 +880,20 @@ ORDER BY half, event_type
     )
 
 
+# Player-fact columns that only ktp_damage_events can supply. damage_dealt is
+# not here: Statsme recovers it.
+PER_HIT_ONLY_FIELDS = (
+    "damage_taken", "damage_differential", "team_damage", "self_damage",
+    "grenade_damage", "grenade_damage_taken",
+)
+
+
+def per_hit_damage_covered(db: EphemeralMysql, match_id: str) -> bool:
+    """Whether ktp_damage_events had started by the time this match ended."""
+    rows = query_rows(db, "damage_coverage.sql", match_id)
+    return bool(rows) and str(rows[0].get("per_hit_damage_covered")) == "1"
+
+
 def install_legacy_compatibility(db: EphemeralMysql) -> None:
     """Install empty optional tables only in the caller's ephemeral database."""
     compatibility = REPO / "sql" / "compatibility" / "legacy_optional_sources.sql"
@@ -1039,7 +1053,7 @@ def evaluate_quality(
     if not sources["per_hit_damage"]:
         checks.append(check(
             "WARN", "damage_source_not_captured",
-            "This archive predates per-hit damage; legacy aggregate damage is shown.",
+            "This match predates per-hit damage; legacy aggregate damage is shown.",
         ))
         v = legacy_damage or {"source": "cache"}
         source = v.get("source")
@@ -1377,6 +1391,12 @@ def duel_matrix_markdown(matrix: dict[str, Any],
     return "\n".join(lines) + "\n"
 
 
+DAMAGE_TOTAL_FIELDS = (
+    "damage_dealt", "damage_taken", "team_damage", "self_damage",
+    "grenade_damage", "grenade_damage_taken",
+)
+
+
 def team_summary(players: list[dict[str, Any]],
                  match: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     additive = (
@@ -1399,13 +1419,15 @@ def team_summary(players: list[dict[str, Any]],
             row[field] += player.get(field, 0) or 0
     duration = float((match or {}).get("duration_seconds") or 0)
     for row in teams.values():
-        has_taken = all(p.get("damage_taken") is not None
-                        for p in players if p.get("team") == row["team"])
-        if not has_taken:
-            row["damage_taken"] = None
-            row["grenade_damage_taken"] = None
+        members = [p for p in players if p.get("team") == row["team"]]
+        # A sum over a missing value is not a total; publish it as unknown.
+        for field in DAMAGE_TOTAL_FIELDS:
+            if any(p.get(field, 0) is None for p in members):
+                row[field] = None
         row["damage_differential"] = (
-            row["damage_dealt"] - row["damage_taken"] if has_taken else None
+            row["damage_dealt"] - row["damage_taken"]
+            if row["damage_dealt"] is not None and row["damage_taken"] is not None
+            else None
         )
         row["raw_accuracy"] = (
             round(row["hits"] / row["shots"], 3) if row["shots"] else None
@@ -1832,6 +1854,8 @@ def build_report(
         sources.get("grenade_entities")
         and capture_stream_authorized(capture_authorization, "grenade_entity")
     )
+    sources["per_hit_damage"] = bool(
+        sources.get("per_hit_damage") and per_hit_damage_covered(db, match_id))
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
@@ -1940,10 +1964,8 @@ def build_report(
         for player in players:
             damage = cached.get(player["player_id"])
             player["damage_dealt"] = damage
-            player["damage_taken"] = None
-            player["damage_differential"] = None
-            player["grenade_damage"] = None
-            player["grenade_damage_taken"] = None
+            for field in PER_HIT_ONLY_FIELDS:
+                player[field] = None
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
@@ -1953,6 +1975,9 @@ def build_report(
                 round(damage / deaths, 2)
                 if damage is not None and deaths else None
             )
+        # Weapon damage has no Statsme split to fall back on here.
+        for weapon in weapons:
+            weapon["damage_dealt"] = None
     if source_mode == "replay":
         for player in players:
             player["damage_per_minute"] = None

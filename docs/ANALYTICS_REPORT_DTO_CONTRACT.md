@@ -19,6 +19,7 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.7.0` | 19 | `map_control` and `progression`'s `teams[]` (flag differential) are now translated to report-team convention — both were silently backwards in half 1 of every two-half match, since DoD swaps Allies/Axis at halftime and these blocks carried raw engine side. Adds top-level `capouts` (completed cap-outs: one side owning every flag, `{half, game_time, team}`) |
 | `analytics-report-dto-v1.8.0` | 20 | `progression` gains `cap_breaks` and `cap_participation` player metrics. Neither needed new capture: `hlstats_Events_PlayerActions` has carried a producer clock for cap breaks since `migrate_021_capture_observability.sql` (KTPHLStatsX), this pipeline had just never probed for it; `cap_participation` reuses `credit_timeline` (the per-credit rows `capture_credit_timeline_fact.sql` already computes for `flag_swing`'s cap-credit join, v1.6.0) — no second query |
 | `analytics-report-dto-v1.10.0` | 23 | `assists`, `cap_breaks`, `capture_credits` and `kda_ratio` are `null`, not `0`, where the match predates the producer (see below). No key is added or removed |
+| `analytics-report-dto-v1.11.0` | 25 | Per-hit damage is decided per match: a match that ended before `ktp_damage_events` began publishes Statsme `damage_dealt` and `null` for the columns only the per-hit ledger supplies (see below). A `teams[]` damage total with any unknown member is `null`. No key is added or removed |
 
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
@@ -90,7 +91,8 @@ half set in `ktp_matches`. It is read from the observer's settled
 A player with no events and no position samples in a half has no row for it.
 Assists have no half column at the source and are placed by event time; cap
 breaks use their producer half when the archive has one, else event time.
-Damage columns are `null` for legacy matches without per-hit damage.
+Damage columns, grenade damage included, are `null` for legacy matches without
+per-hit damage.
 
 From v1.2.0 each row also carries:
 
@@ -310,6 +312,29 @@ tables that predate the whole archive and stay filled.
 Only a rebuilt report changes: one built before this keeps its zeros. The
 report schema did not move, and `contract_version` is stamped when the DTO is
 made, so neither tells an old build from a new one.
+
+## Damage before the per-hit ledger (v1.11.0)
+
+`ktp_damage_events` began partway through the archive (production: the first
+match carrying it started 2026-08-21 21:10 league-local). The table exists for
+every match the live database holds, so the choice is made per match: a match
+is covered when the ledger has a row for it or any row at or before its end.
+
+An uncovered match publishes:
+
+| Key | Value |
+|---|---|
+| `players[].damage_dealt` | From the legacy sources: `ktp_match_stats` half=0 and `hlstats_Events_Statsme`, reconciled as `quality` check `legacy_damage_source` reports. `null` when the two disagree and neither is corroborated |
+| `players[].damage_per_minute`, `.damage_per_life` | From that `damage_dealt` |
+| `players[].damage_taken`, `.damage_differential`, `.grenade_damage`, `.grenade_damage_taken` | `null` |
+| `teams[]` `damage_taken`, `team_damage`, `damage_differential`, `grenade_damage`, `grenade_damage_taken` | `null`; `damage_dealt` is the sum of the players' |
+| `player_halves.rows[]` damage and grenade damage | `null` (legacy damage has no half) |
+| `weapons[].damage_dealt`, `weapon_sides.rows[].damage_dealt` | `null` |
+| `progression` damage | absent (`available.damage` false) |
+
+A covered match is unchanged, and a covered match with no hits reads `0`. Only
+a rebuilt report changes; one already stored keeps its zeros until it is
+regenerated at schema 25.
 
 ## Reports built before schema 11
 
