@@ -13,6 +13,23 @@ halves AS (
     FROM ktp_matches
     WHERE match_id = {{MATCH_ID}} AND half > 0 AND end_time IS NOT NULL
 ),
+producer_coverage AS (
+    -- Per half, as player_match_fact.sql: a producer with no event anywhere
+    -- by the half's end did not exist for it, so its count is unknown.
+    SELECT
+        h.half,
+        EXISTS(SELECT 1 FROM hlstats_Events_PlayerPlayerActions e
+               JOIN hlstats_Actions a ON a.id = e.actionId
+               WHERE a.game = 'dod' AND a.code = 'assist'
+                 AND e.eventTime <= h.end_time) AS assists_covered,
+        EXISTS(SELECT 1 FROM hlstats_Events_PlayerActions e
+               JOIN hlstats_Actions a ON a.id = e.actionId
+               WHERE a.game = 'dod' AND a.code = 'cap_break'
+                 AND e.eventTime <= h.end_time) AS breaks_covered,
+        EXISTS(SELECT 1 FROM ktp_flag_captures c
+               WHERE c.event_time <= h.end_time) AS captures_covered
+    FROM halves h
+),
 roster AS (
     SELECT match_id, player_id, player_name, team
     FROM ktp_match_players
@@ -131,7 +148,7 @@ SELECT
     h.duration_seconds,
     COALESCE(k.kills, 0) AS kills,
     COALESCE(dth.deaths, 0) AS deaths,
-    COALESCE(a.assists, 0) AS assists,
+    CASE WHEN pc.assists_covered THEN COALESCE(a.assists, 0) END AS assists,
     COALESCE(k.headshots, 0) AS headshots,
     COALESCE(k.grenade_kills, 0) AS grenade_kills,
     COALESCE(tk.team_kills, 0) AS team_kills,
@@ -145,13 +162,15 @@ SELECT
     CASE WHEN h.duration_seconds = 0 THEN NULL
          ELSE ROUND(COALESCE(sc.score, 0) * 60.0 / h.duration_seconds, 3)
          END AS points_per_minute,
-    COALESCE(c.capture_credits, 0) AS capture_credits,
-    COALESCE(b.cap_breaks, 0) AS cap_breaks,
+    CASE WHEN pc.captures_covered THEN COALESCE(c.capture_credits, 0) END
+        AS capture_credits,
+    CASE WHEN pc.breaks_covered THEN COALESCE(b.cap_breaks, 0) END AS cap_breaks,
     COALESCE(w.shots, 0) AS shots,
     COALESCE(w.hits, 0) AS hits,
     COALESCE(p.position_samples, 0) AS position_samples
 FROM roster r
 CROSS JOIN halves h
+JOIN producer_coverage pc ON pc.half = h.half
 LEFT JOIN kills k ON k.player_id = r.player_id AND k.half = h.half
 LEFT JOIN deaths dth ON dth.player_id = r.player_id AND dth.half = h.half
 LEFT JOIN teamkills tk ON tk.player_id = r.player_id AND tk.half = h.half

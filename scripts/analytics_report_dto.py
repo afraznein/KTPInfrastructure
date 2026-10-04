@@ -30,7 +30,7 @@ from scripts.in_game_result import unavailable as in_game_unavailable
 from scripts.kill_streaks import DEFINITION as KILL_STREAK_DEFINITION
 from scripts.kill_streaks import DEFINITION_VERSION as KILL_STREAK_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.8.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.9.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -379,9 +379,23 @@ def sanitize_report(report: dict) -> dict:
         "duels_by_side": _duels_by_side_block(report),
         "player_classes": _player_classes_block(report),
     }
+    _unknown_team_totals(dto["teams"], report.get("players") or [])
     dto["box_score_scale"] = _box_score_scale(dto["players"])
     assert_sanitized(dto)
     return dto
+
+
+# Box-score columns whose producer postdates part of the archive. The internal
+# team sum reads a None as 0, so a team of unknowns would publish a false zero.
+PRODUCER_DATED_FIELDS = ("assists", "capture_credits", "cap_breaks")
+
+
+def _unknown_team_totals(teams: list[dict], players: list[dict]) -> None:
+    for team in teams:
+        members = [p for p in players if p.get("team") == team.get("team")]
+        for field in PRODUCER_DATED_FIELDS:
+            if members and all(p.get(field) is None for p in members):
+                team[field] = None
 
 
 PLAYER_FIELDS = (
