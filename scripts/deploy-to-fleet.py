@@ -74,6 +74,25 @@ def _fleet_ssh_password():
     return pw
 
 
+def fleet_ssh_auth():
+    """paramiko.connect() credential kwargs for dodserver.
+
+    $KTP_FLEET_SSH_KEY selects a per-person key and nothing else: with the agent and
+    ~/.ssh fallback left on, a revoked key would keep working through whatever other
+    key the caller happens to hold, and the game hosts' auth log would name that one.
+    Unset, this is the password path exactly as before.
+    """
+    import os
+    key = os.environ.get('KTP_FLEET_SSH_KEY', '').strip()
+    if key:
+        key = os.path.expanduser(key)
+        if not os.path.isfile(key):
+            raise SystemExit(f'$KTP_FLEET_SSH_KEY names {key}, which does not exist — '
+                             'there is no password fallback when a key is configured')
+        return {'key_filename': key, 'allow_agent': False, 'look_for_keys': False}
+    return {'password': _fleet_ssh_password()}
+
+
 # All five active fleet hosts.  Per CLAUDE.md root creds, but we use the
 # dodserver user since all deploy paths land under ~dodserver/.
 # Per-host port lists (mirrors ktp-verify-deploy.py): Chicago 27019 is
@@ -178,7 +197,7 @@ def deploy_to_instance(host_key: str, host_info: dict, port: int, artifacts: lis
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
         ssh.connect(host_info['host'], username=host_info['user'],
-                    password=_fleet_ssh_password(), timeout=timeout)
+                    timeout=timeout, **fleet_ssh_auth())
     except Exception as e:
         for a in artifacts:
             results.append(Outcome(host_key, port, a.basename, 'ssh_fail', str(e)[:80]))
