@@ -192,7 +192,7 @@ def test_box_score_scale_scopes_over_all_players_and_flips_lower_is_better():
 def test_sanitized_report_carries_both_new_blocks():
     from tests.unit.test_analytics_report_dto import internal_report
     out = dto.sanitize_report(internal_report())
-    assert out["contract_version"] == "analytics-report-dto-v1.11.0"
+    assert out["contract_version"] == "analytics-report-dto-v1.12.0"
     assert out["progression"]["status"] == "unavailable"
     assert out["box_score_scale"]["fields"]["kills"]["max_in_match"] == 3
     assert out["box_score_scale"]["fields"]["kills"]["best"] == ["A"]
