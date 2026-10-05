@@ -297,6 +297,10 @@ def curves_by_map(multis, objs, spans, mmap, min_multikills=MIN_MULTIKILLS_FOR_M
 # ---------------------------------------------------------------- scoring
 
 SCORING_FEATURES = ("cap", "hold3", "hold4", "capout")
+MIN_SCORING_HALVES = 12
+# Above this the fit is pricing collinear noise and the map falls back; chosen
+# by bootstrap (README, "Per-map scoring gate").
+MAX_SCORING_CONDITION = 200.0
 
 
 def scoring_features(objs, match, half, team):
@@ -329,6 +333,57 @@ def _solve(A, b):
     return [M_[i][n] / M_[i][i] if abs(M_[i][i]) > 1e-12 else 0.0 for i in range(n)]
 
 
+def _normal_equations(samples):
+    keys = SCORING_FEATURES
+    X = [[f[k] for k in keys] for f, _ in samples]
+    y = [p for _, p in samples]
+    n = len(keys)
+    A = [[sum(X[i][a] * X[i][b] for i in range(len(X))) for b in range(n)] for a in range(n)]
+    b = [sum(X[i][a] * y[i] for i in range(len(X))) for a in range(n)]
+    return A, b
+
+
+def _symmetric_eigenvalues(A, sweeps=100):
+    """Cyclic Jacobi: the eigenvalues of a small symmetric matrix, no solver needed."""
+    n = len(A)
+    a = [row[:] for row in A]
+    for _ in range(sweeps):
+        off = sum(a[i][j] ** 2 for i in range(n) for j in range(n) if i != j)
+        if off < 1e-30:
+            break
+        for p in range(n - 1):
+            for q in range(p + 1, n):
+                if abs(a[p][q]) < 1e-300:
+                    continue
+                theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q])
+                t = (1.0 if theta >= 0 else -1.0) / (abs(theta) + math.sqrt(theta * theta + 1.0))
+                c = 1.0 / math.sqrt(t * t + 1.0)
+                s = t * c
+                for k in range(n):
+                    akp, akq = a[k][p], a[k][q]
+                    a[k][p], a[k][q] = c * akp - s * akq, s * akp + c * akq
+                for k in range(n):
+                    apk, aqk = a[p][k], a[q][k]
+                    a[p][k], a[q][k] = c * apk - s * aqk, s * apk + c * aqk
+    return [a[i][i] for i in range(n)]
+
+
+def scoring_condition(samples):
+    """Condition number of the scoring fit's normal matrix, columns scaled to unit norm.
+
+    Scaling first makes it measure collinearity rather than the fact that hold
+    seconds are larger numbers than caps. A feature that never occurs is inf.
+    """
+    A, _ = _normal_equations(samples)
+    n = len(A)
+    if any(A[i][i] <= 0.0 for i in range(n)):
+        return math.inf
+    d = [1.0 / math.sqrt(A[i][i]) for i in range(n)]
+    eig = _symmetric_eigenvalues([[A[i][j] * d[i] * d[j] for j in range(n)] for i in range(n)])
+    lo, hi = min(eig), max(eig)
+    return hi / lo if lo > 1e-12 * hi else math.inf
+
+
 def fit_scoring(samples):
     """Least squares points = sum(coef * feature), no intercept.
 
@@ -338,11 +393,8 @@ def fit_scoring(samples):
     harrington score differently and get their own once labelled.
     """
     keys = SCORING_FEATURES
-    X = [[f[k] for k in keys] for f, _ in samples]
     y = [p for _, p in samples]
-    n = len(keys)
-    A = [[sum(X[i][a] * X[i][b] for i in range(len(X))) for b in range(n)] for a in range(n)]
-    b = [sum(X[i][a] * y[i] for i in range(len(X))) for a in range(n)]
+    A, b = _normal_equations(samples)
     coef = dict(zip(keys, _solve(A, b)))
     pred = [sum(coef[k] * f[k] for k in keys) for f, _ in samples]
     ybar = sum(y) / len(y) if y else 0.0
