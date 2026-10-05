@@ -83,12 +83,20 @@ journalctl --disk-usage          # default namespace only
 
 ## A size cap is a retention promise that ages out from under you
 
-`/etc/systemd/journald.conf.d/10-ktp-size-cap.conf` sets `SystemMaxUse=1G` and
-says in its own comment that this is "roughly 4 days at the measured ~230MB/day".
-Measured 2026-09-14: the journal spans about two days, so the write rate has
-roughly doubled since the cap was written. **A cap in bytes buys a retention
-window in days only at a rate nobody re-measures**, and nothing anywhere reports
-that the window has halved.
+`/etc/systemd/journald.conf.d/10-ktp-size-cap.conf` (tracked copy:
+`ops/data-server/journald.conf.d/10-ktp-size-cap.conf`) sets `SystemMaxUse` and
+`SystemKeepFree=2G`. It was `1G` on a comment budgeting "roughly 4 days at the
+measured ~230MB/day"; measured, the journal spanned about a day and a half at
+roughly 750MB/day, mostly the hlstatsx daemon's "Flushing player updates" lines.
+The cap is now `8G`, sized for about ten days at that rate. **A cap in bytes buys
+a retention window in days only at a rate nobody re-measures**, and nothing
+anywhere reports that the window has shrunk, so the comment in the file is a
+procedure rather than a number.
+
+Until the 8G file is installed on the host, `/var/log/syslog*` (`ForwardToSyslog=yes`) was the
+longer-lived copy of everything the journal carried. That inverts at 8G, but
+syslog is still rotated by size, so the journal is the one to read first only
+after you have checked its oldest entry.
 
 Two consequences worth separating:
 

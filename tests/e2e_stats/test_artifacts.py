@@ -126,6 +126,7 @@ def daemon_repo(tmp_path):
         (39, "score_round_time_left"),
         (40, "flag_captures_provenance"),
         (41, "shot_hitgroup_rewind"),
+        (42, "aim_vis"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -171,7 +172,11 @@ def test_collect_allows_a_delta_only_daemon(amxx_repo, daemon_repo, tmp_path):
 
 
 def test_default_schema_sequence_includes_retention_through_shot_events():
-    assert DEFAULT_SCHEMA_FILES[-25:] == (
+    # Sliced by the expected tuple's own length, not by a literal. The literal
+    # was 25 and had to be bumped in lockstep with every migration added below
+    # it -- a second edit nothing enforced, and the kind of count that goes
+    # stale silently.
+    expected = (
         "sql/migrate_015_flag_state_events.sql",
         "sql/migrate_016_life_events.sql",
         "sql/migrate_017_capture_clocks_and_assists.sql",
@@ -200,7 +205,9 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_039_score_round_time_left.sql",
         "sql/migrate_040_flag_captures_provenance.sql",
         "sql/migrate_041_shot_hitgroup_rewind.sql",
+        "sql/migrate_042_aim_vis.sql",
     )
+    assert DEFAULT_SCHEMA_FILES[-len(expected):] == expected
 
 
 def test_sma_and_inc_land_in_the_same_directory(amxx_repo, daemon_repo, tmp_path):
