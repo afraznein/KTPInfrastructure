@@ -36,8 +36,11 @@ at the current schema. `report_sync` then inserts those as new rows.
 
 ## `in_game_result`
 
-The game engine's own team score (`source: engine-team-score-v1`, relayed by
-KTPHudObserver). **It is not the league result.** The league result is the
+The game engine's own team score as relayed in-game by KTPHudObserver
+(`source: engine-team-score-v1`). For official matches this is the cross-check;
+the authoritative team score is the `hltv-demo` ledger in
+`ktp_team_score_observations` (operator ruling 2026-10-05, see
+`OFFICIAL_TEAM_SCORE_TELEMETRY.md`). **Neither is the league result.** The league result is the
 captain-reported `ktp.match.home_score` / `away_score`, which this pipeline
 cannot see and which can differ (forfeits, rulings, replays). `authority` is
 always `in_game_team_score`, and `notice` says the same in words.
