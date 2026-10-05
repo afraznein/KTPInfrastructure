@@ -29,8 +29,8 @@
 #              already warns about. Lane A (tier2-integration.yml) is the gate.
 #
 #   `corpus` — MAY gate. Deterministic by construction: committed fixtures, no
-#              bot, no AI. It is required on KTPAMXX `main` and `preprod` as
-#              `corpus-regression / Lane B (corpus, preprod, run 1)`, and it has
+#              bot, no AI. It is required on KTPAMXX `main` as
+#              `corpus-regression / Lane B (corpus, main, run 1)`, and it has
 #              caught a real regression (a migrate_022 failure that reproduced
 #              on two PRs and cleared on the fix). It also runs post-merge on
 #              this repo's `main`, via lane-b-corpus-main.yml — nothing in this
@@ -64,12 +64,6 @@
 # the whole suite runs against the candidate. Empty keeps the baked engine, and
 # nothing falls back — smoking the old engine under a green badge is the one
 # outcome worse than not running at all.
-#
-# A workflow that exists only on preprod cannot be dispatched through GitHub's
-# UI/API because workflow_dispatch registration comes from the default branch.
-# The lane-b-preprod-* tag trigger is the preprod-safe manual run mechanism:
-# tag the reviewed preprod commit, push the tag, and this file runs from that
-# commit while every repository ref under test remains explicitly preprod.
 
 name: Lane B Stats E2E
 
@@ -99,7 +93,7 @@ on:
         description: KTPMatchHandler ref/SHA for the test-mode match driver
         required: false
         type: string
-        default: preprod
+        default: main
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -146,17 +140,17 @@ on:
         description: 'KTPMatchHandler ref/SHA for the test-mode match driver'
         required: true
         type: string
-        default: 'preprod'
+        default: 'main'
       amxx_ref:
         description: 'KTPAMXX ref/SHA under test (e.g. feat/stats-positions)'
         required: true
         type: string
-        default: 'preprod'
+        default: 'main'
       daemon_ref:
         description: 'KTPHLStatsX ref/SHA under test (e.g. feat/seed-cap-break-action)'
         required: true
         type: string
-        default: 'preprod'
+        default: 'main'
       lane:
         description: >-
           'full' = 12 bots (6v6) + server + database + assertion suite. 'corpus' =
@@ -200,14 +194,10 @@ on:
         required: false
         type: string
         default: '360'
-  push:
-    # Manual preprod-only execution. Push events evaluate the workflow in the
-    # tagged commit, so no workflow definition is needed on main.
-    tags: ['lane-b-preprod-*']
   schedule:
-    # 06:00 UTC. Deliberately between publish-base-image (04:30 UTC — so we
-    # pull a fresh base) and Tier 2's nightly (09:00 UTC — so two hlds-booting
-    # suites never overlap).
+    # Requested after publish-base-image (04:30 UTC) so a run usually pulls a
+    # fresh base, but GitHub starts scheduled runs hours late, so neither that
+    # ordering nor separation from Tier 2 (09:00 UTC) is guaranteed.
     - cron: '0 6 * * *'
 
 permissions:
@@ -230,22 +220,16 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 5
-      # Scheduled coverage is intentionally preprod-only until the production
-      # (main) leg is explicitly enabled. Called/manual runs retain their
-      # requested infrastructure ref.
+      # Scheduled runs test main, the production line. Called/manual runs
+      # retain their requested infrastructure ref.
       matrix:
-        target_ref: ${{ (github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/lane-b-preprod-')) && fromJSON('["preprod"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
-        # A series tag fans out five identical disposable jobs. Normal nightly,
-        # manual, and reusable invocations remain one job. The run index is
-        # part of the artifact name so upload-artifact v4 never collides.
-        run_index: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') && fromJSON('[1,2,3,4,5]') || fromJSON('[1]') }}
+        target_ref: ${{ github.event_name == 'schedule' && fromJSON('["main"]') || inputs.infrastructure_ref != '' && fromJSON(format('["{0}"]', inputs.infrastructure_ref)) || fromJSON(format('["{0}"]', github.ref_name)) }}
+        # Part of the artifact name, so upload-artifact v4 never collides.
+        run_index: [1]
 
     env:
       # The harness is NOT part of what a run is testing, so it does not follow
-      # matrix.target_ref -- which the schedule branch hardcodes to preprod, a
-      # branch this repo no longer keeps. lane-c-experimental.yml already draws
-      # this line ("defaults to main, NOT preprod"). target_ref still drives the
-      # three COMPONENT refs below, so scheduled coverage is unchanged.
+      # matrix.target_ref; target_ref drives only the three COMPONENT refs below.
       INFRASTRUCTURE_REF: ${{ inputs.infrastructure_ref || 'main' }}
       MATCHHANDLER_REF: ${{ inputs.matchhandler_ref || matrix.target_ref }}
       AMXX_REF: ${{ inputs.amxx_ref || matrix.target_ref }}
@@ -662,48 +646,4 @@ jobs:
             build/lane-b-artifacts/daemon/PROVENANCE
             build/lane-b-artifacts/engine/provenance.json
           if-no-files-found: warn
-          retention-days: 30
-
-  compare-series:
-    name: Compare five Lane B reports
-    needs: lane-b
-    if: ${{ startsWith(github.ref, 'refs/tags/lane-b-preprod-series-') }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout KTPInfrastructure
-        uses: actions/checkout@v4
-
-      - name: Download all five match-report artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: lane-b-reports-${{ github.run_id }}-*
-          path: build/series-input
-
-      - name: Build and verify the five-match comparison
-        shell: bash
-        run: |
-          set -euo pipefail
-          mapfile -t reports < <(find build/series-input -type f -path '*/match-report/report.json' -printf '%h\n' | sort)
-          test "${#reports[@]}" -eq 5
-          mkdir -p build/series-report
-          python3 scripts/compare_v5_report_series.py \
-            --output-dir build/series-report \
-            "${reports[@]}"
-          for index in 1 2 3 4 5; do
-            source_dir="build/series-input/lane-b-reports-${GITHUB_RUN_ID}-${index}"
-            test -d "${source_dir}/match-report"
-            mkdir -p "build/series-report/run-${index}"
-            cp -a "${source_dir}/match-report" "build/series-report/run-${index}/match-report"
-            cp -a "${source_dir}/lane-b-summary.md" "build/series-report/run-${index}/lane-b-summary.md"
-            cp -a "${source_dir}/bundle-provenance.md" "build/series-report/run-${index}/bundle-provenance.md"
-          done
-          cat build/series-report/SERIES_COMPARISON.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload five-match comparison
-        uses: actions/upload-artifact@v4
-        with:
-          name: lane-b-series-comparison-${{ github.run_id }}
-          path: build/series-report/
-          if-no-files-found: error
           retention-days: 30
