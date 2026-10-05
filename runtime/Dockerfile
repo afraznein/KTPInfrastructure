@@ -58,15 +58,23 @@ RUN dpkg --add-architecture i386 && \
 # This is identical to what LinuxGSM runs during `./dodserver auto-install`.
 # Installs to /opt/hlds producing the same layout as production Denver 5:
 #   /opt/hlds/hlds_linux, /opt/hlds/dod/, /opt/hlds/valve/, Steam runtime .so files
+# Retried because Steam intermittently ends the update job in state 0x202 or
+# 0x10E (steamcmd exit 8) on a healthy network, and a rerun completes it.
 RUN mkdir -p /opt/hlds && \
-    /usr/games/steamcmd \
-        +force_install_dir /opt/hlds \
-        +login anonymous \
-        +app_set_config 90 mod dod \
-        +app_update 90 validate \
-        +app_set_config 90 mod dod \
-        +app_update 90 validate \
-        +quit
+    for attempt in 1 2 3; do \
+        /usr/games/steamcmd \
+            +force_install_dir /opt/hlds \
+            +login anonymous \
+            +app_set_config 90 mod dod \
+            +app_update 90 validate \
+            +app_set_config 90 mod dod \
+            +app_update 90 validate \
+            +quit && break; \
+        rc=$?; \
+        if [ "$attempt" -eq 3 ]; then exit "$rc"; fi; \
+        echo "steamcmd exited $rc on attempt $attempt; retrying in 30s" >&2; \
+        sleep 30; \
+    done
 
 # --- KTP Build Artifacts (overlay on top of stock HLDS) ---
 # Engine (KTP-ReHLDS — replaces stock hlds_linux, engine_i486.so, libsteam_api.so)
