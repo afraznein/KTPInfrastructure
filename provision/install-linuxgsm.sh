@@ -316,6 +316,9 @@ port="$BASE_PORT"
 clientport="$((BASE_PORT - 10))"
 ip="$SERVER_IP"
 
+# Console-log retention; _default.cfg carries 7 and a rebuild would revert to it
+logdays="21"
+
 # Startup parameters
 startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
 EOF
@@ -352,6 +355,9 @@ for i in $(seq 2 $NUM_INSTANCES); do
 port="$PORT"
 clientport="$((PORT - 10))"
 ip="$SERVER_IP"
+
+# Console-log retention; _default.cfg carries 7 and a rebuild would revert to it
+logdays="21"
 
 # Startup parameters
 startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"

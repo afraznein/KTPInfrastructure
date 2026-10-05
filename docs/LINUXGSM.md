@@ -23,6 +23,16 @@ LinuxGSM loads configs in this order (later files override earlier):
 
 **Important**: Instance configs (dodserver2.cfg, etc.) must be in the `dodserver/` folder, NOT in a separate `dodserver2/` folder!
 
+### Console-log retention: `logdays` is 21 per instance, not 7
+
+`_default.cfg` still reads `logdays="7"`, so a reader who checks only that file gets the wrong
+answer. Every live instance overrides it to `logdays="21"` in its own `dodserver*.cfg`, and the
+provisioning scripts write that line into each instance config they create. An instance rebuilt
+from anything else (a hand-made config, an older tarball) reverts to 7 with no error. Console
+logs are where drop reasons and `[KTP_OPCODE]` lines live, and nothing else holds them, so a
+shorter window leaves a late report with no pre-onset baseline. Check the effective value with
+`grep -h '^logdays' lgsm/config-lgsm/dodserver/*.cfg` per instance, never `_default.cfg` alone.
+
 ### Default Server Settings
 When deploying new servers, use these settings in `common.cfg`:
 ```
