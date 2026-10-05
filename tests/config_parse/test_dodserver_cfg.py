@@ -157,6 +157,29 @@ def test_online_example_keeps_the_anti_lockout_settings():
 
 
 
+AVG_LIMIT_PROFILES = [
+    ("local", CONFIG_ROOT / "local" / "dodserver.cfg"),
+    ("online_example", CONFIG_ROOT / "online" / "dodserver.cfg.example"),
+    ("lan_example", CONFIG_ROOT / "lan" / "dodserver.cfg.example"),
+]
+
+
+@pytest.mark.parametrize("path", [p for _, p in AVG_LIMIT_PROFILES],
+                         ids=[label for label, _ in AVG_LIMIT_PROFILES])
+def test_cmdrate_avg_limits_match_the_fleet(path):
+    """The fleet runs these values. The engine defaults punish a client that
+    floods commands catching up after a stall, so a config rebuilt from a
+    template without them brings those kicks back."""
+    cvars = parse_dodserver_cfg(path)
+    for cvar, expected in (
+        ("sv_rehlds_movecmdrate_max_avg", "10000"),
+        ("sv_rehlds_stringcmdrate_max_avg", "800"),
+    ):
+        assert cvars.get(cvar) == expected, (
+            f"{path.name}: {cvar} should be {expected!r}, got {cvars.get(cvar)!r}"
+        )
+
+
 # Where each profile's launch command line is declared. sys_ticrate is only
 # right or wrong relative to these flags, so the test reads both.
 INFRA_ROOT = CONFIG_ROOT.parent
