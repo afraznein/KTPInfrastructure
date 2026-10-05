@@ -168,6 +168,10 @@ under `/opt/ktp-tier2-runner`, which is CI scratch and gets wiped. Not
 `/opt/ktp-infra` either — that is a separate, deliberately stale copy that the
 weekly fleet audit runs from and that never pulls.
 
+To inspect this checkout, run git as its owner: `sudo runuser -u ktpreports -- git -C /opt/ktp-reports/KTPInfrastructure log -1`.
+Root's git refuses a repository it does not own and prints an empty remote, which reads as
+"there is no checkout here".
+
 ```bash
 sudo install -d -o ktpreports -g ktpreports /opt/ktp-reports
 sudo -u ktpreports git clone https://github.com/afraznein/KTPInfrastructure.git \
@@ -330,3 +334,65 @@ When you move the floor for a new season, move it on all three `ExecStart` lines
 
 Nothing is lost by a late install. `generate` reads `hlstatsx` retroactively, so
 matches played before the timer existed still publish on the first run.
+
+## Regenerating reports by hand: the gated workflow
+
+Regeneration runs from GitHub, not from a shell on the box:
+**Actions → Report Regeneration → Run workflow**, on `main`. The job runs on the
+tier-2 runner, which is root on this server, so every run is a production
+change and waits for an approval click before it starts.
+
+**Who can trigger it:** anyone with write access to this repository (that is
+what `workflow_dispatch` requires). **Who lets it run:** the required reviewer
+on the `report-regeneration` environment, the operator (`afraznein`). A run
+nobody approves sits in "Waiting" and does nothing.
+
+**Dry run first.** `dry_run` defaults to on. A dry run persists nothing, syncs
+nothing and refreshes no cache: it runs `generate --dry-run` (how many reports
+would be built) and `report_sync --dry-run` (what would be pushed), and the job
+summary shows the counts. Read them, then dispatch again with `dry_run` off.
+Each dispatch needs its own approval.
+
+Inputs:
+
+| Input | Meaning |
+|---|---|
+| `scope = pending` | Exactly what the 15-minute timer runs: `systemctl start ktp-reports.service`. After a report schema bump lands on main this is the corpus-wide regeneration, because `generate` revisits every report stamped at an older schema version. |
+| `scope = match_ids` | A new revision for the listed matches (`generate <ids>`), then the service for aggregate and sync. Refused while the service is running or when the next timer tick is under 8 minutes away, because `generate` has no lock against the timer. |
+| `dry_run` | On by default. Off means it writes. |
+| `reason` | Required. Logged with your GitHub login in the job log and in `/var/log/ktp-report-regeneration.log`. |
+
+There is no date-range scope: `generate --since` only floors discovery, and the
+season floor is read from the installed unit, never typed in.
+
+What the job refuses, before running anything:
+
+- `/opt/ktp-reports/KTPInfrastructure` dirty (any modified or untracked path).
+- Its HEAD not equal to `origin/main` after a fetch, or the dispatched commit
+  not equal to that same commit. The job fetches (one ref, `--refmap=`, as
+  `ktpreports`) and never pulls, merges or checks out, so a behind checkout
+  stays behind and the run stops. Bring the checkout to main first, as its
+  owner: `sudo runuser -u ktpreports -- git -C /opt/ktp-reports/KTPInfrastructure merge --ff-only origin/main`.
+- A dispatch from any branch other than `main`.
+
+What it prints: counts only. Reports name players, so the pipeline's own output
+(match ids, names, errors) goes to `/var/log/ktp-report-regeneration.log`
+(root-only, `0600`) and `/var/log/ktp-report-service.log`, never to the public
+Actions log.
+
+Site cache: a real run refreshes it the way the timer does, through
+`report_sync`'s revalidate call, which fires only after it pushed at least one
+report. A dry run never refreshes it.
+
+Interim: Drew's manual regeneration runs on the box end when this workflow
+first runs green, or on 2026-10-31, whichever comes first.
+
+### One-time setup (operator)
+
+1. Settings → Environments → New environment `report-regeneration`.
+2. Required reviewers: `afraznein`. Deployment branches: `main` only.
+3. Leave "Prevent self-review" off if you want to approve your own dispatches.
+
+The workflow never creates or edits the environment. Until it exists, the
+first dispatch creates an environment with no protection rules, so create it
+before anyone dispatches.

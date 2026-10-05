@@ -103,13 +103,17 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 23  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band
+SCHEMA_VERSION = 25  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
 # a field this code reads must not be added here without checking that read.
-CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25})
-POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25})
+CAPTURE_SCHEMAS = frozenset({22, 23, 24, 25, 26})
+POSITION_PROVENANCE_SCHEMAS = frozenset({23, 24, 25, 26})
+# From schema 24 the producer numbers each stream from its own sequence and the
+# daemon tracks gaps per stream, so a row's gap counter describes that stream
+# alone. Older producers shared one sequence and every row carried the half's.
+PER_STREAM_SEQUENCE_SCHEMA = 24
 # The health streams EVERY producer contract emits, schema 21 onward. All of
 # these must appear exactly once per half; a missing one means that stream went
 # dark, which is the defect this list exists to catch.
@@ -143,6 +147,14 @@ CAPTURE_EVENT_TYPES_OPTIONAL = (
     # Movement census (KTPAMXX #142). Capability-gated in the daemon, so a
     # producer that does not announce it simply emits no row.
     "move",
+    # Aim-vs-transmission census (KTPHLStatsX migration 042). Listed before any
+    # producer exists, deliberately: ksc_emit_health loops over the plugin's
+    # whole event enum, so the first build that gains the stream emits a health
+    # row for it whether or not it advertises the capability -- and an unknown
+    # type fails capture_health for every half. `move` did exactly that on
+    # 2026-09-29, taking four Lane B assertions and a report authorization down
+    # with it.
+    "aim_vis",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
@@ -433,13 +445,10 @@ def _half_scoped(rows: list[dict[str, Any]], key: str) -> int:
 def _half_sequence_errors(
     half: int, rows: list[dict[str, Any]], intake_shortfall: int,
 ) -> list[str]:
-    """Half-wide sequence evidence that no single stream can own.
+    """Pre-schema-24 halves: one shared sequence, its gap stamped into every row.
 
-    Both counters are HALF-scoped -- the daemon stamps one per-half value into
-    every event type's row, so a gap is non-zero even on a stream that emitted
-    nothing. A gap is intake loss already charged to the stream whose `emitted`
-    exceeds its `daemon_received`; only the unaccounted residual is match-level.
-    """
+    A gap is intake loss already charged to the stream whose `emitted` exceeds
+    its `daemon_received`; only the unaccounted residual is match-level."""
     errors = []
     duplicates = _half_scoped(rows, "duplicate_or_reordered_count")
     if duplicates:
@@ -451,6 +460,64 @@ def _half_sequence_errors(
         errors.append(
             f"half {half} has {residual} sequence-gap line(s) no stream's "
             "emitted/received shortfall accounts for")
+    return errors
+
+
+def _reconcile_failures(counters: dict[str, int]) -> list[str]:
+    """Name each counter disagreement, so a withheld stream says WHERE it lost
+    data: the producer, the trip to the daemon, or the daemon's own rejection."""
+    failures = []
+    if min(counters.values()) < 0:
+        failures.append("a counter is negative")
+    if counters["dropped"]:
+        failures.append(f"producer dropped {counters['dropped']}")
+    if counters["attempted"] != counters["enqueued"] + counters["dropped"]:
+        failures.append(
+            f"attempted {counters['attempted']} != enqueued "
+            f"{counters['enqueued']} + dropped {counters['dropped']}")
+    if counters["enqueued"] != counters["emitted"]:
+        failures.append(
+            f"enqueued {counters['enqueued']} != emitted {counters['emitted']}")
+    if counters["emitted"] > counters["daemon_received"]:
+        failures.append(
+            f"{counters['emitted'] - counters['daemon_received']} of "
+            f"{counters['emitted']} emitted never reached the daemon")
+    elif counters["emitted"] < counters["daemon_received"]:
+        failures.append(
+            f"daemon received {counters['daemon_received']}, more than the "
+            f"{counters['emitted']} emitted")
+    if (counters["daemon_accepted"] + counters["daemon_rejected"]
+            != counters["daemon_received"]):
+        failures.append(
+            f"accepted {counters['daemon_accepted']} + rejected "
+            f"{counters['daemon_rejected']} != received "
+            f"{counters['daemon_received']}")
+    if counters["daemon_rejected"]:
+        failures.append(f"daemon rejected {counters['daemon_rejected']}")
+    if counters["correlation_failure_count"]:
+        failures.append(
+            f"{counters['correlation_failure_count']} correlation failure(s)")
+    return failures
+
+
+def _stream_sequence_errors(half: int, row: dict[str, Any]) -> list[str]:
+    """Schema 24 onward: a lost line is both a gap and a shortfall, so only the
+    gap its own shortfall cannot explain is new evidence. Tail loss leaves no
+    gap, hence a clipped residual rather than an equality."""
+    event_type = str(row.get("event_type") or "") or "<empty>"
+    errors = []
+    duplicates = int(row.get("duplicate_or_reordered_count") or 0)
+    if duplicates:
+        errors.append(
+            f"half {half} {event_type} reports {duplicates} duplicate or "
+            "reordered line(s) on its sequence")
+    shortfall = max(0, int(row.get("emitted") or 0)
+                    - int(row.get("daemon_received") or 0))
+    residual = int(row.get("sequence_gap_count") or 0) - shortfall
+    if residual > 0:
+        errors.append(
+            f"half {half} {event_type} has {residual} sequence-gap line(s) its "
+            "own emitted/received shortfall does not account for")
     return errors
 
 
@@ -563,6 +630,12 @@ def evaluate_capture_authorization(
                             "receipt latency "
                             f"{latency}s is outside inclusive 0..3s policy"
                         )
+    # A half with no manifest already fails the match, so its mode is moot.
+    per_stream_sequence: dict[int, bool] = {}
+    for row in manifests:
+        half = int(row.get("half") or 0)
+        per_stream_sequence[half] = per_stream_sequence.get(half, True) and (
+            int(row.get("schema_version") or 0) >= PER_STREAM_SEQUENCE_SCHEMA)
     streams: dict[str, dict[str, int]] = {}
     for half in sorted(observed):
         rows = [row for row in health if int(row.get("half") or 0) == half]
@@ -599,20 +672,12 @@ def evaluate_capture_authorization(
             shortfall_by_type.setdefault(
                 event_type,
                 max(0, counters["emitted"] - counters["daemon_received"]))
-            if (
-                min(counters.values()) < 0
-                or counters["attempted"] != counters["enqueued"] + counters["dropped"]
-                or counters["enqueued"] != counters["emitted"]
-                or counters["emitted"] != counters["daemon_received"]
-                or counters["daemon_accepted"] + counters["daemon_rejected"]
-                    != counters["daemon_received"]
-                or any(counters[key] for key in (
-                    "dropped", "daemon_rejected", "correlation_failure_count",
-                ))
-            ):
+            failures = _reconcile_failures(counters)
+            if failures:
                 stream_error(
                     event_type,
-                    f"half {half} {event_type or '<empty>'} counters do not reconcile")
+                    f"half {half} {event_type or '<empty>'} counters do not "
+                    f"reconcile: {'; '.join(failures)}")
             stream = streams.setdefault(event_type, {
                 "attempted": 0, "enqueued": 0, "emitted": 0,
                 "received": 0, "accepted": 0,
@@ -623,12 +688,17 @@ def evaluate_capture_authorization(
                 ("accepted", "daemon_accepted"),
             ):
                 stream[target] += counters[source]
-        # A repeated or unknown type means the half's rows cannot be trusted to
-        # account for its gaps, so credit nothing and let the residual stand.
-        match_errors += _half_sequence_errors(
-            half, rows,
-            0 if unknown or len(types) != len(observed_types)
-            else sum(shortfall_by_type.values()))
+        if per_stream_sequence.get(half):
+            for row in rows:
+                for message in _stream_sequence_errors(half, row):
+                    stream_error(str(row.get("event_type") or ""), message)
+        else:
+            # A repeated or unknown type means the half's rows cannot be trusted
+            # to account for its gaps, so credit nothing and let the residual stand.
+            match_errors += _half_sequence_errors(
+                half, rows,
+                0 if unknown or len(types) != len(observed_types)
+                else sum(shortfall_by_type.values()))
     match_ok = not match_errors and bool(observed)
     # Every contracted stream gets a verdict, plus any optional stream the
     # producer actually emitted. An unknown type is already a match error, so
@@ -818,6 +888,20 @@ ORDER BY half, event_type
     )
 
 
+# Player-fact columns that only ktp_damage_events can supply. damage_dealt is
+# not here: Statsme recovers it.
+PER_HIT_ONLY_FIELDS = (
+    "damage_taken", "damage_differential", "team_damage", "self_damage",
+    "grenade_damage", "grenade_damage_taken",
+)
+
+
+def per_hit_damage_covered(db: EphemeralMysql, match_id: str) -> bool:
+    """Whether ktp_damage_events had started by the time this match ended."""
+    rows = query_rows(db, "damage_coverage.sql", match_id)
+    return bool(rows) and str(rows[0].get("per_hit_damage_covered")) == "1"
+
+
 def install_legacy_compatibility(db: EphemeralMysql) -> None:
     """Install empty optional tables only in the caller's ephemeral database."""
     compatibility = REPO / "sql" / "compatibility" / "legacy_optional_sources.sql"
@@ -977,7 +1061,7 @@ def evaluate_quality(
     if not sources["per_hit_damage"]:
         checks.append(check(
             "WARN", "damage_source_not_captured",
-            "This archive predates per-hit damage; legacy aggregate damage is shown.",
+            "This match predates per-hit damage; legacy aggregate damage is shown.",
         ))
         v = legacy_damage or {"source": "cache"}
         source = v.get("source")
@@ -1315,6 +1399,12 @@ def duel_matrix_markdown(matrix: dict[str, Any],
     return "\n".join(lines) + "\n"
 
 
+DAMAGE_TOTAL_FIELDS = (
+    "damage_dealt", "damage_taken", "team_damage", "self_damage",
+    "grenade_damage", "grenade_damage_taken",
+)
+
+
 def team_summary(players: list[dict[str, Any]],
                  match: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     additive = (
@@ -1337,13 +1427,15 @@ def team_summary(players: list[dict[str, Any]],
             row[field] += player.get(field, 0) or 0
     duration = float((match or {}).get("duration_seconds") or 0)
     for row in teams.values():
-        has_taken = all(p.get("damage_taken") is not None
-                        for p in players if p.get("team") == row["team"])
-        if not has_taken:
-            row["damage_taken"] = None
-            row["grenade_damage_taken"] = None
+        members = [p for p in players if p.get("team") == row["team"]]
+        # A sum over a missing value is not a total; publish it as unknown.
+        for field in DAMAGE_TOTAL_FIELDS:
+            if any(p.get(field, 0) is None for p in members):
+                row[field] = None
         row["damage_differential"] = (
-            row["damage_dealt"] - row["damage_taken"] if has_taken else None
+            row["damage_dealt"] - row["damage_taken"]
+            if row["damage_dealt"] is not None and row["damage_taken"] is not None
+            else None
         )
         row["raw_accuracy"] = (
             round(row["hits"] / row["shots"], 3) if row["shots"] else None
@@ -1770,6 +1862,8 @@ def build_report(
         sources.get("grenade_entities")
         and capture_stream_authorized(capture_authorization, "grenade_entity")
     )
+    sources["per_hit_damage"] = bool(
+        sources.get("per_hit_damage") and per_hit_damage_covered(db, match_id))
     match_rows = query_rows(db, "match_fact.sql", match_id)
     players = query_rows(db, "player_match_fact.sql", match_id)
     weapons = query_rows(db, "weapon_fact.sql", match_id)
@@ -1878,10 +1972,8 @@ def build_report(
         for player in players:
             damage = cached.get(player["player_id"])
             player["damage_dealt"] = damage
-            player["damage_taken"] = None
-            player["damage_differential"] = None
-            player["grenade_damage"] = None
-            player["grenade_damage_taken"] = None
+            for field in PER_HIT_ONLY_FIELDS:
+                player[field] = None
             player["damage_per_minute"] = (
                 round(damage * 60.0 / duration, 2)
                 if damage is not None and duration else None
@@ -1891,6 +1983,9 @@ def build_report(
                 round(damage / deaths, 2)
                 if damage is not None and deaths else None
             )
+        # Weapon damage has no Statsme split to fall back on here.
+        for weapon in weapons:
+            weapon["damage_dealt"] = None
     if source_mode == "replay":
         for player in players:
             player["damage_per_minute"] = None

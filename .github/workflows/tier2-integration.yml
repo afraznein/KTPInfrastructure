@@ -166,6 +166,9 @@ jobs:
       # fleet, and currently does. Set this input to smoke a build that leads
       # the pin; it is now honoured rather than silently overwritten.
       KTP_EXPECTED_MATCHHANDLER_VERSION: ${{ inputs.matchhandler_version || '' }}
+      # The reviewed KTPMatchHandler commit. One value, read by the checkout AND
+      # asserted by the build, so the build cannot certify a different tree.
+      KTP_MATCHHANDLER_SHA: 17f2d8fd609250ad880c04bdec75cfc3ddb402b1
 
     steps:
       - name: Checkout
@@ -243,7 +246,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ github.repository_owner }}/KTPMatchHandler
-          ref: b3b3d93158110e2a9f45a8b444cabfea27ace1c4
+          ref: ${{ env.KTP_MATCHHANDLER_SHA }}
           path: .tier2/KTPMatchHandler
 
       - name: Checkout reviewed KTPAMXX preprod includes
@@ -265,6 +268,8 @@ jobs:
           WORK="$(mktemp -d)"
           trap 'rm -rf "$WORK"' EXIT
 
+          BUILD_SHA="$(bash "$GITHUB_WORKSPACE/scripts/tier2-require-sha.sh" "$SRC" "$KTP_MATCHHANDLER_SHA")"
+
           mkdir -p "$WORK/include"
           cp "$TOOLCHAIN"/include/*.inc "$WORK/include/"
           # Current MatchHandler consumes DODX aim-stat natives that predate
@@ -274,7 +279,7 @@ jobs:
           cp "$SRC"/*.inc "$WORK/" 2>/dev/null || true
           tr -d '\r' < "$SRC/KTPMatchHandler.sma" > "$WORK/KTPMatchHandler.sma"
           printf '#define KTP_BUILD_SHA "%s"\n#define KTP_BUILD_TIME "%s"\n' \
-            "$(git -C "$SRC" rev-parse --short HEAD)" "$(date -u +%Y-%m-%dT%H:%MZ)" \
+            "$BUILD_SHA" "$(date -u +%Y-%m-%dT%H:%MZ)" \
             > "$WORK/include/build_info.inc"
 
           ( cd "$WORK" && \
@@ -305,7 +310,7 @@ jobs:
           else
             echo "KTP_EXPECTED_MATCHHANDLER_VERSION=$VER" >> "$GITHUB_ENV"
           fi
-          echo "Installed reviewed KTPMatchHandler $VER test build ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
+          echo "Installed reviewed KTPMatchHandler $VER test build from $BUILD_SHA ($(stat -c%s "$SF/dod/addons/ktpamx/plugins/KTPMatchHandler.amxx") bytes)."
 
       # Re-landed 2026-08-04 from the closed-unmerged PR #33. The runner's copy
       # had drifted a MONTH (staged Jul 3) because it was hand-staged and nothing

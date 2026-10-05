@@ -118,6 +118,16 @@ DEFAULT_SCHEMA_FILES = (
     # score INSERT names ktp_score_events.round_time_left, so a lane without it
     # fails every score row.
     "sql/migrate_039_score_round_time_left.sql",
+    # Proposed for production. The daemon's flag-capture INSERT does not name
+    # either new column, so applying it here proves that INSERT still lands.
+    "sql/migrate_040_flag_captures_provenance.sql",
+    # The schema-26 daemon names hitgroup/rw_* in every shot INSERT and
+    # sv_maxunlag in every manifest INSERT, so a lane without it fails both.
+    "sql/migrate_041_shot_hitgroup_rewind.sql",
+    # Proposed for production, and applied here for the same reason 038 is: the
+    # daemon INSERTs into ktp_aim_vis, so a lane without the table exercises the
+    # new handler as a no-op and reports clean either way.
+    "sql/migrate_042_aim_vis.sql",
 )
 
 DEFAULT_SEED_FILES = (

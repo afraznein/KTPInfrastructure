@@ -305,11 +305,30 @@ def capture_health_evidence(
         for half in expected_halves
     )
     drops = sum(int(row.get("dropped") or 0) for row in health)
-    gaps = max((int(row.get("sequence_gap_count") or 0) for row in health), default=0)
-    duplicates = max(
-        (int(row.get("duplicate_or_reordered_count") or 0) for row in health),
-        default=0,
-    )
+    # Pre-schema-24 producers shared one sequence and the daemon stamped the
+    # half's counter into every row, so max() was the half's figure. From
+    # schema 24 each row owns its stream's counter and max() reports only the
+    # worst stream -- five streams losing two lines each would read as two.
+    # Conservative mid-rollout, matching match_analytics: a half counts as
+    # per-stream only when EVERY manifest for it is at or past the schema.
+    per_stream: dict[int, bool] = {}
+    for row in manifests:
+        half = int(row.get("half") or 0)
+        per_stream[half] = per_stream.get(half, True) and (
+            int(row.get("schema_version") or 0)
+            >= analytics.PER_STREAM_SEQUENCE_SCHEMA)
+
+    def _sequence_total(key: str) -> int:
+        total = 0
+        for half in {int(row.get("half") or 0) for row in health}:
+            values = [int(row.get(key) or 0) for row in health
+                      if int(row.get("half") or 0) == half]
+            total += (sum(values) if per_stream.get(half, False)
+                      else max(values, default=0))
+        return total
+
+    gaps = _sequence_total("sequence_gap_count")
+    duplicates = _sequence_total("duplicate_or_reordered_count")
     mismatches = [row for row in health if int(row.get("emitted") or 0)
                   != int(row.get("daemon_received") or 0)]
     attempted_mismatches = [
@@ -330,8 +349,11 @@ def capture_health_evidence(
         int(row.get("correlation_failure_count") or 0) for row in health
     )
     manifest_complete = bool(expected_halves) and manifest_halves == expected_halves
+    # Schema leg reads the producer contract's own set, not a literal. Pinned
+    # to 22 it was false for every match once 22 left the fleet -- a field that
+    # cannot be true carries no information.
     manifest_authorized = manifest_complete and all(
-        int(row.get("schema_version") or 0) == 22
+        int(row.get("schema_version") or 0) in analytics.CAPTURE_SCHEMAS
         and abs(float(row.get("position_interval") or 0) - 2.0) <= 0.01
         and {"objective_attempt", "grenade_entity"}.issubset({
             item.strip() for item in str(row.get("capabilities") or "").split(",")

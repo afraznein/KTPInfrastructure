@@ -97,6 +97,28 @@
 #                                  default recipient is a key somebody else holds
 #   KTP_CORPUS_ENC_CACHE           local ciphertext cache (default below). Holds
 #                                  one .age per bundle; sized like the corpus
+#   KTP_WEAPON_CONTEXT_SRC         the AC weapon-context store (default below)
+#
+# THE SECOND SOURCE: WEAPON-CONTEXT SIDECARS. The AC API keeps each session's
+# weapon timeline as <shard>/<session>.weapons.json, and once the nightly sweep
+# deletes the database rows behind it the sidecar is the ONLY copy. The files
+# carry victim SteamIDs, so they get exactly the bundles' treatment: same
+# recipients, encrypted manifest, counts in the log and never a name. They land
+# under their own far-side prefix, <dest>/weapon-context/, so a bundle restore and
+# a sidecar restore never read each other's objects:
+#
+#   <dest>/weapon-context/objects/<sha256-of-plaintext>.age
+#   <dest>/weapon-context/ktp-weapon-context-manifest.txt.age        (current)
+#   <dest>/weapon-context/manifests/ktp-weapon-context-manifest-<UTC>.txt.age
+#
+# Unlike a bundle, a sidecar is REWRITTEN IN PLACE when a later hydrate is more
+# complete. A rewrite has a new hash and therefore a new object, and the old one
+# stays: the far side is append-only like everything else here. What says which
+# object is the current version of a file is the stable manifest, which is
+# rewritten every run from what this run read; the dated manifests are the only
+# map to the older versions. The sidecars are copied into the work dir before
+# they are hashed, because the writer replaces a file by rename at any moment
+# and a hash taken from one version must not name the ciphertext of the next.
 #
 # Run on the data server, where the corpus already is. Dry run is the default;
 # it takes --commit to move anything, matching push-corpus.py and
@@ -112,6 +134,9 @@ RSYNC_RSH="${KTP_OFFSITE_RSYNC_RSH:-}"
 DEST="${KTP_OFFSITE_RSYNC_CORPUS_DIR:-}"
 CACHE="${KTP_CORPUS_ENC_CACHE:-/var/lib/ktp-corpus-offsite/enc}"
 RECIPIENTS="${KTP_CORPUS_AGE_RECIPIENTS:-}"
+WC_SRC="${KTP_WEAPON_CONTEXT_SRC:-/opt/ktp-ac-api/weapon-context}"
+WC_PREFIX="weapon-context"
+WC_MANIFEST_NAME="ktp-weapon-context-manifest.txt.age"
 
 COMMIT=0
 for arg in "$@"; do
@@ -131,6 +156,7 @@ fail() { echo "[corpus-offsite] FAILED: $*" >&2; exit 1; }
 [ "$DEST" != "${KTP_OFFSITE_RSYNC_DB_DIR:-}" ] \
     || fail "KTP_OFFSITE_RSYNC_CORPUS_DIR is the same path as the DB dumps (KTP_OFFSITE_RSYNC_DB_DIR)."
 [ -d "$SRC" ] || fail "source $SRC does not exist"
+[ -d "$WC_SRC" ] || fail "weapon-context store $WC_SRC does not exist -- its sidecars are the only copy once the DB rows are swept"
 
 command -v age >/dev/null 2>&1     || fail "age is not installed. This leg does not ship plaintext evidence; install age rather than removing the encryption."
 [ -n "$RECIPIENTS" ] || fail "KTP_CORPUS_AGE_RECIPIENTS is unset. Refusing to write player evidence to a third party in the clear."
@@ -156,6 +182,7 @@ fi
 # re-encrypted forever, each generation naming the last one's ciphertext.
 case "$CACHE/" in
     "$SRC"/*) fail "KTP_CORPUS_ENC_CACHE is inside the source directory." ;;
+    "$WC_SRC"/*) fail "KTP_CORPUS_ENC_CACHE is inside the weapon-context store." ;;
 esac
 
 WORK="$(mktemp -d)"
@@ -239,12 +266,67 @@ done < "$WORK/sha256.txt"
 
 echo "[corpus-offsite] $N_RECIP recipient key(s); $CACHED bundle(s) already encrypted in the cache, $TO_ENCRYPT to encrypt"
 
+# ------------------------------------------------- weapon-context selection
+# The store writes <shard>/<session>.weapons.json and stages each write in tmp/,
+# so the shape is asserted the same way as the bundles' and an in-flight temp
+# file is never mistaken for a sidecar.
+WC_LIST="$WORK/wc-rel.txt"
+WC_SNAP="$WORK/wc-snap"
+WC_ENCLIST="$WORK/wc-enc.txt"
+find "$WC_SRC" -mindepth 2 -maxdepth 2 -type f -name '*.weapons.json' ! -name '.*' -printf '%P\n' \
+    | grep -E '^[0-9]+/[0-9]+\.weapons\.json$' \
+    | sort > "$WC_LIST"
+WC_COUNT=$(wc -l < "$WC_LIST")
+[ "$WC_COUNT" -gt 0 ] || fail "weapon-context selection matched no sidecars -- refusing to 'succeed' with an empty set"
+
+WC_TOTAL=$(find "$WC_SRC" -path "$WC_SRC/tmp" -prune -o -type f ! -name '.*' -print | wc -l)
+if [ "$(( WC_TOTAL - WC_COUNT ))" -ne 0 ]; then
+    echo "[corpus-offsite] WARNING: $(( WC_TOTAL - WC_COUNT )) file(s) under $WC_SRC are not <shard>/<session>.weapons.json and are NOT being copied" >&2
+fi
+
+mkdir -p "$WC_SNAP" || fail "could not create the weapon-context snapshot"
+( cd "$WC_SRC" && xargs -a "$WC_LIST" -d '\n' cp --parents -p -t "$WC_SNAP" ) \
+    || fail "could not snapshot the weapon-context sidecars"
+[ "$(find "$WC_SNAP" -type f | wc -l)" -eq "$WC_COUNT" ] \
+    || fail "weapon-context snapshot holds fewer files than the selection"
+WC_KB=$( cd "$WC_SNAP" && tr '\n' '\0' < "$WC_LIST" | du -c --files0-from=- 2>/dev/null | tail -1 | cut -f1 )
+[ "${WC_KB:-0}" -gt 0 ] 2>/dev/null \
+    || fail "$WC_COUNT sidecar(s) matched but du sized them at nothing -- refusing to report a size that was never measured"
+
+( cd "$WC_SNAP" && xargs -a "$WC_LIST" -d '\n' md5sum )    > "$WORK/wc-md5.txt"    || fail "could not md5 the weapon-context sidecars"
+( cd "$WC_SNAP" && xargs -a "$WC_LIST" -d '\n' sha256sum ) > "$WORK/wc-sha256.txt" || fail "could not sha256 the weapon-context sidecars"
+[ "$(wc -l < "$WORK/wc-md5.txt")"    -eq "$WC_COUNT" ] || fail "md5 pass covered fewer sidecars than the selection"
+[ "$(wc -l < "$WORK/wc-sha256.txt")" -eq "$WC_COUNT" ] || fail "sha256 pass covered fewer sidecars than the selection"
+
+declare -A WC_MD5
+while IFS= read -r line; do
+    h="${line%% *}"; rel="${line#* }"; rel="${rel# }"
+    WC_MD5["$rel"]="$h"
+done < "$WORK/wc-md5.txt"
+
+: > "$WORK/wc-manifest.body"
+while IFS= read -r line; do
+    sha="${line%% *}"; rel="${line#* }"; rel="${rel# }"
+    printf '%s  %s  %s\n' "${WC_MD5[$rel]}" "$sha" "$rel" >> "$WORK/wc-manifest.body"
+done < "$WORK/wc-sha256.txt"
+# Byte-identical sidecars share one object, so the object set can be smaller
+# than the file count and both numbers are right.
+cut -d' ' -f1 "$WORK/wc-sha256.txt" | sort -u | sed "s|^|$WC_PREFIX/objects/|; s|\$|.age|" > "$WC_ENCLIST"
+WC_OBJECTS=$(wc -l < "$WC_ENCLIST")
+WC_CACHED=0
+while IFS= read -r obj; do
+    [ -s "$CACHE/$obj" ] && WC_CACHED=$(( WC_CACHED + 1 ))
+done < "$WC_ENCLIST"
+WC_SHARDS=$(cut -d/ -f1 "$WC_LIST" | sort -u | wc -l)
+echo "[corpus-offsite] weapon-context: selected $WC_COUNT sidecar(s) in $WC_SHARDS shard(s) ($WC_KB KB), $WC_OBJECTS distinct object(s); $WC_CACHED already encrypted, $(( WC_OBJECTS - WC_CACHED )) to encrypt"
+
 if [ "$COMMIT" != "1" ]; then
     echo "[corpus-offsite] DRY RUN -- no --commit, nothing will be encrypted or copied"
     echo "[corpus-offsite] bundles per day-dir (10 most recent):"
     cut -d/ -f1 "$LIST" | uniq -c | tail -10 | sed 's/^/    /'
     echo "[corpus-offsite] target that WOULD be written: $RSYNC_HOSTS -> $DEST"
     echo "[corpus-offsite] objects that WOULD ship: <YYYY-MM-DD>/<sha256>.age, plus $MANIFEST_NAME"
+    echo "[corpus-offsite] and $WC_PREFIX/objects/<sha256>.age, plus $WC_PREFIX/$WC_MANIFEST_NAME"
     echo "[corpus-offsite] (filenames are withheld on purpose -- they carry player names and SteamIDs)"
     exit 0
 fi
@@ -272,13 +354,33 @@ while IFS= read -r line; do
     fi
 done < "$WORK/sha256.txt"
 
+WC_NEW=0
+while IFS= read -r line; do
+    sha="${line%% *}"; rel="${line#* }"; rel="${rel# }"
+    obj="$CACHE/$WC_PREFIX/objects/$sha.age"
+    [ -s "$obj" ] && continue
+    install -d -m 700 "$CACHE/$WC_PREFIX" "$CACHE/$WC_PREFIX/objects" || { ENCFAIL=$(( ENCFAIL + 1 )); continue; }
+    tmp="$CACHE/$WC_PREFIX/objects/.$sha.age.$$"
+    if age "${RECIP[@]}" -o "$tmp" "$WC_SNAP/$rel" 2>/dev/null && [ -s "$tmp" ] \
+       && mv -f "$tmp" "$obj"; then
+        WC_NEW=$(( WC_NEW + 1 ))
+    else
+        rm -f "$tmp"
+        ENCFAIL=$(( ENCFAIL + 1 ))
+    fi
+done < "$WORK/wc-sha256.txt"
+
 # Counted, never listed: a path here is a player.
 [ "$ENCFAIL" -eq 0 ] \
-    || fail "$ENCFAIL of $COUNT bundle(s) failed to encrypt -- refusing to ship a partial corpus over a complete-looking one"
-echo "[corpus-offsite] encrypted $NEW new bundle(s); cache now holds $COUNT object(s) for this selection"
+    || fail "$ENCFAIL of $(( COUNT + WC_COUNT )) file(s) failed to encrypt -- refusing to ship a partial corpus over a complete-looking one"
+BUNDLE_OBJECTS=$(sort -u "$ENCLIST" | wc -l)
+echo "[corpus-offsite] encrypted $NEW new bundle(s); cache holds $BUNDLE_OBJECTS object(s) for $COUNT bundle(s) in this selection"
+echo "[corpus-offsite] encrypted $WC_NEW new weapon-context object(s); cache holds $WC_OBJECTS object(s) for $WC_COUNT sidecar(s)"
 
+STAMP="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+FSTAMP="$(date -u -d "$STAMP" '+%Y%m%dT%H%M%SZ')"
 {
-    echo "# ktp-corpus-offsite manifest -- $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "# ktp-corpus-offsite manifest -- $STAMP"
     echo "# $COUNT bundles, $(( KB / 1024 )) MB, $DAY_COUNT day-dirs, $(printf '%s\n' "$DAYS" | head -1) .. $(printf '%s\n' "$DAYS" | tail -1)"
     echo "# columns: md5  sha256  YYYY-MM-DD/original-name"
     echo "# the remote object for each row is <YYYY-MM-DD>/<sha256>.age"
@@ -287,6 +389,26 @@ echo "[corpus-offsite] encrypted $NEW new bundle(s); cache now holds $COUNT obje
 } > "$WORK/manifest.txt" || fail "could not write the manifest"
 age "${RECIP[@]}" -o "$WORK/$MANIFEST_NAME" "$WORK/manifest.txt" \
     || fail "could not encrypt the manifest"
+
+{
+    echo "# ktp-weapon-context offsite manifest -- $STAMP"
+    echo "# $WC_COUNT sidecars, $WC_OBJECTS distinct objects, $WC_KB KB, $WC_SHARDS shards"
+    echo "# columns: md5  sha256  <shard>/<session>.weapons.json"
+    echo "# CURRENT VERSIONS: each row is the version of that file this run read. Sidecars are rewritten"
+    echo "# in place and the far side keeps every version, so objects/ also holds older ones; only the"
+    echo "# dated copies under manifests/ name those."
+    echo "# the remote object for each row is $WC_PREFIX/objects/<sha256>.age"
+    echo "# restore and verify with ktp-corpus-restore.sh --set weapon-context"
+    cat "$WORK/wc-manifest.body"
+} > "$WORK/wc-manifest.txt" || fail "could not write the weapon-context manifest"
+age "${RECIP[@]}" -o "$WORK/$WC_MANIFEST_NAME" "$WORK/wc-manifest.txt" \
+    || fail "could not encrypt the weapon-context manifest"
+
+# One transfer and one far-side verify for both populations; the prefixes keep
+# them apart on the far side, not separate passes.
+ALL_ENC="$WORK/all-enc.txt"
+sort -u "$ENCLIST" "$WC_ENCLIST" > "$ALL_ENC"
+N_OBJ=$(wc -l < "$ALL_ENC")
 
 # ---------------------------------------------------------------- transfer
 RC=0
@@ -299,38 +421,58 @@ for H in $RSYNC_HOSTS; do
     # cannot serve. No --delete, deliberately: a backup that mirrors deletions
     # propagates the accident it exists to survive.
     rsync -a --checksum --mkpath --partial --human-readable -e "$RSYNC_RSH" \
-          --files-from="$ENCLIST" "$CACHE/" "$H:$DEST/" \
+          --files-from="$ALL_ENC" "$CACHE/" "$H:$DEST/" \
         || { echo "[corpus-offsite] $H: rsync reported failure" >&2; RC=1; continue; }
 
     # Verify from the FAR SIDE by content. Any itemized FILE line is a
     # mismatch; directory lines carry 'd' in the second column and are not
     # content, so they are not failures.
     DIFFS=$(rsync -ani --checksum -e "$RSYNC_RSH" \
-                  --files-from="$ENCLIST" "$CACHE/" "$H:$DEST/" 2>/dev/null \
+                  --files-from="$ALL_ENC" "$CACHE/" "$H:$DEST/" 2>/dev/null \
             | grep -E '^[<>ch.*][fL]' || true)
 
     if [ -n "$DIFFS" ]; then
         # Count only -- an itemized line is a path, and a path here is a player.
-        echo "[corpus-offsite] $H: $(printf '%s\n' "$DIFFS" | grep -c .) of $COUNT bundle(s) missing or corrupt on arrival" >&2
+        echo "[corpus-offsite] $H: $(printf '%s\n' "$DIFFS" | grep -c .) of $N_OBJ object(s) missing or corrupt on arrival" >&2
         RC=1
         continue
     fi
 
-    echo "[corpus-offsite] $H: $COUNT/$COUNT verified by rsync --checksum"
+    echo "[corpus-offsite] $H: $N_OBJ/$N_OBJ object(s) verified by rsync --checksum ($BUNDLE_OBJECTS bundle, $WC_OBJECTS weapon-context)"
     # Two copies: a stable name a restore can always reach for, and a dated one,
     # because the stable name is overwritten every run and the manifest is the
     # only statement of what the archive was supposed to contain at that time.
-    rsync -a -e "$RSYNC_RSH" "$WORK/$MANIFEST_NAME" "$H:$DEST/$MANIFEST_NAME" \
+    # --ignore-times because two runs inside one second write a same-size
+    # manifest with the same mtime, and rsync's quick check would keep the old one.
+    rsync -a -I -e "$RSYNC_RSH" "$WORK/$MANIFEST_NAME" "$H:$DEST/$MANIFEST_NAME" \
         || { echo "[corpus-offsite] $H: manifest ship failed -- the remote copy now has no durable record of what should be there" >&2; RC=1; }
-    rsync -a --mkpath -e "$RSYNC_RSH" "$WORK/$MANIFEST_NAME" \
-          "$H:$DEST/manifests/ktp-corpus-manifest-$(date -u '+%Y%m%dT%H%M%SZ').txt.age" \
+    rsync -a -I --mkpath -e "$RSYNC_RSH" "$WORK/$MANIFEST_NAME" \
+          "$H:$DEST/manifests/ktp-corpus-manifest-$FSTAMP.txt.age" \
         || { echo "[corpus-offsite] $H: dated manifest ship failed" >&2; RC=1; }
+    # The objects went first, so the current-version manifest never names one
+    # that is not there yet.
+    rsync -a -I --mkpath -e "$RSYNC_RSH" "$WORK/$WC_MANIFEST_NAME" "$H:$DEST/$WC_PREFIX/$WC_MANIFEST_NAME" \
+        || { echo "[corpus-offsite] $H: weapon-context manifest ship failed -- a restore would take stale versions" >&2; RC=1; }
+    rsync -a -I --mkpath -e "$RSYNC_RSH" "$WORK/$WC_MANIFEST_NAME" \
+          "$H:$DEST/$WC_PREFIX/manifests/ktp-weapon-context-manifest-$FSTAMP.txt.age" \
+        || { echo "[corpus-offsite] $H: dated weapon-context manifest ship failed" >&2; RC=1; }
+    # A stale current-version manifest restores old sidecars with no error, so
+    # its arrival is checked by content like the objects'.
+    printf '%s\n' "$MANIFEST_NAME" "$WC_PREFIX/$WC_MANIFEST_NAME" > "$WORK/manifests.txt"
+    mkdir -p "$WORK/mstage/$WC_PREFIX" && cp -p "$WORK/$MANIFEST_NAME" "$WORK/mstage/" \
+        && cp -p "$WORK/$WC_MANIFEST_NAME" "$WORK/mstage/$WC_PREFIX/" \
+        || { echo "[corpus-offsite] $H: could not stage the manifests for verification" >&2; RC=1; continue; }
+    if rsync -ani --checksum -e "$RSYNC_RSH" --files-from="$WORK/manifests.txt" \
+             "$WORK/mstage/" "$H:$DEST/" 2>/dev/null | grep -qE '^[<>ch.*][fL]'; then
+        echo "[corpus-offsite] $H: a current manifest on the far side is not the one this run wrote" >&2
+        RC=1
+    fi
 done
 
 if [ "$RC" -ne 0 ]; then
     echo "[corpus-offsite] FAILED: at least one target is incomplete" >&2
     exit 1
 fi
-echo "[corpus-offsite] OK: $COUNT encrypted bundle(s) verified on every target"
+echo "[corpus-offsite] OK: $COUNT encrypted bundle(s) and $WC_COUNT weapon-context sidecar(s) verified on every target"
 echo "[corpus-offsite] NOTE: arrival is proven, recoverability is not -- this host holds no key. Run ktp-corpus-drill.sh."
 exit 0

@@ -18,6 +18,10 @@ overviews/<map>.txt     spectator overview descriptor (make_overview_descriptor.
 overviews/<map>.bmp     spectator overview image      (render_overview_bmp.py)
 ```
 
+⚠️ **All four are keyed on the stem, so when a published schedule name and the built `.bsp` disagree,
+move the schedule row — do not rename the map.** A rename drags the overview pair and the stem-fetched
+`.res` along with it.
+
 `maps/<map>.txt` is **not** required. It is an optional briefing file; most maps
 on the fleet do not have one. Do not invent one.
 

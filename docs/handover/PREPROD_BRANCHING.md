@@ -141,6 +141,34 @@ An administrator must:
 The current token has push but not admin access, so it cannot create or change
 these rules.
 
+## Updating a branch that is behind a protected `preprod`
+
+A `preprod` whose protection requires status checks wants those checks to have
+**already passed on the commit being pushed**. A fresh update commit cannot
+meet that: it does not exist until after the push. So all four ordinary doors
+fail on a branch that IS behind `preprod` — the GitHub "Update branch" button,
+the equivalent API call, a plain `git push`, and `gh pr merge --admin` — each
+with a variant of "N of N required status checks are expected". It is not a
+permissions gap; an admin hits the same wall.
+
+What works is a branch that is never behind by construction: start from
+`preprod`'s current tip, merge the stale branch into it, and open an ordinary
+PR into `preprod`, whose checks then run and pass the normal way.
+
+```bash
+git fetch origin
+git checkout -b reconcile/<pr-number>-into-preprod origin/preprod
+git merge origin/<stale-branch> --no-edit
+git push -u origin reconcile/<pr-number>-into-preprod
+gh pr create --base preprod --head reconcile/<pr-number>-into-preprod
+```
+
+This is only for the case where the stale branch is itself behind `preprod`
+under required checks. An ordinary topic branch that reports `BEHIND` (not
+`DIRTY`) still updates through the normal door. KTPInfrastructure no longer has
+a `preprod`, so this applies to the repos named at the top of this file while
+their `preprod` protections stand.
+
 ## Access blockers resolved (2026-08-26 ET)
 
 This section previously said `andsmit9` had no write access to `KTP-ReAPI`,

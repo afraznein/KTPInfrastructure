@@ -62,6 +62,9 @@ alerted but not remediated is fine, and is most of this estate.
 | A config set on the instances and never mirrored into `/home/dod/distribute` — reverted fleet-wide by the next push of that file, silently | **yes, new** | **yes, new** | no | `audit-distribute-drift.py`, weekly via the fleet audit. Nothing watched this before: the distributor is event-driven with no startup sync, so tree and fleet were compared only by hand. This is the 2026-08-19 `discord.ini` shape, and `ktp_maps.ini` / `users.ini` before it — see [`DISTRIBUTE_DRIFT.md`](DISTRIBUTE_DRIFT.md) |
 | A deploy-tree file carrying per-instance data that no `excludePatterns` declares | **yes, new** | **yes, new** | no | same check, hazard leg — reported on every run, not only on a change |
 | A push that reached part of the fleet and was never retried | **yes, new** | **yes, new** | no | same check, `partial` / `absent` shapes |
+| A config KEY on the instances and in no source file — **deleted** on all 24 by the next push of that file | **yes, new** | **yes, new** | no | `audit-config-key-drift.py`, weekly via the fleet audit. The file-level check above calls this `discord.ini differs` and can say no more; this one names the key and reports which side is missing it. This is the exact half of the 2026-08-19 incident that broke match embeds — `discord_channel_id_default` was deleted, and a missing key is not an error anywhere in the stack — see [`CONFIG_KEY_DRIFT.md`](CONFIG_KEY_DRIFT.md) |
+| A config KEY in the source and on no instance — **imposed** on all 24 by the next push | **yes, new** | **yes, new** | no | same check, `instance-missing`. Found `mp_clan_readyrestart` set in 34 source map configs and on no instance |
+| A key-drift sweep that reached fewer than 24 instances, or could not parse a config | **yes, new** | **yes, new** | no | same check — a level, not a transition. Exit 2, and the gate fires every run. A partial sweep reported as clean is how the 2026-08-19 revert stayed invisible for six weeks |
 
 ## Data server — services
 
@@ -127,7 +130,7 @@ Cron-scheduled work is outside both mechanisms entirely:
 | `ktp-tier2-heartbeat` | itself; deliberately a data-server cron so it does not share fate with the GH runner it watches |
 | `ktp-backup-watchdog` | itself; exists because a run that never happens produces no output |
 | `ktp-demo-cleanup-auto` (30 min) | **nothing** |
-| `ktp-offsite` (Sunday 04:00 / 05:00 / 06:00): DB dumps, demos, AC corpus | **nothing** — output goes to `/var/log/ktp-offsite.log` and no one is told when a leg fails. The corpus leg (2026-09-25) adds a second blind spot on top of that: it encrypts to a key this host does not hold, so even a clean run only proves ARRIVAL. Nothing scheduled anywhere decrypts, and nothing can be scheduled here to, because that would put a private key on the one host the design keeps it off |
+| `ktp-offsite` (Sunday 04:00 / 05:00 / 06:00): DB dumps, demos, AC corpus (bundles **and** weapon-context sidecars since 2026-10-05) | **nothing** — output goes to `/var/log/ktp-offsite.log` and no one is told when a leg fails. ⚠️ The sidecars ride the corpus leg, so a corpus-leg failure now loses both populations' copy for that week, and a missing or empty weapon-context store fails the whole leg before anything ships. The corpus leg (2026-09-25) adds a second blind spot on top of that: it encrypts to a key this host does not hold, so even a clean run only proves ARRIVAL. Nothing scheduled anywhere decrypts, and nothing can be scheduled here to, because that would put a private key on the one host the design keeps it off |
 | `ktp-perf-rollup-daily`, `ktp-spike-digest-daily`, `ktp-soak-verify-*`, `ktp-precache-audit-weekly`, `ktp-ac-retention`, `ktp-credential-carrier-purge`, `ktp-fastdl-*` | **nothing** |
 
 ## Data integrity
@@ -136,8 +139,9 @@ Cron-scheduled work is outside both mechanisms entirely:
 |---|---|---|---|
 | Backup run does not happen | yes | yes | `ktp-backup-watchdog.sh` |
 | Backup written but unrestorable | yes | yes | `ktp-restore-test.sh` — restores into a scratch DB and compares |
-| Offsite copy missing | yes | yes | `ktp-db-offsite.sh`, `ktp-demo-offsite.sh`, `ktp-corpus-offsite.sh` — each refuses an empty selection rather than reporting success over one |
-| Offsite AC corpus present but **unrecoverable** (wrong recipient, lost identity file) | **no** | **no** | `ktp-corpus-drill.sh` is the only thing that would catch it, and it runs where a private key is — the operator's machine, quarterly, by hand. ⛔ Do not close this by scheduling the drill on the data server |
+| Offsite copy missing | yes | yes | `ktp-db-offsite.sh`, `ktp-demo-offsite.sh`, `ktp-corpus-offsite.sh` — each refuses an empty selection rather than reporting success over one; the corpus leg refuses an empty bundle set and an empty weapon-context store separately |
+| Offsite weapon-context copy **stale** (current-version manifest on the far side not the one the run wrote) | yes | **no** | `ktp-corpus-offsite.sh` checks both current manifests on the far side by content after shipping them and fails the run on a mismatch — but nothing watches `ktp-offsite`, so only the log says so |
+| Offsite AC corpus or weapon-context sidecars present but **unrecoverable** (wrong recipient, lost identity file) | **no** | **no** | `ktp-corpus-drill.sh` is the only thing that would catch it (it round-trips both populations, including a sidecar rewritten in place), and it runs where a private key is — the operator's machine, quarterly, by hand. ⛔ Do not close this by scheduling the drill on the data server |
 | HLStatsX ingest stalls | yes | yes | `hlstatsx-ingest-monitor.py` |
 | Tier 2 suite goes quiet | yes | yes | `ktp-tier2-heartbeat.sh` |
 | Perf spike signatures | yes | yes | `ktp-profile-aggregator` → MySQL → Discord, `posted_alert` dedup |

@@ -766,6 +766,7 @@ for i in $(seq 1 $NUM_INSTANCES); do
 port="$PORT"
 clientport="$((PORT - 10))"
 servername="$LGSM_SERVER_NAME"
+logdays="21"
 EOF
         # Add IP if provided (critical for proper LinuxGSM monitoring)
         if [ -n "$SERVER_IP" ]; then

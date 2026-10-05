@@ -225,19 +225,36 @@ def build_league_matches(key: str) -> tuple[list[dict], dict]:
                     if p["status"] == "current"}
 
     rosters = defaultdict(set)
+    # Division per player, for the seeding prior. Built HERE, in the same loop,
+    # deliberately: the resolved pid differs between the CI path (website ids)
+    # and the local path (hlstatsx ids via the bridge), and a label keyed in the
+    # wrong space silently matches nobody. division_history.py cannot serve this
+    # -- it keys on hlstatsx ids and needs the data server's identity bridge,
+    # which CI does not have.
+    div_by_pid, div_season = {}, {}
     for row in fetch(key, "season_team_member", "season_team_id,player_id,left_at"):
         if row.get("left_at"):
             continue
+        st = season_teams.get(row["season_team_id"]) or {}
+        dname = divisions.get(st.get("division_id"))
+        season = st.get("season_id") or 0
         if bridge is None:
             # CI path: key on the website's own player_id, no Steam ID needed.
-            rosters[row["season_team_id"]].add(row["player_id"])
-            continue
-        steam64 = steam_by_pid.get(row["player_id"])
-        if not steam64:
-            continue
-        pid = bridge.get(steam64_to_hlstats(steam64))
-        if pid is not None:
-            rosters[row["season_team_id"]].add(merges.get(pid, pid))
+            pid = row["player_id"]
+            rosters[row["season_team_id"]].add(pid)
+        else:
+            steam64 = steam_by_pid.get(row["player_id"])
+            if not steam64:
+                continue
+            pid = bridge.get(steam64_to_hlstats(steam64))
+            if pid is None:
+                continue
+            pid = merges.get(pid, pid)
+            rosters[row["season_team_id"]].add(pid)
+        # Most recent season wins: a promoted player is seeded where they play
+        # now, not where they came from.
+        if dname and season >= div_season.get(pid, -1):
+            div_by_pid[pid], div_season[pid] = dname, season
 
     # Who ACTUALLY played, where we can establish it. Falls back to the
     # registered roster per fixture, which is recorded so the digest can say
@@ -281,7 +298,8 @@ def build_league_matches(key: str) -> tuple[list[dict], dict]:
     out.sort(key=lambda m: m["when"])
     return out, dict(pending=pending, total_scheduled=len(matches_raw),
                      rated_on_actual_participants=used_actual, bindings=played,
-                     ringer_appearances=ringer_appearances)
+                     ringer_appearances=ringer_appearances,
+                     division_labels=div_by_pid)
 
 
 def season_rosters(key: str, season_number: int):
@@ -334,10 +352,39 @@ def season_rosters(key: str, season_number: int):
     return dict(rosters), current, sizes
 
 
-def run(matches, model_factory):
+def load_division_offsets():
+    """division -> mu offset, from the committed `division_offsets.json`.
+
+    Fitted by `division_fit.py` on the data server, because the offsets are
+    measured on 12-mans and CI sees only official website results. Returns {}
+    when the file is absent, which disables seeding for that run rather than
+    failing it -- the file is committed, so absence means someone is running
+    from a tree that predates it, not that the season is misconfigured.
+
+    The LABELS are not read here: they come from build_league_matches, which
+    resolves them into whichever player-id space the ladder is using.
+    """
+    path = HERE / "division_offsets.json"
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return {k: v["mu_offset"] for k, v in doc.get("divisions", {}).items()
+            if v.get("mu_offset")}
+
+
+def run(matches, model_factory, division_seed=None):
     """Predict each match before applying it, then update. Returns per-match
-    rows and the metrics over all predictions made."""
+    rows and the metrics over all predictions made.
+
+    `division_seed` is (labels, offsets) and seeds starting mu BEFORE any match
+    is applied, so the prior is in place for the first prediction rather than
+    arriving after the pool has already drifted.
+    """
     model = model_factory()
+    if division_seed:
+        labels, offsets = division_seed
+        model.seed_from_divisions(labels, offsets)
+        print(f"division seeding ON: {len(labels)} players labelled, offsets {offsets}")
     rows, preds, ys = [], [], []
     for m in matches:
         p = model.predict(m["t1"], m["t2"])
@@ -397,6 +444,14 @@ def main():
                          "held-out comparison says it helps.")
     ap.add_argument("--performance-strength", type=float, default=PF.DEFAULT_STRENGTH,
                     help="how hard performance tilts the split (0 = even, today's behaviour)")
+    ap.add_argument("--no-division-seed", action="store_true",
+                    help="do NOT seed starting mu by division. Seeding is on by default "
+                         "(drew's ruling 2026-09-30) because divisions never play each "
+                         "other, so an unseeded ladder orders the pools only by chance. "
+                         "The prior is weak and decays as results land. NOTE the consequence: "
+                         "a seeded rating is partly an echo of the division it was seeded "
+                         "from, so MMR can no longer independently validate promotion and "
+                         "relegation -- use this flag for that comparison.")
     args = ap.parse_args()
     if not args.key:
         raise SystemExit("No key. Pass --key or set NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY.")
@@ -427,7 +482,24 @@ def main():
         print("wrote weekly_digest.md (no matches yet)")
         return
 
-    model, rows, metrics = run(matches, L.OpenSkill)
+    # Seeding is ON by default (drew's ruling 2026-09-30): divisions never play
+    # each other, so without a prior the pools are only ordered by chance. It is
+    # weak and decays -- see ladder.seed_from_divisions.
+    seed = None
+    if not args.no_division_seed:
+        offsets = load_division_offsets()
+        labels = counts.get("division_labels") or {}
+        if offsets and labels:
+            seed = (labels, offsets)
+        else:
+            print(f"division seeding SKIPPED: "
+                  f"{len(offsets)} offsets, {len(labels)} labelled players")
+    # Whether a run was seeded is a PUBLISHED fact, not a log line: a reader
+    # comparing weeks has to be able to tell which ratings carried the prior.
+    seed_state = dict(enabled=bool(seed),
+                      offsets=(seed[1] if seed else {}),
+                      labelled_players=len(seed[0]) if seed else 0)
+    model, rows, metrics = run(matches, L.OpenSkill, division_seed=seed)
     ratings = model.ratings()
     (HERE / "ratings_current.json").write_text(json.dumps(
         {str(p): r for p, r in sorted(ratings.items(), key=lambda kv: -kv[1]["ordinal"])}, indent=1), encoding="utf-8")
@@ -520,6 +592,8 @@ def main():
         upsets=len(upsets), challenger_beat_champion=bool(beat_champion),
         challenger_name=beat_champion[0]["name"] if beat_champion else None,
         has_findings=bool(upsets or beat_champion),
+        division_seeded=seed_state["enabled"],
+        division_offsets=seed_state["offsets"],
         headline=(f"{len(matches)} matches rated, {metrics['acc']:.0%} accuracy"
                   + (f", {len(upsets)} upsets" if upsets else "")
                   + (", challenger beat champion" if beat_champion else "")),
@@ -542,7 +616,8 @@ def main():
         doc = METH.build(METH.load_params(),
                          generated_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                          source_report_count=counts.get("rated_on_actual_participants", 0),
-                         summary=summary, prior_history=prior_history)
+                         summary=summary, prior_history=prior_history,
+                         division_seed=seed_state)
         (HERE / "rating_methodology_payload.json").write_text(
             json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote rating_methodology_payload.json ({len(doc['momentum']['maps'])} maps, "
