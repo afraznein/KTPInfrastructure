@@ -47,6 +47,14 @@ The format string is present in `engine_i486.so` but had emitted 0 lines as of
 2026-08-27. Its absence is not a fault; this tool counts it separately so you
 can see when it starts firing rather than inferring from silence.
 
+POOLED, NOT PARTITIONED BY ROUTE
+-------------------------------
+Latency and rewind figures pool clients that reach the fleet through a third-party route-optimiser
+tunnel with direct ones. Zeros are unaffected; split any latency-sensitive rate (e.g. the sv_maxunlag
+clamp share) by MEASURED latency band, never by inspecting players' AC bundles.
+Pooled read 2026-10-01, six league evenings, clients >= 6: lagcomp off 0.0%, unlag 0 0.0%, ignorecmd
+25.2 per 1,000 player-minutes, clamp 7.8%.
+
 CREDENTIALS -- this repo is PUBLIC, so nothing is hardcoded:
   $KTP_FLEET_SSH_PASSWORD, else ~/.ktp_fleet_ssh_password, else a local
   ktp_hosts.py if one is importable (workstation convenience only).

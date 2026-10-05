@@ -1,0 +1,181 @@
+# Match-report regeneration, by hand, behind the operator's approval click.
+#
+# The tier-2 runner is root on the PRODUCTION data server, so a run of this
+# workflow is a production change. Three things bound it:
+#   - `environment: report-regeneration` holds every run until a required
+#     reviewer approves it. The environment is created and owned by the
+#     operator in repo settings; nothing here creates or edits it.
+#   - The job regenerates only from reviewed main: the serving checkout must be
+#     clean and at the fetched origin/main, and the dispatched commit must be
+#     that same commit. The checkout is fetched, never pulled, merged or moved.
+#   - The public log carries counts only. Reports name players, so the
+#     pipeline's own output goes to a root-only log on the box.
+#
+# Scope mirrors what scripts/report_service.py supports:
+#   pending    exactly what the 15-minute timer runs: ktp-reports.service,
+#              started through systemd so it can never overlap a timer tick.
+#              This is "regenerate everything that needs it": generate
+#              revisits every settled report once main carries a schema bump.
+#   match_ids  a fresh revision for the named matches (generate <ids>), then
+#              ktp-reports.service for aggregate and sync. generate has no
+#              lock against the timer, so this refuses unless the next tick is
+#              far enough off to finish first.
+# There is no date-range scope: generate's --since only floors discovery, and
+# the season floor is read from the installed unit, never typed in.
+#
+# dry_run (the default) persists nothing, syncs nothing and purges nothing:
+# generate --dry-run counts what would be built, report_sync --dry-run counts
+# what would be pushed. A real run refreshes the site cache through
+# report_sync's own revalidate call, which only fires after it pushed a report.
+#
+# Never add `pull_request` or `push`: either would run unreviewed code as root
+# on the data server. Runbook: docs/runbooks/REPORT_PIPELINE_INSTALL.md.
+
+name: Report Regeneration
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: "pending = what the timer runs; match_ids = a new revision for the ids below"
+        type: choice
+        options: [pending, match_ids]
+        default: pending
+      match_ids:
+        description: "scope=match_ids only: match ids, space or comma separated"
+        type: string
+        required: false
+        default: ""
+      dry_run:
+        description: "Count what would be regenerated; persist, sync and purge nothing"
+        type: boolean
+        default: true
+      reason:
+        description: "Why this run (logged with your login)"
+        type: string
+        required: true
+
+permissions: {}
+
+concurrency:
+  # Its own group: never two regenerations at once, queued rather than
+  # cancelled, and never sharing a Lane B or tier-2 group.
+  group: report-regeneration
+  cancel-in-progress: false
+
+jobs:
+  regenerate:
+    name: Regenerate match reports
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, ktp-tier2]
+    environment: report-regeneration
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      REPORTS_REPO: /opt/ktp-reports/KTPInfrastructure
+      REPORTS_USER: ktpreports
+      SERVICE_LOG: /var/log/ktp-report-service.log
+      PRIVATE_LOG: /var/log/ktp-report-regeneration.log
+      SCOPE: ${{ inputs.scope }}
+      MATCH_IDS: ${{ inputs.match_ids }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      REASON: ${{ inputs.reason }}
+      ACTOR: ${{ github.actor }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          python3 scripts/report_regen_guard.py inputs --scope "$SCOPE" \
+            --match-ids "$MATCH_IDS" --reason "$REASON" --ids-out "$RUNNER_TEMP/ids.txt"
+          install -m 0600 /dev/null "$RUNNER_TEMP/segment.log"
+          [ -e "$PRIVATE_LOG" ] || install -m 0600 -o root -g root /dev/null "$PRIVATE_LOG"
+          {
+            echo "=== $(date -Is) run $GITHUB_RUN_ID by $ACTOR: scope=$SCOPE dry_run=$DRY_RUN commit=$GITHUB_SHA"
+            printf 'reason: %s\n' "$REASON"
+          } | tee -a "$PRIVATE_LOG"
+
+      - name: Refuse unless the serving checkout is clean reviewed main
+        run: |
+          set -euo pipefail
+          python3 scripts/report_regen_guard.py checkout --repo "$REPORTS_REPO" \
+            --expect-sha "$GITHUB_SHA" --as-user "$REPORTS_USER"
+
+      - name: Read the season floor from the installed unit
+        id: floor
+        run: |
+          set -euo pipefail
+          floor="$(systemctl cat ktp-reports.service | python3 scripts/report_regen_guard.py floor)"
+          echo "since=$floor" >> "$GITHUB_OUTPUT"
+          echo "season floor: $floor"
+
+      - name: Dry run (counts only, writes nothing)
+        if: inputs.dry_run
+        env:
+          FLOOR: ${{ steps.floor.outputs.since }}
+        run: |
+          set -euo pipefail
+          mapfile -t ids < "$RUNNER_TEMP/ids.txt"
+          seg="$RUNNER_TEMP/segment.log"
+          cd "$REPORTS_REPO"
+          if [ "${#ids[@]}" -gt 0 ]; then
+            runuser -u "$REPORTS_USER" -- /usr/bin/python3 -m scripts.report_service \
+              --repo . generate --dry-run "${ids[@]}" >> "$seg" 2>&1
+          else
+            runuser -u "$REPORTS_USER" -- /usr/bin/python3 -m scripts.report_service \
+              --repo . generate --dry-run --since "$FLOOR" >> "$seg" 2>&1
+          fi
+          # systemd-run reads the secret file itself, so it never reaches argv.
+          systemd-run --quiet --wait --pipe --collect \
+            --uid="$REPORTS_USER" --gid="$REPORTS_USER" \
+            -p WorkingDirectory="$REPORTS_REPO" -p EnvironmentFile=/etc/ktp/reports.env \
+            /usr/bin/python3 -m scripts.report_sync --since "$FLOOR" --dry-run >> "$seg" 2>&1
+
+      - name: Regenerate the named matches
+        if: ${{ !inputs.dry_run && inputs.scope == 'match_ids' }}
+        run: |
+          set -euo pipefail
+          if systemctl is-active --quiet ktp-reports.service; then
+            echo "REFUSED: ktp-reports.service is running now; dispatch again after it" >&2
+            exit 1
+          fi
+          next="$(systemctl show ktp-reports.timer -p NextElapseUSecRealtime --value --timestamp=unix)"
+          python3 scripts/report_regen_guard.py window --now "$(date +%s)" \
+            --next-tick "${next#@}" --need-sec 480
+          mapfile -t ids < "$RUNNER_TEMP/ids.txt"
+          cd "$REPORTS_REPO"
+          timeout 420 runuser -u "$REPORTS_USER" -- /usr/bin/python3 -m scripts.report_service \
+            --repo . generate "${ids[@]}" >> "$RUNNER_TEMP/segment.log" 2>&1
+
+      - name: Run the report service (generate pending, aggregate, sync, site refresh)
+        if: ${{ !inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          offset="$(stat -c %s "$SERVICE_LOG")"
+          rc=0
+          # A oneshot start blocks until the unit finishes; if a timer tick is
+          # already running, this waits on that run rather than starting a second.
+          systemctl start ktp-reports.service || rc=$?
+          tail -c +"$((offset + 1))" "$SERVICE_LOG" >> "$RUNNER_TEMP/segment.log"
+          exit "$rc"
+
+      - name: Summary (counts only)
+        if: always()
+        run: |
+          set -euo pipefail
+          seg="$RUNNER_TEMP/segment.log"
+          [ -f "$seg" ] || exit 0
+          label="dry run"
+          [ "$DRY_RUN" = "true" ] || label="real run"
+          python3 scripts/report_regen_summary.py --label "$label ($SCOPE)" < "$seg" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -f "$PRIVATE_LOG" ]; then
+            cat "$seg" >> "$PRIVATE_LOG"
+          fi
+          rm -f "$seg" "$RUNNER_TEMP/ids.txt"

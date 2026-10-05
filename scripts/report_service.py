@@ -275,9 +275,11 @@ def cmd_generate(args: argparse.Namespace) -> int:
     # getattr default silently pinned the pending filter at 7 while writes
     # stamped 8, and every match regenerated on every run.
     schema_version = int(ma.SCHEMA_VERSION)
-    sources = ma.source_capabilities(db)
-    scorer = load_accumulation_scorer(args.repo)
-    print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
+    dry_run = getattr(args, "dry_run", False)
+    if not dry_run:
+        sources = ma.source_capabilities(db)
+        scorer = load_accumulation_scorer(args.repo)
+        print(f"accumulation scorer: {'available' if scorer else 'unavailable'}")
     ids = args.match_ids or pending_match_ids(db, schema_version, args.since)
     print(f"pending: {len(ids)} matches (schema v{schema_version})")
     # Say it every run: the corpus is deliberately wider than what publishes,
@@ -295,6 +297,9 @@ def cmd_generate(args: argparse.Namespace) -> int:
         detail = ", ".join(f"{k} {v}" for k, v in sorted(dropped.items()))
         print(f"excluded by match_type filter: {sum(dropped.values())}"
               f"{f' ({detail})' if detail else ''}")
+    if dry_run:
+        print(f"dry run: would build {len(ids)} reports; nothing persisted")
+        return 0
     failures = 0
     for match_id in ids:
         try:
@@ -761,6 +766,8 @@ def main(argv: list[str] | None = None) -> int:
     gen.add_argument("--observer-root", type=Path, default=DEFAULT_OBSERVER_ROOT,
                      help="KTPHudObserver matches directory the in-game "
                           "result is read from (read only)")
+    gen.add_argument("--dry-run", action="store_true",
+                     help="report what would be built and persist nothing")
     agg = sub.add_parser("aggregate")
     # Required with no default, like report_sync's: an aggregate that forgot
     # its floor pools pre-season test reports into the published season.
