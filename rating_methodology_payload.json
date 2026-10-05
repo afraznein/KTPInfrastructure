@@ -1,7 +1,7 @@
 {
  "kind": "rating_methodology",
  "method_version": "rating_methodology_v1",
- "generated_at": "2026-09-28T20:17:37+00:00",
+ "generated_at": "2026-10-05T21:21:13+00:00",
  "provisional": true,
  "notice": "All values are refit as matches land and may change week to week. Sample sizes and fit quality are shown so the reader can judge each number.",
  "ktpr_v2": {
@@ -66,7 +66,18 @@
    "strength": 0.35,
    "what": "when on, a side's rating change is split by each player's KTPR contribution instead of evenly. Off until measured to predict better than even splits."
   },
-  "status": "provisional"
+  "status": "provisional",
+  "division_seeding": {
+   "enabled": true,
+   "offsets_mu": {
+    "Gold": 1.87,
+    "Bronze": -1.64
+   },
+   "labelled_players": 214,
+   "what": "Starting rating is offset by the player's division, because divisions do not play each other and so their rating pools cannot otherwise be compared. The offset is measured on 12-mans, which do mix divisions.",
+   "status": "prior, not a measurement of this player -- it is an assumption about their division that a handful of results will override",
+   "caveat": "Because the prior comes from division, these ratings cannot be used as independent evidence for promotion or relegation -- that would be circular. Re-run with --no-division-seed for that comparison."
+  }
  },
  "momentum": {
   "name": "Momentum credit",
@@ -114,13 +125,13 @@
     "A": 1.8309,
     "lam": 0.10592,
     "n_multikills": 1757,
-    "half_life_s": 6.5
+    "t_half_s": 6.5
    },
    "capout": {
     "A": 2.8958,
     "lam": 0.04551,
     "n_multikills": 1757,
-    "half_life_s": 15.2
+    "t_half_s": 15.2
    }
   },
   "maps": {
@@ -156,13 +167,13 @@
       "A": 0.3717,
       "lam": 0.02665,
       "n_multikills": 210,
-      "half_life_s": 26.0
+      "t_half_s": 26.0
      },
      "capout": {
       "A": 1.5168,
       "lam": 0.0321,
       "n_multikills": 210,
-      "half_life_s": 21.6
+      "t_half_s": 21.6
      }
     },
     "scoring": {
@@ -205,13 +216,13 @@
       "A": 1.3409,
       "lam": 0.08454,
       "n_multikills": 666,
-      "half_life_s": 8.2
+      "t_half_s": 8.2
      },
      "capout": {
       "A": 2.3854,
       "lam": 0.03459,
       "n_multikills": 666,
-      "half_life_s": 20.0
+      "t_half_s": 20.0
      }
     },
     "scoring": {
@@ -292,13 +303,13 @@
       "A": 10.0227,
       "lam": 0.24853,
       "n_multikills": 723,
-      "half_life_s": 2.8
+      "t_half_s": 2.8
      },
      "capout": {
       "A": 1.4424,
       "lam": 0.01948,
       "n_multikills": 723,
-      "half_life_s": 35.6
+      "t_half_s": 35.6
      }
     },
     "scoring": {
@@ -344,8 +355,18 @@
    "upsets": 0,
    "upsets_pct": 0.0,
    "headline": "27 matches rated, 52% accuracy, challenger beat champion"
+  },
+  {
+   "week": 4,
+   "date": "2026-10-05",
+   "accuracy_pct": 56.4,
+   "log_loss": 0.6747,
+   "completed_matches": 39,
+   "upsets": 0,
+   "upsets_pct": 0.0,
+   "headline": "39 matches rated, 56% accuracy"
   }
  ],
- "source_report_count": 27,
+ "source_report_count": 38,
  "report_schema_version": 9
 }
