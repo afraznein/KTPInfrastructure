@@ -58,3 +58,4 @@ config/overviews/*.txt -text
 # The AC stock path list is read line-by-line by build-game-files-manifest.py on
 # Linux and on a Windows clone; pin LF so both sides parse identical bytes.
 scripts/data/*.txt text eol=lf
+.githooks/* text eol=lf

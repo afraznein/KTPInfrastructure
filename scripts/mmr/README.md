@@ -111,6 +111,35 @@ that) and the scoring fit is per map. `momentum_report.py` writes
 `momentum_params.json` — the current values, sample sizes and fit quality
 per map — which is versioned and refit weekly as matches land.
 
+## Known weakness: `min_halves`
+
+The only gate on a per-map scoring fit is `fit_scoring_by_map(..., min_halves=12)`
+in `momentum_report.py`. A fit with 12 labelled halves that trips no guard can
+still be badly ill-conditioned. Bootstrap on `dod_thunder2` (4000 draws at
+n=12 halves, error as map-total scoreboard points):
+
+- Draws where a guard fired: median error 18.7%, max 56.4%. Bad, but bounded
+  and detectable.
+- Draws where no guard fired: median 0.00%, but p99 34.6% and max 1304%. The
+  worst one fit `hold3 = -6.67` and `hold4 = +25.8` against true values of
+  0.05 and 0.30, pricing `hold4` 86x too high from ill-conditioning alone.
+
+The `max(0.0, ...)` clamp in `value()` hides a negative coefficient but does
+nothing about an inflated one, so the output of a bad fit looks sane.
+Degeneracy is 0% by n=60 and the wild-coefficient tail is also a small-sample
+effect.
+
+Hardening `_solve` would only address the visible half. The lever is the gate.
+Two candidates:
+
+1. Raise `min_halves`.
+2. Reject a fit on its condition number instead of on a pivot.
+
+These per-map values are published weekly in the `rating_methodology`
+aggregate (since e46cff9), so an unflagged wild fit would be displayed on the
+site. Which fix to take, or whether to take either, is the module owner's
+decision; this section records the measurement only.
+
 ## Transparency: the `rating_methodology` document
 
 `methodology.py` builds the `rating_methodology` season aggregate: how KTPR

@@ -54,6 +54,7 @@ from scripts.flag_fights import (  # noqa: E402
 )
 from scripts.highlight_windows import build_highlight_windows  # noqa: E402
 from scripts.excursions import build_excursions  # noqa: E402
+from scripts.brinks import build_brinks  # noqa: E402
 from scripts.interruptions import build_interruptions  # noqa: E402
 from scripts.plays import build_plays  # noqa: E402
 from scripts.progression import build_progression  # noqa: E402
@@ -103,7 +104,7 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 26  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate
+SCHEMA_VERSION = 28  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
@@ -2160,6 +2161,14 @@ def build_report(
             and sources.get("life_boundaries", False)
             and source_mode != "replay"),
     )
+    # One flag from a cap-out: the threat, which the win-probability curve
+    # cannot pay for because it flattens exactly where the round ends.
+    brinks = build_brinks(
+        flag_states if sources.get("flag_ownership", False) else None,
+        credit_timeline,
+        source_status=("available" if sources.get("flag_ownership", False)
+                       else "unavailable"),
+    )
     # Captures that were begun and stopped: the only class here anchored on a
     # capture that never happened. Measured before it was built -- see the
     # module docstring for the dose-response.
@@ -2352,6 +2361,7 @@ def build_report(
             "ktpr_v2": ktpr_v2,
             "highlight_windows": highlight_windows,
             "excursions": excursions,
+            "brinks": brinks,
             "interruptions": interruptions,
             "plays": plays,
             "progression": progression,
