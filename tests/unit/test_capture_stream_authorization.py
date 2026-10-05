@@ -340,7 +340,7 @@ def _with_schema(version):
 
 
 def test_schema_25_authorizes_capture_and_position_like_24():
-    for version in (24, 25):
+    for version in (24, 25, 26):
         manifests, health, positions = _with_schema(version)
         capture = analytics.evaluate_capture_authorization({1}, manifests, health)
         position = analytics.evaluate_position_provenance(
@@ -350,7 +350,7 @@ def test_schema_25_authorizes_capture_and_position_like_24():
 
 
 def test_schemas_outside_the_accepted_set_are_still_refused():
-    for version in (20, 26):
+    for version in (20, 27):
         manifests, health, positions = _with_schema(version)
         assert analytics.evaluate_capture_authorization(
             {1}, manifests, health)["authorized"] is False
@@ -479,3 +479,56 @@ def test_a_clean_per_stream_capture_authorizes_every_stream():
     result = _authorize_two_halves(manifests, health)
 
     assert result["authorized"] is True, result["errors"]
+
+
+def _withheld_reason(health_edits):
+    manifests, health = _two_half_evidence()
+    for field, value in health_edits.items():
+        _break_stream(health, "damage", 1, field, value)
+    result = _authorize_two_halves(manifests, health)
+    return analytics.capture_stream_status(result, "damage")["reason"]
+
+
+def test_a_withheld_reason_names_loss_between_producer_and_daemon():
+    """Lines lost after the producer emitted them are not a producer drop or a
+    daemon rejection, and the reason has to say which one it was."""
+    reason = _withheld_reason({
+        "attempted": 100, "enqueued": 100, "emitted": 100,
+        "daemon_received": 97, "daemon_accepted": 97,
+    })
+
+    assert "half 1 damage counters do not reconcile" in reason
+    assert "3 of 100 emitted never reached the daemon" in reason
+    assert "dropped" not in reason
+    assert "rejected" not in reason
+
+
+def test_a_withheld_reason_names_a_daemon_rejection():
+    reason = _withheld_reason({
+        "attempted": 10, "enqueued": 10, "emitted": 10, "daemon_received": 10,
+        "daemon_accepted": 8, "daemon_rejected": 2,
+        "correlation_failure_count": 2,
+    })
+
+    assert "daemon rejected 2" in reason
+    assert "2 correlation failure(s)" in reason
+    assert "never reached the daemon" not in reason
+
+
+def test_a_withheld_reason_names_a_producer_drop():
+    reason = _withheld_reason({
+        "attempted": 10, "enqueued": 9, "dropped": 1, "emitted": 9,
+        "daemon_received": 9, "daemon_accepted": 9,
+    })
+
+    assert "producer dropped 1" in reason
+    assert "never reached the daemon" not in reason
+
+
+def test_a_reconciled_stream_still_authorizes():
+    """Control: naming causes must not invent one for a clean stream."""
+    manifests, health = _two_half_evidence()
+    result = _authorize_two_halves(manifests, health)
+
+    assert analytics.capture_stream_authorized(result, "damage") is True
+    assert result["errors"] == []

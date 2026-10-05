@@ -92,6 +92,19 @@ def test_the_move_census_health_type_is_accepted_as_optional():
     assert _health_errors(types) == []
 
 
+def test_the_aim_vis_health_type_is_accepted_as_optional():
+    """Listed before its producer exists, which is the whole point.
+
+    `ksc_emit_health` loops over the plugin's whole event enum, so the first
+    build that gains the aim-vis stream emits a health row for it whether or not
+    it announces the capability. An unknown type fails `capture_health` for every
+    half -- which is what `move` did on 2026-09-29: four Lane B assertions and a
+    report authorization, over a stream that was working.
+    """
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("aim_vis",)
+    assert _health_errors(types) == []
+
+
 def test_a_missing_required_health_type_is_still_an_error():
     """The point of the list: a stream that went dark must be caught."""
     types = tuple(t for t in analytics.CAPTURE_EVENT_TYPES if t != "damage")
@@ -322,7 +335,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 23
+    assert report["schema_version"] == 25
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []

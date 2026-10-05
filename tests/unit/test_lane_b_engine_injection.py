@@ -51,14 +51,31 @@ def _input_block(name: str) -> list[str]:
 
 
 def test_the_full_lane_stays_off_pull_request_and_adds_no_new_trigger():
-    assert _triggers() == {"workflow_call", "workflow_dispatch", "push", "schedule"}
+    assert _triggers() == {"workflow_call", "workflow_dispatch", "schedule"}
 
 
-def test_the_push_trigger_is_still_the_preprod_tag_only():
-    assert "    tags: ['lane-b-preprod-*']" in _text()
+def test_no_trigger_or_default_points_at_the_deleted_preprod_branches():
+    # KTPAMXX and KTPHLStatsX deleted preprod, so any path that resolves a
+    # component ref to it fails at checkout.
+    assert "lane-b-preprod-" not in _text()
+    assert not re.search(r"^\s+default: '?preprod'?$", _text(), re.M)
     # Control: the parser above finds real keys, so an empty trigger set could
-    # not have satisfied the assertion in the previous test.
-    assert len(_triggers()) == 4
+    # not have satisfied the trigger assertion.
+    assert len(_triggers()) == 3
+
+
+def test_the_schedule_tests_main():
+    assert "github.event_name == 'schedule' && fromJSON('[\"main\"]')" in _text()
+    assert "fromJSON('[\"preprod\"]')" not in _text()
+    # Control: the schedule branch really feeds the component refs.
+    assert "MATCHHANDLER_REF: ${{ inputs.matchhandler_ref || matrix.target_ref }}" in _text()
+
+
+def test_matchhandler_ref_defaults_to_main_on_both_entry_points():
+    blocks = _input_block("matchhandler_ref")
+    assert len(blocks) == 2
+    for block in blocks:
+        assert any(re.fullmatch(r"        default: '?main'?", line) for line in block)
 
 
 def test_the_lane_stays_github_hosted():

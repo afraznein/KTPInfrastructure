@@ -29,6 +29,9 @@
 #   --dest  <dir>                      empty or nonexistent; created 0700
 #   --key   <identity file>            age private key. Required; no default
 #   --day   <YYYY-MM-DD>               restore only this day; repeatable. Default: everything
+#   --set   bundles|weapon-context     which population to restore (default bundles). The
+#                                      weapon-context set restores the CURRENT version of
+#                                      every sidecar, from <src>/weapon-context/
 #
 # No hostnames or credentials in this file. This repository is public.
 
@@ -40,6 +43,7 @@ RSH=""
 DEST=""
 KEY=""
 DAYS=()
+SET="bundles"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -48,6 +52,7 @@ while [ $# -gt 0 ]; do
         --dest) DEST="${2:-}"; shift 2 ;;
         --key)  KEY="${2:-}";  shift 2 ;;
         --day)  DAYS+=( "${2:-}" ); shift 2 ;;
+        --set)  SET="${2:-}";  shift 2 ;;
         *) echo "[corpus-restore] unknown argument: $1" >&2; exit 1 ;;
     esac
 done
@@ -59,6 +64,16 @@ command -v age >/dev/null 2>&1 || fail "age is not installed."
 [ -n "$DEST" ] || fail "--dest is required."
 [ -n "$KEY" ]  || fail "--key is required. Without the identity file the archive is ciphertext and stays that way."
 [ -f "$KEY" ]  || fail "--key $KEY does not exist."
+case "$SET" in
+    bundles)
+        MANIFEST_PATH="ktp-corpus-manifest.txt.age"
+        OBJ_PREFIX="" ;;
+    weapon-context)
+        MANIFEST_PATH="weapon-context/ktp-weapon-context-manifest.txt.age"
+        OBJ_PREFIX="weapon-context/objects/"
+        [ "${#DAYS[@]}" -eq 0 ] || fail "--day selects bundle day-dirs; sidecars have none." ;;
+    *) fail "--set takes bundles or weapon-context." ;;
+esac
 # A world-readable private key on the machine that decrypts the whole evidence
 # corpus is worth one line to catch.
 PERM=$(stat -c '%a' "$KEY" 2>/dev/null || echo "")
@@ -85,9 +100,9 @@ RSYNC_E=()
 [ -n "$RSH" ] && RSYNC_E=( -e "$RSH" )
 
 # --------------------------------------------------------------- manifest
-MANIFEST_NAME="ktp-corpus-manifest.txt.age"
-rsync -a "${RSYNC_E[@]}" "$SRC/$MANIFEST_NAME" "$WORK/$MANIFEST_NAME" \
-    || fail "could not fetch $MANIFEST_NAME from the archive. Without it the objects are unnamed hashes."
+MANIFEST_NAME="${MANIFEST_PATH##*/}"
+rsync -a "${RSYNC_E[@]}" "$SRC/$MANIFEST_PATH" "$WORK/$MANIFEST_NAME" \
+    || fail "could not fetch $MANIFEST_PATH from the archive. Without it the objects are unnamed hashes."
 age -d -i "$KEY" -o "$WORK/manifest.txt" "$WORK/$MANIFEST_NAME" \
     || fail "could not decrypt the manifest. Wrong identity file, or the archive was encrypted to a key you do not hold."
 
@@ -106,10 +121,18 @@ if [ "${#DAYS[@]}" -gt 0 ]; then
 else
     SEL="$TOTAL"
 fi
-echo "[corpus-restore] manifest lists $TOTAL bundle(s); restoring $SEL"
+echo "[corpus-restore] $SET manifest lists $TOTAL file(s); restoring $SEL"
 
 # ----------------------------------------------------------------- fetch
-awk '{ split($3,p,"/"); print p[1] "/" $2 ".age" }' "$WORK/rows.txt" | sort -u > "$WORK/objects.txt"
+# A bundle object sits in its day-dir; a sidecar object sits under its set's prefix.
+objpath() {
+    if [ -n "$OBJ_PREFIX" ]; then printf '%s%s.age\n' "$OBJ_PREFIX" "$2"
+    else printf '%s/%s.age\n' "${1%%/*}" "$2"; fi
+}
+while IFS= read -r row; do
+    rest="${row#*  }"
+    objpath "${rest#*  }" "${rest%%  *}"
+done < "$WORK/rows.txt" | sort -u > "$WORK/objects.txt"
 rsync -a --checksum "${RSYNC_E[@]}" --files-from="$WORK/objects.txt" "$SRC/" "$WORK/enc/" \
     || fail "could not fetch the encrypted objects."
 GOT=$(find "$WORK/enc" -type f -name '*.age' 2>/dev/null | wc -l)
@@ -125,9 +148,8 @@ while IFS= read -r row; do
     rest="${row#*  }"
     sha="${rest%%  *}"
     rel="${rest#*  }"
-    day="${rel%%/*}"
-    mkdir -p "$DEST/$day" || { DECFAIL=$(( DECFAIL + 1 )); continue; }
-    if ! age -d -i "$KEY" -o "$DEST/$rel" "$WORK/enc/$day/$sha.age" 2>/dev/null; then
+    mkdir -p "$DEST/${rel%/*}" || { DECFAIL=$(( DECFAIL + 1 )); continue; }
+    if ! age -d -i "$KEY" -o "$DEST/$rel" "$WORK/enc/$(objpath "$rel" "$sha")" 2>/dev/null; then
         rm -f "$DEST/$rel"
         DECFAIL=$(( DECFAIL + 1 ))
         continue
@@ -148,5 +170,5 @@ if [ "$DECFAIL" -ne 0 ] || [ "$BADSUM" -ne 0 ]; then
     echo "[corpus-restore] $DECFAIL failed to decrypt, $BADSUM decrypted to the wrong bytes" >&2
     fail "restore is incomplete. The tree in $DEST is partial -- do not treat it as the corpus."
 fi
-echo "[corpus-restore] OK: $OK bundle(s) restored to $DEST and verified against the manifest"
+echo "[corpus-restore] OK: $OK file(s) of the $SET set restored to $DEST and verified against the manifest"
 exit 0

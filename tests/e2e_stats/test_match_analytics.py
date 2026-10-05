@@ -139,6 +139,24 @@ def test_team_summary_adds_only_additive_match_facts():
     ]
 
 
+def test_team_summary_damage_with_an_unknown_member_is_unknown_not_a_partial_sum():
+    players = _players()
+    for player in players:
+        for field in ("damage_taken", "team_damage", "self_damage",
+                      "grenade_damage", "grenade_damage_taken"):
+            player[field] = None
+    players[0]["damage_dealt"] = None
+    teams = analytics.team_summary(analytics.public_players(players))
+    allies, axis = teams
+    for team in teams:
+        for field in ("damage_taken", "team_damage", "self_damage",
+                      "grenade_damage", "grenade_damage_taken",
+                      "damage_differential"):
+            assert team[field] is None, (field, team)
+    assert allies["damage_dealt"] is None
+    assert axis["damage_dealt"] == 600
+
+
 def test_team_summary_rolls_up_grenade_and_score_and_computes_rates():
     players = _players()
     for i, player in enumerate(players):

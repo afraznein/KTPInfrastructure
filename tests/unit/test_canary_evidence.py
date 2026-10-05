@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts import canary_evidence
+from scripts import match_analytics as analytics
 
 
 def test_canary_manifest_evidence_keeps_producer_and_receipt_clocks_separate():
@@ -260,6 +261,55 @@ def test_capture_health_requires_manifest_all_types_and_exact_receipts():
     assert result["manifest_versions"] == ["stats_logging@1.18.0/schema-22"]
 
 
+@pytest.mark.parametrize("schema_version", sorted(analytics.CAPTURE_SCHEMAS))
+def test_manifest_authorized_accepts_every_schema_the_contract_accepts(
+    schema_version,
+):
+    """Every schema in the producer contract authorizes the manifest.
+
+    Pinned to a literal 22 this was false for all four, and the fleet has run
+    23/24/25 since 22 was retired -- so the field reported a problem that did
+    not exist and could not report one that did.
+    """
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = schema_version
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_authorized"] is True
+
+
+def test_manifest_authorized_still_rejects_a_schema_outside_the_contract():
+    """The gate must discriminate: one below the contract floor stays false.
+
+    Both other legs are healthy here, so a false can only come from the schema
+    leg -- which is what keeps the widened leg a gate rather than a constant.
+    """
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = min(analytics.CAPTURE_SCHEMAS) - 1
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_complete"] is True
+    assert result["manifest_authorized"] is False
+
+
+@pytest.mark.parametrize("leg,value", (
+    ("position_interval", 1.0),
+    ("capabilities", "life,damage,position,frag,assist,break,flag_state,"
+                     "flag_position,objective_attempt"),
+))
+def test_manifest_authorized_still_rejects_each_non_schema_leg(leg, value):
+    """A fielded schema must not launder a bad cadence or a missing stream."""
+    rows = _healthy_capture_health_rows()
+    rows["manifests"][0]["schema_version"] = max(analytics.CAPTURE_SCHEMAS)
+    rows["manifests"][0][leg] = value
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["manifest_authorized"] is False
+
+
 @pytest.mark.parametrize("missing", (
     "producer_activation_epoch", "activation_receipt_epoch", "match_start_epoch",
 ))
@@ -314,6 +364,72 @@ def test_capture_health_fails_on_drop_gap_or_receipt_mismatch():
     assert result["emitted_received_mismatches"] == 1
     assert result["attempted_enqueue_drop_mismatches"] == 2
     assert result["enqueued_emitted_mismatches"] == 1
+
+
+def _gap_rows(gaps_by_index: dict[int, int], schema_version=None):
+    """One health row per required stream, with gaps planted by index."""
+    health = [
+        {
+            "half": 1, "event_type": event_type, "dropped": 0,
+            "attempted": 2, "enqueued": 2,
+            "emitted": 2, "daemon_received": 2, "daemon_accepted": 2,
+            "daemon_rejected": 0, "correlation_failure_count": 0,
+            "sequence_gap_count": 0, "duplicate_or_reordered_count": 0,
+        }
+        for event_type in canary_evidence.CAPTURE_EVENT_TYPES
+    ]
+    for index, value in gaps_by_index.items():
+        health[index]["sequence_gap_count"] = value
+        health[index]["duplicate_or_reordered_count"] = value
+    manifest = {"half": 1}
+    if schema_version is not None:
+        manifest["schema_version"] = schema_version
+    return {"manifests": [manifest], "health": health}
+
+
+def test_sequence_gaps_sum_across_streams_from_schema_24():
+    """Schema 24 numbers each stream separately, so the half's gap total is the
+    SUM. max() would report 3 -- the worst single stream -- and understate the
+    loss by four lines."""
+    rows = _gap_rows({0: 3, 1: 2, 2: 2}, schema_version=24)
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 7
+    assert result["duplicates_or_reordered"] == 7
+
+
+def test_sequence_gaps_stay_half_wide_below_schema_24():
+    """Older producers shared one sequence and the daemon stamped the half's
+    value into every row, so summing would multiply one loss by the stream
+    count. Same planted rows as the schema-24 case: 3, not 7."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3}, schema_version=22)
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
+    assert result["duplicates_or_reordered"] == 3
+
+
+def test_sequence_gaps_treat_a_schemaless_manifest_as_half_wide():
+    """A manifest with no schema_version must not be read as per-stream."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3})
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
+
+
+def test_sequence_gaps_need_every_manifest_past_the_schema():
+    """Mid-rollout a half can carry two manifests. One below the schema means
+    the half is not per-stream, or an old producer's half-wide value gets
+    summed across streams."""
+    rows = _gap_rows({0: 3, 1: 3, 2: 3}, schema_version=24)
+    rows["manifests"].append({"half": 1, "schema_version": 23})
+
+    result = canary_evidence.capture_health_evidence(rows, {1})
+
+    assert result["sequence_gaps"] == 3
 
 
 def test_position_cadence_accepts_two_second_samples_with_tolerance():

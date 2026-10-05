@@ -56,6 +56,27 @@ already on disk, because a copy that differs from even a KNOWN-OLD ref is a
 finding that needs no network to be true. Only the clean-but-unverifiable case
 needs the operator (`KTP_FRESHNESS_OFFLINE`).
 
+AN INSTALLED COPY
+-----------------
+A file in `/usr/local/bin` is in no checkout, and the cron entry that runs it
+has no checkout to run it from. Refusing it as "no provenance" would turn the
+nightly post-restart soak into an exit 3 every night. But it does have
+provenance: `ktp-install` wrote a row for it in the deploy manifest, naming the
+repo, the commit and the blob it was installed from. So for a file outside any
+checkout the question is asked of that row, in two legs, and both must hold:
+
+  1. its bytes still have the md5 of its LAST manifest row -- untouched since
+     install. A hand-edit in place, or a copy nobody recorded, has no row it
+     matches, and is refused the same way a file in a temp dir is.
+  2. those bytes are the blob at the FETCHED ref for the row's source_path, in
+     the checkout named by KTP_FRESHNESS_REPO (default /opt/ktp-infra). A row
+     that is honest about an old commit is still an old copy, and is refused.
+
+Leg 2 is the checkout rule again, compared by md5 rather than by `git diff`:
+`ktp-install` writes the blob's exact bytes, so there is no line-ending
+normalisation between them to get wrong. The fetch writes one remote-tracking
+ref and nothing else, because that checkout is never pulled.
+
 INERT CONTEXTS
 --------------
 Under pytest and under GitHub Actions the check reports and returns. In CI the
@@ -71,7 +92,11 @@ got old, which nothing else on this estate reports.
 Env:
   KTP_FRESHNESS_REF       ref to compare against (default: origin/main)
   KTP_FRESHNESS_REPO      checkout to verify against, for a copy extracted to a
-                          temp path outside any tree
+                          temp path outside any tree; for an installed copy, the
+                          checkout its manifest row is resolved in
+                          (default: /opt/ktp-infra)
+  KTP_MANIFEST            deploy manifest to read (default: the system and user
+                          manifests ktp-install writes)
   KTP_FRESHNESS_OFFLINE   non-empty reason; accepts an unfetchable ref that the
                           local comparison found clean. Never skips the compare.
   KTP_FRESHNESS_BYPASS    non-empty reason; proceeds after a refusal, printing
@@ -83,12 +108,19 @@ Env:
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import subprocess
 import sys
 
 DEFAULT_REF = "origin/main"
+DEFAULT_INSTALLED_REPO = "/opt/ktp-infra"
+# Where and how ktp-install records; a path's current state is its LAST row.
+SYSTEM_MANIFEST = "/usr/local/share/ktp-infra/DEPLOYED.tsv"
+USER_MANIFEST = os.path.expanduser("~/.ktp/DEPLOYED.tsv")
+MANIFEST_HEADER = ["installed_path", "md5", "source_repo", "source_commit",
+                   "source_path", "deployed_at_iso", "previous_md5", "deployed_by"]
 _FETCH_TIMEOUT = 45
 _GIT_TIMEOUT = 60
 # How far back through a path's history to look for the running copy. Bounded so
@@ -212,6 +244,149 @@ def _describe_drift(repo, ref, rel):
     return lines
 
 
+def _manifest_row(path):
+    """Return ((manifest, last row for `path`) or None, error or None)."""
+    if os.environ.get("KTP_MANIFEST"):
+        manifests = [os.environ["KTP_MANIFEST"]]
+    else:
+        manifests = [SYSTEM_MANIFEST, USER_MANIFEST]
+    names = {os.path.abspath(path), os.path.realpath(path)}
+    found = None
+    for manifest in manifests:
+        if not os.path.exists(manifest):
+            continue
+        try:
+            with open(manifest, encoding="utf-8") as fh:
+                lines = fh.read().split("\n")
+        except OSError as exc:
+            return None, f"cannot read deploy manifest {manifest}: {exc}"
+        if lines and lines[-1] == "":
+            lines.pop()
+        if not lines or lines[0].split("\t") != MANIFEST_HEADER:
+            return None, f"deploy manifest {manifest} has a missing or unexpected header"
+        for n, line in enumerate(lines[1:], start=2):
+            cols = line.split("\t")
+            if len(cols) != len(MANIFEST_HEADER):
+                return None, f"deploy manifest {manifest}:{n} does not parse"
+            row = dict(zip(MANIFEST_HEADER, cols))
+            if row["installed_path"] in names:
+                found = (manifest, row)
+    return found, None
+
+
+def _check_installed(script_path, ref, also):
+    """Verify copies outside any checkout: manifest row first, then the fetched ref."""
+    here = os.path.dirname(script_path)
+    paths = [script_path, *(os.path.abspath(os.path.join(here, n)) for n in also)]
+    rows = []
+    for path in paths:
+        found, err = _manifest_row(path)
+        if err:
+            return [f"Cannot verify {path}: {err}.\n  An unreadable manifest proves nothing."]
+        if not found:
+            return [
+                f"Cannot verify {os.path.basename(path)} is current: it is not "
+                f"inside a git checkout, and no deploy manifest records it.\n"
+                f"  looked for: {path}\n"
+                f"  A copy extracted to a temp path has no provenance and this guard "
+                f"will not assume one.\n"
+                f"  Run it from the checkout, or install it with ktp-install so the "
+                f"manifest says which blob it is."
+            ]
+        manifest, row = found
+        try:
+            with open(path, "rb") as fh:
+                have = hashlib.md5(fh.read()).hexdigest()
+        except OSError as exc:
+            return [f"Cannot verify {path}: {exc}."]
+        if have != row["md5"]:
+            return [
+                f"{path} DIFFERS from its deploy-manifest row.\n"
+                f"    on disk:  {have}\n"
+                f"    recorded: {row['md5']} ({row['source_path']} at "
+                f"{row['source_commit'][:12]}, {manifest})\n"
+                f"    It was edited in place or copied without ktp-install; either "
+                f"way nothing says which version it is."
+            ]
+        rows.append((path, have, row))
+
+    repo = os.path.abspath(os.environ.get("KTP_FRESHNESS_REPO") or DEFAULT_INSTALLED_REPO)
+    top = _toplevel(repo) if os.path.isdir(repo) else None
+    if not top:
+        return [f"Cannot verify installed copies against {ref}: {repo} is not a git "
+                f"checkout. Point KTP_FRESHNESS_REPO at the one they were installed from."]
+    rc, url, _ = _git(top, "remote", "get-url", "origin")
+    url = url.replace("\\", "/").rstrip("/") if rc == 0 else ""
+    name = url.split("/")[-1] if url else os.path.basename(top)
+    name = name[:-4] if name.endswith(".git") else name
+
+    remote, _, branch = ref.partition("/")
+    # One remote-tracking ref and nothing else: that checkout is never pulled.
+    fetch_rc, _, fetch_err = _git(
+        top, "fetch", "--quiet", "--no-tags", "--refmap=", remote,
+        f"+refs/heads/{branch}:refs/remotes/{remote}/{branch}", timeout=_FETCH_TIMEOUT)
+
+    problems = []
+    for path, have, row in rows:
+        if row["source_repo"].split("/")[-1] != name:
+            problems.append(f"Cannot verify {path}: its manifest row names "
+                            f"{row['source_repo']}, but {top} is {name}.")
+            continue
+        rel = row["source_path"]
+        try:
+            blob = subprocess.run(["git", "-C", top, "cat-file", "blob", f"{ref}:{rel}"],
+                                  capture_output=True, timeout=_GIT_TIMEOUT)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            problems.append(f"Cannot verify {path}: {exc}.\n  Undetermined is not clean.")
+            continue
+        if blob.returncode != 0:
+            problems.append(f"Cannot verify {path}: {rel} does not exist at {ref} in {top}.")
+            continue
+        if hashlib.md5(blob.stdout).hexdigest() == have:
+            continue
+
+        block = [f"{path} is STALE: installed from {rel} at "
+                 f"{row['source_commit'][:12]}, and {ref} has moved past it."]
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            running = fh.read()
+        missing = sorted(_long_options(blob.stdout.decode("utf-8", "replace"))
+                         - _long_options(running))
+        if missing:
+            block.append(f"    flags on {ref} that this copy does not have:")
+            block.append("      " + "  ".join(missing))
+        rc, out, _ = _git(top, "log", "--format=      %h %s",
+                          f"{row['source_commit']}..{ref}", "--", rel)
+        if rc == 0 and out:
+            block.append(f"    commits on {ref} since the installed one, on this path:")
+            block.extend(out.splitlines())
+        block.append(f"    reinstall: ktp-install --repo {top} --commit <{ref} sha> "
+                     f"--src {rel} --dest {path} --expect-md5 {have}")
+        problems.append("\n".join(block))
+
+    return problems or _fetch_verdict(fetch_rc, fetch_err, remote, branch, ref)
+
+
+def _fetch_verdict(fetch_rc, fetch_err, remote, branch, ref):
+    """Clean against a ref that could not be refreshed: refuse, unless declared offline."""
+    if fetch_rc == 0:
+        return []
+    offline = os.environ.get("KTP_FRESHNESS_OFFLINE", "").strip()
+    detail = (f"Could not fetch {remote} {branch}: "
+              f"{fetch_err or f'git fetch exited {fetch_rc}'}")
+    if not offline:
+        return [
+            f"{detail}\n"
+            f"  The files match the {ref} already on disk, but nothing here "
+            f"proves that ref is current, and a ref that has not moved since "
+            f"the checkout went stale agrees with a stale copy.\n"
+            f"  Fix the network, or set KTP_FRESHNESS_OFFLINE to a reason to "
+            f"accept the on-disk ref."
+        ]
+    print(f"[freshness] ACCEPTING AN UNVERIFIED {ref}: {offline}", file=sys.stderr)
+    print(f"[freshness]   {detail}", file=sys.stderr)
+    return []
+
+
 def _inert_context():
     if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
         return "pytest"
@@ -231,18 +406,10 @@ def check(script_path, also=()):
     script_path = os.path.abspath(script_path)
     here = os.path.dirname(script_path)
 
-    repo = os.environ.get("KTP_FRESHNESS_REPO") or _toplevel(here)
-    if not repo:
-        return [
-            f"Cannot verify {os.path.basename(script_path)} is current: it is not "
-            f"inside a git checkout.\n"
-            f"  looked from: {here}\n"
-            f"  A copy extracted to a temp path has no provenance and this guard "
-            f"will not assume one.\n"
-            f"  Run it from the checkout, or point KTP_FRESHNESS_REPO at the "
-            f"checkout whose {ref} it should be compared against."
-        ]
-    repo = os.path.abspath(repo)
+    top = _toplevel(here)
+    if not top:
+        return _check_installed(script_path, ref, also)
+    repo = os.path.abspath(os.environ.get("KTP_FRESHNESS_REPO") or top)
 
     targets = []
     for path in (script_path, *(os.path.join(here, name) for name in also)):
@@ -292,23 +459,7 @@ def check(script_path, also=()):
         # rather than muddying a real finding with a network caveat.
         return problems
 
-    if fetch_rc != 0:
-        offline = os.environ.get("KTP_FRESHNESS_OFFLINE", "").strip()
-        detail = (f"Could not fetch {remote} {branch}: "
-                  f"{fetch_err or f'git fetch exited {fetch_rc}'}")
-        if not offline:
-            return [
-                f"{detail}\n"
-                f"  The files match the {ref} already on disk, but nothing here "
-                f"proves that ref is current, and a ref that has not moved since "
-                f"the checkout went stale agrees with a stale copy.\n"
-                f"  Fix the network, or set KTP_FRESHNESS_OFFLINE to a reason to "
-                f"accept the on-disk ref."
-            ]
-        print(f"[freshness] ACCEPTING AN UNVERIFIED {ref}: {offline}", file=sys.stderr)
-        print(f"[freshness]   {detail}", file=sys.stderr)
-
-    return []
+    return _fetch_verdict(fetch_rc, fetch_err, remote, branch, ref)
 
 
 def require_current(script_path, also=(), purpose=None):

@@ -23,6 +23,16 @@ LinuxGSM loads configs in this order (later files override earlier):
 
 **Important**: Instance configs (dodserver2.cfg, etc.) must be in the `dodserver/` folder, NOT in a separate `dodserver2/` folder!
 
+### Console-log retention: `logdays` is 21 per instance, not 7
+
+`_default.cfg` still reads `logdays="7"`, so a reader who checks only that file gets the wrong
+answer. Every live instance overrides it to `logdays="21"` in its own `dodserver*.cfg`, and the
+provisioning scripts write that line into each instance config they create. An instance rebuilt
+from anything else (a hand-made config, an older tarball) reverts to 7 with no error. Console
+logs are where drop reasons and `[KTP_OPCODE]` lines live, and nothing else holds them, so a
+shorter window leaves a late report with no pre-onset baseline. Check the effective value with
+`grep -h '^logdays' lgsm/config-lgsm/dodserver/*.cfg` per instance, never `_default.cfg` alone.
+
 ### Default Server Settings
 When deploying new servers, use these settings in `common.cfg`:
 ```
@@ -280,5 +290,43 @@ ls -la ~/dod-*/lgsm/lock/*-monitoring.lock
 # Check monitor log for errors
 tail -20 ~/log/monitor.log | grep -E 'lockfile|ERROR'
 ```
+
+### Monitor guard: no restarts into a dead link
+
+LinuxGSM's `monitor` cannot tell a hung server from a host that has lost its own
+network. When the uplink loses carrier, networkd drops the static address with it,
+every gsquery fails, and the monitor restarts the instance into a network where
+`+ip <addr> -strictportbind` cannot bind. The new process dies at startup
+(`UDP_OpenSocket ... bind: Cannot assign requested address` → `Sys_Error` → a core in
+`/tmp`), and the first tick after the link returns restarts it again. That happened to
+all five Dallas instances on 2026-09-29: a 4-minute flap, two full restarts each.
+Those cores are the engine's deliberate exit after a fatal error, not an engine bug.
+
+`monitoring/monitor-guard/ktp-monitor-guard.sh` wraps the cron call and skips the
+monitor for that tick when any of these holds:
+
+- the instance's `ip=` (last literal value in LinuxGSM's own load order) is not
+  assigned to any interface;
+- the interface carrying it — or the default route's interface, for a wildcard
+  bind — has no carrier;
+- there is no IPv4 default route.
+
+Otherwise it `exec`s the wrapped command unchanged, so a hung server on a healthy
+host is restarted exactly as before. Anything it cannot evaluate runs the monitor.
+It logs one `HOLD` and one `RESUME` line per outage to `~/log/monitor-guard.log`
+and syslog (`journalctl -t ktp-monitor-guard`).
+
+```
+* * * * * /home/dodserver/ktp-monitor-guard.sh /home/dodserver/dod-27015/dodserver monitor > /dev/null 2>&1
+```
+
+Keep `<control> monitor` as the wrapper's arguments: `ktp-scheduled-restart.sh`
+pauses the monitor by stripping lines that match `dodserver.*monitor`, and
+`ktp-fleet-health.sh` counts lines matching `^[^#]*monitor`. Both still see one line
+per instance. `install-linuxgsm.sh` installs the guard and writes wrapped lines when
+it runs from a repo checkout.
+
+⚠️ A run already in progress when the link drops is not stopped: it can still finish
+its five attempts and restart. The guard only decides at the start of each tick.
 
 ---

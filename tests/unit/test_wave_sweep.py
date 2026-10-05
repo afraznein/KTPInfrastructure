@@ -188,7 +188,7 @@ def test_an_exported_copy_is_still_refused(setup, tmp_path):
                        env=clean_env(KTP_FRESHNESS_REPO=str(tree)))
     assert r.returncode == 3
     assert "REFUSING TO RUN ktp-wave-ledger.py" in r.stderr
-    assert "is not under" in r.stderr
+    assert "no deploy manifest records it" in r.stderr
 
 
 def test_a_stale_checkout_is_still_refused(setup):

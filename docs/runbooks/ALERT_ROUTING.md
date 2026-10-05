@@ -99,9 +99,19 @@ python3 /usr/local/bin/ktp_alert_routing.py info --producer hltv-restart-all \
 ## What it looks like the first time it runs
 
 - **`hltv-restart-all.sh`, 03:00 and 11:00** — on a clean run, *nothing appears in Discord*.
-  The absence is the change. Confirm it worked by reading
-  `/var/lib/ktp-alerts/ops-daily.jsonl` (one JSON line per run) and
-  `/var/log/hltv-restart.log` (`Clean restart (24/24 connected) — digest line, no post.`).
+  The absence is the change. Partial, failed and first-green-after-failure ("recovery") runs
+  still post to both HLTV status channels. The unit is `hltv-restart.service`, fired by
+  `hltv-restart.timer` (a oneshot with no `StandardOutput` redirect, so there is **no**
+  `/var/log/hltv-restart.log`; output goes to the journal). Confirm a run in three places:
+  1. the state file changed: `stat -c '%y %n' /var/lib/ktp-alerts/hltv-restart-all.state`
+     (it holds the last severity; the mtime moves every run);
+  2. the journal: `journalctl -u hltv-restart.service --since "today 02:55"` shows
+     `Clean restart (24/24 connected) — digest line, no post.`;
+  3. the spool: `tail -n 2 /var/lib/ktp-alerts/ops-daily.jsonl` holds one line per clean run
+     (`HLTV: 24/24 proxies restarted and connected`).
+  ⚠️ **Nothing drains that spool yet.** No caller of `drain_digest_lines()` exists, so a clean
+  run is recorded only in the spool file and the journal, and the file grows until a consumer
+  is built. The digest gap is tracked in [ALERT_COVERAGE.md](ALERT_COVERAGE.md).
 - **First run only**, `/var/lib/ktp-alerts/hltv-restart-all.state` does not exist. A clean
   run is treated as routine and stays quiet — deliberately: an all-clear for a page nobody
   saw is worse than one more silent night.
