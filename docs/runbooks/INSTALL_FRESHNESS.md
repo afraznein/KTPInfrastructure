@@ -69,7 +69,8 @@ what they were doing, not a batch.
 `scripts/systemd/dropins/ktp-install-freshness.service.d/00-ktp-onfailure-alert.conf`,
 `scripts/ktp-install-freshness.conf.example`.
 
-It runs `ktp-install --report --repo <mirror> --against-ref origin/main`, writes
+It fetches `origin/main` into `/opt/ktp-infra` (fetch only — see below), runs
+`ktp-install --report --repo /opt/ktp-infra --against-ref origin/main`, writes
 the result, and compares the **set** of non-fresh paths to the previous run's.
 
 **It keys on work done, not on the unit being up.** A hung unit reads as
@@ -93,8 +94,8 @@ ten tomorrow; a daily "10 paths are stale" is a number people learn to skim. So:
 **A dirty estate exits 0.** `ktp-install --report` exits 1 whenever anything is
 stale. Letting that fail the unit would fire the `OnFailure` drop-in every single
 run until somebody masked it. Non-zero from this script means the check *could
-not run* — no mirror, no manifest, an unresolvable ref — and that is the only
-thing the drop-in should ever see.
+not run* — no checkout, a failed fetch, no manifest, an unresolvable ref — and
+that is the only thing the drop-in should ever see.
 
 **A failed relay post does not save the transition**, so the next run
 re-announces it rather than swallowing a change nobody saw.
@@ -106,15 +107,10 @@ re-announces it rather than swallowing a change nobody saw.
 ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install \
             --dest /usr/local/bin/ktp-install --expect-md5 <md5 there now>
 
-# 2. the check, and the mirror it reads
+# 2. the check (it reads /opt/ktp-infra; nothing to clone)
 ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install-freshness.sh \
             --dest /usr/local/bin/ktp-install-freshness.sh --expect-md5 -
 install -d -m 750 /var/lib/ktp-install-freshness
-git clone --bare https://github.com/afraznein/KTPInfrastructure \
-    /var/lib/ktp-install-freshness/mirror.git
-git -C /var/lib/ktp-install-freshness/mirror.git config \
-    remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
-git -C /var/lib/ktp-install-freshness/mirror.git fetch --prune origin
 
 # 3. conf, units, drop-in
 cp scripts/ktp-install-freshness.conf.example /etc/ktp/install-freshness.conf  # then edit
@@ -126,11 +122,22 @@ chmod 600 /etc/ktp/install-freshness.conf
 systemctl show -p OnFailure ktp-install-freshness.service   # the check, not a grep
 ```
 
-⚠️ **`/opt/ktp-infra` is not the mirror.** The check fetches, and that tree must
-not be auto-pulled; the script refuses it outright. The mirror is a bare clone it
-owns, and it is a `--bare` clone configured to fetch into `refs/remotes/origin/*`
-— a `--mirror` clone puts branches in `refs/heads`, where `origin/main` does not
-resolve and every run would exit 2.
+⚠️ **The check FETCHES `/opt/ktp-infra` and never pulls it.** The standing rule is
+that the deploy checkout is not auto-pulled, and that still holds: the fetch uses
+an explicit refspec, `+refs/heads/main:refs/remotes/origin/main`, so the only
+thing it can write is that one remote-tracking ref. HEAD, the index, the working
+tree and every local branch stay where a person put them — even if the checkout's
+configured refspec were changed to write `refs/heads/*`. The script records HEAD
+before the fetch and exits 1 if it moved. What changes is that `origin/main` in
+that checkout is now current, which is what the comparison needs, and it also
+means a newly merged commit is present there to install from with
+`ktp-install --commit` without anyone moving the tree. `AGAINST_REF` must be a
+`<remote>/<branch>` ref; a local ref is refused, because a fetch never refreshes
+it and it would read as fresh forever.
+
+⚠️ **A fetch can lose a race.** If someone runs git in `/opt/ktp-infra` at 06:20
+the fetch may fail on a lock; that run exits 1, the `OnFailure` drop-in fires,
+and the next run is normal.
 
 ⚠️ **Enable the timer and add it to `CRITICAL_TIMERS` in the same change.**
 `ktp-data-server-health.sh` is what notices a *stopped* timer; the gap leg inside

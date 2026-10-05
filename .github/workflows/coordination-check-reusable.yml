@@ -26,6 +26,24 @@ name: Coordination check (reusable)
 #
 # Requires an Actions secret COORD_DEPLOY_KEY in the calling repo: the private half of a
 # read-only SSH deploy key added to andsmit9/ktp-coordination. See that repo's README.
+#
+# If the coordination clone fails
+#
+# Symptom: the "Load coordination repo deploy key" or "Clone coordination repo" step
+# fails, typically `Permission denied (publickey)`, `Repository not found`, or an
+# ssh-agent error on an empty key. Every gated PR fails the same way, whatever its body says.
+#
+# Causes, most likely first: the deploy key was removed or rotated on
+# andsmit9/ktp-coordination (only andsmit9 can manage it: a personal repo has no other
+# admin); COORD_DEPLOY_KEY in the calling repo is missing, empty or no longer matches the
+# public half; the repo was renamed or made unreachable. GitHub secrets are write-only, so
+# the private half cannot be read back, only re-set from the operator's offline key store.
+#
+# Escape hatches (the gated repos have enforce_admins off):
+#   1. Admin-merge past the failing check.
+#   2. Drop `check / check` from the branch's required status checks.
+#   3. Restore: andsmit9 re-adds the deploy key to ktp-coordination, then re-set
+#      COORD_DEPLOY_KEY in each calling repo from the offline copy.
 
 on:
   workflow_call:

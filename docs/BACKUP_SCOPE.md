@@ -19,7 +19,8 @@ refuse to run with them unset.
 ## 1. What is actually wired today
 
 `/etc/cron.d/ktp-offsite` runs three jobs on Sunday: `ktp-db-offsite.sh` at 04:00,
-`ktp-demo-offsite.sh` at 05:00 and `ktp-corpus-offsite.sh --commit` at 06:00 (added 2026-09-25).
+`ktp-demo-offsite.sh` at 05:00 and `ktp-corpus-offsite.sh --commit` at 06:00 (added 2026-09-25;
+it carries the AC weapon-context sidecars as a second source since 2026-10-05, section 1.2).
 The first two read `KTP_OFFSITE_HOSTS`, and that variable names **two** provider-diverse hosts we
 already own. The most recent run reports every file present on every target.
 
@@ -92,9 +93,67 @@ registered provider formats only, so it would not stop you.
 Objects are named for the sha256 of the plaintext, so two bundles with the same content in the same
 day-dir share one remote object. The first real run selected 854 bundles and wrote 842 objects, and
 both numbers are correct. The restore handles it (it fetches `sort -u` objects and writes every
-manifest row), but the leg's own log line calls the cache `$COUNT object(s)` when it holds fewer, and
-**the drill's `OBJS -eq N` assert would fail on real data** — it passes only because the drill's
-bundles are random bytes.
+manifest row). 🔻 **CORRECTED 2026-10-05:** the leg's log line used to call the cache `$COUNT
+object(s)` when it held fewer; it now prints the distinct-object count beside the bundle count.
+**The drill's `OBJS -eq N` assert would still fail on real data** — it passes only because the
+drill's bundles are random bytes, and it never runs on real data.
+
+### 1.2 The second source: AC weapon-context sidecars (added 2026-10-05)
+
+**Operator ruling 2026-10-05:** back up the weapon-context store off-provider, encrypted, through
+the corpus leg — same `age` recipients, same Sunday 06:00 run, retention **unbounded** like the
+bundles. Before this, `/opt/ktp-ac-api/weapon-context` had no copy anywhere: not in the corpus leg
+(bundles only) and not in `ktp-backup.sh`.
+
+🔑 **Why it matters more than its size suggests.** The store keeps each session's weapon timeline as
+`<shard>/<session>.weapons.json`. The database rows it is cut from are swept nightly, so **once a
+session's rows are gone its sidecar is the only copy** of which weapon was in hand. The files carry
+victim SteamIDs, so they get exactly the bundles' treatment: encrypted before they leave, an
+encrypted manifest, and counts — never names — in the log.
+
+**Far-side layout.** Its own prefix under the corpus directory, so a bundle restore and a sidecar
+restore never read each other's objects. The bundle layout is unchanged:
+
+```
+<corpus dir>/<YYYY-MM-DD>/<sha256>.age                                  bundles
+<corpus dir>/ktp-corpus-manifest.txt.age                                bundle manifest
+<corpus dir>/weapon-context/objects/<sha256-of-plaintext>.age           sidecars, every version
+<corpus dir>/weapon-context/ktp-weapon-context-manifest.txt.age         CURRENT versions
+<corpus dir>/weapon-context/manifests/ktp-weapon-context-manifest-<UTC>.txt.age
+```
+
+⚠️ **Sidecars are rewritten in place, and the far side is append-only.** The API rewrites a
+sidecar by rename whenever a later hydrate is more complete. A rewrite has a new hash and therefore
+lands as a **new** object, and the old object stays — that is correct for a far side that never
+deletes. What says which object is the **current** version of each file is the stable manifest,
+rewritten every run from what that run read; a restore reads it and so takes the latest version of
+every sidecar. The dated manifests are the only map to the older versions. Two details follow from
+the rewriting:
+
+- **The sidecars are copied into the run's work dir before they are hashed.** The writer can replace
+  a file between the hash and the encryption, and a hash taken from one version must never name the
+  ciphertext of the next.
+- **The current manifest is verified on the far side by content**, like the objects. A stale one
+  restores old sidecars with no error at all. (The manifest ships with `--ignore-times`: two runs in
+  one second write a same-size manifest with the same mtime, and rsync's quick check kept the old
+  one — found by the tests, not in production, where runs are a week apart.)
+
+**No new conf variable.** The source defaults to `/opt/ktp-ac-api/weapon-context`
+(`KTP_WEAPON_CONTEXT_SRC` overrides it) and the prefix is fixed, so the install is the scripts
+alone. ⚠️ **Selection is strict, like the bundles':** only `<digits>/<digits>.weapons.json` one
+level deep is copied, the in-flight `tmp/` is never selected, anything else under the store is
+**counted in a WARNING and not copied**, and **an empty or missing store fails the whole run before
+anything ships** — the same "refuse an empty selection rather than report success" rule. A store
+that is switched off will therefore stop the bundle leg too, and that is deliberate: it is the
+operator's ruling that this data leaves, and a silent skip is how it would stop leaving.
+
+📌 **Measured 2026-10-05 (counts only):** 121 files, 15,045,625 bytes, every one matching the shape
+and 121 distinct sha256, store mode 0750 root. Re-derive before acting.
+
+➡️ **Restore:** `ktp-corpus-restore.sh --set weapon-context --src <archive> --dest <empty dir> --key
+<identity>`; `--day` does not apply. **The drill** now builds a synthetic store too, rewrites one
+sidecar in place between two runs, and asserts the archive gained exactly one object and that the
+restore returns the **current** bytes of every sidecar.
 
 ## 2. Why "add it as a third target" does not work
 

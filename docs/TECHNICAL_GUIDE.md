@@ -2425,6 +2425,7 @@ The original design sent `record <name>` at match start and `stoprecording` at m
 The replacement ("always-on + rename"):
 - **HLTV cfg-driven recording** — every HLTV instance records continuously to `auto_<alias>`-stamped files. Nothing at match time can fail to start a recording, because nothing at match time starts one.
 - **`hltv-demo-renamer` service** (data server, Python/systemd) — tails the game hosts' logs for the plugin's `MATCH_WINDOW_OPEN`/`CLOSE` markers and renames the covering `auto_*.dem` files to canonical match-id names (with `_h1`/`_h2`/`_ot` half suffixes) for the demo portal.
+  ⚠️ When auditing what it renamed, match demos to matches by map and time, never by `match_id` alone: a false start is re-issued under a new id, so one match can carry two.
 - **Retention** — non-match `auto_*.dem` churn is swept on a short age threshold; renamed match demos follow the tiered retention policy (competitive/draft longer than scrim/12man).
 
 </details>
