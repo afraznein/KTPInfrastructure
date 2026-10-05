@@ -21,8 +21,7 @@ from .parsers import parse_plugins_ini
 
 # Plugin filenames the runtime currently expects across profiles. Update
 # alongside any production rollout. Source of truth for the canonical
-# expected set; the actual file may have a subset (e.g. local has
-# KTPHudObserver, online does not).
+# expected set; the actual file may have a subset.
 KNOWN_PLUGINS: set[str] = {
     "admin.amxx",
     "stats_logging.amxx",
@@ -34,7 +33,7 @@ KNOWN_PLUGINS: set[str] = {
     "KTPPracticeMode.amxx",
     "KTPGrenadeLoadout.amxx",
     "KTPGrenadeDamage.amxx",
-    "KTPHudObserver.amxx",  # local-profile only; external repo
+    "KTPHudObserver.amxx",  # external repo; loaded on local and online
     "KTPScoreTracker.amxx",
 }
 
@@ -97,8 +96,8 @@ def test_online_profile_has_no_debug_flag():
 
 
 def test_local_profile_has_hud_observer():
-    """KTPHudObserver lives only in local profile (external repo, deployed
-    via local/plugins/ mount). Catches accidental drop in local profile."""
+    """KTPHudObserver is an external repo, deployed via local/plugins/ mount
+    locally. Catches accidental drop in local profile."""
     entries = parse_plugins_ini(CONFIG_ROOT / "local" / "plugins.ini")
     files = [e.filename for e in entries]
     assert "KTPHudObserver.amxx" in files, (
