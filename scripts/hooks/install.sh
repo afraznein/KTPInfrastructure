@@ -7,7 +7,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-HOOK_DIR="$(git rev-parse --git-path hooks)"
+# Not --git-path hooks: that follows core.hooksPath into the tracked .githooks/.
+HOOK_DIR="$(git rev-parse --git-common-dir)/hooks"
 mkdir -p "${HOOK_DIR}"
 
 for hook in pre-push; do
