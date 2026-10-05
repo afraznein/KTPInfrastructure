@@ -37,6 +37,31 @@ METHOD_VERSION = "openskill_pl_v1"
 # threshold can move without a website deploy.
 MIN_MATCHES_FOR_DISPLAY = 3
 
+# A rating is shown only once its uncertainty has actually come DOWN, not
+# merely once the player has appeared N times. The convention is half the
+# model's starting sigma -- the usual "converged" line for a Bayesian skill
+# rating, and the point at which mu - 3*sigma stops being dominated by sigma.
+#
+# Expressed as a fraction of the model's own starting sigma rather than an
+# absolute, so it tracks the model instead of silently becoming wrong if beta
+# or the starting sigma ever change.
+#
+# WHY A SIGMA GATE AT ALL. Matches-played was the wrong proxy. On 2026-09-29
+# every displayable player had exactly 3 matches and an identical sigma of
+# 8.16, barely off the 8.333 starting value -- so `conservative` (mu - 3*sigma)
+# was simply mu - 24.5, and NEGATIVE for 20 of 41. A match count says how often
+# someone turned up; sigma says whether the rating knows anything yet, and that
+# is the question the card is actually asking.
+SIGMA_CONVERGED_FRACTION = 0.5
+
+# PlackettLuce's starting sigma (25/3). Written as a LITERAL rather than read
+# from `ladder`, because report_service.py imports this module on the data
+# server and `ladder` drags in openskill, which is not installed there -- the
+# exact breakage #559 had to fix. `test_start_sigma_matches_the_ladder` pins
+# this against the real model so the duplication cannot drift silently.
+MODEL_START_SIGMA = 25.0 / 3.0
+MAX_SIGMA_FOR_DISPLAY = MODEL_START_SIGMA * SIGMA_CONVERGED_FRACTION
+
 
 def conservative(mu, sigma):
     """mu - 3*sigma: the value the consumer ranks and displays.
@@ -49,7 +74,7 @@ def conservative(mu, sigma):
 
 
 def build(ratings, matches_played, aliases, *, generated_at,
-          min_matches=MIN_MATCHES_FOR_DISPLAY, source_report_count=0,
+          min_matches=MIN_MATCHES_FOR_DISPLAY, max_sigma=None, source_report_count=0,
           report_schema_version=9):
     """Build the aggregate payload.
 
@@ -78,6 +103,16 @@ def build(ratings, matches_played, aliases, *, generated_at,
             "conservative": conservative(mu, sigma),
         })
     rows.sort(key=lambda r: (-r["conservative"], r["name"].lower()))
+    # Gate HERE, in the producer, rather than publishing a threshold and
+    # trusting the consumer to apply it. That was the previous design and it
+    # failed silently: keep-the-prac's findMmrEntry never checked min_matches
+    # (its own docstring said it did), so every player in the payload got a
+    # card -- 120 of 161 below the threshold, 41 of them on a single match.
+    # A row that should not be displayed is a row that should not be published.
+    rated = len(rows)
+    gate = MAX_SIGMA_FOR_DISPLAY if max_sigma is None else float(max_sigma)
+    shown = [r for r in rows
+             if r["matches"] >= int(min_matches) and r["uncertainty"] <= gate]
     return {
         "kind": AGGREGATE_KIND,
         "provisional": True,
@@ -86,7 +121,13 @@ def build(ratings, matches_played, aliases, *, generated_at,
         "method_version": METHOD_VERSION,
         "generated_at": generated_at,
         "min_matches": int(min_matches),
-        "players": rows,
+        "max_uncertainty": round(gate, 3),
+        # Everyone the ladder rated, displayable or not. The import guard
+        # checks THIS, so "nobody is confident enough yet" stays publishable
+        # while "the builder produced nothing" still fails.
+        "rated_players": rated,
+        "withheld_players": rated - len(shown),
+        "players": shown,
         # Carried so the existing aggregate insert path can write this row
         # without a special case.
         "source_report_count": int(source_report_count),
@@ -159,9 +200,21 @@ def validate_for_import(payload):
             "players is an object keyed by player; the consumer reads a list of "
             "alias rows")
         return problems
-    if not isinstance(rows, list) or not rows:
+    if not isinstance(rows, list):
         problems.append("payload carries no players")
         return problems
+    # An EMPTY players[] is legitimate and must stay publishable: it is what
+    # "the ladder rated people, but none of them are certain enough to show"
+    # looks like, which is the honest state early in a season. A broken build
+    # is distinguished by having rated nobody at all.
+    rated = payload.get("rated_players")
+    if rated is None:
+        rated = len(rows)                      # payload predating the field
+    if not rated:
+        problems.append("payload carries no players")
+        return problems
+    if not rows:
+        return problems                        # nothing to check field-wise
     if not all(isinstance(row, dict) for row in rows):
         problems.append("player rows must all be objects")
         return problems
