@@ -6,10 +6,15 @@ data, five times the events — and on scrims:
 
 | band | officials | 12-mans | scrims |
 |---|---|---|---|
-| negligible | 0.99 (n=186) | 0.97 (n=923) | 0.82 (n=667) |
-| partial | 0.64 (n=45) | 0.82 (n=188) | 0.99 (n=203) |
-| substantial | **0.38** (n=22) | 0.74 (n=118) | 0.89 (n=117) |
-| decisive | **0.00** (n=10) | 0.71 (n=59) | **1.06** (n=56) |
+| negligible | 0.94 (n=223) | 0.97 (n=923) | 0.82 (n=667) |
+| partial | 0.99 (n=133) | 0.82 (n=188) | 0.99 (n=203) |
+| substantial | 0.85 (n=77) | 0.74 (n=118) | 0.89 (n=117) |
+| decisive | 0.83 (n=32) | 0.71 (n=59) | **1.06** (n=56) |
+
+The officials column is itself the proof. Measured first on 54 halves it read
+0.64 / **0.38** / **0.00** at n=45/22/10; one more league week (76 halves,
+n=133/77/32) regressed it to 0.99 / 0.85 / 0.83 — onto the 12-man magnitudes,
+which is exactly what pricing on the larger sample was for.
 
 **The shape holds** on 12-mans: every band below chance, monotone in progress,
 the control nearest chance, over 1,111 events. **The magnitude does not.**

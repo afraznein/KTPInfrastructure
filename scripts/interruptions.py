@@ -15,9 +15,10 @@ The direction holds on independent data. Officials gave a steep dose-response
 on a thin sample; 12-mans reproduce the SHAPE on five times the events --
 every band below chance, monotone in progress, the control nearest chance --
 but at a far milder magnitude. Officials' 0.38 and 0.00 rested on n=22 and
-n=10 and were small-sample noise; the honest estimate is ~0.7-0.8 in the
-strong bands. Scrims show no effect at all, with the control more suppressed
-than the strong bands. Full table in SUPPRESSION_BANDS.
+n=10, and one more league week regressed them to 0.85 and 0.83: they were
+noise, and the larger sample was right. The honest estimate is a modest ~0.8
+in the strong bands. Scrims show no effect at all, with the control more
+suppressed than the strong bands. Full table in SUPPRESSION_BANDS.
 
 That replication is why this class was built and the excursion class was not:
 no tightening of that one ever beat chance, in any sample.
@@ -47,15 +48,18 @@ DEFINITION_VERSION = 2
 # interruption suppressed the cap-out.
 #
 #   band         officials        12-mans          scrims
-#   negligible   0.99 (n=186)     0.97 (n=923)     0.82 (n=667)
-#   partial      0.64 (n=45)      0.82 (n=188)     0.99 (n=203)
-#   substantial  0.38 (n=22)      0.74 (n=118)     0.89 (n=117)
-#   decisive     0.00 (n=10)      0.71 (n=59)      1.06 (n=56)
+#   negligible   0.94 (n=223)     0.97 (n=923)     0.82 (n=667)
+#   partial      0.99 (n=133)     0.82 (n=188)     0.99 (n=203)
+#   substantial  0.85 (n=77)      0.74 (n=118)     0.89 (n=117)
+#   decisive     0.83 (n=32)      0.71 (n=59)      1.06 (n=56)
 #
 # The DIRECTION replicates on 12-mans -- every band below chance, monotone in
 # progress, control nearest chance -- on five times the events. The MAGNITUDE
-# does not: officials' 0.38 and 0.00 were small-sample noise, and the honest
-# estimate from the larger corpus is a modest ~0.7-0.8 in the strong bands.
+# did not, and the officials column above is the proof: measured first on 54
+# halves it read 0.64 / 0.38 / 0.00 with n=45/22/10, and after one more league
+# week (76 halves, n=133/77/32) it regressed to 0.99 / 0.85 / 0.83 -- onto the
+# 12-man magnitudes, which is what pricing on the larger sample was for. The
+# honest estimate is a modest ~0.8 in the strong bands.
 # Scrims show no effect at all, with the control MORE suppressed than the
 # strong bands, i.e. the pattern inverted; that is either looser play not
 # following up a stopped capture, or noise, and these samples cannot tell the
@@ -81,18 +85,20 @@ DEFINITION_VERSION = 2
 # review/hidden-value/tools/hv_interrupt.py, which takes the match types as its
 # third argument and `--by-map` for the per-map cut.
 SUPPRESSION_BANDS: tuple[tuple[str, int, dict[str, tuple[float, int]]], ...] = (
-    ("negligible", 0, {"official": (0.99, 186), "twelve_man": (0.97, 923),
+    ("negligible", 0, {"official": (0.94, 223), "twelve_man": (0.97, 923),
                        "scrim": (0.82, 667)}),
-    ("partial", 25, {"official": (0.64, 45), "twelve_man": (0.82, 188),
+    ("partial", 25, {"official": (0.99, 133), "twelve_man": (0.82, 188),
                      "scrim": (0.99, 203)}),
-    ("substantial", 50, {"official": (0.38, 22), "twelve_man": (0.74, 118),
+    ("substantial", 50, {"official": (0.85, 77), "twelve_man": (0.74, 118),
                          "scrim": (0.89, 117)}),
-    ("decisive", 75, {"official": (0.00, 10), "twelve_man": (0.71, 59),
+    ("decisive", 75, {"official": (0.83, 32), "twelve_man": (0.71, 59),
                       "scrim": (1.06, 56)}),
 )
 
 # Which corpus a consumer should price on, and why: the largest sample whose
-# dose-response holds. Named here rather than left to the reader's judgement.
+# dose-response holds. Still the 12-man column after the 2026-10-05 re-measure --
+# officials converged onto it but are NOT monotone (control 0.94 sits below
+# partial 0.99), so they do not yet hold the shape on their own.
 PRICING_CORPUS = "twelve_man"
 
 

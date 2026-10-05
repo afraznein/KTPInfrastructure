@@ -122,8 +122,16 @@ class Bands(unittest.TestCase):
     def test_a_band_carries_every_corpus_because_they_disagree(self):
         got = band_for(80)["measured_all_corpora"]
         self.assertEqual(sorted(got), ["official", "scrim", "twelve_man"])
-        self.assertEqual(got["official"], {"lift": 0.00, "n": 10})
+        self.assertEqual(got["official"], {"lift": 0.83, "n": 32})
         self.assertEqual(got["scrim"], {"lift": 1.06, "n": 56})
+
+    def test_officials_regressed_onto_the_priced_corpus(self):
+        # The point of pricing on the larger sample: officials' decisive band
+        # read 0.00 on n=10 and came back 0.83 on n=32 one league week later.
+        # If a future re-measure pushes them far from the priced value again,
+        # that is a finding, not a detail.
+        official = band_for(80)["measured_all_corpora"]["official"]["lift"]
+        self.assertLess(abs(official - band_for(80)["measured_lift"]), 0.25)
 
     def test_the_replicated_corpus_is_monotone_in_progress(self):
         # The claim this class rests on: more progress stopped, more suppression.
