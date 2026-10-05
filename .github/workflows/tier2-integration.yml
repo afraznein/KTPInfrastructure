@@ -425,6 +425,19 @@ jobs:
           test -f "$SF/dod/addons/ktpamx/plugins/KTPPracticeMode.amxx" || { echo "MISSING: KTPPracticeMode.amxx (must be test-mode build)"; exit 1; }
           echo "All required artifacts present."
 
+      - name: Load test-server rcon password
+        if: steps.changes.outputs.run == '1'
+        run: |
+          # Box-local like the relay creds below: this repo is public, so the value cannot live in it.
+          f=/etc/ktp/tier2-test-rcon.env
+          pw=$(sed -n 's/^KTP_TEST_RCON_PASSWORD=//p' "$f" 2>/dev/null | head -n 1)
+          if [ -z "$pw" ]; then
+            echo "::error::KTP_TEST_RCON_PASSWORD is missing from $f on the runner"
+            exit 1
+          fi
+          echo "::add-mask::$pw"
+          echo "KTP_TEST_RCON_PASSWORD=$pw" >> "$GITHUB_ENV"
+
       - name: Run Tier 2 integration suite
         id: pytest
         if: steps.changes.outputs.run == '1'

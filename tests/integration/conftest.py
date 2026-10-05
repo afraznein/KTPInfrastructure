@@ -47,7 +47,8 @@ if str(_SMOKE_DIR.parent) not in sys.path:
     sys.path.insert(0, str(_SMOKE_DIR.parent))
 
 from smoke import ServerHandle  # noqa: E402
-from smoke.boot_subprocess import booted_subprocess  # noqa: E402
+from smoke.boot_subprocess import (  # noqa: E402
+    booted_subprocess, cfg_with_rcon_password, resolve_test_rcon_password)
 
 from ._timing import scaled
 from .fake_ingest import FakeIngest
@@ -404,14 +405,13 @@ def hlds(request, _discord_ini_setup, _ac_ini_setup, _hud_cvars_setup):
     # Always refresh from source so cfg edits (e.g. the `exec ktp_hud_test.cfg`
     # line) take effect even when a stale copy lingers on the runner.
     target_cfg = serverfiles / "dod" / smoke_cfg.name
-    target_cfg.write_text(smoke_cfg.read_text())
+    rcon_password = resolve_test_rcon_password()
+    target_cfg.write_text(cfg_with_rcon_password(smoke_cfg.read_text(), rcon_password))
 
     with booted_subprocess(
         serverfiles,
         map_name="dod_anzio",
-        # Must match the rcon_password set in test_server.cfg — the cfg
-        # executes after +rcon_password CLI processing and overrides it.
-        rcon_password="smoketest",
+        rcon_password=rcon_password,
         server_cfg=smoke_cfg.name,
         boot_timeout=120.0,
     ) as handle:

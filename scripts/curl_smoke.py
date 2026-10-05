@@ -6,11 +6,17 @@ Boots hlds_linux from the runner serverfiles, drives boot -> changelevel -> quit
   rc==0, zero new /tmp cores, clean KTP_ExtensionShutdown + module detach,
   no curl WARNING / segfault / abort lines.
 
-Usage: curl_smoke.py <label>
+Usage: set -a; . /etc/ktp/tier2-test-rcon.env; set +a; curl_smoke.py <label>
 Prints a JSON result line prefixed RESULT_JSON: for machine parse.
 """
 import json, os, signal, socket, subprocess, sys, time, glob
 from pathlib import Path
+
+# Checked before the runner-path import so a missing value is the error you see.
+RCON_PW = os.environ.get("KTP_TEST_RCON_PASSWORD", "")
+if not RCON_PW:
+    sys.exit("curl_smoke: KTP_TEST_RCON_PASSWORD is not set "
+             "(on the tier-2 runner: set -a; . /etc/ktp/tier2-test-rcon.env; set +a)")
 
 REPO = "/opt/ktp-tier2-runner/actions-runner/_work/KTPInfrastructure/KTPInfrastructure"
 SF = Path("/opt/ktp-tier2-runner/serverfiles")
@@ -18,7 +24,6 @@ sys.path.insert(0, REPO)
 from tests.smoke.rcon import RconClient, wait_until_responsive, RconError  # noqa: E402
 
 LABEL = sys.argv[1] if len(sys.argv) > 1 else "run"
-RCON_PW = "smoketest"
 
 
 def free_udp():
