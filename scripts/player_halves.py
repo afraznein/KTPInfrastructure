@@ -49,7 +49,9 @@ def build_player_halves(
     out = []
     for r in rows:
         pid = _int(r.get("player_id"))
-        values: dict[str, int | None] = {c: _int(r.get(c)) for c in ADDITIVE}
+        # None is a producer that did not exist yet; keep it apart from 0.
+        values: dict[str, int | None] = {
+            c: None if r.get(c) is None else _int(r.get(c)) for c in ADDITIVE}
         for c in ADDITIVE:
             sums[pid][c] += values[c] or 0
         # A roster member with no samples and no events in a half did not play it.
@@ -90,8 +92,9 @@ def build_player_halves(
             "points_per_minute": (round(score * 60.0 / duration, 3)
                                   if per_minute else None),
             "grenade_kills": _int(r.get("grenade_kills")),
-            "grenade_damage": _int(r.get("grenade_damage")),
-            "grenade_damage_taken": _int(r.get("grenade_damage_taken")),
+            "grenade_damage": _int(r.get("grenade_damage")) if per_hit_damage else None,
+            "grenade_damage_taken": (_int(r.get("grenade_damage_taken"))
+                                     if per_hit_damage else None),
         })
     mismatched = sorted({
         c for p in players for c in checked

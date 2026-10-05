@@ -40,9 +40,21 @@ import statistics
 _PPA = "hlstats_Events_PlayerPlayerActions"
 _PA = "hlstats_Events_PlayerActions"
 
+# Imported rather than re-listed. check_capture_health carried its own copy of
+# both lists, and when KTPAMXX #142 added the `move` health row the copy here was
+# missed: four Lane B assertions and a report authorization failed on 2026-09-29
+# over a stream that was working. One list, one edit.
+from scripts.match_analytics import (  # noqa: E402
+    CAPTURE_EVENT_TYPES, CAPTURE_EVENT_TYPES_OPTIONAL)
+
 
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+_REQUIRED_HEALTH_TYPES_SQL = ",".join(_sql_literal(t) for t in CAPTURE_EVENT_TYPES)
+_KNOWN_HEALTH_TYPES_SQL = ",".join(
+    _sql_literal(t) for t in CAPTURE_EVENT_TYPES + CAPTURE_EVENT_TYPES_OPTIONAL)
 
 # Migration 017 deliberately leaves the producer fields on legacy frag and
 # damage tables nullable: old rows cannot be backfilled truthfully.  The
@@ -1209,6 +1221,89 @@ WHERE {scoped_s}
             f"{registered}/{clean} clean live-enemy hits registered ({pct:.1f}%)"}
 
 
+SCHEMA26_SHOT_COLUMNS = ("hitgroup", "rw_flags", "rw_depth", "rw_want")
+
+
+def check_shot_hitgroup_and_rewind(db, *, match_id: str | None,
+                                   half: int | None) -> dict:
+    """Schema 26 plumbing on a bot half: hitgroup rides target state, and no bot
+    row carries a rewind record.
+
+    Plumbing only, never a rate. hitgroup is stamped in the same first-wins window
+    as the target group, so it is non-NULL exactly where tgt_dead is. The rw_*
+    columns are the negative control: a fakeclient never reaches SV_SetupMove, so
+    the engine has no rewind record for a bot and any value there is fabricated.
+    A depth, clamp or hit-share assertion would be a physics claim on bots.
+
+    Every column is probed before it is named, because the corpus lane replays a
+    schema list that stops long before migration 041. A producer that announced
+    a schema below 26 leaves every new column NULL by design, so the check is not
+    exercised rather than passed.
+    """
+    code = "shot_hitgroup_rewind"
+    if match_id is None:
+        return {"code": code, "status": "not_exercised", "detail":
+                "no match/half to scope the shot rows; corpus replay has no "
+                "single producer context."}
+    scope_sql = f"match_id = {_sql_literal(match_id)}"
+    if half is not None:
+        scope_sql += f" AND half = {int(half)}"
+    names = ", ".join(_sql_literal(c) for c in SCHEMA26_SHOT_COLUMNS)
+    present = db.count(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ktp_shot_events' "
+        f"AND COLUMN_NAME IN ({names})")
+    if present < len(SCHEMA26_SHOT_COLUMNS):
+        return {"code": code, "status": "not_exercised", "detail":
+                "ktp_shot_events lacks the schema-26 columns -- migrate_041 was "
+                "not applied, so hitgroup and rewind were not exercised."}
+    schema = db.count(
+        f"SELECT COALESCE(MAX(schema_version), 0) FROM ktp_capture_manifests WHERE {scope_sql}")
+    if schema < 26:
+        return {"code": code, "status": "not_exercised", "detail":
+                f"the producer announced schema {schema}; hitgroup and rewind "
+                f"arrive from schema 26."}
+    rows = db.count(f"SELECT COUNT(*) FROM ktp_shot_events WHERE {scope_sql}")
+    if rows == 0:
+        return {"code": code, "status": "not_exercised", "detail":
+                "no shot rows in the half."}
+    problems = []
+    mismatched = db.count(
+        f"SELECT COUNT(*) FROM ktp_shot_events WHERE {scope_sql} "
+        "AND (tgt_dead IS NULL) <> (hitgroup IS NULL)")
+    if mismatched:
+        problems.append(
+            f"{mismatched} shot row(s) carry hitgroup without target state or "
+            f"target state without hitgroup; both come from one stamp")
+    fabricated = db.count(
+        f"SELECT COUNT(*) FROM ktp_shot_events WHERE {scope_sql} "
+        "AND (rw_flags IS NOT NULL OR rw_depth IS NOT NULL OR rw_want IS NOT NULL)")
+    if fabricated:
+        problems.append(
+            f"{fabricated} bot shot row(s) carry a rewind value; bots never pass "
+            f"through SV_SetupMove, so the value is fabricated")
+    unlag_column = db.count(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ktp_capture_manifests' "
+        "AND COLUMN_NAME = 'sv_maxunlag'") > 0
+    if unlag_column:
+        no_unlag = db.count(
+            f"SELECT COUNT(*) FROM ktp_capture_manifests WHERE {scope_sql} "
+            "AND schema_version >= 26 AND sv_maxunlag IS NULL")
+        if no_unlag:
+            problems.append(
+                f"{no_unlag} schema-26 manifest(s) stored no sv_maxunlag")
+    targeted = db.count(
+        f"SELECT COUNT(*) FROM ktp_shot_events WHERE {scope_sql} AND tgt_dead IS NOT NULL")
+    if problems:
+        return {"code": code, "status": "pipeline", "rows": rows,
+                "detail": "; ".join(problems) + "."}
+    return {"code": code, "status": "ok", "rows": rows, "detail":
+            f"{rows} shot row(s): hitgroup on all {targeted} with target state, "
+            f"rewind NULL on every bot row"
+            + ("" if targeted else " (shot detail off, so hitgroup was not exercised)")}
+
+
 def assert_no_dropped_lines(log_text: str) -> None:
     """The plugin's ring buffer never overflowed.
 
@@ -1982,11 +2077,7 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
     bad = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND (event_type NOT IN ('life','damage','position','frag','assist','break',
-                          'flag_state','flag_position','objective_attempt',
-                          'grenade_entity','team_membership','shot',
-                          'score','duel','player_state','grenade_throw',
-                          'move')
+  AND (event_type NOT IN ({_KNOWN_HEALTH_TYPES_SQL})
        OR attempted IS NULL OR attempted < 0
        OR enqueued IS NULL OR enqueued < 0
        OR dropped IS NULL OR dropped < 0
@@ -2009,20 +2100,17 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 """)
-    # Eleven required types, exactly once each. `shot` is optional and MAY be
-    # present once (mirrors CAPTURE_EVENT_TYPES_OPTIONAL in match_analytics):
-    # ksc_emit_health loops over the plugin's whole event enum, so a 1.19.4+
-    # build emits a zeroed shot row whether or not it advertises the stream,
-    # and a schema-24 build emits a live one. Pinning the count at 11 failed
+    # Every required type, exactly once each. An optional one MAY also be
+    # present: ksc_emit_health loops over the plugin's whole event enum, so a
+    # 1.19.4+ build emits a zeroed `shot` row whether or not it advertises the
+    # stream, and a schema-24 build emits a live one. Pinning the count failed
     # both. Anything outside required|optional is still a defect, via `bad`.
     required_present = db.count(f"""
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND event_type IN ('life','damage','position','frag','assist','break',
-                     'flag_state','flag_position','objective_attempt',
-                     'grenade_entity','team_membership')
+  AND event_type IN ({_REQUIRED_HEALTH_TYPES_SQL})
 """)
-    ok = (manifest == 1 and required_present == 11
+    ok = (manifest == 1 and required_present == len(CAPTURE_EVENT_TYPES)
           and rows == distinct_types and bad == 0)
     return {
         "code": "capture_health",

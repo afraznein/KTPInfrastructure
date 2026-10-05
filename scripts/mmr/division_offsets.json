@@ -1,0 +1,44 @@
+{
+ "method_version": "division_offsets_v1",
+ "fitted_at": "2026-09-30T13:36:50+00:00",
+ "what": "Cross-division skill offsets, measured on 12-mans because league divisions never play each other. Used as a SEEDING PRIOR only.",
+ "baseline": "Silver",
+ "min_labelled_players_per_match": 8,
+ "mu_per_performance_sigma": 4.167,
+ "mu_per_performance_sigma_is": "a declared prior, not a measurement -- see division_fit.py for why nothing in the data fixes it",
+ "divisions": {
+  "Gold": {
+   "player_matches": 5900,
+   "z_kd": 0.375,
+   "z_damage_per_death": 0.341,
+   "relative_to_baseline_sigma": 0.448,
+   "mu_offset": 1.87,
+   "by_era_z_kd": {
+    "pre_S10": 0.376,
+    "S10": 0.369
+   }
+  },
+  "Silver": {
+   "player_matches": 4283,
+   "z_kd": -0.073,
+   "z_damage_per_death": -0.082,
+   "relative_to_baseline_sigma": 0.0,
+   "mu_offset": 0.0,
+   "by_era_z_kd": {
+    "pre_S10": -0.066,
+    "S10": -0.131
+   }
+  },
+  "Bronze": {
+   "player_matches": 4066,
+   "z_kd": -0.468,
+   "z_damage_per_death": -0.452,
+   "relative_to_baseline_sigma": -0.395,
+   "mu_offset": -1.64,
+   "by_era_z_kd": {
+    "pre_S10": -0.47,
+    "S10": -0.441
+   }
+  }
+ }
+}
