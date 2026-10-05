@@ -16,6 +16,7 @@ import re
 import pytest
 
 from . import assertions
+from scripts import match_analytics as analytics
 
 
 class FakeDb:
@@ -1327,3 +1328,113 @@ def test_life_events_tolerate_an_unstamped_producer_but_not_a_dead_round():
         LifeEventDb(rows=20, starts=12, deaths=8, stamped=20, live=0), emitted=20)
     assert dead["status"] == "pipeline"
     assert "round_live_live=0" in dead["detail"]
+
+
+class Schema26Db(FakeDb):
+    """Schema-26 shot rows on a bot half, with each plumbing fault injectable."""
+
+    def __init__(self, *, columns: int = 4, schema: int = 26, rows: int = 300,
+                 targeted: int = 120, mismatched: int = 0, fabricated: int = 0,
+                 unlag_column: bool = True, no_unlag: int = 0):
+        super().__init__()
+        self.__dict__.update(columns=columns, schema=schema, rows=rows,
+                             targeted=targeted, mismatched=mismatched,
+                             fabricated=fabricated, unlag_column=unlag_column,
+                             no_unlag=no_unlag)
+        self.queries = []
+
+    def count(self, query):
+        self.queries.append(query)
+        if "information_schema.COLUMNS" in query:
+            if "'sv_maxunlag'" in query:
+                return 1 if self.unlag_column else 0
+            return self.columns
+        if "MAX(schema_version)" in query:
+            return self.schema
+        if "(tgt_dead IS NULL) <> (hitgroup IS NULL)" in query:
+            return self.mismatched
+        if "rw_flags IS NOT NULL" in query:
+            return self.fabricated
+        if "sv_maxunlag IS NULL" in query:
+            return self.no_unlag
+        if "tgt_dead IS NOT NULL" in query:
+            return self.targeted
+        if "FROM ktp_shot_events" in query:
+            return self.rows
+        return 0
+
+
+def _s26(db):
+    return assertions.check_shot_hitgroup_and_rewind(db, match_id="1789521063-TEST", half=1)
+
+
+def test_schema26_bot_half_passes_and_is_scoped():
+    db = Schema26Db()
+    v = _s26(db)
+    assert v["status"] == "ok", v
+    assert "hitgroup on all 120" in v["detail"]
+    scoped = [q for q in db.queries if "information_schema" not in q]
+    assert scoped and all("match_id = '1789521063-TEST' AND half = 1" in q for q in scoped)
+
+
+def test_schema26_hitgroup_must_track_target_state():
+    v = _s26(Schema26Db(mismatched=3))
+    assert v["status"] == "pipeline" and "3 shot row(s) carry hitgroup" in v["detail"]
+
+
+def test_schema26_a_bot_rewind_value_is_fabricated():
+    """The negative control: a fakeclient never reaches SV_SetupMove."""
+    v = _s26(Schema26Db(fabricated=1))
+    assert v["status"] == "pipeline" and "fabricated" in v["detail"]
+
+
+def test_schema26_manifest_must_carry_sv_maxunlag():
+    v = _s26(Schema26Db(no_unlag=1))
+    assert v["status"] == "pipeline" and "sv_maxunlag" in v["detail"]
+    # Without the column (an older migration set) the manifest leg is not asked.
+    assert _s26(Schema26Db(no_unlag=1, unlag_column=False))["status"] == "ok"
+
+
+def test_schema26_is_not_exercised_before_its_migration_or_producer():
+    v = _s26(Schema26Db(columns=3))
+    assert v["status"] == "not_exercised" and "migrate_041" in v["detail"]
+    v = _s26(Schema26Db(schema=25, fabricated=5))
+    assert v["status"] == "not_exercised" and "schema 25" in v["detail"]
+    assert _s26(Schema26Db(rows=0))["status"] == "not_exercised"
+    assert assertions.check_shot_hitgroup_and_rewind(
+        Schema26Db(), match_id=None, half=None)["status"] == "not_exercised"
+
+
+def test_schema26_without_shot_detail_says_hitgroup_was_not_exercised():
+    v = _s26(Schema26Db(targeted=0))
+    assert v["status"] == "ok" and "not exercised" in v["detail"]
+
+
+def test_the_capture_health_type_lists_are_the_analytics_lists():
+    """One list, one edit.
+
+    `check_capture_health` used to re-list both the required and the
+    required|optional event types inline. When KTPAMXX #142 added the `move`
+    health row, `CAPTURE_EVENT_TYPES_OPTIONAL` was updated and this copy was
+    not: `capture_health`, `diagnostic_capture_health`,
+    `capture_context_isolation` and a v5 report authorization all failed on
+    2026-09-29, over a stream that was working.
+
+    Asserting the derived SQL rather than the constant, because the SQL string
+    is what the query actually runs -- a constant that agrees while the f-string
+    interpolates something else would pass this test and still fail Lane B.
+    """
+    required = set(analytics.CAPTURE_EVENT_TYPES)
+    known = required | set(analytics.CAPTURE_EVENT_TYPES_OPTIONAL)
+
+    def parsed(sql_list):
+        return {t.strip().strip("'") for t in sql_list.split(",")}
+
+    assert parsed(assertions._REQUIRED_HEALTH_TYPES_SQL) == required
+    assert parsed(assertions._KNOWN_HEALTH_TYPES_SQL) == known
+    # The optional half is what rots, so name it: a stream added to analytics
+    # and not here is exactly the 2026-09-29 defect.
+    assert "aim_vis" in parsed(assertions._KNOWN_HEALTH_TYPES_SQL)
+    # Control: the two lists are genuinely different, so an accidental
+    # required == known would not satisfy both assertions above.
+    assert required < known

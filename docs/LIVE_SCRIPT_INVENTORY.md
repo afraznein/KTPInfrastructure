@@ -255,6 +255,13 @@ that safe by construction is absent — a future rotation that blanks the line, 
 on a `0.0.0.0` bind. Closing it means installing the v2.3 body and `systemctl restart hltv-api`, which is
 the operator's call: `hltv-restart-all.sh` does **not** restart `hltv-api`.
 
+⚠️ **The restart is a timing decision, not a technical one.** A mistimed `hltv-api` restart loses a demo
+**permanently** — 1,568 API requests were measured in a 15-minute window with demos landing continuously.
+There are three ways to do it: a session watches for a real lull and fires unattended; the operator accepts
+the risk now; or it goes at 03:00 ET. ⚠️ **But `hltv-restart-all.sh` does not touch `hltv-api`, so "riding
+03:00" still means someone runs the restart by hand at 03:00.** It is safe to leave indefinitely: the
+missing guard is latent hardening, and a staged copy persists until someone acts.
+
 **Verification controls used, so the "no leak" result means something.** The 32-character `AUTH_KEY`
 value was extracted from the live file and counted: 1 occurrence in the file (the control is alive) and
 **0** in the checker's 11,789 bytes of output. A nonsense token counted 0 in both. `grep -c AUTH_KEY` on

@@ -476,8 +476,46 @@ class Sanitize(unittest.TestCase):
         ph = sanitize_report(internal_report())["player_halves"]
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
-    def test_contract_is_v1_8_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.8.0")
+    def test_contract_is_v1_11_0(self):
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.11.0")
+
+    def test_a_team_of_unmeasured_players_has_no_total_not_zero(self):
+        rep = internal_report()
+        rep["players"] = [
+            {"player_id": 1, "player_name_at_match": "A", "team": 1,
+             "assists": None, "capture_credits": None, "cap_breaks": None},
+            {"player_id": 2, "player_name_at_match": "B", "team": 2,
+             "assists": 0, "capture_credits": 1, "cap_breaks": None},
+        ]
+        rep["teams"] = [
+            {"team": 1, "team_name": "Allies", "assists": 0,
+             "capture_credits": 0, "cap_breaks": 0},
+            {"team": 2, "team_name": "Axis", "assists": 0,
+             "capture_credits": 1, "cap_breaks": 0},
+        ]
+        dto = sanitize_report(rep)
+        allies, axis = dto["teams"]
+        self.assertEqual((allies["assists"], allies["capture_credits"],
+                          allies["cap_breaks"]), (None, None, None))
+        self.assertEqual((axis["assists"], axis["capture_credits"],
+                          axis["cap_breaks"]), (0, 1, None))
+        self.assertIsNone(dto["players"][0]["assists"])
+        self.assertEqual(dto["players"][1]["assists"], 0)
+
+    def test_player_halves_keep_an_unmeasured_count_unknown(self):
+        from scripts.player_halves import build_player_halves
+        players = [{"player_id": 1, "kills": 1, "deaths": 0, "assists": None,
+                    "cap_breaks": None, "capture_credits": None}]
+        rows = [{"player_id": 1, "team": 1, "half": 1, "duration_seconds": 600,
+                 "kills": 1, "deaths": 0, "assists": None, "cap_breaks": None,
+                 "capture_credits": None, "position_samples": 0}]
+        ph = build_player_halves(rows, players, per_hit_damage=True,
+                                 temporal_valid=True)
+        row = ph["rows"][0]
+        self.assertEqual((row["assists"], row["cap_breaks"],
+                          row["capture_credits"]), (None, None, None))
+        self.assertEqual(row["kills"], 1)
+        self.assertTrue(ph["reconciled"])
 
     def test_player_halves_carry_side_and_best_streak(self):
         rep = internal_report()

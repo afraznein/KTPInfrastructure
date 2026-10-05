@@ -316,6 +316,9 @@ port="$BASE_PORT"
 clientport="$((BASE_PORT - 10))"
 ip="$SERVER_IP"
 
+# Console-log retention; _default.cfg carries 7 and a rebuild would revert to it
+logdays="21"
+
 # Startup parameters
 startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
 EOF
@@ -352,6 +355,9 @@ for i in $(seq 2 $NUM_INSTANCES); do
 port="$PORT"
 clientport="$((PORT - 10))"
 ip="$SERVER_IP"
+
+# Console-log retention; _default.cfg carries 7 and a rebuild would revert to it
+logdays="21"
 
 # Startup parameters
 startparameters="-game dod -strictportbind +ip \${ip} -port \${port} +clientport \${clientport} +map \${defaultmap} +servercfgfile \${servercfg} -maxplayers 13 -pingboost 2 -absgrid"
@@ -442,6 +448,35 @@ KTP_MONITOR_PATCH
     fi
 done
 
+# The monitor runs through ktp-monitor-guard.sh so a host-level link loss does not
+# restart every instance into an address it cannot bind. Installed from the repo
+# checkout this script runs from; without it the bare monitor line is kept.
+GUARD_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../monitoring/monitor-guard/ktp-monitor-guard.sh"
+GUARD_DST="$HOME/ktp-monitor-guard.sh"
+if [ -f "$GUARD_SRC" ]; then
+    install -m 0755 "$GUARD_SRC" "$GUARD_DST"
+    log_info "Installed monitor guard at $GUARD_DST"
+fi
+if [ -x "$GUARD_DST" ]; then
+    MONITOR_GUARD="~/ktp-monitor-guard.sh"
+else
+    MONITOR_GUARD=""
+    log_warn "ktp-monitor-guard.sh not found — monitor cron left UNGUARDED against link loss"
+fi
+
+# >>> ktp-monitor-cron-line
+# Keep `<control> monitor` verbatim: ktp-scheduled-restart.sh strips and restores
+# lines matching 'dodserver.*monitor', and ktp-fleet-health.sh counts them.
+monitor_cron_line() {
+    local ctl=$1 prefix=${2:-}
+    if [ -n "$MONITOR_GUARD" ]; then
+        echo "* * * * * ${prefix}$MONITOR_GUARD $ctl monitor > /dev/null 2>&1"
+    else
+        echo "* * * * * ${prefix}$ctl monitor > /dev/null 2>&1"
+    fi
+}
+# <<< ktp-monitor-cron-line
+
 # Create crontab entries — generated per instance so the monitor list always
 # matches NUM_INSTANCES (was hardcoded to 5; broke the 6th server's monitor).
 CRON_BLOCK="# KTP Server Monitor - check every minute"
@@ -450,14 +485,14 @@ for i in $(seq 1 $NUM_INSTANCES); do
     name="dodserver"
     [ $i -gt 1 ] && name="dodserver$i"
     CRON_BLOCK="$CRON_BLOCK
-* * * * * ~/dod-$port/$name monitor > /dev/null 2>&1"
+$(monitor_cron_line "~/dod-$port/$name")"
 done
 
 # Warmup lives outside ~/dod-*, so the loop above cannot generate its entry.
 # Without a monitor line nothing ever revives it after a crash or a kill.
 WARMUP_DIR="${KTP_WARMUP_DIR:-/srv/ktpdata/warmup}"
 WARMUP_EXEC="${KTP_WARMUP_EXEC:-dodserver}"
-WARMUP_CRON="* * * * * cd $WARMUP_DIR && ./$WARMUP_EXEC monitor > /dev/null 2>&1"
+WARMUP_CRON=$(monitor_cron_line "./$WARMUP_EXEC" "cd $WARMUP_DIR && ")
 if [ -x "$WARMUP_DIR/$WARMUP_EXEC" ]; then
     CRON_BLOCK="$CRON_BLOCK
 # KTP Warmup Monitor (instance lives outside ~/dod-*)

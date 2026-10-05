@@ -228,6 +228,34 @@ class OpenSkill:
         for p, r in list(self.r.items()):
             self.r[p] = self.m.rating(mu=r.mu, sigma=min(r.sigma * factor, default_sigma))
 
+    def seed_from_divisions(self, player_division, mu_offsets):
+        """Offset each player's starting mu by their division's prior.
+
+        League divisions never play each other, so their rating pools are
+        disconnected graphs: every one of them is anchored at the model's
+        starting mu by the PRIOR rather than by evidence, which is why a
+        dominant silver player can outrank a struggling gold one. This puts the
+        pools in order on day one. `division_fit.py` measures the offsets on
+        12-mans, which are the only thing that bridges the divisions.
+
+        Sigma is deliberately left at the model's starting value. That makes the
+        prior WEAK -- a division step is worth about 1.9 mu against a sigma of
+        8.33 -- so a handful of real results overwrite it rather than the
+        ordering calcifying into something nobody can climb out of.
+
+        Only seeds players who have not been rated yet, so calling this after
+        matches have been applied cannot rewrite earned ratings. A player with
+        no division label is left alone.
+        """
+        for pid, division in player_division.items():
+            if pid in self.r:            # already earned a rating; do not touch
+                continue
+            offset = mu_offsets.get(division)
+            if not offset:               # unknown or zero-offset division
+                continue
+            base = self.m.rating()
+            self.r[pid] = self.m.rating(mu=base.mu + offset, sigma=base.sigma)
+
     def ratings(self):
         return {p: dict(mu=round(r.mu, 2), sigma=round(r.sigma, 2), ordinal=round(r.ordinal(), 2)) for p, r in self.r.items()}
 

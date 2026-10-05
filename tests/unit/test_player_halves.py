@@ -64,6 +64,16 @@ class PlayerHalves(unittest.TestCase):
         self.assertIsNone(out["rows"][0]["damage_dealt"])
         self.assertIsNone(out["rows"][0]["damage_per_minute"])
 
+    def test_legacy_grenade_damage_is_null_not_zero(self):
+        rows = [dict(r, grenade_damage=0, grenade_damage_taken=0) for r in ROWS]
+        out = build_player_halves(rows, TOTALS, per_hit_damage=False, temporal_valid=True)
+        for r in out["rows"]:
+            self.assertIsNone(r["grenade_damage"])
+            self.assertIsNone(r["grenade_damage_taken"])
+        covered = build_player_halves(rows, TOTALS, per_hit_damage=True,
+                                      temporal_valid=True)
+        self.assertEqual(covered["rows"][0]["grenade_damage"], 0)
+
     def test_replay_has_no_per_minute_rates(self):
         r = build_player_halves(ROWS, TOTALS, per_hit_damage=True,
                                 temporal_valid=False)["rows"][0]
