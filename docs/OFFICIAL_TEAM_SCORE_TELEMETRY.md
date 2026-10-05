@@ -1,26 +1,42 @@
 # Official team-score telemetry v1
 
-This slice retains and projects the authoritative in-game team score emitted by
-the HUD observer as `source: "engine-team-score-v1"`. It is deliberately
-separate from player points, capture credits, KTPR, and the experimental
-accumulation models.
+This slice retains and projects the game engine's team score as
+`source: "engine-team-score-v1"`. Rows come from the `hltv-demo` importer, which
+reads the score out of HLTV demos. It is deliberately separate from player
+points, capture credits, KTPR, and the experimental accumulation models.
 
 ## Provenance
 
-These tables hold the game engine's own team score, relayed by the HUD observer
-(KTPHudObserver). They are **not** the captain-reported league score. That one
-is `ktp.match.home_score` / `away_score` in the website's database, and nothing
-copies between the two.
+**Authority (operator ruling 2026-10-05):** for official team scores, the
+`hltv-demo` importer's ledger (demo-derived rows in
+`ktp_team_score_observations`) is authoritative. The in-game result that
+KTPHudObserver relays, stored in `ktp_match_reports` and built by
+`scripts/in_game_result.py`, is its cross-check, not a second source of truth.
+Demo-derived rows are retained.
 
-Migration 032 records this on the rows themselves. `ktp_team_score_observations`
-and `ktp_team_score_ingest_manifests` carry a `producer` column that is always
-`KTPHudObserver`, pinned by a CHECK constraint, and both table comments say the
-same. The column has no default, so the importer writes it explicitly and a
-writer that leaves it out fails.
+What is true of the data today:
+
+- The HUD-observer "engine team-score" importer never produced production rows
+  and was removed on 2026-09-18 (commit `a64f5cb`). Every row in the ledger comes
+  from the `hltv-demo` importer, first loaded 2026-09-18.
+- A 2026-10-01 re-measure found the HUD in-game result and the demo-derived score
+  agreeing on 56 of 56 per-half scores across 28 matches.
+- `ktp_score_events` cannot produce a team final: it has no team column and the
+  sides swap between halves.
+
+These tables hold the game engine's own team score. They are **not** the
+captain-reported league score. That one is `ktp.match.home_score` / `away_score`
+in the website's database, and nothing copies between the two.
+
+Each row names its writer in a `producer` column (`hltv-demo` for every current
+row, `KTPHudObserver` for the retired path). Migration 032 added the column with
+a CHECK pinning it to `KTPHudObserver`; migration 033 widened that CHECK to admit
+`hltv-demo` and 034 scoped the settlement check to the HUD producer. The column
+has no default, so a writer that leaves it out fails.
 
 ## Authority and ordering
 
-- Only official-v1 `team_score` rows are eligible.
+- Only official-v1 `team_score` rows are eligible, and `hltv-demo` rows are the authority for official scores.
 - `tick` is fractional `get_gametime()` seconds since the current map started.
   It is stored as `DECIMAL(20,9)` without a tick-rate conversion; no
   `engine_tick` is invented.
@@ -35,8 +51,9 @@ writer that leaves it out fails.
 ## Local migration and import
 
 Apply `sql/migrate_023_team_score_observations.sql`, then
-`sql/migrate_032_team_score_producer.sql`, with the normal local MySQL/MariaDB
-migration account. Both are forward-only and idempotent. 023 creates a
+`sql/migrate_032_team_score_producer.sql`, `sql/migrate_033_team_score_demo_producer.sql`
+and `sql/migrate_034_team_score_demo_settlement.sql`, with the normal local
+MySQL/MariaDB migration account. All are forward-only and idempotent. 023 creates a
 closed-file ingestion-manifest ledger, an append-only observation ledger, and a
 separate conflict-audit ledger. 032 adds the `producer` column and its CHECK to
 the observation and manifest ledgers and rewrites their table comments.
@@ -48,29 +65,41 @@ incompatible pre-existing schema. It accepts the schema both before and after
 tables have exactly the migration-023 shape (optionally with a partial 032 it
 can finish), and it verifies its own result before returning.
 
-The order is always 023 then 032:
+The order is always 023, 032, 033, 034:
 
 | Database | What to apply |
 |---|---|
-| Fresh (LAN, test) | 023, then 032. `--migrate` does both, in that order. |
-| Production `hlstatsx` (023 already applied) | 032 only, through the migration queue. |
-| Re-run, once 023 is in place | Either file, any number of times. |
+| Fresh (LAN, test) | 023, 032, 033, 034. `--migrate` applies all four, in that order. |
+| Production `hlstatsx` | Already through 034; the hourly import runs `--migrate`. |
+| Re-run, once 023 is in place | Any file, any number of times. |
 
 If a table already holds rows when 032 runs, the column default backfills them
 with `KTPHudObserver` before the default is dropped.
 
+### Importing: `hltv-demo`
+
+Rows come from `scripts/import_demo_team_score.py` (`producer = hltv-demo`,
+migrations 033/034). On the data server it runs hourly from the
+`ktp-demo-publish.sh` labels hook; the same invocation works by hand from the
+repo root:
+
+```bash
+python3 -m scripts.import_demo_team_score   --dod-tools /usr/local/bin/dod-tools-cli   --demos-root /home/hltvserver/hlds/dod/demos --types ktp --since-days 3   --database hlstatsx --defaults-extra-file /etc/ktp/team-score-import.cnf   --migrate --apply
+```
+
+Drop `--apply` and add `--sql-out FILE` to print the SQL without touching a
+database.
+
 ### HUD observer import: retired (2026-09-18)
 
 `scripts/import_team_score_events.py` (the `events.jsonl` + `metadata.json` path
-written by KTPHudObserver) is removed. It produced 0 production rows across the
-first 9 S10 official matches; HLTV demos cover every official match instead.
-Rows now come from `scripts/import_demo_team_score.py` (`producer = hltv-demo`,
-migrations 033/034), run hourly by the `ktp-demo-publish.sh` labels hook on the
-data server. The `read_event_files` validator in `team_score_telemetry.py` stays:
-the Lane B e2e fixture and `in_game_result.py` still read observer-format files.
+written by KTPHudObserver) was removed in `a64f5cb`; it never produced a
+production row. The `read_event_files` validator in `team_score_telemetry.py`
+stays: the Lane B e2e fixture and `in_game_result.py` still read observer-format
+files, which is the cross-check described under Provenance.
 
-`ktp_team_score_observations` rows with `producer = KTPHudObserver` remain valid
-ledger rows; nothing here rewrites or purges them.
+`ktp_team_score_observations` rows with `producer = KTPHudObserver`, if any exist,
+remain valid ledger rows; nothing here rewrites or purges them.
 
 ## Post-match projection
 
@@ -129,7 +158,7 @@ The scheduled match retention allowlist includes all four score ledgers. Scrim,
 competitive, draft, and explicit OT classifications remain retained under the
 existing policy.
 
-This change supplies migration, one-shot import, settlement/finality validation,
+This change supplies migration, import, settlement/finality validation,
 projection, and test/report artifacts. It does not install a service, deploy a
 production UI, tail a live file, or alter existing authorization, health, and
 diagnostic gates.

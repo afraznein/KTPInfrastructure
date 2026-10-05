@@ -40,9 +40,21 @@ import statistics
 _PPA = "hlstats_Events_PlayerPlayerActions"
 _PA = "hlstats_Events_PlayerActions"
 
+# Imported rather than re-listed. check_capture_health carried its own copy of
+# both lists, and when KTPAMXX #142 added the `move` health row the copy here was
+# missed: four Lane B assertions and a report authorization failed on 2026-09-29
+# over a stream that was working. One list, one edit.
+from scripts.match_analytics import (  # noqa: E402
+    CAPTURE_EVENT_TYPES, CAPTURE_EVENT_TYPES_OPTIONAL)
+
 
 def _sql_literal(value: str) -> str:
     return "'" + value.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+_REQUIRED_HEALTH_TYPES_SQL = ",".join(_sql_literal(t) for t in CAPTURE_EVENT_TYPES)
+_KNOWN_HEALTH_TYPES_SQL = ",".join(
+    _sql_literal(t) for t in CAPTURE_EVENT_TYPES + CAPTURE_EVENT_TYPES_OPTIONAL)
 
 # Migration 017 deliberately leaves the producer fields on legacy frag and
 # damage tables nullable: old rows cannot be backfilled truthfully.  The
@@ -2065,11 +2077,7 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
     bad = db.count(f"""
 SELECT COUNT(*) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND (event_type NOT IN ('life','damage','position','frag','assist','break',
-                          'flag_state','flag_position','objective_attempt',
-                          'grenade_entity','team_membership','shot',
-                          'score','duel','player_state','grenade_throw',
-                          'move')
+  AND (event_type NOT IN ({_KNOWN_HEALTH_TYPES_SQL})
        OR attempted IS NULL OR attempted < 0
        OR enqueued IS NULL OR enqueued < 0
        OR dropped IS NULL OR dropped < 0
@@ -2092,20 +2100,17 @@ WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
 """)
-    # Eleven required types, exactly once each. `shot` is optional and MAY be
-    # present once (mirrors CAPTURE_EVENT_TYPES_OPTIONAL in match_analytics):
-    # ksc_emit_health loops over the plugin's whole event enum, so a 1.19.4+
-    # build emits a zeroed shot row whether or not it advertises the stream,
-    # and a schema-24 build emits a live one. Pinning the count at 11 failed
+    # Every required type, exactly once each. An optional one MAY also be
+    # present: ksc_emit_health loops over the plugin's whole event enum, so a
+    # 1.19.4+ build emits a zeroed `shot` row whether or not it advertises the
+    # stream, and a schema-24 build emits a live one. Pinning the count failed
     # both. Anything outside required|optional is still a defect, via `bad`.
     required_present = db.count(f"""
 SELECT COUNT(DISTINCT event_type) FROM ktp_capture_health
 WHERE BINARY match_id=BINARY {literal} AND half={int(half)}
-  AND event_type IN ('life','damage','position','frag','assist','break',
-                     'flag_state','flag_position','objective_attempt',
-                     'grenade_entity','team_membership')
+  AND event_type IN ({_REQUIRED_HEALTH_TYPES_SQL})
 """)
-    ok = (manifest == 1 and required_present == 11
+    ok = (manifest == 1 and required_present == len(CAPTURE_EVENT_TYPES)
           and rows == distinct_types and bad == 0)
     return {
         "code": "capture_health",

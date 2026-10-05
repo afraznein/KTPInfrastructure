@@ -16,6 +16,7 @@ import re
 import pytest
 
 from . import assertions
+from scripts import match_analytics as analytics
 
 
 class FakeDb:
@@ -1407,3 +1408,33 @@ def test_schema26_is_not_exercised_before_its_migration_or_producer():
 def test_schema26_without_shot_detail_says_hitgroup_was_not_exercised():
     v = _s26(Schema26Db(targeted=0))
     assert v["status"] == "ok" and "not exercised" in v["detail"]
+
+
+def test_the_capture_health_type_lists_are_the_analytics_lists():
+    """One list, one edit.
+
+    `check_capture_health` used to re-list both the required and the
+    required|optional event types inline. When KTPAMXX #142 added the `move`
+    health row, `CAPTURE_EVENT_TYPES_OPTIONAL` was updated and this copy was
+    not: `capture_health`, `diagnostic_capture_health`,
+    `capture_context_isolation` and a v5 report authorization all failed on
+    2026-09-29, over a stream that was working.
+
+    Asserting the derived SQL rather than the constant, because the SQL string
+    is what the query actually runs -- a constant that agrees while the f-string
+    interpolates something else would pass this test and still fail Lane B.
+    """
+    required = set(analytics.CAPTURE_EVENT_TYPES)
+    known = required | set(analytics.CAPTURE_EVENT_TYPES_OPTIONAL)
+
+    def parsed(sql_list):
+        return {t.strip().strip("'") for t in sql_list.split(",")}
+
+    assert parsed(assertions._REQUIRED_HEALTH_TYPES_SQL) == required
+    assert parsed(assertions._KNOWN_HEALTH_TYPES_SQL) == known
+    # The optional half is what rots, so name it: a stream added to analytics
+    # and not here is exactly the 2026-09-29 defect.
+    assert "aim_vis" in parsed(assertions._KNOWN_HEALTH_TYPES_SQL)
+    # Control: the two lists are genuinely different, so an accidental
+    # required == known would not satisfy both assertions above.
+    assert required < known
