@@ -14,12 +14,12 @@ Run from KTPInfrastructure root:
 
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
 from tests.smoke.asserts import assert_modules_loaded, assert_plugins_running
-from tests.smoke.boot_subprocess import booted_subprocess
+from tests.smoke.boot_subprocess import (
+    booted_subprocess, cfg_with_rcon_password, resolve_test_rcon_password)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SERVERFILES = REPO_ROOT / "KTP DoD Server" / "serverfiles"
@@ -50,14 +50,15 @@ def main() -> int:
 
     # Stage the fixture cfg into dod/. Engine looks for it there.
     target_cfg = SERVERFILES / "dod" / "test_server.cfg"
-    shutil.copy(FIXTURE_CFG, target_cfg)
+    rcon_password = resolve_test_rcon_password()
+    target_cfg.write_text(cfg_with_rcon_password(FIXTURE_CFG.read_text(), rcon_password))
     print(f"staged {target_cfg.name} into {target_cfg.parent}")
 
     try:
         with booted_subprocess(
             SERVERFILES,
             map_name="dod_anzio",
-            rcon_password="smoketest",
+            rcon_password=rcon_password,
             server_cfg="test_server.cfg",
         ) as handle:
             print(f"booted; rcon at {handle.host}:{handle.port}")

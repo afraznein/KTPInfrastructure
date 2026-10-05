@@ -53,7 +53,9 @@ set, every producer posts exactly where it posts today.**
 ## Three rules
 
 1. **Silence means healthy.** A green run posts nothing unless the run before it was not.
-2. **A confirmation that scheduled work succeeded is not an alert.** It is a digest line.
+2. **A confirmation that scheduled work succeeded is not an alert.** It is a line appended to a
+   local spool file, `/var/lib/ktp-alerts/<lane>.jsonl`, on the host that ran. That file is a
+   record only: nothing reads it, and nothing delivers it to Discord.
 3. **One glyph set, set by the helper.** No producer carries colour constants.
 
 Four producers already worked this way and were the model: `ktp-perf-rollup`,
@@ -109,9 +111,20 @@ python3 /usr/local/bin/ktp_alert_routing.py info --producer hltv-restart-all \
      `Clean restart (24/24 connected) — digest line, no post.`;
   3. the spool: `tail -n 2 /var/lib/ktp-alerts/ops-daily.jsonl` holds one line per clean run
      (`HLTV: 24/24 proxies restarted and connected`).
-  ⚠️ **Nothing drains that spool yet.** No caller of `drain_digest_lines()` exists, so a clean
-  run is recorded only in the spool file and the journal, and the file grows until a consumer
-  is built. The digest gap is tracked in [ALERT_COVERAGE.md](ALERT_COVERAGE.md).
+  ⚠️ **The spool is a local record, not a digest that gets posted.** Nothing reads it to
+  Discord. The clean-run branch of `scripts/hltv-restart-all.sh` (byte-identical to the
+  deployed `/usr/local/bin` copy) only appends, and posts nothing:
+  ```bash
+  else
+      echo "$LOG_PREFIX Clean restart ($SUCCESS/$TOTAL connected) — digest line, no post."
+      ktp_alert_spool_line hltv-restart-all info \
+          "HLTV: $SUCCESS/$TOTAL proxies restarted and connected" ops-daily || true
+  fi
+  ```
+  `ktp_alert_spool_line` in `ktp-alert-routing.sh` ends in one append, `>> "$dir/$lane.jsonl"`.
+  The only reader in the repo is `drain_digest_lines()` in `ktp_alert_routing.py`, and nothing
+  calls it. "Digest line" in the journal message names the format; nothing is delivered. The file
+  grows until a consumer is built; that gap is tracked in [ALERT_COVERAGE.md](ALERT_COVERAGE.md).
 - **First run only**, `/var/lib/ktp-alerts/hltv-restart-all.state` does not exist. A clean
   run is treated as routine and stays quiet — deliberately: an all-clear for a page nobody
   saw is worse than one more silent night.
@@ -266,7 +279,7 @@ above touches no `log()` call for exactly this reason.
 2. Close the three-line `.example` gap in the same commit as the diff above.
 3. Run the guard test, then `deploy-restart-script.py`, then verify md5 equality on all five.
 4. Watch one 03:00. Expect: two in-progress messages per host as before, two edits per host
-   whose title now carries ⚪ on a clean night, and a new line per host in
+   whose title now carries ⚪ on a clean night, and a new local line per host in
    `/var/lib/ktp-alerts/ops-daily.jsonl`.
 
 ---
@@ -282,7 +295,7 @@ Add to `/etc/ktp/discord-relay.conf` on the data server (and the `KTP_CHANNEL_*`
 
 ```sh
 KTP_CHANNEL_PAGE=<id>          # must wake someone
-KTP_CHANNEL_OPS_DAILY=<id>     # digest, read once a day
+KTP_CHANNEL_OPS_DAILY=<id>     # posts in the ops-daily lane; does not deliver the spool
 KTP_CHANNEL_OPS_WEEKLY=<id>    # roll-up, read when convenient
 KTP_CHANNEL_COMMUNITY=<id>     # externally visible
 ```
@@ -416,7 +429,8 @@ routing (moving daily and weekly material out of the page channel) rather than i
   `ops-weekly`. Estimated 7/week → ~1-2/week.
 - **Disk usage/growth → a digest line, not a post** (`ktp-data-server-health.sh`, owned by
   #397). #388's deadband is merged and cuts the flip-flop; the remaining ask is that a warn
-  becomes a line in `ops-daily` rather than a post in `page`.
+  becomes a line in `ops-daily` rather than a post in `page`. Until something drains the
+  spool, that line is a local record nobody sees, so the drain has to come first.
 - **AC sessions scored** — report a week-over-week delta rather than four bare integers.
 - **The daily ops digest moves out of the page channel** (`KTPAdminBot`#21 owns its content;
   the channel is the operator's Tier 3 mapping).

@@ -62,7 +62,8 @@ python -m tests.smoke.cli assert-no-failed --port 27016
 ```
 
 Default `--rcon-password` is `changeme` — matches `config/local/dodserver.cfg`.
-For a manual subprocess boot pass whatever the harness used (`smoketest`).
+`booted_subprocess()` called without `rcon_password` takes it from `KTP_TEST_RCON_PASSWORD`
+and refuses to boot when that is unset. The Tier 2 conftest and `curl_smoke.py` always do.
 
 Exit codes: `0` clean, `1` assertion fail, `2` infrastructure error, `3`
 base-image fault (only reachable via `assert-no-failed --under-test`).
