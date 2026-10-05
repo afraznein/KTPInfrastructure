@@ -21,13 +21,16 @@
 #
 # WHAT IT PROVES, IN ORDER: selection shape, encryption to the configured
 # recipients, opaque remote naming, manifest encryption, transfer, and then a
-# full decrypt and byte-for-byte comparison against the source. Plus the
+# full decrypt and byte-for-byte comparison against the source -- for the bundles
+# and for the weapon-context sidecars, after one sidecar is rewritten in place so
+# the restore has to pick the current version over the older object. Plus the
 # negative: that a restore WITHOUT the key fails loudly instead of producing a
 # partial tree that looks like a success.
 #
 #   --key    <identity file>   age private key matching KTP_CORPUS_AGE_RECIPIENTS
 #   --days   <n>               synthetic day-dirs to build (default 5)
 #   --per    <n>               bundles per day-dir (default 4)
+#   --wc     <n>               synthetic weapon-context sidecars (default 6)
 #   --remote                   also run the real transport to a scratch dir
 #
 # Run it quarterly, and after any change to either script or to the key set.
@@ -43,12 +46,14 @@ RESTORE="${KTP_CORPUS_RESTORE_BIN:-$HERE/ktp-corpus-restore.sh}"
 KEY=""
 NDAYS=5
 NPER=4
+NWC=6
 REMOTE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --key)    KEY="${2:-}"; shift 2 ;;
         --days)   NDAYS="${2:-}"; shift 2 ;;
         --per)    NPER="${2:-}"; shift 2 ;;
+        --wc)     NWC="${2:-}"; shift 2 ;;
         --remote) REMOTE=1; shift ;;
         *) echo "[corpus-drill] unknown argument: $1" >&2; exit 1 ;;
     esac
@@ -80,7 +85,9 @@ trap 'rm -rf "$WORK"' EXIT
 SRC="$WORK/corpus"
 ARCHIVE="$WORK/archive"
 BACK="$WORK/restored"
-mkdir -p "$SRC" "$ARCHIVE"
+WCSRC="$WORK/weapon-context"
+WCBACK="$WORK/wc-restored"
+mkdir -p "$SRC" "$ARCHIVE" "$WCSRC/tmp"
 
 # ------------------------------------------------------- synthetic corpus
 # Random bytes, realistic sizes, deliberately unrealistic names.
@@ -96,10 +103,22 @@ for i in $(seq 1 "$NDAYS"); do
 done
 echo "[corpus-drill] built $N synthetic bundle(s) across $NDAYS day-dir(s)"
 
+# Same <shard>/<session>.weapons.json shape as the store, spread over two shards,
+# plus an in-flight temp file that must never be selected.
+for k in $(seq 1 "$NWC"); do
+    shard=$(( 998 + k % 2 ))
+    mkdir -p "$WCSRC/$shard"
+    head -c $(( (RANDOM % 200 + 20) * 1024 )) /dev/urandom \
+        > "$WCSRC/$shard/$(( shard * 1000 + k )).weapons.json" || fail "could not build the synthetic sidecars"
+done
+head -c 4096 /dev/urandom > "$WCSRC/tmp/0123456789abcdef0123456789abcdef"
+echo "[corpus-drill] built $NWC synthetic weapon-context sidecar(s)"
+
 run_leg() {
     local label="$1" hosts="$2" rsh="$3" dest="$4"
     echo "[corpus-drill] === $label"
     KTP_CORPUS_SRC="$SRC" \
+    KTP_WEAPON_CONTEXT_SRC="$WCSRC" \
     KTP_CORPUS_ENC_CACHE="$WORK/cache-$label" \
     KTP_OFFSITE_RSYNC_HOSTS="$hosts" \
     KTP_OFFSITE_RSYNC_RSH="$rsh" \
@@ -131,24 +150,49 @@ run_leg "local" "localhost" "$WORK/localsh" "$ARCHIVE" \
 
 [ -s "$ARCHIVE/ktp-corpus-manifest.txt.age" ] \
     || fail "no encrypted manifest in the archive."
-OBJS=$(find "$ARCHIVE" -type f -name '*.age' ! -name 'ktp-corpus-manifest*' 2>/dev/null | wc -l)
-[ "$OBJS" -eq "$N" ] || fail "archive holds $OBJS object(s), expected $N."
+bundle_objects() { find "$ARCHIVE" -mindepth 2 -maxdepth 2 -type f -path "$ARCHIVE/????-??-??/*.age" | wc -l; }
+wc_objects() { find "$ARCHIVE/weapon-context/objects" -type f -name '*.age' 2>/dev/null | wc -l; }
+OBJS=$(bundle_objects)
+[ "$OBJS" -eq "$N" ] || fail "archive holds $OBJS bundle object(s), expected $N."
+[ -s "$ARCHIVE/weapon-context/ktp-weapon-context-manifest.txt.age" ] \
+    || fail "no encrypted weapon-context manifest in the archive."
+WCOBJS=$(wc_objects)
+[ "$WCOBJS" -eq "$NWC" ] || fail "archive holds $WCOBJS weapon-context object(s), expected $NWC."
 
 # The confidentiality claim, checked rather than assumed: nothing in the archive
 # may carry an original filename, and no object may be readable as a zip.
-if find "$ARCHIVE" -name '*DRILL_synthetic*' | grep -q .; then
+if find "$ARCHIVE" \( -name '*DRILL_synthetic*' -o -name '*.weapons.json*' \) | grep -q .; then
     fail "an original filename survived into the archive -- the opaque naming is not working."
 fi
 if head -c 2 "$(find "$ARCHIVE" -type f -name '*.age' ! -name 'ktp-corpus-manifest*' | head -1)" | grep -q 'PK'; then
     fail "an archive object still begins with a zip signature -- it was not encrypted."
 fi
-echo "[corpus-drill] archive holds $OBJS opaque encrypted object(s) and an encrypted manifest"
+if ! head -c 21 "$(find "$ARCHIVE/weapon-context/objects" -type f -name '*.age' | head -1)" | grep -q 'age-encryption.org'; then
+    fail "a weapon-context object does not carry an age header -- it was not encrypted."
+fi
+echo "[corpus-drill] archive holds $OBJS bundle and $WCOBJS weapon-context object(s), opaque and encrypted, with their manifests"
+
+# ------------------------------------------- a sidecar rewritten in place
+# The writer replaces a sidecar by rename when a later hydrate is more complete.
+# The far side must keep the old object AND the restore must take the new one.
+REWRITTEN=$(find "$WCSRC" -mindepth 2 -maxdepth 2 -name '*.weapons.json' | sort | head -1)
+head -c 51200 /dev/urandom > "$WCSRC/tmp/rewrite" && mv -f "$WCSRC/tmp/rewrite" "$REWRITTEN" \
+    || fail "could not rewrite a synthetic sidecar."
+run_leg "local" "localhost" "$WORK/localsh" "$ARCHIVE" \
+    || fail "the second local offsite leg failed."
+[ "$(bundle_objects)" -eq "$N" ] || fail "the second run changed the bundle object count."
+[ "$(wc_objects)" -eq $(( NWC + 1 )) ] \
+    || fail "after one rewrite the archive holds $(wc_objects) weapon-context object(s), expected $(( NWC + 1 )) -- an older version was lost or the new one never shipped."
+echo "[corpus-drill] a rewritten sidecar added one object and kept the old one"
 
 # ------------------------------------------------- the negative: no key, no data
 NOKEY="$WORK/wrong.key"
 age-keygen -o "$NOKEY" >/dev/null 2>&1 || fail "could not mint a throwaway key for the negative test."
 if "$RESTORE" --src "$ARCHIVE" --dest "$WORK/nokey" --key "$NOKEY" >/dev/null 2>&1; then
     fail "a restore with the WRONG key reported success. The archive is not confidential."
+fi
+if "$RESTORE" --set weapon-context --src "$ARCHIVE" --dest "$WORK/nokey-wc" --key "$NOKEY" >/dev/null 2>&1; then
+    fail "a weapon-context restore with the WRONG key reported success."
 fi
 echo "[corpus-drill] restore with the wrong key refused, as it must"
 
@@ -160,6 +204,14 @@ if ! diff -r "$SRC" "$BACK" >/dev/null 2>&1; then
     fail "the restored tree differs from the synthetic source."
 fi
 echo "[corpus-drill] restored tree is byte-for-byte identical to the source"
+
+"$RESTORE" --set weapon-context --src "$ARCHIVE" --dest "$WCBACK" --key "$KEY" \
+    || fail "the weapon-context restore failed."
+# Identical to the source means the rewritten file came back as its NEW bytes.
+diff -r -x tmp "$WCSRC" "$WCBACK" >/dev/null 2>&1 \
+    || fail "the restored sidecars differ from the current source -- the restore did not take the latest versions."
+[ ! -e "$WCBACK/tmp" ] || fail "an in-flight temp file was backed up as if it were a sidecar."
+echo "[corpus-drill] restored sidecars are byte-for-byte the CURRENT versions"
 
 # ------------------------------------------------------------- real transport
 if [ "$REMOTE" = "1" ]; then
@@ -178,9 +230,15 @@ if [ "$REMOTE" = "1" ]; then
         || fail "the remote restore failed."
     diff -r "$SRC" "$WORK/remote-back" >/dev/null 2>&1 \
         || fail "the remotely restored tree differs from the synthetic source."
-    echo "[corpus-drill] real transport round-tripped $N synthetic bundle(s)"
+    rm -rf "$WORK/remote-wc-back"
+    "$RESTORE" --set weapon-context --src "$(echo "$KTP_OFFSITE_RSYNC_HOSTS" | awk '{print $1}'):$SCRATCH" \
+               --rsh "$KTP_OFFSITE_RSYNC_RSH" --dest "$WORK/remote-wc-back" --key "$KEY" \
+        || fail "the remote weapon-context restore failed."
+    diff -r -x tmp "$WCSRC" "$WORK/remote-wc-back" >/dev/null 2>&1 \
+        || fail "the remotely restored sidecars differ from the synthetic source."
+    echo "[corpus-drill] real transport round-tripped $N synthetic bundle(s) and $NWC sidecar(s)"
     echo "[corpus-drill] REMINDER: remove $SCRATCH from the archive box by hand; this script does not delete on the far side."
 fi
 
-echo "[corpus-drill] OK: encrypt, ship, refuse-without-key and restore all proved on $N synthetic bundle(s)"
+echo "[corpus-drill] OK: encrypt, ship, refuse-without-key and restore all proved on $N synthetic bundle(s) and $NWC sidecar(s)"
 exit 0
