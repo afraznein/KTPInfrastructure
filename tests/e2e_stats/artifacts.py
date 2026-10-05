@@ -124,6 +124,10 @@ DEFAULT_SCHEMA_FILES = (
     # The schema-26 daemon names hitgroup/rw_* in every shot INSERT and
     # sv_maxunlag in every manifest INSERT, so a lane without it fails both.
     "sql/migrate_041_shot_hitgroup_rewind.sql",
+    # Proposed for production, and applied here for the same reason 038 is: the
+    # daemon INSERTs into ktp_aim_vis, so a lane without the table exercises the
+    # new handler as a no-op and reports clean either way.
+    "sql/migrate_042_aim_vis.sql",
 )
 
 DEFAULT_SEED_FILES = (

@@ -147,6 +147,14 @@ CAPTURE_EVENT_TYPES_OPTIONAL = (
     # Movement census (KTPAMXX #142). Capability-gated in the daemon, so a
     # producer that does not announce it simply emits no row.
     "move",
+    # Aim-vs-transmission census (KTPHLStatsX migration 042). Listed before any
+    # producer exists, deliberately: ksc_emit_health loops over the plugin's
+    # whole event enum, so the first build that gains the stream emits a health
+    # row for it whether or not it advertises the capability -- and an unknown
+    # type fails capture_health for every half. `move` did exactly that on
+    # 2026-09-29, taking four Lane B assertions and a report authorization down
+    # with it.
+    "aim_vis",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
