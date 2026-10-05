@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the KTP weekly outlier report Monday morning, after the weekend's officials
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+# League nights are Saturday/Sunday; 06:00 local Monday is after the last reports regenerate
+# and before anyone looks. Persistent so a box that was down on Monday runs it on boot.
+OnCalendar=Mon *-*-* 06:00:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
