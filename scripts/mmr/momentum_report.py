@@ -43,8 +43,16 @@ def lift_table(rows):
     return "\n".join(lines)
 
 
-def fit_scoring_by_map(labels, objs, mmap, min_halves=12):
-    """{map: coef} from demo-labelled halves, one fit per map with enough of them."""
+def fit_scoring_by_map(labels, objs, mmap, min_halves=M.MIN_SCORING_HALVES,
+                       max_condition=M.MAX_SCORING_CONDITION):
+    """({map: (coef, r2, n)}, {map: rejection}) from demo-labelled halves.
+
+    A map needs `min_halves` labelled halves AND a design the fit can actually
+    separate: a fit whose condition number exceeds `max_condition` (or that
+    never saw one of the features) is rejected and the map uses the fallback.
+    The pivot test in `_solve` misses that case and the clamp in `value()`
+    hides it, so it is caught here.
+    """
     samples = defaultdict(list)
     for mid, L in labels.items():
         if mid not in mmap:
@@ -53,14 +61,25 @@ def fit_scoring_by_map(labels, objs, mmap, min_halves=12):
             for side_name, team in (("allies", 1), ("axis", 2)):
                 pts = L["halves"][half][L["sides"][half][side_name]]
                 samples[mmap[mid]].append((M.scoring_features(objs, mid, half, team), pts))
-    out = {}
+    out, rejected = {}, {}
     for mp, rows in samples.items():
-        if len(rows) >= min_halves:
-            out[mp] = M.fit_scoring(rows) + (len(rows),)
-    return out
+        if len(rows) < min_halves:
+            continue
+        cond = M.scoring_condition(rows)
+        if cond > max_condition:
+            rejected[mp] = {
+                "reason": "ill_conditioned",
+                "condition_number": round(cond, 1) if math.isfinite(cond) else None,
+                "max_condition": max_condition,
+                "absent_features": [k for k in M.SCORING_FEATURES if not any(f[k] for f, _ in rows)],
+                "n_team_halves": len(rows),
+            }
+            continue
+        out[mp] = M.fit_scoring(rows) + (len(rows), cond)
+    return out, rejected
 
 
-def write_params(by_map, fits, rho, rho_evidence, mk, ob, side, mmap, mtype):
+def write_params(by_map, fits, rho, rho_evidence, mk, ob, side, mmap, mtype, rejected=None):
     """momentum_params.json -- what the ledger runs on this week, per map.
 
     Committed with the weekly refit so the transparency payload (and anyone
@@ -82,8 +101,11 @@ def write_params(by_map, fits, rho, rho_evidence, mk, ob, side, mmap, mtype):
             "capouts": sum(1 for o in ob if o["kind"] == "capout" and mmap[o["match"]] == mp),
             "curves": ({k: curve(*v) for k, v in by_map[mp].items()} if mp in by_map else None),
             "scoring": ({"coef": {k: round(v, 4) for k, v in fits[mp][0].items()},
-                         "r2": round(fits[mp][1], 3), "n_team_halves": fits[mp][2]} if mp in fits else None),
+                         "r2": round(fits[mp][1], 3), "n_team_halves": fits[mp][2],
+                         "condition_number": round(fits[mp][3], 1)} if mp in fits else None),
         }
+        if mp in (rejected or {}):
+            maps[mp]["scoring_rejected"] = rejected[mp]
     params = {
         "method_version": "momentum_ledger_v1",
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -95,6 +117,8 @@ def write_params(by_map, fits, rho, rho_evidence, mk, ob, side, mmap, mtype):
             "scoring": "points = cap·caps + hold3·s + hold4·s + capout·capouts, per map, on demo-labelled halves",
             "fallback": {"curves": "pooled", "scoring": {"cap": M.CAP_VALUE, "capout": M.CAPOUT_VALUE}},
             "min_multikills_for_map_curve": M.MIN_MULTIKILLS_FOR_MAP_CURVE,
+            "min_scoring_halves": M.MIN_SCORING_HALVES,
+            "max_scoring_condition": M.MAX_SCORING_CONDITION,
         },
         "corpus": {"halves": len(side), "official_halves": sum(1 for k in side if mtype[k[0]] == "0"),
                    "multikills": len(mk), "caps": sum(1 for o in ob if o["kind"] == "cap"),
@@ -141,11 +165,11 @@ def main():
     off_rows = {k: M.lag_lift(mko, obo, M.half_spans(mko, obo), kind=k) for k in ("cap", "capout")}
 
     # --- scoring: price objectives in points where a map has labelled halves
-    fits = {}
+    fits, rejected = {}, {}
     if args.labels:
         labels = D.labels(D.read_backfill_sql(args.labels))
-        fits = fit_scoring_by_map(labels, ob, mmap)
-    scoring = {mp: coef for mp, (coef, _, _) in fits.items()}
+        fits, rejected = fit_scoring_by_map(labels, ob, mmap)
+    scoring = {mp: coef for mp, (coef, *_) in fits.items()}
     for e in ob:
         e["map"] = mmap.get(e["match"])
 
@@ -156,7 +180,7 @@ def main():
     got = M.credit(mk + ob, curves, rho, scoring=scoring, curves_by_map=by_map)
 
     # --- the versioned "current values": per-map parameters only, no player data
-    write_params(by_map, fits, rho, (p_with, p_without, n_with, n_without), mk, ob, side, mmap, mtype)
+    write_params(by_map, fits, rho, (p_with, p_without, n_with, n_without), mk, ob, side, mmap, mtype, rejected)
 
     lines = ["# Momentum credit report", ""]
     lines += ["Deposit/payout ledger over multikills, caps and capouts. Curves fitted on",
@@ -165,9 +189,16 @@ def main():
         lines += ["Credit units: scoreboard points, from a per-map fit on demo-labelled halves",
                   "(points = cap·caps + hold3·s + hold4·s + capout·capouts; a cap owns the hold",
                   "until the next ownership change):", ""]
-        for mp, (coef, r2, n) in sorted(fits.items()):
-            lines.append(f"- {mp} (n={n} team-halves, R²={r2:.3f}): " +
+        for mp, (coef, r2, n, cond) in sorted(fits.items()):
+            lines.append(f"- {mp} (n={n} team-halves, R²={r2:.3f}, cond={cond:.0f}): " +
                          ", ".join(f"{k}={v:.2f}" for k, v in coef.items()))
+    if rejected:
+        lines += ["", f"Rejected as ill-conditioned (condition number > {M.MAX_SCORING_CONDITION:.0f}), "
+                  "so they use the fallback:", ""]
+        for mp, r in sorted(rejected.items()):
+            lines.append(f"- {mp} (n={r['n_team_halves']} team-halves): cond={r['condition_number']}"
+                         + (f", never saw {', '.join(r['absent_features'])}" if r["absent_features"] else ""))
+    if fits or rejected:
         lines += ["", f"Maps without a fit pay {M.CAP_VALUE} per cap and {M.CAPOUT_VALUE} per capout.", ""]
     else:
         lines += [f"Credit units: one flag cap = {M.CAP_VALUE}, a capout pays {M.CAPOUT_VALUE} on top "
