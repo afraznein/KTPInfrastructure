@@ -476,8 +476,8 @@ class Sanitize(unittest.TestCase):
         ph = sanitize_report(internal_report())["player_halves"]
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
-    def test_contract_is_v1_11_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.11.0")
+    def test_contract_is_v1_12_0(self):
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.12.0")
 
     def test_a_team_of_unmeasured_players_has_no_total_not_zero(self):
         rep = internal_report()
@@ -644,3 +644,150 @@ class Corpus(unittest.TestCase):
             self.assertTrue(dto["ratings"]["ktpr_v2"]["players"])
             n += 1
         self.assertGreater(n, 0)
+
+
+class KastInNaturalUnits(unittest.TestCase):
+    """KAST-F is a SHARE, and publishing it only on the z-score index misleads.
+
+    drew read a displayed KAST of 125 as a percentage, which is the obvious
+    reading and an impossible one for a share: 125 is +1.67 sigma on the
+    `max(50, 100 + 15z)` index. The same scale had already caused an outage
+    when a consumer applied a second z-transform to it (keep-the-prac
+    #679/#691), so this is the second time the index has been mistaken for the
+    quantity. The share is now published in its own units.
+    """
+
+    def setUp(self):
+        from scripts import analytics_report_dto as D
+        self.D = D
+
+    def test_a_share_becomes_a_percentage(self):
+        self.assertEqual(self.D._kast_pct(0.8649), 86.5)
+        self.assertEqual(self.D._kast_pct(0.9412), 94.1)
+        self.assertEqual(self.D._kast_pct(1.0), 100.0)
+        self.assertEqual(self.D._kast_pct(0.0), 0.0)
+
+    def test_not_measured_stays_null_rather_than_zero(self):
+        """flag_fights SUPPRESSES kast_f when the assist or trade source is
+        unavailable, instead of emitting a smaller number -- an absent trade
+        feed would otherwise read as "never got traded", a real penalty rather
+        than missing data. 0% would re-introduce exactly that lie."""
+        self.assertIsNone(self.D._kast_pct(None))
+
+    def test_the_percentage_reaches_the_published_player_row(self):
+        report = {"shadow_explorations": {
+            "ktpr_v2": {"components_used": ["kast_f"],
+                        "players": [{"player_id": 123, "player_name_at_match": "kroD-",
+                                     "team": 1, "rating": 1.1,
+                                     "components": {"kast_f": 1.67}}]},
+            "flag_fights": {"players": [{"player_id": 123, "kast_f": 0.8649}]}}}
+        body = json.dumps(self.D.sanitize_report(report))
+        self.assertIn('"kast_f_pct": 86.5', body)
+        # The index is still there, for comparison against the match average.
+        self.assertIn('"kast_f"', body)
+
+    def test_the_scale_metadata_tells_a_consumer_which_is_which(self):
+        meta = self.D.KTPR_DISPLAY_SCALE
+        self.assertEqual(meta["kast_f_pct"]["kind"], "percent")
+        self.assertEqual(meta["components"]["kind"], "floored_index")
+        # The note has to say the index is NOT a percentage, because that is the
+        # mistake it exists to prevent.
+        self.assertIn("not a percentage", meta["kast_f_pct"]["note"])
+
+    def test_it_still_passes_the_publish_gate(self):
+        report = {"shadow_explorations": {
+            "ktpr_v2": {"components_used": ["kast_f"],
+                        "players": [{"player_id": 9, "player_name_at_match": "a",
+                                     "team": 1, "rating": 0.0, "components": {}}]},
+            "flag_fights": {"players": [{"player_id": 9, "kast_f": 0.5}]}}}
+        self.D.assert_sanitized(self.D.sanitize_report(report))
+
+
+class Glossary(unittest.TestCase):
+    """Every published number declares what it is and what unit it is in.
+
+    The site had no glossary and no unit declarations outside the ratings
+    block, which produced two misreadings of the same kind: a KAST of 125 read
+    as a percentage, and before that a 100-centred index re-z-scored into
+    flatness (keep-the-prac #679/#691). The guard that matters is the first
+    test here -- a new published field cannot ship without a definition.
+    """
+
+    UNITS = frozenset({
+        "count", "share_0_1", "percent_0_100", "ratio", "damage", "points",
+        "seconds", "per_minute", "index", "rank",
+    })
+
+    def setUp(self):
+        from scripts import analytics_report_dto as D
+        self.D = D
+
+    def test_every_published_box_score_field_is_defined(self):
+        missing = [f for f in self.D.PLAYER_FIELDS
+                   if f not in self.D.FIELD_GLOSSARY]
+        self.assertEqual(missing, [], f"undefined published fields: {missing}")
+
+    def test_every_rating_side_row_field_is_defined(self):
+        """accumulation and flag_swing rows, as sanitize_report emits them."""
+        report = internal_report()
+        # Without a scorer attachment the accumulation block is empty and this
+        # test would pass vacuously.
+        report["accumulation"] = {
+            "status": "available",
+            "players": [{"player_name_at_match": "A", "total_points": 42.0,
+                         "points_per_minute": 1.2, "deaths": 2,
+                         "impact_index": 103.4, "observed_seconds": 90,
+                         "participation_percent": 90.0, "rank": 1}],
+        }
+        dto = self.D.sanitize_report(report)
+        self.assertTrue(dto["ratings"]["accumulation"]["players"])
+        rows = ((dto["ratings"]["accumulation"].get("players") or [])
+                + (dto["ratings"]["flag_swing"].get("players") or []))
+        skip = {"name", "team"}
+        missing = sorted({k for row in rows for k in row
+                          if k not in skip and k not in self.D.FIELD_GLOSSARY})
+        self.assertEqual(missing, [], f"undefined published fields: {missing}")
+
+    def test_units_come_from_the_declared_vocabulary(self):
+        for field, entry in self.D.FIELD_GLOSSARY.items():
+            with self.subTest(field=field):
+                self.assertIn(entry["unit"], self.UNITS)
+                self.assertTrue(entry["what"].strip())
+
+    def test_a_share_is_never_declared_a_percentage(self):
+        """raw_accuracy is 0.28, not 28. Mislabelling it is the 125 bug."""
+        for field in ("raw_accuracy", "headshot_rate"):
+            self.assertEqual(
+                self.D.FIELD_GLOSSARY[field]["unit"], "share_0_1")
+        self.assertEqual(
+            self.D.FIELD_GLOSSARY["participation_percent"]["unit"],
+            "percent_0_100")
+
+    def test_the_multikill_window_is_read_off_the_report(self):
+        report = internal_report()
+        report["shadow_timelines"]["config"] = {"multikill_seconds": 10.0}
+        what = (self.D.sanitize_report(report)["glossary"]["fields"]
+                ["fast_2k"]["what"])
+        self.assertIn("10.0s", what)
+
+    def test_the_window_sentence_is_absent_when_the_config_is(self):
+        report = internal_report()
+        report["shadow_timelines"].pop("config", None)
+        what = (self.D.sanitize_report(report)["glossary"]["fields"]
+                ["fast_2k"]["what"])
+        self.assertNotIn("after its first", what)
+
+    def test_the_glossary_does_not_leak_the_window_between_reports(self):
+        """The copy is per report; a second build must not append twice."""
+        report = internal_report()
+        report["shadow_timelines"]["config"] = {"multikill_seconds": 10.0}
+        first = (self.D.sanitize_report(report)["glossary"]["fields"]
+                 ["fast_2k"]["what"])
+        second = (self.D.sanitize_report(report)["glossary"]["fields"]
+                  ["fast_2k"]["what"])
+        self.assertEqual(first, second)
+
+    def test_it_passes_the_publish_gate(self):
+        """A forbidden substring in a glossary key would fail the whole sync."""
+        self.D.assert_sanitized(
+            self.D.sanitize_report(internal_report())["glossary"])

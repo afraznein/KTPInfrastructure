@@ -149,6 +149,7 @@ pip install -r deploy/requirements.txt          # deployment tooling
 pip install -r sites/lan-web/requirements.txt   # only if touching sites/lan-web
 pip install pytest
 scripts/install-hooks.sh                        # installs the pre-push hook
+git config core.hooksPath .githooks             # commit-sweep guard, see below
 ```
 
 CI runs Python 3.12; match it if you can. Docker is required for builds and the local stack.
@@ -156,6 +157,25 @@ CI runs Python 3.12; match it if you can. Docker is required for builds and the 
 `scripts/install-hooks.sh` installs a pre-push hook that runs a full `make build` in Docker.
 It is slow on a cold cache. `KTP_SKIP_PREPUSH=1` or `git push --no-verify` bypasses it — fine for
 a docs-only branch, not fine for anything that compiles.
+
+### Launch-time setup: the commit-sweep guard
+
+Once per clone, before the first commit (linked worktrees share the setting):
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The main checkout is shared by concurrent sessions, so its index is shared too: a bare `git commit` takes
+whatever anyone else has staged, and `git commit -a` takes every modified tracked file. `.githooks/pre-commit`
+refuses both in the main checkout whenever anything is staged. Commit by path instead:
+`git commit -m "..." -- <paths>` builds a private index from just those paths (a new file still needs
+`git add <path>` first). Linked worktrees have their own index and skip the check, so isolated work pays nothing.
+Finishing a conflicted merge, revert or cherry-pick legitimately commits the index:
+`KTP_COMMIT_SWEEP=1 git commit ...`. A hook already in `.git/hooks/pre-commit` still runs; the guard chains to it.
+`core.hooksPath` would otherwise shadow `.git/hooks`, so `.githooks/pre-push` hands off to the pre-push gate
+`scripts/install-hooks.sh` installs there.
+Test: `sh .githooks/test-pre-commit.sh`.
 
 **Line endings matter.** `.gitattributes` pins shell scripts, Python, systemd units, ini files,
 cron payloads and SQL to LF, because these files are copied byte-for-byte onto Linux hosts and a
