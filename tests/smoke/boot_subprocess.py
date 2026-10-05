@@ -31,6 +31,37 @@ from typing import Iterator
 
 from .server_handle import ServerHandle
 
+TEST_RCON_ENV = "KTP_TEST_RCON_PASSWORD"
+
+
+def resolve_test_rcon_password() -> str:
+    """The test server's rcon password, from the environment and nowhere else.
+
+    No default on purpose: a literal here is a literal in public history.
+    """
+    password = os.environ.get(TEST_RCON_ENV, "")
+    if not password:
+        raise RuntimeError(
+            f"{TEST_RCON_ENV} is not set. On the tier-2 runner it lives in "
+            f"/etc/ktp/tier2-test-rcon.env; anywhere else, export any value you like."
+        )
+    return password
+
+
+def cfg_with_rcon_password(cfg_text: str, password: str) -> str:
+    """Return `cfg_text` with its single `rcon_password` line set to `password`.
+
+    A staged cfg runs after the CLI arg, so its value is the one the server keeps.
+    """
+    if not password or '"' in password or "\n" in password or "\r" in password:
+        raise ValueError("rcon password must be non-empty with no quote or line break")
+    lines = cfg_text.split("\n")
+    hits = [i for i, ln in enumerate(lines) if ln.strip().startswith("rcon_password")]
+    if len(hits) != 1:
+        raise ValueError(f"expected exactly one rcon_password line, found {len(hits)}")
+    lines[hits[0]] = f'rcon_password "{password}"'
+    return "\n".join(lines)
+
 
 def _free_udp_port(preferred: int | None = None) -> int:
     """Bind-then-close to find a free UDP port. Race window is tiny but real;
@@ -176,7 +207,7 @@ def booted_subprocess(
     map_name: str = "dod_anzio",
     port: int | None = None,
     maxplayers: int = 13,
-    rcon_password: str = "smoketest",
+    rcon_password: str | None = None,
     server_cfg: str = "test_server.cfg",
     log_file: Path | None = None,
     boot_timeout: float = 90.0,
@@ -188,8 +219,11 @@ def booted_subprocess(
     relative to dod/ (the engine looks there for cfg files).
 
     On exit, the last 100 lines of stdout are printed if the body raised, so
-    failures show server-side context inline.
+    failures show server-side context inline. `rcon_password` defaults to
+    `resolve_test_rcon_password()`.
     """
+    if rcon_password is None:
+        rcon_password = resolve_test_rcon_password()
     serverfiles = Path(serverfiles).resolve()
     chosen_port = _free_udp_port(preferred=port)
     log_file = log_file or (serverfiles / f"smoke-{chosen_port}.log")

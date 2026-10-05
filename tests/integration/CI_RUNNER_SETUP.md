@@ -79,7 +79,8 @@ The tree must contain:
 | `dod/addons/ktpamx/plugins/KTPHudObserver.amxx` | DoD-hud-observer build | required for `test_hud_observer_contract.py` |
 | `dod/addons/ktpamx/plugins/KTPPracticeMode.amxx` | **TEST-MODE build** (`KTP_TEST_MODE=1 bash compile.sh`, from `compiled/test/`) | required for `test_practice_mode_grenade_refill.py` (needs `amx_ktp_prac_test_enable` + entry diagnostic) |
 | `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness + KTPHudObserver + KTPPracticeMode |
-| `dod/addons/ktpamx/configs/dodserver.cfg` | (minimal test config) | rcon_password=`smoketest` per the conftest |
+| `dod/addons/ktpamx/configs/dodserver.cfg` | (minimal test config) | rcon_password must equal `KTP_TEST_RCON_PASSWORD` |
+| `/etc/ktp/tier2-test-rcon.env` | runner box, root 600 | `KTP_TEST_RCON_PASSWORD=<value>`; the workflow masks it and exports it to pytest. Never commit the value |
 
 **Critical: KTPMatchHandler MUST be the test-mode build** (compiled with
 `KTP_TEST_MODE=1 bash compile.sh`, output at `compiled/test/`) — production
