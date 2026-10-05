@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
+from scripts.match_analytics import CAPTURE_EVENT_TYPES
 from tests.e2e_stats.assertions import check_capture_health
 from tests.e2e_stats.ephemeral_mysql import EphemeralMysql
 
 
 MATCH_ID = "capture-health-regression-TEST"
-EVENT_TYPES = (
-    "life", "damage", "position", "frag", "assist", "break",
-    "flag_state", "flag_position", "objective_attempt", "grenade_entity",
-    "team_membership",
-)
+# Derived, not re-listed: this was the THIRD copy of the required type list, and
+# a fixture that drifts from the assertion it exercises tests a shape production
+# never has.
+EVENT_TYPES = tuple(CAPTURE_EVENT_TYPES)
 
 
 @pytest.fixture(scope="module")

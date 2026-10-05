@@ -236,6 +236,7 @@ def main():
     hosts = load_hosts()
     reached, unreachable, dirty = [], [], {}
     for entry in hosts:
+        # falls back to the address, which would reach the report if an entry lacks `name`
         name = entry.get("name", entry["host"])
         try:
             client = connect(entry)

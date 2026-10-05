@@ -83,6 +83,7 @@ _ENV_ASSIGN_RE = re.compile(
 
 _VAR_REF_RE = re.compile(r"^\$(?:\{[A-Za-z_]\w*\}|[A-Za-z_]\w*)$")
 
+# `/` is excluded in the lookarounds too, so base64 adjacent to a `/` (a PEM body line) is never redacted.
 _TOKEN_RE = re.compile(
     r"(?<![A-Za-z0-9+=_/.\-])[A-Za-z0-9+=_-]{20,}(?![A-Za-z0-9+=_/.\-])"
 )
