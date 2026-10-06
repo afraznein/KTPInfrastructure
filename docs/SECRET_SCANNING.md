@@ -227,6 +227,13 @@ watchdog that complains when no heartbeat arrives.
   value back.
 - **It is not entropy detection.** No guessing at what looks secret-shaped —
   that is the layer that already failed here.
+- **It does not see an evidence copy, because nothing it watches is a commit.**
+  A crash/freeze capture handed to another host or provider goes out as a
+  tarball, past all four surfaces. ⚠️ **And a game console log carries the live
+  rcon password in its `Rcon:` status lines**, so stripping client IPs — the
+  obvious redaction, and the only one anyone asked for — leaves the credential
+  in. Redact credentials as well as identifiers, and prove it by grepping the
+  copy for the current rcon value before it leaves the workstation.
 
 ## Running it
 
