@@ -128,6 +128,10 @@ DEFAULT_SCHEMA_FILES = (
     # daemon INSERTs into ktp_aim_vis, so a lane without the table exercises the
     # new handler as a no-op and reports clean either way.
     "sql/migrate_042_aim_vis.sql",
+    # Proposed for production. Applied here because the lane runs the query this
+    # index serves: shot_placement_fact.sql joins shots to ktp_position_samples
+    # on (match_id, half, game_time), so without it the lane plans differently.
+    "sql/migrate_043_position_samples_time_index.sql",
 )
 
 DEFAULT_SEED_FILES = (
