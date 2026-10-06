@@ -2,53 +2,64 @@
   "corpus_candidates": {
     "officials_only": {
       "extra_halves": 0,
-      "held_out_loss_on_officials": 0.647696
+      "held_out_loss_on_officials": 0.651689
     },
     "officials_plus_12man": {
-      "extra_halves": 122,
-      "held_out_loss_on_officials": 0.649587
+      "extra_halves": 195,
+      "held_out_loss_on_officials": 0.653884
     },
     "officials_plus_all_practice": {
-      "extra_halves": 206,
-      "held_out_loss_on_officials": 0.650112
+      "extra_halves": 367,
+      "held_out_loss_on_officials": 0.653184
     }
   },
   "corpus_selected": "officials_only",
   "corpus_since": "2026-09-13",
   "definition": "flag_swing_map_coefficients_v1",
-  "fitted_at": "2026-09-28T17:32:10Z",
+  "fitted_at": "2026-10-05T16:32:33Z",
   "label_mix": {
-    "engine": 242,
-    "ledger": 18
+    "engine": 424,
+    "ledger": 19
   },
   "label_source": "ktp_score_events, falling back to the demo ledger where the engine feed does not reach (see the module docstring)",
   "maps": {
+    "dod_anzio": {
+      "alive_coefficient": 1.3176,
+      "flag_coefficient": 1.3616,
+      "log_loss": 0.660819,
+      "official_halves": 18,
+      "own_alive_coefficient": 1.5263,
+      "own_flag_coefficient": 1.2127,
+      "samples": 11403,
+      "shrinkage_weight": 0.4737,
+      "training_halves": 18
+    },
     "dod_harrington": {
-      "alive_coefficient": 0.9766,
-      "flag_coefficient": 1.6727,
-      "log_loss": 0.641457,
-      "official_halves": 16,
-      "own_alive_coefficient": 0.9282,
-      "own_flag_coefficient": 1.7731,
-      "samples": 13345,
-      "shrinkage_weight": 0.4444,
-      "training_halves": 16
+      "alive_coefficient": 1.0383,
+      "flag_coefficient": 1.6363,
+      "log_loss": 0.641183,
+      "official_halves": 18,
+      "own_alive_coefficient": 0.9365,
+      "own_flag_coefficient": 1.7927,
+      "samples": 14931,
+      "shrinkage_weight": 0.4737,
+      "training_halves": 18
     },
     "dod_lennon5_b1": {
-      "alive_coefficient": 1.0492,
-      "flag_coefficient": 1.2401,
-      "log_loss": 0.674777,
-      "official_halves": 20,
-      "own_alive_coefficient": 1.0831,
-      "own_flag_coefficient": 0.8879,
-      "samples": 14859,
-      "shrinkage_weight": 0.5,
-      "training_halves": 20
+      "alive_coefficient": 1.1203,
+      "flag_coefficient": 1.1881,
+      "log_loss": 0.673004,
+      "official_halves": 22,
+      "own_alive_coefficient": 1.1116,
+      "own_flag_coefficient": 0.9086,
+      "samples": 16415,
+      "shrinkage_weight": 0.5238,
+      "training_halves": 22
     },
     "dod_thunder2": {
-      "alive_coefficient": 0.9577,
-      "flag_coefficient": 2.7789,
-      "log_loss": 0.596864,
+      "alive_coefficient": 1.018,
+      "flag_coefficient": 2.728,
+      "log_loss": 0.597658,
       "official_halves": 18,
       "own_alive_coefficient": 0.8936,
       "own_flag_coefficient": 4.0974,
@@ -58,11 +69,11 @@
     }
   },
   "pooled": {
-    "alive_coefficient": 1.0153,
-    "flag_coefficient": 1.5923,
-    "halves": 54,
-    "log_loss": 0.65186,
-    "samples": 39036
+    "alive_coefficient": 1.1299,
+    "flag_coefficient": 1.4956,
+    "halves": 76,
+    "log_loss": 0.654111,
+    "samples": 53581
   },
   "prior_halves": 20.0
 }

@@ -111,6 +111,98 @@ that) and the scoring fit is per map. `momentum_report.py` writes
 `momentum_params.json` — the current values, sample sizes and fit quality
 per map — which is versioned and refit weekly as matches land.
 
+## Known weakness: `min_halves` (ruled — see below)
+
+Before the condition-number gate, the only gate on a per-map scoring fit was
+`fit_scoring_by_map(..., min_halves=12)` in `momentum_report.py`. A fit with 12 labelled halves that trips no guard can
+still be badly ill-conditioned. Bootstrap on `dod_thunder2` (4000 draws at
+n=12 halves, error as map-total scoreboard points):
+
+- Draws where a guard fired: median error 18.7%, max 56.4%. Bad, but bounded
+  and detectable.
+- Draws where no guard fired: median 0.00%, but p99 34.6% and max 1304%. The
+  worst one fit `hold3 = -6.67` and `hold4 = +25.8` against true values of
+  0.05 and 0.30, pricing `hold4` 86x too high from ill-conditioning alone.
+
+The `max(0.0, ...)` clamp in `value()` hides a negative coefficient but does
+nothing about an inflated one, so the output of a bad fit looks sane.
+Degeneracy is 0% by n=60 and the wild-coefficient tail is also a small-sample
+effect.
+
+Hardening `_solve` would only address the visible half. The lever is the gate.
+Two candidates:
+
+1. Raise `min_halves`.
+2. Reject a fit on its condition number instead of on a pivot.
+
+These per-map values are published weekly in the `rating_methodology`
+aggregate (since e46cff9), so an unflagged wild fit would be displayed on the
+site.
+
+**Ruled 2026-10-05 (module owner, on #601): option 2.** A fit is rejected on
+its condition number at the gate, not by raising `min_halves` and not inside
+`_solve`. A condition number tests the thing that actually fails; `min_halves`
+is a proxy for it, and a value high enough to be safe would cost coverage on
+every map, including maps whose fits were never ill-conditioned.
+
+### Per-map scoring gate
+
+`fit_scoring_by_map` now applies two gates, in order:
+
+1. at least `MIN_SCORING_HALVES` labelled team-halves (12, unchanged);
+2. `scoring_condition(rows) <= MAX_SCORING_CONDITION` (**200**), both in
+   `momentum.py`.
+
+`scoring_condition` is the condition number of the fit's normal matrix
+(`XᵀX`) after scaling each column to unit norm, so it measures how far the
+features move together rather than the fact that hold seconds are bigger
+numbers than cap counts. A feature that never occurs in the sample (no
+capouts in twelve halves, say) is infinitely ill-conditioned: the fit cannot
+price an event it never saw, and the ledger would later price that event at 0.
+
+A rejected map falls back exactly as a thin map does (`definitions.fallback`).
+The reason is recorded: `momentum_params.json` carries
+`maps.<map>.scoring_rejected` (`reason: "ill_conditioned"`,
+`condition_number` — `null` when infinite — `max_condition`,
+`absent_features`, `n_team_halves`), the methodology payload copies it to
+`momentum.maps.<map>.scoring.rejected` beside `uses: "fallback"`, an accepted
+fit's `scoring` gains `condition_number`, and `definitions` gains
+`min_scoring_halves` and `max_scoring_condition`. All additive; no existing
+key moved.
+
+How 200 was chosen. The event corpus is fetched over the module owner's
+read-only ssh grant, so the bootstrap was reproduced on synthetic thunder-like
+halves rather than rerun on the real ones: event-level halves (caps with a
+held-flag count and hold time, capouts driven by four-flag hold time), true
+prices set to the published `dod_thunder2` fit, residual noise sized to its
+R² of 0.887, scored through `value()` as map-total points. Two variants: the
+base one, and a "tight" one where capouts are almost a function of four-flag
+hold time, which is the collinearity the #601 worst case shows. Share of
+bootstrap fits that publish (4000 draws each; the current gate publishes all
+of them):
+
+| n team-halves | T=50 base / tight | **T=200 base / tight** | T=500 base / tight |
+|---|---|---|---|
+| 12 | 57.8% / 27.6% | **80.7% / 71.3%** | 82.7% / 81.7% |
+| 30 | 97.0% / 53.6% | **98.8% / 97.8%** | 98.8% / 99.2% |
+| 32 (thunder's real count) | 97.2% / 54.2% | **98.7% / 98.3%** | 98.7% / 99.4% |
+| 60 | 100% / 58.2% | **100% / 99.9%** | 100% / 100% |
+
+At n=12 most of the cost is fits that never saw a capout, which the pivot
+test also flags. Among fits the pivot test passes (20000 draws at n=12), 200
+removes 68% of the fits with a coefficient more than 10x off and 72% / 92%
+(base / tight) of the fits more than 100% off on map-total points; it removes
+none at n≥20 because there are none to remove. Lower thresholds remove a
+little more of that tail but reject well-conditioned fits at realistic n in
+the collinear variant (T=50 publishes 54% at n=32). What the gate does not
+remove is plain small-sample noise in a well-conditioned design: at n=12 a few
+fits remain more than 50% off with condition numbers under 30. That is the
+sample-size question `min_halves` exists for, and the ruling left it at 12.
+
+The synthetic numbers fix the threshold's order, not its exact cost on the
+real corpus. `momentum_report.md` prints every map's condition number, and the
+next refit records them in `momentum_params.json`.
+
 ## Transparency: the `rating_methodology` document
 
 `methodology.py` builds the `rating_methodology` season aggregate: how KTPR

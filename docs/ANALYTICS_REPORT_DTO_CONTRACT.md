@@ -21,6 +21,8 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.10.0` | 23 | `assists`, `cap_breaks`, `capture_credits` and `kda_ratio` are `null`, not `0`, where the match predates the producer (see below). No key is added or removed |
 | `analytics-report-dto-v1.11.0` | 25 | Per-hit damage is decided per match: a match that ended before `ktp_damage_events` began publishes Statsme `damage_dealt` and `null` for the columns only the per-hit ledger supplies (see below). A `teams[]` damage total with any unknown member is `null`. No key is added or removed |
 
+
+| `analytics-report-dto-v1.12.0` | 25 | Adds top-level `glossary`: a reader-facing `what` and a declared `unit` for every published box-score, `flag_swing` and `accumulation` field, plus the metric contract it was transcribed from. The ratings block already carried its own `definition` and `display_scale`; everything else was published with no definition a reader could reach, which produced two misreadings of a 100-centred index (a KAST of 125 read as a percentage; and earlier, keep-the-prac #679/#691, a second z-transform applied to an already-scaled value). The multikill window in the `fast_*k` definitions is read off `shadow_timelines.config` per report rather than restated, so it cannot drift from the config the numbers were built with |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a

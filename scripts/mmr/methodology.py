@@ -203,6 +203,8 @@ def build(params, *, generated_at, source_report_count=0, report_schema_version=
             "scoring": m["scoring"] if m.get("scoring") else {"uses": "fallback",
                                                                 "fallback": params["definitions"]["fallback"]["scoring"]},
         }
+        if not m.get("scoring") and m.get("scoring_rejected"):
+            maps[mp]["scoring"]["rejected"] = m["scoring_rejected"]
 
     return {
         "kind": AGGREGATE_KIND,

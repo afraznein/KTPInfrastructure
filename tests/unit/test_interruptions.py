@@ -108,12 +108,51 @@ class Bands(unittest.TestCase):
         self.assertEqual(band_for(75)["band"], "decisive")
         self.assertEqual(band_for(100)["band"], "decisive")
 
-    def test_a_band_carries_its_evidence_not_a_price(self):
+    def test_a_band_prices_on_the_replicated_corpus_not_the_thin_one(self):
+        # officials said 0.00 on n=10 for "decisive"; 12-mans say 0.71 on n=59.
+        # Shipping the former would tell a consumer a decisive interruption
+        # always prevents the cap-out.
         got = band_for(80)
-        self.assertEqual(got["measured_lift"], 0.0)
-        self.assertEqual(got["measured_n"], 10)
+        self.assertEqual(got["measured_corpus"], "twelve_man")
+        self.assertEqual(got["measured_lift"], 0.71)
+        self.assertEqual(got["measured_n"], 59)
         self.assertNotIn("value", got)
         self.assertNotIn("points", got)
+
+    def test_a_band_carries_every_corpus_because_they_disagree(self):
+        got = band_for(80)["measured_all_corpora"]
+        self.assertEqual(sorted(got), ["official", "scrim", "twelve_man"])
+        self.assertEqual(got["official"], {"lift": 0.83, "n": 32})
+        self.assertEqual(got["scrim"], {"lift": 1.06, "n": 56})
+
+    def test_officials_regressed_onto_the_priced_corpus(self):
+        # The point of pricing on the larger sample: officials' decisive band
+        # read 0.00 on n=10 and came back 0.83 on n=32 one league week later.
+        # If a future re-measure pushes them far from the priced value again,
+        # that is a finding, not a detail.
+        official = band_for(80)["measured_all_corpora"]["official"]["lift"]
+        self.assertLess(abs(official - band_for(80)["measured_lift"]), 0.25)
+
+    def test_the_replicated_corpus_is_monotone_in_progress(self):
+        # The claim this class rests on: more progress stopped, more suppression.
+        lifts = [band_for(p)["measured_lift"] for p in (0, 25, 50, 75)]
+        self.assertEqual(lifts, sorted(lifts, reverse=True), lifts)
+
+    def test_the_pricing_corpus_is_chosen_for_holding_not_for_size(self):
+        # Not simply the biggest: scrims have more events than 12-mans in the
+        # `partial` band (203 vs 188). It is chosen because its dose-response
+        # HOLDS -- monotone and below chance throughout -- which scrims' does
+        # not. If a future re-measure breaks that, this test is the alarm.
+        from scripts.interruptions import PRICING_CORPUS, SUPPRESSION_BANDS
+
+        def column(corpus):
+            return [measured[corpus][0] for _n, _f, measured in SUPPRESSION_BANDS]
+
+        priced = column(PRICING_CORPUS)
+        self.assertEqual(priced, sorted(priced, reverse=True), priced)
+        self.assertTrue(all(lift < 1.0 for lift in priced), priced)
+        self.assertNotEqual(column("scrim"), sorted(column("scrim"), reverse=True),
+                            "scrims used to be non-monotone; re-check the choice")
 
     def test_unknown_progress_lands_in_the_control_band(self):
         self.assertEqual(band_for(None)["band"], "negligible")

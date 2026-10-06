@@ -30,7 +30,7 @@ from scripts.in_game_result import unavailable as in_game_unavailable
 from scripts.kill_streaks import DEFINITION as KILL_STREAK_DEFINITION
 from scripts.kill_streaks import DEFINITION_VERSION as KILL_STREAK_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.11.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.12.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -86,6 +86,16 @@ KTPR_DISPLAY_SCALE = {
         "note": "Already scaled for display: max(floor, center + per_z * z). "
                 "Render as published; do not transform again.",
     },
+    "kast_f_pct": {
+        "kind": "percent",
+        "note": "KAST-F in its own units: the share of flag fights where the "
+                "player got a kill, got an assist, survived, or had their death "
+                "traded. 0-100. Show THIS as the KAST figure. "
+                "components.kast_f is the same quantity on the index below, "
+                "useful only as a comparison against the match average -- it is "
+                "not a percentage and reads as a nonsensical one (a KAST of 125 "
+                "is +1.67 sigma, not 125%). null means not measured.",
+    },
     "components": {
         "kind": "floored_index",
         "center": KTPR_DISPLAY_CENTER,
@@ -114,6 +124,20 @@ def ktpr_display(z, *, floor: float = KTPR_DISPLAY_FLOOR,
     if value is None:
         return None
     return round(max(floor, center + per_z * value), 2)
+
+
+def _kast_pct(share):
+    """KAST-F as a percentage, 0-100, or None if it was not measured.
+
+    `flag_fights` suppresses kast_f entirely when the assist or trade source is
+    unavailable, rather than emitting a lower number -- an absent trade feed
+    would otherwise look like "never got traded", which is a real penalty
+    rather than missing data. None must therefore stay None here and render as
+    "not measured", not as 0%.
+    """
+    if share is None:
+        return None
+    return round(float(share) * 100.0, 1)
 
 
 def _name(value):
@@ -223,6 +247,14 @@ def sanitize_report(report: dict) -> dict:
     ta = st.get("trade_analysis") or {}
     rs = se.get("recap_speed") or {}
     ktpr = se.get("ktpr_v2") or {}
+    # KAST-F's natural unit is a SHARE, and publishing it only on the z-score
+    # display index actively misleads: a KAST of 125 reads as "125%", which is
+    # impossible for a share. Carried through in its own units alongside the
+    # index so the page can show "86.5%" and keep the index as the comparison.
+    # Keyed by player_id, which both blocks carry.
+    _ff = ((se.get("flag_fights") or {}).get("players")) or []
+    kast_share_by_pid = {r.get("player_id"): r.get("kast_f") for r in _ff
+                         if r.get("kast_f") is not None}
     swing = se.get("flag_swing") or {}
     # flag_swing players carry no name; join on the internal id here so
     # only the name crosses.
@@ -346,7 +378,11 @@ def sanitize_report(report: dict) -> dict:
                      "team": p.get("team"),
                      "rating": ktpr_display(p.get("rating")),
                      "components": {k: ktpr_display(v) for k, v in
-                                    (p.get("components") or {}).items()}}
+                                    (p.get("components") or {}).items()},
+                     # Natural units, NOT on the display index. Render this as
+                     # the KAST figure; the index belongs next to it as "vs
+                     # match average", never on its own.
+                     "kast_f_pct": _kast_pct(kast_share_by_pid.get(p.get("player_id")))}
                     for p in ktpr.get("players") or []
                 ],
             },
@@ -381,6 +417,17 @@ def sanitize_report(report: dict) -> dict:
     }
     _unknown_team_totals(dto["teams"], report.get("players") or [])
     dto["box_score_scale"] = _box_score_scale(dto["players"])
+    dto["glossary"] = {"contract": METRIC_CONTRACT,
+                       "fields": copy.deepcopy(FIELD_GLOSSARY)}
+    # Read the multikill window off the report instead of restating it, so the
+    # definition cannot drift from the config the numbers were built with. It
+    # already has: the contract document says 5s between consecutive kills,
+    # production runs 10s measured from the chain's first kill.
+    window = _num((st.get("config") or {}).get("multikill_seconds"))
+    if window is not None:
+        for key in ("fast_2k", "fast_3k", "fast_4k_plus"):
+            dto["glossary"]["fields"][key]["what"] += (
+                f" A chain is kills no more than {window}s after its first.")
     assert_sanitized(dto)
     return dto
 
@@ -416,6 +463,125 @@ PLAYER_FIELDS = (
 LOWER_IS_BETTER = frozenset({
     "deaths", "damage_taken", "team_kills", "suicides", "grenade_damage_taken",
 })
+
+
+METRIC_CONTRACT = "MATCH_METRIC_CONTRACT_V1.md@1.0.0"
+
+# Reader-facing definition and declared unit for every number the DTO
+# publishes outside the ratings block, which carry their own `definition` and
+# `display_scale`. Transcribed from docs/MATCH_METRIC_CONTRACT_V1.md -- that
+# document stays normative; this is its machine-readable projection, so a
+# consumer never has to infer a unit from a field name.
+#
+# `unit` vocabulary: count, share_0_1, percent_0_100, ratio, damage, points,
+# seconds, per_minute, index, rank.
+#
+# Two guards, both earned:
+#   * test_analytics_report_dto pins that every PLAYER_FIELDS entry and every
+#     accumulation/flag_swing row key has an entry here, so a new published
+#     field cannot ship undefined.
+#   * a `share_0_1` is NOT a percentage. Publishing a share on a 100-centred
+#     index is what let a KAST of 125 read as "125%" (KTPInfrastructure#577);
+#     state the unit rather than letting the magnitude suggest one.
+NULL_NOTE = "null, not 0, for a match that predates the source that measures it."
+
+FIELD_GLOSSARY = {
+    "kills": {"unit": "count", "what": "Frags credited to the player."},
+    "deaths": {"unit": "count", "what": "Times the player was killed."},
+    "assists": {"unit": "count",
+                "what": "Kills the player contributed to without the "
+                        "finishing blow, as DoD itself credits them.",
+                "caveat": "null, not 0, for a match that predates the source that measures it."},
+    "headshots": {"unit": "count", "what": "Kills that were headshots."},
+    "team_kills": {"unit": "count", "what": "Team-mates killed."},
+    "suicides": {"unit": "count", "what": "Self-inflicted deaths."},
+    "damage_dealt": {"unit": "damage",
+                     "what": "Damage to opponents. Excludes damage to "
+                             "team-mates and to self, which are separate."},
+    "damage_taken": {"unit": "damage", "what": "Damage from opponents."},
+    "damage_differential": {"unit": "damage",
+                            "what": "damage_dealt minus damage_taken.",
+                            "caveat": "null when damage taken was not "
+                                      "captured, not zero."},
+    "capture_credits": {"unit": "count",
+                        "what": "Flag captures the player was credited for. "
+                                "Several players can be credited for one "
+                                "capture, so a team's credits exceed its "
+                                "flags taken. " + NULL_NOTE},
+    "cap_breaks": {"unit": "count",
+                   "what": "Captures in progress that the player stopped.",
+                   "caveat": "null, not 0, for a match that predates the source that measures it."},
+    "shots": {"unit": "count", "what": "Shots fired."},
+    "hits": {"unit": "count", "what": "Shots that hit."},
+    "raw_accuracy": {"unit": "share_0_1",
+                     "what": "hits / shots, 0 to 1.",
+                     "caveat": "Descriptive only, never a ranking. Garand "
+                               "users discharge a chambered round to force a "
+                               "reload and the source cannot tell that from "
+                               "a miss."},
+    "kd_ratio": {"unit": "ratio", "what": "kills / deaths.",
+                 "caveat": "null when deaths are zero."},
+    "damage_per_minute": {"unit": "per_minute",
+                          "what": "Opponent damage per minute of live play."},
+    "kills_per_minute": {"unit": "per_minute",
+                         "what": "Frags per minute of live play."},
+    "damage_per_life": {"unit": "damage",
+                        "what": "Opponent damage per completed life "
+                                "(damage_dealt / deaths).",
+                        "caveat": "Counts only lives that ended, so the "
+                                  "unfinished last life of each half is "
+                                  "deliberately excluded."},
+    "headshot_rate": {"unit": "share_0_1",
+                      "what": "headshots / kills, 0 to 1."},
+    "fast_2k": {"unit": "count",
+                "what": "Chains of exactly 2 kills inside the fast-multikill "
+                        "window."},
+    "fast_3k": {"unit": "count", "what": "Chains of exactly 3 kills."},
+    "fast_4k_plus": {"unit": "count", "what": "Chains of 4 or more kills."},
+    "best_streak": {"unit": "count",
+                    "what": "Longest run of kills without dying."},
+    "grenade_kills": {"unit": "count", "what": "Kills by grenade."},
+    "grenade_damage": {"unit": "damage", "what": "Opponent damage by grenade."},
+    "grenade_damage_taken": {"unit": "damage",
+                             "what": "Damage taken from grenades."},
+    "score": {"unit": "points",
+              "what": "DoD's own objective score, as the scoreboard shows it.",
+              "caveat": "Not a capture count: a flag is worth 1 or 2 points "
+                        "depending on how many players capture it."},
+    "points_per_minute": {"unit": "per_minute",
+                          "what": "Objective score per minute of live play."},
+    # ratings.flag_swing players[]
+    "attributed_swing": {"unit": "points",
+                         "what": "The player's share of how far their team "
+                                 "moved the flags, in win-probability terms. "
+                                 "The objective measure: positive means they "
+                                 "pushed the match toward their team winning."},
+    "weighted_frags": {"unit": "points",
+                       "what": "Frags weighted by how much each one mattered "
+                               "to the flag fight it happened in."},
+    # ratings.accumulation players[]
+    "total_points": {"unit": "points",
+                     "what": "Accumulation scorer total across combat and "
+                             "objective budgets."},
+    "points_per_life": {"unit": "points",
+                        "what": "total_points per life, where lives are "
+                                "deaths plus halves played -- every life ends "
+                                "in a death except the last one of each half."},
+    "impact_index": {"unit": "index",
+                     "what": "Accumulation points on a 100-centred index, "
+                             "published with its own centre and scale.",
+                     "caveat": "A different quantity from the KTPR rating "
+                               "despite both being 100-centred. Do not "
+                               "compare the two numbers directly."},
+    "observed_seconds": {"unit": "seconds",
+                         "what": "Seconds the player was actually observed "
+                                 "in the match."},
+    "participation_percent": {"unit": "percent_0_100",
+                              "what": "observed_seconds as a percentage of "
+                                      "match duration, 0 to 100."},
+    "rank": {"unit": "rank",
+             "what": "Placement within the match on total_points, 1 is best."},
+}
 
 
 def _box_score_scale(players: list[dict]) -> dict:
