@@ -32,6 +32,7 @@ import os
 import pwd
 import re
 import math
+from datetime import datetime
 import statistics
 import subprocess
 import sys
@@ -159,8 +160,8 @@ def _pending_corpus_sql(schema_version: int, since: str | None,
         "AND EXISTS (SELECT 1 FROM ktp_flag_state_events f "
         "WHERE BINARY f.match_id = BINARY m.match_id) "
         # A report older than the last half's close is partial and gets a new
-        # revision. MySQL stores generated_at's UTC offset converted to the
-        # session zone, which is the zone end_time is written in.
+        # revision. persist_report writes generated_at in the session zone,
+        # which is the zone the daemon's NOW() writes end_time in.
         "AND NOT EXISTS (SELECT 1 FROM ktp_match_reports r "
         "WHERE BINARY r.match_id = BINARY m.match_id "
         f"AND r.schema_version = {schema_version} "
@@ -222,6 +223,19 @@ def next_revision(db: LocalMysql, match_id: str, schema_version: int) -> int:
     return int(out.strip().splitlines()[-1]) + 1
 
 
+def session_zone_datetime(iso: str) -> str:
+    """SQL for `iso` as a whole-second DATETIME in the session zone, like NOW().
+
+    Never the ISO string itself: MySQL 8.0 converts an offset literal to the
+    session zone only when its fraction rounds down, and stores a fraction that
+    rounds up as the UTC wall clock, hours in the future.
+    """
+    moment = datetime.fromisoformat(iso)
+    if moment.tzinfo is None:
+        raise ValueError(f"generated_at has no UTC offset: {iso!r}")
+    return f"FROM_UNIXTIME({math.floor(moment.timestamp())})"
+
+
 def persist_report(db: LocalMysql, report: dict) -> None:
     body = json.dumps(report, ensure_ascii=False, default=str)
     sha = hashlib.sha256(body.encode("utf-8")).hexdigest()
@@ -233,7 +247,7 @@ def persist_report(db: LocalMysql, report: dict) -> None:
         "INSERT INTO ktp_match_reports (match_id, schema_version, revision, "
         "generated_at, quality_status, publishable, report_sha256, report) "
         f"VALUES ({sql_str(match_id)}, {schema_version}, {revision}, "
-        f"{sql_str(str(report['generated_at']))}, {sql_str(quality)}, "
+        f"{session_zone_datetime(str(report['generated_at']))}, {sql_str(quality)}, "
         f"{1 if is_publishable(report) else 0}, {sql_str(sha)}, "
         f"{sql_str(body)})"
     )
