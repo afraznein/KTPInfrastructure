@@ -155,8 +155,15 @@ The check reports; it does not fix. These are not the checker's to decide:
 3. **`motd.txt`.** Two hosts run an older copy. Whether a per-region MOTD is
    intended (→ `excludePatterns`) or those hosts simply missed the February push
    (→ let the next touch deliver it) is a product decision, not a drift call.
-4. **`addons/ktpamx/configs/plugins.ini`.** Three variants across the fleet,
-   grouped by neither host nor role. Somebody has to say which is canonical.
+4. ~~**`addons/ktpamx/configs/plugins.ini`.**~~ **Answered 2026-10-01: 24/24 now
+   hold one copy.** The three variants collapsed on measurement — 19 shared one,
+   three differed by zero content lines (line endings only, which is why the md5
+   moved) and two by a single comment line — so the canonical copy was the
+   majority one, pulled from a live host rather than authored. See
+   `CONFIG_KEY_DRIFT.md` for the key-level half it closed in the same write.
+   ⚠️ **A whole-file md5 census that reports N variants is an upper bound on
+   disagreement, not a count of decisions**: diff them before treating a variant
+   as a choice someone made.
 5. **Non-config artefacts in the tree.** `addons/ktpamx/logs/` and `logs/` hold
    files dated 2025-12-29, and `addons/ktpamx/modules/*.so`, `dlls/*.so` and two
    `.amxx` plugins are stale copies of binaries that ship by wave instead.

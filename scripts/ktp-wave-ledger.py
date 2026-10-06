@@ -47,11 +47,16 @@ the same one, and each entry records who staged it (`staged_by`).
 
 Usage:
   ktp-wave-ledger.py status                     # what is pending, and what is due
-  ktp-wave-ledger.py check                      # CLAUDE.md only; no fleet, no network
+  ktp-wave-ledger.py check [--no-clear]         # CLAUDE.md only; no fleet, no network -- but it WRITES
   ktp-wave-ledger.py reconcile                  # read the fleet, then gate on CLAUDE.md
   ktp-wave-ledger.py sweep [--no-ledger]        # the same whole-fleet read, marks nothing (timer)
   ktp-wave-ledger.py record -a NAME=MD5:REMOTE_DIR [-a ...] --hosts a,b --targets 24 \
                             --base NAME=owner/repo@sha
+
+"No fleet, no network" is not "no side effect": `check` MARKS a satisfied wave
+reconciled in the ledger unless `--no-clear` is passed. `sweep` says it marks
+nothing, which makes `check` read the same way -- it does not. Use `--no-clear`
+whenever you are reading state rather than closing out a wave.
 
 The unit of reconciliation is the RESTART. The 03:00 swap activates every staged
 `.new`, including ones no wave recorded: the 2026-09-08 swap activated
@@ -938,7 +943,8 @@ def main(argv=None) -> int:
     s.add_argument("--all", action="store_true", help="Include reconciled waves.")
     s.set_defaults(func=_cmd_status)
 
-    c = sub.add_parser("check", help="Gate on CLAUDE.md alone. No network.")
+    c = sub.add_parser("check", help="Gate on CLAUDE.md alone. No network -- but it marks a "
+                                     "satisfied wave reconciled; --no-clear to only report.")
     c.add_argument("--no-clear", action="store_true",
                    help="Report without marking a satisfied wave reconciled.")
     c.set_defaults(func=_cmd_check)
