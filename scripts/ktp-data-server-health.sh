@@ -100,6 +100,15 @@ RENAMER_STALE_SEC=900
 # window is ever seen. last_read_ok stamps the last clean pass per game host.
 RENAMER_READ_STALE_SEC=1800
 
+# Weekly precache audit, which nothing watched. The audit writes
+# /var/log/ktp-precache-audit-<date>.md on every run; the cron's own .log is
+# excluded on purpose, because it is appended to even by a run that died before
+# auditing anything, so it would certify work that never happened.
+PRECACHE_REPORT_GLOB="${PRECACHE_REPORT_GLOB:-/var/log/ktp-precache-audit-*.md}"
+# Sunday cadence (7d) plus a day, so a run that starts late does not page while a
+# missed Sunday -- 14d before the next one -- does.
+PRECACHE_STALE_SEC="${PRECACHE_STALE_SEC:-691200}"
+
 BANLIST_FILE="/home/dod/distribute/addons/ktpamx/configs/ktp_ac_bans.ini"
 BANLIST_UNIT="ktp-render-banlist.service"
 BANLIST_STALE_SEC=900
@@ -422,6 +431,33 @@ PY
         fi
     fi
 fi
+
+# >>> ktp-precache-freshness — extracted verbatim by tests/unit/test_health_precache_freshness.py
+# Alert on work DONE, never on process state. The cron sets MAILTO='' and the
+# audit posts only on actionable severity, so a quiet week and an audit that
+# stopped running are the same silence -- and a hung process reads as active.
+precache_freshness() {  # $1 = report glob, $2 = max age seconds, $3 = now epoch
+    local newest=0 f e
+    for f in $1; do
+        [ -f "$f" ] || continue
+        e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+        if [ "$e" -gt "$newest" ]; then newest="$e"; fi
+    done
+    if [ "$newest" -eq 0 ]; then
+        # No report at all is deliberately the loud direction: if the audit's
+        # --output path is ever renamed, this becomes a false alarm rather than
+        # the silence it exists to end.
+        echo "ktp-precache-audit=no-report"
+        return 0
+    fi
+    # Fixed token, never the age -- the report is a set-diff against the previous
+    # run, so a ticking value would read as a fresh failure on every hourly run.
+    if [ $(( $3 - newest )) -gt "$2" ]; then echo "ktp-precache-audit=stale"; fi
+    return 0
+}
+# <<< ktp-precache-freshness
+precache_item="$(precache_freshness "$PRECACHE_REPORT_GLOB" "$PRECACHE_STALE_SEC" "$(date +%s)")"
+if [ -n "$precache_item" ]; then down+=("$precache_item"); fi
 
 # HLTV instance coverage — check each port in the expected set,
 # skipping intentionally-excluded ones.

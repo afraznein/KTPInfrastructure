@@ -133,7 +133,8 @@ Cron-scheduled work is outside both mechanisms entirely:
 | `ktp-backup-watchdog` | itself; exists because a run that never happens produces no output |
 | `ktp-demo-cleanup-auto` (30 min) | **nothing** |
 | `ktp-offsite` (Sunday 04:00 / 05:00 / 06:00): DB dumps, demos, AC corpus (bundles **and** weapon-context sidecars since 2026-10-05) | **nothing** — output goes to `/var/log/ktp-offsite.log` and no one is told when a leg fails. ⚠️ The sidecars ride the corpus leg, so a corpus-leg failure now loses both populations' copy for that week, and a missing or empty weapon-context store fails the whole leg before anything ships. The corpus leg (2026-09-25) adds a second blind spot on top of that: it encrypts to a key this host does not hold, so even a clean run only proves ARRIVAL. Nothing scheduled anywhere decrypts, and nothing can be scheduled here to, because that would put a private key on the one host the design keeps it off |
-| `ktp-perf-rollup-daily`, `ktp-spike-digest-daily`, `ktp-soak-verify-*`, `ktp-precache-audit-weekly`, `ktp-ac-retention`, `ktp-credential-carrier-purge`, `ktp-fastdl-*` | **nothing** |
+| `ktp-precache-audit-weekly` (Sunday 06:00 ET) | `ktp-data-server-health`, on the newest `/var/log/ktp-precache-audit-*.md` mtime against an 8-day ceiling (7d cadence + a day, so a late run is not a page and a missed Sunday is). Keyed on the report because the audit is silent on a green week, so its Discord post cannot distinguish "nothing to report" from "did not run" |
+| `ktp-perf-rollup-daily`, `ktp-spike-digest-daily`, `ktp-soak-verify-*`, `ktp-ac-retention`, `ktp-credential-carrier-purge`, `ktp-fastdl-*` | **nothing** |
 
 ## Data integrity
 
