@@ -21,7 +21,7 @@ roster AS (
     WHERE match_id = {{MATCH_ID}}
 ),
 shots AS (
-    SELECT s.id AS shot_id, s.player_id, s.half, s.game_time,
+    SELECT s.id AS shot_id, s.match_id, s.player_id, s.half, s.game_time,
            s.pos_x, s.pos_y, s.pos_z,
            COS(RADIANS(s.pitch)) * COS(RADIANS(s.yaw)) AS fx,
            COS(RADIANS(s.pitch)) * SIN(RADIANS(s.yaw)) AS fy,
@@ -42,7 +42,10 @@ candidates AS (
            ABS(p.game_time - sh.game_time) AS dt
     FROM shots sh
     JOIN ktp_position_samples p
-      ON p.match_id = {{MATCH_ID}} AND p.half = sh.half
+      -- Bounds, not equalities: an equality lets MySQL pick a ref on (match_id, half)
+      -- and scan the whole half per shot; bounds force a per-shot range on game_time.
+      ON p.match_id >= sh.match_id AND p.match_id <= sh.match_id
+     AND p.half >= sh.half AND p.half <= sh.half
      AND p.team <> sh.team AND p.is_alive = 1
      AND p.game_time BETWEEN sh.game_time - 1.0 AND sh.game_time + 1.0
 ),
