@@ -68,3 +68,20 @@ def test_missing_metric_does_not_poison_the_score():
     wo.zscores(rows, min_prior=4)
     assert rows[5]["z_own_reg"] is None
     assert rows[5]["driver"] == "k100"
+
+
+def test_chronic_ranks_the_always_bad_connection_not_the_one_off():
+    rows = []
+    # Player 1: worst-jitter client in 60% of windows every half (kroD- shape).
+    rows += [half(1, f"m{i}", 1, jit_share=0.6, drop_share=0.0, lat_share=0.0, rewind_share=0.0) for i in range(6)]
+    # Player 2: clean except one half at 60% -- a network event, not a connection.
+    rows += [half(2, f"m{i}", 1, jit_share=0.6 if i == 0 else 0.02, drop_share=0.0, lat_share=0.0, rewind_share=0.0) for i in range(6)]
+    for p in range(3, 15):
+        rows += [half(p, f"m{i}", 2, jit_share=0.03, drop_share=0.02, lat_share=0.05, rewind_share=0.0) for i in range(6)]
+    wo.zscores(rows, min_prior=4)
+    chron = wo.chronic(rows, min_prior=4)
+    assert [p["player_id"] for p in chron] == [1]
+    assert chron[0]["net_driver"] == "jit_share"
+    # ...while the one-off half is what the per-half own-z catches instead.
+    assert rows[6]["z_own_jit_share"] > 2.0
+

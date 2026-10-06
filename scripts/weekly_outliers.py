@@ -62,9 +62,12 @@ NET = ["ping_avg", "ping_sd", "jit_share", "lat_share", "drop_share", "rewind_sh
 
 
 def q(sql: str, db: str) -> list[list[str]]:
-    out = subprocess.run(["mysql", "-N", "--batch", "--raw", "--default-character-set=utf8mb4",
-                          db, "-e", sql], capture_output=True, text=True, check=True).stdout
-    return [line.split("\t") for line in out.splitlines() if line]
+    proc = subprocess.run(["mysql", "-N", "--batch", "--raw", "--default-character-set=utf8mb4",
+                           db, "-e", sql], capture_output=True, text=True)
+    if proc.returncode:
+        # The server's one-line reason, not a 60-line SQL dump: a journal reader needs the former.
+        raise SystemExit(f"mysql failed ({proc.returncode}): {proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else 'no stderr'}")
+    return [line.split("\t") for line in proc.stdout.splitlines() if line]
 
 
 def num(x: str) -> float | None:
@@ -83,6 +86,14 @@ WITH m AS (
 ), p AS (
   SELECT match_id, player_id, MIN(player_name) player_name, MIN(steam_id) steam_id
   FROM ktp_match_players GROUP BY 1,2
+), latest AS (
+  -- Display name = the one most recently seen. The per-match name above stays for joining
+  -- the net worst-of columns, which store names. One player carried 60+ aliases this season,
+  -- several of them other people's names, so an alphabetical pick labelled him as someone else.
+  SELECT a.player_id, MIN(a.player_name) player_name
+  FROM ktp_match_players a JOIN (SELECT player_id, MAX(joined_at) joined_at FROM ktp_match_players GROUP BY 1) b
+    ON b.player_id = a.player_id AND b.joined_at = a.joined_at
+  GROUP BY 1
 ), fires AS (
   SELECT m.match_id, m.half, f.steam_id,
          COUNT(*) shots, SUM(f.hitgroup IS NOT NULL) traced,
@@ -102,11 +113,13 @@ WITH m AS (
   GROUP BY 1,2,3
 )
 SELECT m.match_id, m.half, m.map_name, m.server_id, m.start_time, s.player_id, p.player_name,
+       COALESCE(lt.player_name, p.player_name) latest_name,
        s.kills, s.deaths, s.headshots, s.damage,
        fi.shots, fi.traced, fi.registered, pg.ping_avg, pg.ping_sd
 FROM ktp_match_stats s
 JOIN m ON m.match_id = s.match_id AND m.half = s.half
 JOIN p ON p.match_id = s.match_id AND p.player_id = s.player_id
+LEFT JOIN latest lt ON lt.player_id = s.player_id
 LEFT JOIN fires fi ON fi.match_id = m.match_id AND fi.half = m.half
                   AND fi.steam_id = CONCAT('STEAM_0:', p.steam_id) COLLATE utf8mb4_0900_ai_ci
 LEFT JOIN ping pg ON pg.match_id = m.match_id AND pg.half = m.half AND pg.player_id = s.player_id
@@ -137,13 +150,13 @@ UNION ALL SELECT 'rw', match_id, half, COUNT(*), 'mw', mw FROM r GROUP BY match_
 def load(db: str, since: str) -> list[dict]:
     rows = []
     for r in q(halves_sql(since), db):
-        (mid, half, map_name, sid, start, pid, name, k, d, hs, dmg, shots, traced, reg,
+        (mid, half, map_name, sid, start, pid, name, latest_name, k, d, hs, dmg, shots, traced, reg,
          ping_avg, ping_sd) = r
         k, d, hs, dmg = int(k), int(d), int(hs), int(dmg)
         shots, traced, reg = num(shots), num(traced), num(reg)
         rows.append({
             "match_id": mid, "half": int(half), "map": map_name, "server": int(sid),
-            "start": start, "player_id": int(pid), "player": name,
+            "start": start, "player_id": int(pid), "player": latest_name, "match_name": name,
             "kills": k, "deaths": d, "headshots": hs, "damage": dmg, "shots": shots,
             "k100": 100 * k / shots if shots else None,
             "on_target": traced / shots if shots else None,
@@ -164,8 +177,42 @@ def load(db: str, since: str) -> list[dict]:
     for row in rows:
         for g, c in col.items():
             t = totals.get((row["match_id"], row["half"], g), 0)
-            row[c] = share.get((row["match_id"], row["half"], g, row["player"]), 0) / t if t else None
+            row[c] = share.get((row["match_id"], row["half"], g, row["match_name"]), 0) / t if t else None
     return rows
+
+
+CHRONIC = ["jit_share", "drop_share", "lat_share", "rewind_share"]
+
+
+def chronic(rows: list[dict], min_prior: int, flag_z: float = 2.0) -> list[dict]:
+    """Season-long connection ranking: each player's mean worst-of shares, z'd against the
+    population of player means. A connection that is bad in every half never shows against
+    the player's own baseline, which is exactly the one the owner can fix at home."""
+    by_player = defaultdict(list)
+    for r in rows:
+        by_player[r["player_id"]].append(r)
+    players = []
+    for pid, rs in by_player.items():
+        if len(rs) < min_prior:
+            continue
+        rec = {"player_id": pid, "player": rs[-1]["player"], "halves": len(rs)}
+        for m in CHRONIC + ["ping_avg"]:
+            vals = [r[m] for r in rs if r[m] is not None]
+            rec[m] = statistics.fmean(vals) if vals else None
+        players.append(rec)
+    for m in CHRONIC:
+        vals = [p[m] for p in players if p[m] is not None]
+        if len(vals) < 2:
+            continue
+        mu, sd = statistics.fmean(vals), statistics.pstdev(vals)
+        for p in players:
+            p[f"z_{m}"] = (p[m] - mu) / sd if p[m] is not None and sd > 1e-9 else None
+    for p in players:
+        zs = {m: p.get(f"z_{m}") for m in CHRONIC if p.get(f"z_{m}") is not None}
+        p["net_driver"] = max(zs, key=zs.get) if zs else None
+        p["net_score"] = zs[p["net_driver"]] if zs else None
+    return sorted([p for p in players if p["net_score"] is not None and p["net_score"] >= flag_z],
+                  key=lambda p: -p["net_score"])
 
 
 PSEUDO = 4  # league-sd pseudo-halves blended into a player's own sd; see zscores()
@@ -215,7 +262,7 @@ def fmt(v, nd=1):
     return str(v)
 
 
-def report(rows: list[dict], window: list[dict], top: int, alert_z: float) -> str:
+def report(rows: list[dict], window: list[dict], top: int, alert_z: float, min_prior: int) -> str:
     L = ["# Weekly outliers", "",
          f"{len(window)} player-halves in the window, {len(rows)} in the baseline "
          f"({len({r['player_id'] for r in rows})} players, "
@@ -270,11 +317,22 @@ def report(rows: list[dict], window: list[dict], top: int, alert_z: float) -> st
                  f"| {below}/{scored} | {'/'.join(f'{x:.0f}' for x in hs_halves)} "
                  f"| {'/'.join(str(x) for x in ranks)} of {len(hs_sorted)} "
                  f"| {fmt(statistics.fmean(mzo) if mzo else None, 2)} | {fmt(statistics.fmean(mzr) if mzr else None, 2)} |")
+    chron = chronic(rows, min_prior)
+    L += ["", f"## Chronic connections (season, official halves, {len(chron)} players at z >= 2 vs the league)", "",
+          "Mean share of 10 s windows in which the player was the server's worst client. Bad in every half never "
+          "shows against the player's own baseline; this is the list to hand to the player.", "",
+          "| player | halves | driver | jitter-worst | drops-worst | latency-worst | rewind-worst | ping |",
+          "|---|---|---|---|---|---|---|---|"]
+    for p in chron[:top]:
+        L.append(f"| {p['player']} | {p['halves']} | {p['net_driver']} z={p['net_score']:+.1f} "
+                 f"| {fmt((p['jit_share'] or 0) * 100, 0)}% | {fmt((p['drop_share'] or 0) * 100, 0)}% "
+                 f"| {fmt((p['lat_share'] or 0) * 100, 0)}% | {fmt((p['rewind_share'] or 0) * 100, 0)}% | {fmt(p['ping_avg'], 0)} |")
     L += ["", "## Reading it", "",
           "- `on_target` low and `reg` normal: the shots were not on a hitbox when fired -- aim or exposure, not the server.",
           "- `reg` low with `on_target` normal: traced fires did not become damage rows -- the registration question. "
           "Killing blows are missing from the hits ledger, so compare against the player's own `reg`, never read it as a rate.",
-          "- `jit_share` high in one half only is a network event; high in every half is that player's connection (kroD- sits at 57-66%).",
+          "- `jit_share` high in one half only is a network event; high in every half is that player's connection -- see Chronic connections.",
+          "- `rewind-worst` is only scored in windows that had a miss at all, which is rare, so a few windows can read as 100%; weigh it by halves.",
           "- `ping_sd` is from ~90 s scoreboard samples and cannot see jitter; `ktp_net_intervals` stores only the worst client "
           "per window, so there is no per-player series yet (infra-weekly-outliers, telemetry gap 1)."]
     return "\n".join(L) + "\n"
@@ -301,7 +359,7 @@ def main() -> int:
     latest = max(r["start"] for r in rows)
     cutoff = q(f"SELECT DATE_SUB('{latest}', INTERVAL {a.window_days} DAY)", a.db)[0][0]
     window = [r for r in rows if r["start"] >= cutoff and (not a.match or r["match_id"] == a.match)]
-    text = report(rows, window, a.top, a.alert_z)
+    text = report(rows, window, a.top, a.alert_z, a.min_prior)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text)
