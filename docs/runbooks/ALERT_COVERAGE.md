@@ -88,6 +88,7 @@ that never "failed", and alerts on state transitions only.
 | `hltv-restart.service` | yes | no | yes |
 | `ktp-identity-reconcile.service` | yes | no | yes |
 | `ktp-hlstatsx-ingest-monitor.service` | yes | no | yes |
+| `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery; the report is at `/var/lib/ktp-weekly-outliers/latest.md` |
 | `ktp-reports.service` | yes, once the unit from `systemd/` is reinstalled; the live unit has none | no | a failing run alerts; `ktp-reports.timer` is not in `CRITICAL_TIMERS`, so a timer that stops firing does not. The journal only says `exit-code`; the cause is in `/var/log/ktp-report-service.log` |
 | `ktp-admin-bot.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
 | `ktp-frag-diag-tail.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
@@ -109,6 +110,7 @@ once by the `failed-unit:` producer.
 | `ktp-demo-publish.timer` | yes | alerted |
 | `ktp-hltv-liveness.timer` | yes (2026-09-16) | **the HLTV liveness check stops and nothing notices** |
 | `ktp-hlstatsx-ingest-monitor.timer` | yes (2026-09-16) | ingest monitoring stops silently |
+| `ktp-weekly-outliers.timer` | yes (2026-10-05) | the weekly outlier report stops and nobody notices until someone asks why Monday was quiet |
 | `ktp-stats-export.timer` | yes (2026-09-16) | exports stop; last file stays in place and reads healthy |
 | `ktp-corpus-push.timer` / `-denver` | yes (2026-09-16) | corpus pushes stop silently |
 | `ktp-roster-history-audit.timer` | yes (2026-09-16) | audit stops silently |

@@ -1,0 +1,19 @@
+[Unit]
+Description=KTP weekly outlier report: rank the week's official player-halves against each player's own history
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=mysql.service
+
+[Service]
+Type=oneshot
+# The report is the product, so it is kept: latest.md for whoever opens the box, and a dated
+# copy so a half flagged in week 3 can still be read beside week 9's. Read-only on MySQL.
+ExecStartPre=/bin/mkdir -p /var/lib/ktp-weekly-outliers
+ExecStart=/bin/sh -c '/usr/local/bin/weekly_outliers.py --out /var/lib/ktp-weekly-outliers/latest.md --tsv /var/lib/ktp-weekly-outliers/latest.tsv; rc=$?; cp /var/lib/ktp-weekly-outliers/latest.md "/var/lib/ktp-weekly-outliers/week-$(date +%%F).md"; exit $rc'
+# Exits 1 when a half scores at or above the alert threshold. That fails the unit, which
+# fires the existing ktp-systemd-alert OnFailure wiring -- the same delivery path as
+# hlstatsx-ingest-monitor. A weekly outlier that only lands in a file nobody opens is the
+# failure this report exists to fix.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

@@ -76,6 +76,8 @@ CRITICAL_TIMERS=(
     # Corpus pushes stop; the offsite copy quietly ages.
     ktp-corpus-push.timer
     ktp-corpus-push-denver.timer
+    # The Monday outlier report stops; a quiet Monday reads as a clean week.
+    ktp-weekly-outliers.timer
     # Not listed: ktp-monday-reminder.timer. A reminder that fails to arrive is
     # noticed by the people expecting it, which is the alert.
 )
