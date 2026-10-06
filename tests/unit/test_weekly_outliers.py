@@ -85,3 +85,19 @@ def test_chronic_ranks_the_always_bad_connection_not_the_one_off():
     # ...while the one-off half is what the per-half own-z catches instead.
     assert rows[6]["z_own_jit_share"] > 2.0
 
+
+
+def test_match_anomalies_flag_the_night_not_the_week():
+    def m(mid, start, **k):
+        d = {"match_id": mid, "match_type": 2, "map": "dod_halle", "start": start, "server": "s", "windows": 400,
+             "drops_win": 3.0, "drops_max": 40.0, "maxunlag_win": 1.0, "loss_worst": 2.0, "jitter_worst": 90.0,
+             "lagcomp_off": 0}
+        d.update(k)
+        return d
+    ms = [m(f"old{i}", "2026-09-14", drops_win=2.0 + i % 4) for i in range(20)]
+    ms += [m("quiet", "2026-10-04"), m("disaster", "2026-10-04", drops_win=320.0, maxunlag_win=290.0),
+           m("lagcomp", "2026-10-04", lagcomp_off=3)]
+    out = wo.match_anomalies(ms, cutoff="2026-10-01")
+    assert [x["match_id"] for x in out] == ["disaster", "lagcomp"]
+    assert out[0]["net_driver"] in ("drops_win", "maxunlag_win")
+    assert all(x["match_id"] != "old0" for x in out)  # outside the window, even if extreme

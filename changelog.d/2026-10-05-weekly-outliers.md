@@ -16,6 +16,14 @@ questions asked by hand that day are the metrics here.
   below their own hs%, where the match's hs% sits among all halves, mean on-target z).
   Shots come from `ktp_ac_weapon_fires`, which exists for every official match and matches
   `ktp_shot_events` exactly where both exist. Read-only over the local socket, no credentials.
+- Two more sections, added after the first league-wide pass. **Chronic connections** ranks each
+  player's season-mean worst-of shares against the league, because a connection bad in every half
+  never shows against its own baseline (first run: 24 players; one at 91% drops-worst, one at 76%
+  jitter-worst on a 36 ms ping). **Pathological matches** z's every match of every type on
+  drops/window, rewind-cap hits/window, loss and jitter against the season, so a night like the
+  09-14 Dallas 12-man (321 drops/window) or the 10-02 NY2 12-man (1,427 rewind-cap hits/window)
+  is named the Monday after instead of surfacing as "Dallas is the worst server" a month later —
+  with those nights removed, every server sits within ±2 points of the others within-player.
 - **`ktp-weekly-outliers.timer` / `.service`** run it Monday 06:00, keep `latest.md` and a
   dated copy under `/var/lib/ktp-weekly-outliers/`, and exit 1 when a half scores at or above
   `--alert-z` (3.0) so the existing `OnFailure` wiring carries the week's outliers to Discord.

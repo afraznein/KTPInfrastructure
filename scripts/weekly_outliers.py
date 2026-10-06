@@ -147,6 +147,59 @@ UNION ALL SELECT 'rw', match_id, half, COUNT(*), 'mw', mw FROM r GROUP BY match_
 """
 
 
+def matches_sql(since: str) -> str:
+    # Every match type: the pathological nights found by hand (a 12-man at 321 drops/window, a
+    # 12-man with 1,427 rewind requests/window past sv_maxunlag) were not officials, and they
+    # are what made two servers look broken in a per-server average.
+    return f"""
+SELECT n.match_id, MIN(m.match_type), MIN(m.map_name), MIN(m.start_time), n.server_endpoint,
+       COUNT(*) windows, AVG(n.drops), MAX(n.drops), AVG(n.maxunlag_hits), AVG(n.loss_worst),
+       AVG(n.jitter_worst_ms), SUM(n.lagcomp_off)
+FROM ktp_net_intervals n JOIN (SELECT match_id, MIN(match_type) match_type, MIN(map_name) map_name,
+                                      MIN(start_time) start_time FROM ktp_matches
+                               WHERE start_time >= '{since}' GROUP BY 1) m ON m.match_id = n.match_id
+WHERE n.ts >= '{since}' AND n.clients >= 8
+GROUP BY n.match_id, n.server_endpoint HAVING windows >= 60
+"""
+
+
+MATCH = ["drops_win", "maxunlag_win", "loss_worst", "jitter_worst"]
+
+
+def load_matches(db: str, since: str) -> list[dict]:
+    out = []
+    for r in q(matches_sql(since), db):
+        mid, mt, map_name, start, ep, win, dr, drmax, mu, lo, ji, lc = r
+        out.append({"match_id": mid, "match_type": int(mt), "map": map_name, "start": start, "server": ep,
+                    "windows": int(win), "drops_win": float(dr), "drops_max": float(drmax),
+                    "maxunlag_win": float(mu), "loss_worst": float(lo), "jitter_worst": float(ji),
+                    "lagcomp_off": int(lc)})
+    return out
+
+
+def match_anomalies(matches: list[dict], cutoff: str, flag_z: float = 2.0) -> list[dict]:
+    """Matches in the window whose per-window drops, rewind-cap hits, loss or jitter sit far
+    above every match this season. These are nights, not players: the per-player sections
+    would file them under whoever happened to be worst."""
+    for m in MATCH:
+        vals = [x[m] for x in matches]
+        if len(vals) < 2:
+            return []
+        mu, sd = statistics.fmean(vals), statistics.pstdev(vals)
+        for x in matches:
+            x[f"z_{m}"] = (x[m] - mu) / sd if sd > 1e-9 else 0.0
+    flagged = []
+    for x in matches:
+        if x["start"] < cutoff:
+            continue
+        zs = {m: x[f"z_{m}"] for m in MATCH}
+        x["net_driver"] = max(zs, key=zs.get)
+        x["net_score"] = zs[x["net_driver"]]
+        if x["net_score"] >= flag_z or x["lagcomp_off"]:
+            flagged.append(x)
+    return sorted(flagged, key=lambda x: -x["net_score"])
+
+
 def load(db: str, since: str) -> list[dict]:
     rows = []
     for r in q(halves_sql(since), db):
@@ -262,7 +315,8 @@ def fmt(v, nd=1):
     return str(v)
 
 
-def report(rows: list[dict], window: list[dict], top: int, alert_z: float, min_prior: int) -> str:
+def report(rows: list[dict], window: list[dict], top: int, alert_z: float, min_prior: int,
+           anomalies: list[dict] | None = None, n_matches: int = 0) -> str:
     L = ["# Weekly outliers", "",
          f"{len(window)} player-halves in the window, {len(rows)} in the baseline "
          f"({len({r['player_id'] for r in rows})} players, "
@@ -327,6 +381,16 @@ def report(rows: list[dict], window: list[dict], top: int, alert_z: float, min_p
         L.append(f"| {p['player']} | {p['halves']} | {p['net_driver']} z={p['net_score']:+.1f} "
                  f"| {fmt((p['jit_share'] or 0) * 100, 0)}% | {fmt((p['drop_share'] or 0) * 100, 0)}% "
                  f"| {fmt((p['lat_share'] or 0) * 100, 0)}% | {fmt((p['rewind_share'] or 0) * 100, 0)}% | {fmt(p['ping_avg'], 0)} |")
+    anomalies = anomalies or []
+    L += ["", f"## Pathological matches (all match types, {len(anomalies)} flagged of {n_matches} this season)", "",
+          "Per-10 s-window server telemetry z'd against every match since the season floor. A night, not a player; "
+          "the servers themselves read the same once these are removed.", "",
+          "| match | type | map | server | windows | driver | drops/win (max) | maxunlag hits/win | loss worst | jitter worst | lagcomp off |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for x in anomalies[:top]:
+        L.append(f"| {x['match_id']} | {x['match_type']} | {x['map'].replace('dod_', '')} | {x['server']} | {x['windows']} "
+                 f"| {x['net_driver']} z={x['net_score']:+.1f} | {x['drops_win']:.1f} ({x['drops_max']:.0f}) | {x['maxunlag_win']:.1f} "
+                 f"| {x['loss_worst']:.2f} | {x['jitter_worst']:.0f} | {x['lagcomp_off']} |")
     L += ["", "## Reading it", "",
           "- `on_target` low and `reg` normal: the shots were not on a hitbox when fired -- aim or exposure, not the server.",
           "- `reg` low with `on_target` normal: traced fires did not become damage rows -- the registration question. "
@@ -359,7 +423,9 @@ def main() -> int:
     latest = max(r["start"] for r in rows)
     cutoff = q(f"SELECT DATE_SUB('{latest}', INTERVAL {a.window_days} DAY)", a.db)[0][0]
     window = [r for r in rows if r["start"] >= cutoff and (not a.match or r["match_id"] == a.match)]
-    text = report(rows, window, a.top, a.alert_z, a.min_prior)
+    matches = load_matches(a.db, a.since)
+    anomalies = match_anomalies(matches, cutoff)
+    text = report(rows, window, a.top, a.alert_z, a.min_prior, anomalies, len(matches))
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text)
