@@ -22,6 +22,19 @@ These drive the TEAM score line. They are NOT the player ObjScore: that is
 `SUM(captures x CP_points_for_cap)`, a per-flag map-entity value captured in
 `ktp_flag_positions.points_for_cap` (migration 032). Two different quantities;
 see handover/SCOREBOARD_ALIGNMENT_MODEL_20260922.md.
+
+TWO WAYS A READER OF THE EMITTED JSON GETS A FALSE ANSWER, both hit on 2026-10-01
+while chasing a saints mismatch that did not exist.
+
+  A `map_config` entry that no map points at is a CONFIG FILE that exists, not
+  dead data: entries come from the config tree, one per cfg. Pruning one deletes
+  a fact, and its presence is not evidence any map still uses it.
+
+  Both analytics files nest their maps under a `maps` key — a list here, an object
+  in map_flag_facts.json — so a top-level key scan returns nothing and reads as
+  "the map is not configured". Read one row's shape before trusting a lookup, and
+  read the file from `git show origin/main:<path>`: the data server's checkout is
+  deliberately stale and answers zero to questions main answers.
 """
 
 from __future__ import annotations

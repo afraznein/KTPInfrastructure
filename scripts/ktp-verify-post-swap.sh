@@ -7,6 +7,10 @@
 # record of an incomplete swap — this script just finds it, using the same
 # glob set the restart script swaps from.
 #
+# A leftover and a fresh stage are the same shape on disk, so read the wave ledger
+# before calling a hit a failure — this runs after the swap, and a wave staged since
+# is the expected answer, not drift.
+#
 # Usage: ktp-verify-post-swap.sh
 # Exit:  0 = no leftover .new files (this host's wave fully activated)
 #        1 = one or more leftover .new files found (partial activation)
