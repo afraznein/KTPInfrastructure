@@ -150,6 +150,25 @@ that was *meant* to happen — is **not** a finding. `tests/unit/test_config_key
 runs the same thing on every PR. ⚠️ **Never assert its exit code through a
 `| head`/`| tail`** — the pipe launders it to 0.
 
+### Hand-checking a finding: four ways the assertion lies, not the file
+
+All four were hit in one sitting while verifying the `plugins.ini` write, and
+each one printed alarm on a file that was already correct.
+
+- **Strip comments before you count anything.** `;` and `#` lines hold keys that
+  are not set. A "`debug` must be 0" check matched three commented stock lines
+  and read as a failure. (The checker's own first sweep had the same bug.)
+- **Anchor with `^`.** A pattern needing a character before the token (`[^;[:space:]].*NAME`) returns
+  0 on a line that *starts* with it, which is the normal shape for a plugin entry.
+- **`grep -c` counts a match SET, not the lines you mean.** Comparing 3 against
+  11 compared every occurrence in two files rather than the three lines under test.
+- **Test path CONTAINMENT, never a substring.** `echo "$B" | grep -q distribute`
+  matches `/root/distribute-backups` and reports a backup as unsafely *inside*
+  the deploy tree. Use `case "$(readlink -f "$B")/" in /home/dod/distribute/*)`.
+
+➡️ Carry a positive control and a nonsense control on every one of these: an
+assertion that cannot fail is the same evidence as one that cannot pass.
+
 ## Scope comes from the distributor, never from a list in the checker
 
 Which paths and which targets are read out of the distributor's own two config
@@ -206,11 +225,16 @@ hiding two of the three items below.
 
 The check reports; it does not fix. None of these is the checker's to decide.
 
-1. **`plugins.ini`.** Two findings on one file, pulling in opposite directions:
-   the fleet loads `ktphudobserver.amxx` and the source does not list it, and
-   the source carries `debug` on eight plugins that the fleet does not. Either
-   edit of that file today ships the other half. **It needs one reconciled copy
-   written back, not a partial fix.**
+1. ~~**`plugins.ini`.**~~ **Answered and written 2026-10-01** — both halves in one
+   write, 24/24 now on a single copy with `KTPHudObserver` loaded and no
+   uncommented `debug`. "Which copy is canonical" turned out to have a
+   measurement for an answer rather than a ruling: 19 of 24 already ran the same
+   copy, and the five others differed by one comment line or by whitespace, so
+   the reconciled file needed pulling from a live host, not authoring. Writing it
+   converged those five as a side effect, which is what made it a change to 24
+   instances and not only to the source. Three `debug` mentions remain in the
+   file and are **correct** — commented-out stock AMXX lines above the KTP
+   section.
 2. **`mp_clan_readyrestart` in 34 source map configs.** The fleet removed it and
    the source still sets it. Whether the fleet is right (mirror the removal
    back) or the source is (let the next touch deliver it) is a match-rules call.
