@@ -10,6 +10,11 @@ CD track or the frame count and calls it seconds).
 Both are pinned here against a hand-built file whose bytes match a real HLTV
 demo's layout -- 2 entries, times [0.0, 1257.4] -- as measured on
 scrim_1783041573-ATL1_h2-2607022141-dod_armory_b6.dem, 2026-09-26.
+
+The second group pins the OTHER half of `loss`, which is not the demo at all:
+the producer-written context_live row and the assumed half length. Both move
+`loss` on their own, so a shift in either reads as demo regression -- the trap
+the module docstring now names.
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ import struct
 import pytest
 
 from scripts.demo_coverage import (DEMO_T0_GAME_TIME, HALF_SECONDS, Coverage,
-                                   DemoFormatError, read_track_time)
+                                   DemoFormatError, measure, read_track_time)
 
 
 def build_demo(tmp_path, track_times, magic=b"HLDEMO\0\0"):
@@ -68,3 +73,30 @@ def test_loss_is_the_half_clock_the_demo_never_reached():
 def test_loss_is_unknown_rather_than_zero_when_the_half_never_went_live():
     row = Coverage("1789953053-CHI1", 2, "x.dem", track_time=1289.4, live_game_time=None)
     assert row.loss is None
+
+
+def test_a_producer_side_shift_of_the_half_clock_moves_loss_with_the_demo_unchanged():
+    # The trap this measurement carries: context_live is written by stats_logging,
+    # not by the engine, so a producer change that moves it is reported as demo
+    # loss. Same track_time, reference 10 s later, loss 10 s worse.
+    early = Coverage("1789953053-CHI1", 2, "x.dem", track_time=1289.4, live_game_time=95.4)
+    late = Coverage("1789953053-CHI1", 2, "x.dem", track_time=1289.4, live_game_time=105.4)
+    assert early.covers_to == late.covers_to
+    assert late.loss - early.loss == pytest.approx(10.0)
+
+
+def test_the_assumed_half_length_is_part_of_loss_and_can_be_overridden():
+    # An overtime or short half measured against the default reports a loss that
+    # is wrong by the difference, which is why --half-seconds exists.
+    default = Coverage("1789953053-CHI1", 2, "x.dem", track_time=1289.4, live_game_time=95.4)
+    overtime = Coverage("1789953053-CHI1", 2, "x.dem", track_time=1289.4,
+                        live_game_time=95.4, half_seconds=HALF_SECONDS + 300.0)
+    assert default.half_seconds == HALF_SECONDS
+    assert overtime.loss - default.loss == pytest.approx(300.0)
+
+
+def test_measure_threads_the_assumed_half_length_into_every_row(tmp_path):
+    # Without this the flag parses, prints in --help, and changes nothing.
+    demo = build_demo(tmp_path, [0.0, 1257.4])
+    rows = measure([demo], cli=None, half_seconds=900.0)
+    assert [r.half_seconds for r in rows] == [900.0]

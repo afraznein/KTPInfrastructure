@@ -25,9 +25,27 @@ the proxy-side fix, and the thing to point at when a demo-derived FINAL value
 
 Playback length comes from the `.dem` directory entry at the tail of the file,
 so a remote demo costs one range read for the 544-byte header and one for the
-directory -- not a transfer. The half's own clock comes from the engine feed:
-`ktp_life_events.reason='context_live'` is the moment the half went live, and a
-half runs 1200 s from there.
+directory -- not a transfer.
+
+LOSS IS A DIFFERENCE BETWEEN TWO SOURCES AND ONLY ONE OF THEM IS THE DEMO. The
+half's clock is `ktp_life_events.reason='context_live'` plus --half-seconds, and
+that row is written by the `stats_logging` PRODUCER rather than by the engine:
+`ksc_sync_life_context` queues it from a 0.5 s poll and retries whenever the
+dedicated life buffer is full. So a producer change that moves the first
+`context_live` row of a half moves `loss` by the same amount WITH NO CHANGE TO
+ANY DEMO, and "the producer regressed demo coverage" is not separable from "the
+producer moved this reference point" by `loss` alone.
+
+Before reading a `loss` shift as a demo regression, run the control: compare
+`MIN(game_time) WHERE reason='context_live'` for the SAME halves across the two
+producer versions. The `live_at` column exists so that input is visible beside
+the demo's rather than folded into one number.
+
+--half-seconds is an ASSUMPTION, not a measurement -- nothing in the feed states
+the half length. A half that did not run the configured mp_timelimit (overtime,
+an early clinch, a half closed by hand) reports a `loss` wrong by the
+difference, and outliers in BOTH directions are that signature rather than a
+demo's.
 """
 from __future__ import annotations
 
@@ -55,6 +73,10 @@ DIRECTORY_OFFSET = 540  # last field of the header
 # (infra-hidden-value-plays, 2026-09-26); it is a property of connect timing,
 # not of the delay, so the fix does not move it.
 DEMO_T0_GAME_TIME = 3.0
+
+# Default only. Nothing in the feed states a half's length, so this is the
+# configured timelimit assumed -- override it per run rather than reading a
+# wrong loss for an overtime or short half.
 HALF_SECONDS = 1200.0
 
 
@@ -69,6 +91,7 @@ class Coverage:
     name: str
     track_time: float
     live_game_time: float | None
+    half_seconds: float = HALF_SECONDS
 
     @property
     def covers_to(self) -> float:
@@ -76,7 +99,7 @@ class Coverage:
 
     @property
     def half_ends_at(self) -> float | None:
-        return None if self.live_game_time is None else self.live_game_time + HALF_SECONDS
+        return None if self.live_game_time is None else self.live_game_time + self.half_seconds
 
     @property
     def loss(self) -> float | None:
@@ -167,7 +190,7 @@ def collect_demos(args: argparse.Namespace) -> list[str | Path]:
     return demos
 
 
-def measure(demos: list[str | Path], cli: MysqlCli | None) -> list[Coverage]:
+def measure(demos: list[str | Path], cli: MysqlCli | None, half_seconds: float = HALF_SECONDS) -> list[Coverage]:
     parsed = []
     for demo in demos:
         name = demo.rsplit("/", 1)[-1] if isinstance(demo, str) else demo.name
@@ -187,7 +210,8 @@ def measure(demos: list[str | Path], cli: MysqlCli | None) -> list[Coverage]:
         except (OSError, DemoFormatError) as exc:
             print(f"skip: {exc}", file=sys.stderr)
             continue
-        out.append(Coverage(meta.match_id, meta.half, name, track_time, live.get((meta.match_id, meta.half))))
+        out.append(Coverage(meta.match_id, meta.half, name, track_time,
+                            live.get((meta.match_id, meta.half)), half_seconds))
     return out
 
 
@@ -202,6 +226,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     db.add_argument("--database", default="hlstatsx", help="schema holding ktp_life_events (default: hlstatsx)")
     db.add_argument("--defaults-extra-file", type=Path, help="MySQL option file with the credentials")
     db.add_argument("--no-database", action="store_true", help="report playback length only, no half clock")
+    ap.add_argument("--half-seconds", type=float, default=HALF_SECONDS,
+                    help=f"assumed half length in seconds (default: {HALF_SECONDS:.0f}); "
+                         "an overtime or short half needs its own value or loss is wrong by the difference")
     ap.add_argument("--max-loss", type=float, help="exit 1 if any half loses more than this many seconds")
     return ap.parse_args(argv)
 
@@ -218,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         cli = MysqlCli(database=args.database, defaults_extra_file=args.defaults_extra_file)
 
     try:
-        rows = measure(demos, cli)
+        rows = measure(demos, cli, args.half_seconds)
     except MysqlCommandError as exc:
         print(f"database: {exc}", file=sys.stderr)
         return 2
@@ -227,18 +254,23 @@ def main(argv: list[str] | None = None) -> int:
         print("nothing measurable", file=sys.stderr)
         return 2
 
-    print(f"{'match':24} {'half':>4} {'covers_to':>10} {'half_ends':>10} {'loss_s':>8}")
+    # live_at is printed because loss is a difference between a producer-written
+    # row and a demo; folding them leaves a producer-side shift of the reference
+    # looking exactly like a demo regression.
+    print(f"{'match':24} {'half':>4} {'live_at':>9} {'covers_to':>10} {'half_ends':>10} {'loss_s':>8}")
     losses = []
     for row in sorted(rows, key=lambda r: (r.match_id, r.half)):
+        live_at = "" if row.live_game_time is None else f"{row.live_game_time:9.1f}"
         end = "" if row.half_ends_at is None else f"{row.half_ends_at:10.1f}"
         loss = "" if row.loss is None else f"{row.loss:8.1f}"
-        print(f"{row.match_id:24} {row.half:>4} {row.covers_to:10.1f} {end:>10} {loss:>8}")
+        print(f"{row.match_id:24} {row.half:>4} {live_at:>9} {row.covers_to:10.1f} {end:>10} {loss:>8}")
         if row.loss is not None:
             losses.append(row.loss)
 
     if losses:
         print(f"\n{len(losses)} halves: min {min(losses):.1f} s, "
               f"median {statistics.median(losses):.1f} s, max {max(losses):.1f} s")
+        print(f"half clock: producer-written context_live + {args.half_seconds:.0f} s assumed half")
         if args.max_loss is not None and max(losses) > args.max_loss:
             print(f"FAIL: {sum(l > args.max_loss for l in losses)} halves lose more than "
                   f"{args.max_loss:.1f} s", file=sys.stderr)
