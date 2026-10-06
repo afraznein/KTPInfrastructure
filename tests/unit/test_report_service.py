@@ -373,6 +373,47 @@ class SqlStr(unittest.TestCase):
         self.assertTrue(all(c in "0123456789abcdef" for c in inner))
 
 
+class PersistGeneratedAt(unittest.TestCase):
+    """generated_at is compared with end_time, which the daemon writes as NOW()
+    in the session zone. The report's own value is UTC ISO with microseconds,
+    and MySQL 8.0 stores such a literal converted only when the fraction rounds
+    down: from .5 up it lands as the UTC wall clock, hours in the future."""
+
+    # 2026-10-06 02:39:05.607600 UTC, a fraction that rounds up.
+    ROUNDS_UP = "2026-10-06T02:39:05.607600+00:00"
+    EPOCH = 1791254345
+
+    def _insert(self, generated_at):
+        db = FakeDb(response="revision\n0\n")
+        report_service.persist_report(db, {
+            "match_id": "1.3-1-X", "schema_version": 28,
+            "generated_at": generated_at, "quality": {"status": "PASS"}})
+        return db.queries[-1]
+
+    def test_a_fraction_that_rounds_up_is_written_as_a_whole_second_epoch(self):
+        insert = self._insert(self.ROUNDS_UP)
+        self.assertIn(f"FROM_UNIXTIME({self.EPOCH}),", insert)
+        self.assertNotIn(sql_str(self.ROUNDS_UP), insert)
+
+    def test_the_fraction_is_truncated_not_rounded(self):
+        self.assertIn(f"FROM_UNIXTIME({self.EPOCH}),",
+                      self._insert("2026-10-06T02:39:05.407600+00:00"))
+
+    def test_an_offset_other_than_utc_names_the_same_instant(self):
+        self.assertIn(f"FROM_UNIXTIME({self.EPOCH}),",
+                      self._insert("2026-10-05T22:39:05.900000-04:00"))
+
+    def test_a_value_without_an_offset_is_refused(self):
+        with self.assertRaises(ValueError):
+            self._insert("2026-10-06T02:39:05.607600")
+
+    def test_the_report_json_keeps_its_own_generated_at(self):
+        self.assertIn(sql_str(json.dumps(
+            {"match_id": "1.3-1-X", "schema_version": 28,
+             "generated_at": self.ROUNDS_UP, "quality": {"status": "PASS"}},
+            ensure_ascii=False)), self._insert(self.ROUNDS_UP))
+
+
 class AggregatesSynthetic(unittest.TestCase):
     def _report(self, mapname, cells, ktpr_players=None):
         return {
