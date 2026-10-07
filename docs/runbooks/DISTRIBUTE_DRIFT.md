@@ -127,6 +127,32 @@ diagnosis half is long.
 - **A file mixing a fleet-wide secret with a per-instance value must never be
   distributed whole.**
 
+## Who made the write: `provision/install-distribute-audit.sh`
+
+Attribution for writes under `/home/dod/distribute` is an auditd watch, installed
+on the data server by [`provision/install-distribute-audit.sh`](../../provision/install-distribute-audit.sh)
+from [`provision/audit-distribute.rules`](../../provision/audit-distribute.rules).
+Read it back with the key, and the `-if` is not optional — without it `ausearch`
+hangs on this host and prints nothing, which looks exactly like no writes:
+
+```bash
+ausearch -if /var/log/audit/audit.log -k ktp-distribute-cfg -i
+```
+
+Neither the distributor's own logs nor sshd's can answer this. The distributor
+records the event without the actor; sshd identifies a session, not which session
+touched a file.
+
+⚠️ **`audit-distribute-drift.py` is a different thing with a near-identical name.**
+It compares tree against fleet; it says nothing about who wrote. A grep for
+`audit-distribute` returns that checker and its sixteen references and gives no
+hint that attribution exists — which is how an estate sweep concluded the deploy
+path had no attribution at all while the installer sat in `provision/`.
+
+⛔ **Installing it is not self-testing.** Any write under the watched directory —
+a probe file included — reaches all 24 instances in ~15s, so there is no harmless
+way to fire the rule. The next real deploy is the test, and the installer says so.
+
 ## Standing findings as of 2026-09-28
 
 Measured against all 24 instances; direction taken from source mtime against
