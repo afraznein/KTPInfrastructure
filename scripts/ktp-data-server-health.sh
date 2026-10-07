@@ -663,6 +663,140 @@ else
     down+=("capture-loss=query-failed")
 fi
 
+# ---- Capture health, second leg: did any ONE match-half lose its events? ----
+# The 24h average above cannot see a localised loss, and on 2026-10-07 it did
+# not: one match-half had 100% of eleven event types rejected while the headline
+# stayed under 5%, because a dead half divided by a day of healthy traffic is a
+# rounding error. A CUMULATIVE COUNTER UNDER A WINDOWED HEADLINE MAKES THE WORST
+# NIGHT AND AN ORDINARY ONE PRODUCE THE SAME NUMBER -- the same shape as the
+# disk-growth key before the latch rewrite above. This leg sits BESIDE the
+# average rather than replacing it: the average answers "is the daemon
+# healthy", this one answers "did any half not happen".
+#
+# Scored per (half, event_type), then reduced to the worst one in the window.
+# Aggregating the eleven types inside a half would re-commit the same dilution
+# one level down, because `position` outnumbers `frag` by about twenty to one.
+#
+# ONE constant alert key, with the offending half in `detail`. A key carrying
+# the half's identity would age out of the trailing window and the set
+# comparison would announce a recovery for a half that never recovered -- the
+# exact bug the latch comment above was written about.
+#
+# Loss is `emitted - daemon_accepted`, NOT `rejected / received`. The ratio the
+# average uses is blind to the worst case available: a half whose stream was
+# lost in transit has daemon_received 0, so rejected/received is 0/0 and the row
+# is discarded by the floor instead of paging. `emitted` is the producer's own
+# count in the same row, so a half that arrived as nothing still scores 100%.
+#
+# THE THRESHOLD IS PROVISIONAL AND MUST BE SET FROM THE OBSERVED PER-HALF RANGE.
+# AN ALERT THRESHOLD ABOVE EVERYTHING EVER OBSERVED IS AN ALERT THAT CANNOT
+# FIRE, and one has already shipped on this box. A per-half rate has a different
+# distribution from a 24h average, so the sibling's 5% is evidence for nothing
+# here. 50 is bracketed, not measured: KTPHLStatsX migration 035 measured ~0.1%
+# transit loss per stream and the 10-07 half measured 100%, so 50 is provably
+# above known-normal and below the known fault -- but nobody has looked at the
+# band between them. Tighten it from the top of the real distribution:
+#
+#   SELECT ROUND(100*GREATEST(SUM(emitted)-SUM(daemon_accepted),0)/SUM(emitted)) AS pct,
+#          server_id, match_id, half, event_type, SUM(emitted) AS emitted
+#     FROM ktp_capture_health WHERE event_time > NOW() - INTERVAL 30 DAY
+#    GROUP BY server_id, match_id, half, event_type
+#   HAVING emitted >= 200 ORDER BY pct DESC LIMIT 40;
+#
+# Second item, capture-half-unreconciled: a half whose manifest arrived and
+# whose health rows never did. No rate test can see that -- a missing row is not
+# a 100% rate -- and it is the shape a total ingest failure takes, since every
+# health row travels the same one-way UDP path as the events it accounts for.
+# Judged against ktp_capture_manifests (written at half start), after a grace
+# period so a half still being played is not an alert. KNOWN FALSE POSITIVE: an
+# abandoned half (map change mid-half, .forcereset, crash) never sends health
+# either. If that proves common, raise the floor; do not drop the leg -- a
+# watcher that can go blind has to say so.
+#
+# Both queries deliberately stay on migration 021 columns, the same set the
+# working sibling above depends on. repaired_count (035) would sharpen the
+# detail line, but a new alert should not be the first thing to discover that a
+# migration was never applied.
+#
+# >>> ktp-capture-half — extracted verbatim by tests/unit/test_health_capture_half.py
+CAPTURE_HALF_LOSS_WARN_PCT="${CAPTURE_HALF_LOSS_WARN_PCT:-50}"
+CAPTURE_HALF_LOSS_CLEAR_PCT="${CAPTURE_HALF_LOSS_CLEAR_PCT:-25}"
+CAPTURE_HALF_MIN_EMITTED="${CAPTURE_HALF_MIN_EMITTED:-200}"
+CAPTURE_HALF_WINDOW_HOURS="${CAPTURE_HALF_WINDOW_HOURS:-24}"
+CAPTURE_HALF_GRACE_MINUTES="${CAPTURE_HALF_GRACE_MINUTES:-180}"
+CAPTURE_HALF_UNRECONCILED_WARN="${CAPTURE_HALF_UNRECONCILED_WARN:-1}"
+# stdin:  half_key<TAB>event_type<TAB>emitted<TAB>received<TAB>accepted<TAB>
+#         rejected<TAB>gaps, one row per (half, event_type) (mysql -N -B).
+# stdout: ONE line, or nothing when no row cleared the floor:
+#         pct<TAB>crossing<TAB>scored<TAB>then the winning input row verbatim.
+#         pct is the worst half's loss, rounded to an integer so `latched` can
+#         compare it. Ties break on events lost, so the line names the most
+#         damage rather than whichever row mysql happened to return first.
+capture_half_worst() {
+    awk -F'\t' -v min="$CAPTURE_HALF_MIN_EMITTED" -v warn="$CAPTURE_HALF_LOSS_WARN_PCT" '
+        NF >= 7 && $3+0 >= min {
+            emitted = $3+0; lost = emitted - ($5+0); if (lost < 0) lost = 0
+            pct = int(100*lost/emitted + 0.5)
+            scored++
+            if (pct >= warn) crossing++
+            if (!have || pct > best || (pct == best && lost > bestlost)) {
+                have = 1; best = pct; bestlost = lost; line = $0
+            }
+        }
+        END { if (have) printf "%d\t%d\t%d\t%s\n", best, crossing+0, scored, line }'
+}
+# stdin:  one half_key per line (mysql -N -B); empty when nothing is pending.
+# stdout: ONE line always, count<TAB>up to three named halves, so a clean run
+#         reads as a measured zero rather than as no output.
+capture_half_unreconciled() {
+    awk 'NF { n++; if (n <= 3) named = named (named ? ", " : "") $1 }
+         END { printf "%d\t%s\n", n+0, named }'
+}
+# <<< ktp-capture-half
+
+if capture_half_rows=$(mysql hlstatsx -N -B -e "
+        SELECT CONCAT(server_id, '/', match_id, '/', half), event_type,
+               SUM(emitted), SUM(daemon_received), SUM(daemon_accepted),
+               SUM(daemon_rejected), SUM(sequence_gap_count)
+        FROM ktp_capture_health
+        WHERE event_time >= NOW() - INTERVAL ${CAPTURE_HALF_WINDOW_HOURS} HOUR
+        GROUP BY server_id, match_id, half, event_type" 2>/dev/null); then
+    worst=$(printf '%s\n' "$capture_half_rows" | capture_half_worst)
+    if [ -n "${worst:-}" ]; then
+        IFS=$'\t' read -r hpct hcross hscored hkey hetype hemit hrecv hacc hrej hgaps <<< "$worst"
+        echo "[$now_ts] capture worst half: ${hpct}% of ${hemit} ${hetype} events lost on ${hkey} (${hcross}/${hscored} half-streams at or over ${CAPTURE_HALF_LOSS_WARN_PCT}%) over ${CAPTURE_HALF_WINDOW_HOURS}h"
+        key="capture-half-loss"
+        if latched "$key" "$hpct" "$CAPTURE_HALF_LOSS_WARN_PCT" "$CAPTURE_HALF_LOSS_CLEAR_PCT"; then
+            down+=("$key"); detail[$key]="${hpct}% of ${hemit} ${hetype} events never became stats on ${hkey} (received ${hrecv}, accepted ${hacc}, rejected ${hrej}, sequence gaps ${hgaps}); ${hcross} of ${hscored} half-streams at or over ${CAPTURE_HALF_LOSS_WARN_PCT}% in ${CAPTURE_HALF_WINDOW_HOURS}h"
+        fi
+    else
+        echo "[$now_ts] capture worst half: no half-stream cleared the ${CAPTURE_HALF_MIN_EMITTED}-event floor in ${CAPTURE_HALF_WINDOW_HOURS}h"
+    fi
+else
+    down+=("capture-half=query-failed")
+fi
+
+if capture_half_pending=$(mysql hlstatsx -N -B -e "
+        SELECT CONCAT(m.server_id, '/', m.match_id, '/', m.half)
+        FROM ktp_capture_manifests m
+        LEFT JOIN ktp_capture_health h
+          ON h.server_id = m.server_id AND h.match_id = m.match_id
+             AND h.half = m.half
+        WHERE m.event_time >= NOW() - INTERVAL ${CAPTURE_HALF_WINDOW_HOURS} HOUR
+          AND m.event_time <  NOW() - INTERVAL ${CAPTURE_HALF_GRACE_MINUTES} MINUTE
+          AND h.id IS NULL
+        GROUP BY m.server_id, m.match_id, m.half
+        ORDER BY MIN(m.event_time) DESC" 2>/dev/null); then
+    IFS=$'\t' read -r hpend hnamed <<< "$(printf '%s\n' "$capture_half_pending" | capture_half_unreconciled)"
+    echo "[$now_ts] capture unreconciled halves: ${hpend} manifest(s) with no health row, settled over ${CAPTURE_HALF_GRACE_MINUTES}m, in ${CAPTURE_HALF_WINDOW_HOURS}h"
+    key="capture-half-unreconciled"
+    if latched "$key" "$hpend" "$CAPTURE_HALF_UNRECONCILED_WARN" "$CAPTURE_HALF_UNRECONCILED_WARN"; then
+        down+=("$key"); detail[$key]="${hpend} match-half(s) started and never reconciled in ${CAPTURE_HALF_WINDOW_HOURS}h: ${hnamed} -- no ktp_capture_health row at all, which no rejection rate can see"
+    fi
+else
+    down+=("capture-half-unreconciled=query-failed")
+fi
+
 # ---- Hit registration: do the server's own trace hits still turn into damage? ----
 # The 2026-09 hitreg investigation (coordination: infra-hitreg-diagnostics)
 # ended on one number: of the shot rows where the server's trace hit a live

@@ -27,10 +27,14 @@ after the outage rather than before it:
 | 2026-07-22 | LinuxGSM `command_monitor.sh` stopped parsing on the LAN box; monitor exited 2 every minute, silently | 9 days, including a 3h outage monitor sat through |
 | 2026-08-12 | `ktp-render-banlist` ran every minute and failed every minute, keeping its exit timestamp fresh | Until the three-legged check was added |
 | 2026-09-08→22 | Six AC evidence bundles were lost to aborted uploads; nginx logs the cause at `info`, below the default `error` level, so `api.ktpdod.com.error.log` has been 0 bytes since 2026-07-18 | The whole fortnight — found by reading the access log, not by an alert |
+| 2026-10-07 | A match-half had 100% of eleven event types rejected. `capture-loss` was watching, running hourly, and silent: it averages a flat 24 hours, so the dead half landed under its 5% warn | Found by an evidence pass over the rows, not by the alert built for exactly this |
 
 The pattern is the same every time: **a component that is dead in a way its
-watcher cannot see**. This table is the inventory that makes the next one
-findable before it costs a match.
+watcher cannot see**. The 10-07 entry is the variant worth knowing, because the
+watcher existed and ran: **a check can be live, correct and still unable to see
+the fault, because of the shape of its aggregation**. The two shapes that do
+that are below the matrix legend. This table is the inventory that makes the
+next one findable before it costs a match.
 
 ## How to read the matrix
 
@@ -40,6 +44,34 @@ findable before it costs a match.
 
 A row that is detected but not alerted is a report nobody reads. A row that is
 alerted but not remediated is fine, and is most of this estate.
+
+## Two shapes that make a `yes` in this matrix untrue
+
+Both have already happened here, and neither leaves a gap a reader of the matrix
+can see — the row says *alerted*, the check runs on schedule, and the fault goes
+past it anyway. Test a new row against both before writing `yes`.
+
+- **A cumulative counter under a windowed headline makes the worst night and an
+  ordinary one produce the same number.** The headline is an average, and an
+  average is the one statistic a localised fault cannot move. `capture-loss`
+  summed a trailing 24 hours per event type and warned at 5%, so the match-half
+  on 2026-10-07 that lost 100% of eleven event types divided by a day of healthy
+  traffic and landed under the threshold. `disk-growth` hit the same shape from
+  the other side — a magnitude bucketed into the alert key, so the set
+  comparison read a rising rate as a recovery. **Keep the aggregate and add a
+  leg at the granularity the fault actually has** (per half, per unit, per run),
+  reduced to the worst one rather than the mean. Keep that leg's alert key
+  constant and put the identity in the body, or the key ages out of the trailing
+  window and announces a recovery for something that never recovered.
+- **An alert threshold above everything ever observed is an alert that cannot
+  fire.** It passes review, runs forever, and reports a clean estate. Set every
+  threshold from the measured distribution of the thing it watches; when that
+  distribution has not been measured, say so at the constant and name the one
+  query that would settle it. A number borrowed from a sibling check is not
+  evidence — a per-half rate and a 24-hour average are different distributions,
+  and the same figure can be far too tight on one and unreachable on the other.
+  A threshold worth keeping also has a test that goes red when somebody pushes
+  it out of reach.
 
 ---
 
@@ -148,7 +180,9 @@ Cron-scheduled work is outside both mechanisms entirely:
 | HLStatsX ingest stalls | yes | yes | `hlstatsx-ingest-monitor.py` |
 | Tier 2 suite goes quiet | yes | yes | `ktp-tier2-heartbeat.sh` |
 | Perf spike signatures | yes | yes | `ktp-profile-aggregator` → MySQL → Discord, `posted_alert` dedup |
-| Stats daemon rejecting the fleet's capture events | yes | yes | `ktp-data-server-health.sh`, `capture-loss:<event_type>` — trailing 24h per event type from `ktp_capture_health`, warn 5% / clear 2%, floor 200 received. Added after the 09-02→09-08 loss went six days unnoticed |
+| Stats daemon rejecting the fleet's capture events | yes | yes | `ktp-data-server-health.sh`, `capture-loss:<event_type>` — trailing 24h per event type from `ktp_capture_health`, warn 5% / clear 2%, floor 200 received. Added after the 09-02→09-08 loss went six days unnoticed. ⛔ **This leg is an average and cannot see one bad half** — that is what the next two rows are for |
+| **One match-half** loses its events, on a day that otherwise looks fine | yes (2026-10-07, in the repo) | yes | `ktp-data-server-health.sh`, `capture-half-loss` — worst `(half, event_type)` in a trailing 24h by `emitted - daemon_accepted` over `emitted`, floor 200 emitted, one constant key with the half named in the body. Scored against the producer's own `emitted`, not against `daemon_received`, so a half that arrived as nothing scores 100% instead of 0/0. ⚠️ **Warn 50 / clear 25 are PROVISIONAL** — bracketed by migration 035's ~0.1% measured transit loss and the 10-07 half's 100%, not taken from the per-half distribution, which nobody has looked at. The query that would settle it is at the constant. **Open on the data server**: `scripts/` has no deploy workflow, so merging does not field it |
+| A match-half **never reconciles at all** (health rows missing, not rejected) | yes (2026-10-07, in the repo) | yes | `ktp-data-server-health.sh`, `capture-half-unreconciled` — `ktp_capture_manifests` rows with no `ktp_capture_health` row after a 180-minute grace, warn 1. No rejection rate can see this: a missing row is not a 100% rate, and health rows travel the same one-way UDP path as the events. ⚠️ **Known false positive**: an abandoned half (map change mid-half, `.forcereset`, crash) never sends health either. **Open on the data server** for the same reason as the row above |
 | Hits stop turning into damage (registration regresses) | yes (2026-09-18) | yes | `ktp-data-server-health.sh`, `hitreg-reg` — clean live-enemy trace hits vs `ktp_damage_events` within 300 ms, per finished 12-man half in `ktp_hitreg_quality` (KTPHLStatsX 036), trailing 48h, warn 10 / clear 5 per thousand missed, floor 300 hits. Measured normal 0–2. `hitreg-reg=stale` when 12-mans ran for 7d and none was scorable — the watcher saying it has gone blind, not a clean 100%. Lane B runs the same predicate pre-deploy (`check_hit_registration`) |
 | AC evidence bundle never reaches the API (aborted upload) | yes (2026-09-23) | yes | `ktp-data-server-health.sh`, `ac-upload-abort` — a request on `/api/session/upload` that nginx answered itself (`urt=-`) with a 4xx/5xx, over a trailing 6h of `api.ktpdod.com.access.log`, warn 1. The discriminator is `urt`, never the status: a 400 the API produced carries a duration and is a rejected bundle, not a lost one. `ac-upload-abort=unmeasurable` fires when the window holds lines with no `rt`/`urt`/`rl` — the fields only exist from the 2026-09-16 `log_format` change, and a rotated file from before it scores 0 aborts out of real traffic |
 
