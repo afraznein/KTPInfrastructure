@@ -208,6 +208,9 @@ concurrency:
   # One Lane B at a time. Two concurrent runs would each boot hlds and mariadbd
   # in their own container, which is fine, but serialising keeps the report
   # artifact unambiguous.
+  # ⚠️ No ref or event in this key, so every caller's run queues here too, and
+  # GitHub kills a PENDING run when the next push or PR arrives. Dispatch into
+  # an idle group and confirm `in_progress`; a cancelled dispatch looks absent.
   group: lane-b-stats-e2e
   cancel-in-progress: false
 
