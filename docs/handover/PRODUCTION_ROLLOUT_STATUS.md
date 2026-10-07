@@ -237,6 +237,12 @@ nightlies.
   shows *Frag context marked* lines; the new no-row-matched warning ≈ 0,
   each occurrence explainable as UDP loss (meaningful now that control (b)
   above proved the line can actually fire).
+  ⚠️ **A *… context marked* status line is printed whether or not the UPDATE
+  matched a row** — the daemon assigns it after the rowcount check, not inside
+  the success branch, in the frag, headshot and break paths alike. So counting
+  those lines measures markers *received*, never contexts *recorded*, and a
+  journal full of them is consistent with every UPDATE missing. Judge the
+  columns in the database; `KTP_NO_ROW_MATCHED` is the only signal of a miss.
 - **Waves C & D**: C — rows landing, plausible hits-per-kill ratio,
   non-degenerate hitplace distribution, no daemon backlog, and *measured*
   table growth per evening (feeds the retention decision, D-6 below). D —
