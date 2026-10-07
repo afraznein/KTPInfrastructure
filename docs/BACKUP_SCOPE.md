@@ -266,6 +266,39 @@ The bottom half of that table is small enough that arguing about it costs more t
 config, unit, cron and script paths together are under 2 MB and are the difference between rebuilding
 this host in an afternoon and reverse-engineering it.
 
+⛔ **`configs_*.tar.gz` is the row most likely to be misread, because it is the one row here marked
+`yes` that sounds like it covers the fleet's configs. It does not.** `/opt/ktp-backup.sh` names a
+literal list of sources, and the only distribute path among them is `addons/ktpamx/configs/`. So the
+match-rules configs under `distribute/configs/`, the fleet-wide `distribute/dodserver.cfg`, and
+`distribute/addons/extensions.ini` sit in **no** backup leg — while the AMXX config directory beside
+them is in a weekly one that also goes offsite and is mirrored to the game hosts.
+
+🔑 **`extensions.ini` is the sharpest of the three: it is the whole reason KTPAMXX loads at all.** The
+engine reads it at boot in extension mode, so a lost or truncated copy is a fleet with no plugins.
+
+⚠️ **The selection also fails silently in the direction that hides this.** That `tar` ends in
+`2>/dev/null`, so a source path that is renamed or removed drops out with no error, no log line and no
+change in exit status — the backup keeps succeeding and keeps getting smaller.
+
+➡️ **Re-derive rather than trusting any list, here or elsewhere**, because the sources are an argument
+list that changes without anything noticing:
+
+```bash
+grep -n 'tar -czf' /opt/ktp-backup.sh                                # the sources, verbatim
+tar tzf <newest configs_*.tar.gz> | grep -c 'distribute/configs/'    # 0 today
+tar tzf <newest configs_*.tar.gz> | grep -c 'ktpamx/configs'         # positive control, non-zero
+```
+
+⚠️ **Judge a member's presence by the listing, never by hashing what you extracted.** `tar -O` on a
+member the archive does not hold prints nothing, and `md5sum` then returns
+`d41d8cd98f00b204e9800998ecf8427e`, the hash of empty input — which reads as "present and empty"
+rather than "never backed up". That is how `distribute/configs/` and `extensions.ini` first looked
+covered here.
+
+📌 **Where the pre-change copies came from the one time they were needed (2026-10-06):** not a
+scheduled leg, but `/root/distribute-reconcile-20261005/`, an ad-hoc backup taken before a mirror-back,
+carrying an old→new md5 manifest per file. That it answered the question is luck, not coverage.
+
 ⚠️ **`/opt/ktp-ac-api` (8.93 GiB) and `hud-observer` (3.04 GiB) are mostly application payload**, not
 state. Back up their configuration and data, not their trees, and decide that deliberately rather
 than by whether a `du` number looked alarming.

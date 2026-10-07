@@ -235,9 +235,32 @@ The check reports; it does not fix. None of these is the checker's to decide.
    instances and not only to the source. Three `debug` mentions remain in the
    file and are **correct** — commented-out stock AMXX lines above the KTP
    section.
-2. **`mp_clan_readyrestart` in 34 source map configs.** The fleet removed it and
-   the source still sets it. Whether the fleet is right (mirror the removal
-   back) or the source is (let the next touch deliver it) is a match-rules call.
+2. ~~**`mp_clan_readyrestart` in 34 source map configs.**~~ **Ruled 2026-10-05
+   (operator): the fleet is right — mirror the removal back.** Done the same day
+   as part of a 36-file mirror-back; the source's 34 `configs/ktp_*.cfg` now carry
+   the disabled form, the fleet was unchanged by the push, and a sweep since finds
+   the cvar set by no file in the tree.
+
+   🔑 **What this closed was a latent fleet-wide match-rules change, not an
+   inconsistency.** While the source set it and the fleet did not, *any* touch of
+   those 34 files for any unrelated reason would have delivered
+   `mp_clan_readyrestart 1` to all 24 — exactly what this table's "what the next
+   touch does" column said.
+
+   📌 **The pre-change value is `1`, and it stayed recoverable from the disabled
+   line itself**, which keeps the value after the marker rather than deleting it.
+   Prefer that shape over removing a line: it survives into every later copy and
+   needs no backup to read.
+
+   ⚠️ **But the marker is `#`, and `#` is NOT a comment to this engine — only `//`
+   is** (`COM_Parse`, `rehlds/engine/common.cpp`, which skips `//` and nothing
+   else). The line is tokenized as a command named `#`, found to be neither
+   command, alias nor cvar, and then dropped **in silence**, because
+   `Cmd_ExecuteString_internal` only prints for an unknown command when
+   `sv_echo_unknown_cmd` is `1` — and that cvar is set in no `dodserver.cfg` on the
+   fleet. So the disable works and costs nothing, and it works for a different
+   reason than the one a reader assumes. ➡️ **Use `//` for a new one**, so the
+   disable does not depend on a silent-unknown-command path.
 3. **The two unparsable configs.** Give them a reader in
    `scripts/ktp_config_kv.py`, or declare them out of scope in `servers.json`.
    Until then the check reports that it has not compared them, which is honest
