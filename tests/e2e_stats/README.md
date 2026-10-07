@@ -157,12 +157,15 @@ not the competitive pool: five of them (`dod_jagd`, `dod_flash`, `dod_caen`,
 and fifteen maps that do appear in it are not among the ten. The measured
 position is in `build/bots/README.md` — **"The custom competitive pool has no
 waypoints at all."** ⛔ **No replacement "covers N of the pool" figure belongs
-here either:** the competitive pool is not defined in any repo, it is
-`ktp.veto_map` in Supabase, and `keep-the-prac`'s `KTP_MAP_POOL` constant says
-of itself that it is "NOT the competitive pool". ⚠️ **The file count is unsettled
-as well** — this passage said 93 and `build/bots/README.md` says 94, both claiming
-the built image, and neither is re-derivable from a checkout. Count it in the
-image if you need it, with the command in that README.
+here either:** the competitive pool has no source of record in a checkout — it is
+`ktp.veto_map` in Supabase, and `keep-the-prac`'s `KTP_MAP_POOL` constant says of
+itself that it is "NOT the competitive pool". `docker-compose.local.yml` does
+name a seven-map S10 custom pool in a comment, but it is a comment, and it is
+stale on the same entries as the table in `build/bots/README.md`. ⚠️ **The file
+count is unsettled too** — this passage said 93, while `build/bots/README.md` and
+`docker-compose.local.yml` independently say 94; all three claim the built image,
+and none is re-derivable from a checkout. Count it in the image if you need it,
+with the command in that README.
 
 Because the image now contains a third-party binary that is not ours to
 redistribute, **it must not be pushed to a public registry.** It is a local/CI
