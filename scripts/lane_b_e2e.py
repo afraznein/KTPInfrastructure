@@ -1684,6 +1684,25 @@ def main() -> int:
                 "unmatched_warnings": [],
             }
         )
+        # Diagnosis only -- it changes no verdict. Without it a producer that
+        # named the wrong weapon reads as unexplained frag loss, and finding
+        # that out has cost a bisect of the whole run every time.
+        frag_weapon_disagreements = (
+            log_invariants.frag_context_weapon_disagreements(log_text)
+        )
+        report["frag_context_weapon_disagreements"] = frag_weapon_disagreements
+        if frag_weapon_disagreements:
+            print(
+                f"  {len(frag_weapon_disagreements)} producer/engine weapon "
+                "disagreement(s): "
+                + "; ".join(
+                    f"{row['killer_userid']}->{row['victim_userid']} "
+                    f"producer {row['producer_weapon']} vs engine "
+                    f"{'/'.join(row['engine_weapons'])}"
+                    for row in frag_weapon_disagreements
+                ),
+                flush=True,
+            )
         if frag_diagnostic_evidence.get("unresolved_ignored_pre_interval"):
             failures.append(
                 "frag transition correlation: "
@@ -1853,6 +1872,7 @@ def main() -> int:
                 unparsed_observed=frag_diagnostic_evidence[
                     "unparsed_observed"
                 ],
+                weapon_disagreements=frag_weapon_disagreements,
             ),
             assertions.check_frag_context_claimed(
                 db,

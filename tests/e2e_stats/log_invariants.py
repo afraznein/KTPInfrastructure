@@ -845,6 +845,88 @@ def breakdrive_synthetic_frag_diagnostics(log_text: str) -> list[str]:
     ]
 
 
+def _is_sentinel_frag_marker(line: str) -> bool:
+    """The producer's own startup sentinel, not an attributed kill.
+
+    Fails closed on an unparseable half/sequence: an odd marker is treated as
+    real evidence rather than silently exempted.
+    """
+    properties = {
+        match.group("key"): match.group("value")
+        for match in _MARKER_PROPERTY_RE.finditer(line)
+    }
+    try:
+        return (
+            properties.get("matchid") == "-"
+            and int(properties.get("half", "")) == 0
+            and int(properties.get("sequence", "")) == 0
+        )
+    except ValueError:
+        return False
+
+
+def frag_context_weapon_disagreements(
+        log_text: str, *, window: int = 10) -> list[dict]:
+    """Producer frag_context markers that name a different weapon than the kill.
+
+    DODX resolves a death weapon from the attacker's CURRENTLY HELD weapon, so
+    a killer who switched or butt-killed is published under the wrong weapon
+    and the daemon's `AND weapon IN (...)` clause then matches no row. The
+    daemon already drops that clause for the unresolved slot it labels
+    `mortar`; a resolved-but-wrong weapon has no such escape, so it surfaces as
+    frag loss and costs a bisect every time the nightly hits one.
+
+    Pairs a marker to an engine kill of the same killer/victim userids within
+    `window` seconds BEFORE it — the producer buffers, so the kill always leads.
+    A pair with no candidate kill is not a weapon question and is left alone;
+    more than one candidate is reported as ambiguous rather than counted, since
+    nothing in either log says which kill the marker belongs to.
+    """
+    kills: list[tuple[int, str, str, str]] = []
+    markers: list[tuple[int, str, str, str, str]] = []
+    for line in log_text.splitlines():
+        second = _event_second(line)
+        if second is None:
+            continue
+        kill = _KILL_RE.search(line)
+        if kill:
+            groups = kill.groups()
+            kills.append((second, groups[1], groups[4], groups[6]))
+            continue
+        if 'triggered "frag_context"' not in line:
+            continue
+        marker = _FRAG_CONTEXT_RE.search(line)
+        if not marker or _is_sentinel_frag_marker(line):
+            continue
+        groups = marker.groups()
+        markers.append(
+            (second, groups[1], groups[4], groups[6], line.strip())
+        )
+
+    disagreements: list[dict] = []
+    for second, killer, victim, weapon, line in markers:
+        candidates = [
+            kill for kill in kills
+            if kill[1] == killer and kill[2] == victim
+            and 0 <= second - kill[0] <= window
+        ]
+        if not candidates:
+            continue
+        kill_weapons = sorted({kill[3] for kill in candidates})
+        if weapon in kill_weapons:
+            continue
+        disagreements.append({
+            "status": "ambiguous" if len(candidates) > 1 else "disagreement",
+            "killer_userid": killer,
+            "victim_userid": victim,
+            "producer_weapon": weapon,
+            "engine_weapons": kill_weapons,
+            "candidate_kills": len(candidates),
+            "marker": line,
+        })
+    return disagreements
+
+
 def frag_context_diagnostic_evidence(
         log_text: str, daemon_text: str, *,
         ignored_producer_markers: list[str] | tuple[str, ...] = (),
@@ -918,19 +1000,7 @@ def frag_context_diagnostic_evidence(
     for line in producer_text.splitlines():
         if 'triggered "frag_context"' not in line:
             continue
-        properties = {
-            match.group("key"): match.group("value")
-            for match in _MARKER_PROPERTY_RE.finditer(line)
-        }
-        try:
-            is_sentinel = (
-                properties.get("matchid") == "-"
-                and int(properties.get("half", "")) == 0
-                and int(properties.get("sequence", "")) == 0
-            )
-        except ValueError:
-            is_sentinel = False
-        if is_sentinel:
+        if _is_sentinel_frag_marker(line):
             continue
         identity, _reason = producer_identity(line)
         if identity is not None:

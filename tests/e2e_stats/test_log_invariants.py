@@ -1030,3 +1030,137 @@ def test_frag_diagnostic_evidence_does_not_guess_ambiguous_names():
 
     assert evidence["expected_identities"] == []
     assert len(evidence["unresolved_expected"]) == 1
+
+
+# -- producer/engine weapon disagreement -----------------------------------
+#
+# Line shapes below are copied from Lane B runs 37350645776 and 37361715848,
+# which is where this condition was first separated from ordinary frag loss.
+
+
+def _weapon_marker(kuid, vuid, weapon, *, at, matchid="1786376148-TEST",
+                   half=1, sequence=1):
+    return (f"L 08/10/2026 - {at}: "
+            f'"K<{kuid}><BOT><Axis>" triggered "frag_context" against '
+            f'"V<{vuid}><BOT><Allies>" with "{weapon}" (headshot "0") '
+            f'(matchid "{matchid}") (half "{half}") (sequence "{sequence}")')
+
+
+def _weapon_kill(kuid, vuid, weapon, *, at):
+    return (f"L 08/10/2026 - {at}: "
+            f'"K<{kuid}><0><Axis>" killed "V<{vuid}><0><Allies>" '
+            f'with "{weapon}"')
+
+
+def test_weapon_disagreement_is_named_when_producer_and_engine_differ():
+    log = "\n".join([
+        _weapon_kill(8, 1, "kar", at="18:00:40"),
+        _weapon_marker(8, 1, "mp44", at="18:00:42"),
+    ])
+
+    rows = li.frag_context_weapon_disagreements(log)
+
+    assert len(rows) == 1
+    assert rows[0]["status"] == "disagreement"
+    assert rows[0]["producer_weapon"] == "mp44"
+    assert rows[0]["engine_weapons"] == ["kar"]
+    assert rows[0]["candidate_kills"] == 1
+
+
+def test_melee_variant_still_counts_as_a_disagreement():
+    log = "\n".join([
+        _weapon_kill(1, 7, "garandbutt", at="19:33:10"),
+        _weapon_marker(1, 7, "bar", at="19:33:10"),
+    ])
+
+    rows = li.frag_context_weapon_disagreements(log)
+
+    assert [row["producer_weapon"] for row in rows] == ["bar"]
+    assert rows[0]["engine_weapons"] == ["garandbutt"]
+
+
+def test_agreeing_weapon_is_not_reported():
+    log = "\n".join([
+        _weapon_kill(8, 1, "kar", at="18:00:40"),
+        _weapon_marker(8, 1, "kar", at="18:00:42"),
+    ])
+
+    assert li.frag_context_weapon_disagreements(log) == []
+
+
+def test_marker_with_no_engine_kill_is_not_a_weapon_question():
+    """BreakDrive's synthetic injections have no kill line at all.
+
+    They are the reason this cannot simply flag every unmatched marker: three
+    `amerknife` injections in one real run would otherwise be reported as
+    producer defects.
+    """
+    log = "\n".join([
+        _weapon_kill(1, 9, "garand", at="18:00:00"),
+        _weapon_marker(1, 9, "amerknife", at="18:05:00"),
+    ])
+
+    assert li.frag_context_weapon_disagreements(log) == []
+
+
+def test_producer_startup_sentinel_is_excluded():
+    log = "\n".join([
+        _weapon_kill(3, 8, "thompson", at="19:32:53"),
+        _weapon_marker(3, 8, "mortar", at="19:32:54",
+                       matchid="-", half=0, sequence=0),
+    ])
+
+    assert li.frag_context_weapon_disagreements(log) == []
+
+
+def test_two_candidate_kills_report_ambiguous_rather_than_guessing():
+    log = "\n".join([
+        _weapon_kill(11, 2, "mp40", at="18:00:20"),
+        _weapon_kill(11, 2, "kar", at="18:00:22"),
+        _weapon_marker(11, 2, "scopedkar", at="18:00:27"),
+    ])
+
+    rows = li.frag_context_weapon_disagreements(log)
+
+    assert len(rows) == 1
+    assert rows[0]["status"] == "ambiguous"
+    assert rows[0]["engine_weapons"] == ["kar", "mp40"]
+
+
+def test_a_kill_after_its_marker_is_never_paired():
+    """The producer buffers, so the kill always leads. A later kill is a
+    different kill, and pairing it would invent a disagreement."""
+    log = "\n".join([
+        _weapon_marker(8, 1, "mp44", at="18:00:40"),
+        _weapon_kill(8, 1, "kar", at="18:00:42"),
+    ])
+
+    assert li.frag_context_weapon_disagreements(log) == []
+
+
+def test_disagreement_is_named_in_the_failing_verdict_and_changes_no_status():
+    disagreements = [{
+        "status": "disagreement", "killer_userid": "8", "victim_userid": "1",
+        "producer_weapon": "mp44", "engine_weapons": ["kar"],
+        "candidate_kills": 1, "marker": "...",
+    }]
+
+    failing = assertions.check_frag_context_diagnostics(
+        expected=0, observed=1, expected_identities=[],
+        observed_identities=["321->329:mp44"], unresolved_expected=[],
+        unparsed_observed=[], weapon_disagreements=disagreements)
+    silent = assertions.check_frag_context_diagnostics(
+        expected=0, observed=1, expected_identities=[],
+        observed_identities=["321->329:mp44"], unresolved_expected=[],
+        unparsed_observed=[])
+
+    assert failing["status"] == silent["status"] == "pipeline"
+    assert "producer mp44 vs engine kar" in failing["detail"]
+    assert "weapon disagreement" not in silent["detail"]
+
+    passing = assertions.check_frag_context_diagnostics(
+        expected=0, observed=0, expected_identities=[],
+        observed_identities=[], unresolved_expected=[],
+        unparsed_observed=[], weapon_disagreements=disagreements)
+    assert passing["status"] == "ok"
+    assert passing["weapon_disagreements"] == disagreements
