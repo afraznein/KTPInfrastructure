@@ -1,18 +1,20 @@
-# KTP AntiCheat data retention — uploads day-dirs (60d), weapon-timeline rows
-# (30d, batched), expired session tokens (7d past expiry).
+# KTP AntiCheat data retention — upload day-dirs, weapon-timeline rows (batched)
+# and expired session tokens.
 # Script: /usr/local/bin/ktp-ac-retention.sh (canonical: KTPInfrastructure/scripts/).
 # 04:40 ET daily — after ktp-backup so the nightly dump still contains the day
 # about to age out.
 #
+# Read every horizon in the script, not here. A pair of figures copied onto line 1
+# rotted: it claimed 30d weapon rows and 7d tokens while the script's own defaults
+# were 365 and 22. The sweeps run on those defaults unless a line below overrides one.
+#
 # ACTIVE on the data server. Was staged-disabled when first written; activating it
 # there never made it back here, so this file claimed retention was off while it had
-# been pruning nightly for weeks. Verified 2026-07-24 against the box: job line live
-# in /etc/cron.d/ktp-ac-retention, /var/log/ktp-ac-retention.log running daily, and
-# the data agrees — oldest weapon row sits exactly on the 30d horizon, oldest upload
-# day-dir exactly on 60d.
+# been pruning nightly for weeks.
 #
 # On a FRESH install, comment the job line out and check DRY_RUN=1 output first:
 # the first run deletes everything back to the retention horizon in one go.
+#
 # UPLOAD SWEEP HELD since 2026-08-16 (operator: retain all evidence bundles).
 # This line exists on the data server and did NOT exist here, so restoring this
 # file from the repo removed the hold and let the script fall back to its 60d
@@ -20,7 +22,16 @@
 # zip_path for 43 sessions (04-25 -> 06-15). The bundles themselves survive on the
 # provider-diverse mirrors, so the cost is recovery work, not lost evidence -- but
 # the API cannot reparse a session whose zip_path is NULL until both are restored.
+#
+# 0 IS NOT A HOLD FOR THE WEAPON SWEEP, AND IT IS FOR THE UPLOAD ONE. The upload
+# sweep is wrapped in `-gt 0`, so 0 means retain everything. The weapon sweep has no
+# such guard: its value goes straight into `INTERVAL n DAY`, so 0 deletes every
+# weapon row up to now, succeeds, and logs a deletion count like any other night.
+# Use a large number, never 0, for anything below that is not UPLOAD_RETENTION_DAYS.
 SHELL=/bin/bash
 UPLOAD_RETENTION_DAYS=36500
+# Weapon rows are what explain a retained bundle, and bundles are held indefinitely,
+# so the two horizons are aligned by the 2026-10-05 operator ruling.
+WEAPON_RETENTION_DAYS=36500
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 40 4 * * * root /usr/local/bin/ktp-ac-retention.sh >> /var/log/ktp-ac-retention.log 2>&1
