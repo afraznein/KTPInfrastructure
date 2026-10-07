@@ -52,7 +52,13 @@ def test_called_workflow_key_discriminates_event_and_ref() -> None:
 
 
 def test_called_workflow_key_discriminates_the_caller() -> None:
-    """Two callers dispatching the same ref are still two separate queues."""
+    """Two callers on the same ref and event should not share a queue.
+
+    A `workflow_call` run's record carries the CALLER's identity: run
+    37636221910 reports name "Lane B Corpus (main)" against path
+    lane-b-corpus-main.yml while executing this file's job. Event and ref
+    already carry the fix on their own, so this one is belt and braces.
+    """
     assert "github.workflow" in _group(CALLED)
 
 
