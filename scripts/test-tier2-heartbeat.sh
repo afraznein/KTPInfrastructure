@@ -114,14 +114,31 @@ mk_listeners() {  # $1 = count, $2 = ppid of the first one (default 4242)
         done
     } > "$T/ps-out"
 }
+# Two shapes, one fixture file each: the listener scan (-eo pid,ppid,args) and
+# the write gate's parent-name probe (-o comm=). A single fixture would answer the
+# gate with the listener table, which is not a cron name, so the gate would read
+# "not under cron" for a reason the case never set.
 cat > "$T/bin/ps" <<EOF
 #!/usr/bin/env bash
-cat "$T/ps-out"
+case " \$* " in
+    *" comm= "*) cat "$T/ps-parent" ;;
+    *)           cat "$T/ps-out" ;;
+esac
 EOF
 chmod +x "$T/bin/ps"
 mk_listeners 1
+mk_parent() { echo "${1:-bash}" > "$T/ps-parent"; }   # what launched us
+mk_parent bash
 
-run_hb() {      # env: STATE preloaded by caller
+# $1 = KTP_TIER2_HEARTBEAT_WRITE, or "-" to leave it unset; rest = argv.
+# `env` so the var can be genuinely ABSENT -- a case that needs the unset default
+# cannot express it by assigning an empty string, because the script tells those
+# two apart and that is the whole subject of cases 13*.
+run_hb_env() {  # env: STATE preloaded by caller
+    local w="$1"; shift
+    local -a pre
+    if [ "$w" = "-" ]; then pre=(env); else pre=(env "KTP_TIER2_HEARTBEAT_WRITE=$w"); fi
+    "${pre[@]}" \
     KTP_RELAY_CONFIG="$T/relay.conf" \
     KTP_TIER2_MARKER="$T/marker" \
     KTP_TIER2_MARKER_PREPROD="$T/marker-preprod" \
@@ -130,8 +147,17 @@ run_hb() {      # env: STATE preloaded by caller
     KTP_AGGREGATOR_ENV="$T/agg.env" \
     KTP_AGGREGATOR_PY="$T/bin/py" \
     PATH="$T/bin:$PATH" \
-    bash "$HB" 2>&1
+    bash "$HB" "$@" 2>&1
 }
+# The cron-shaped invocation: every case below 13 is about the state machine, and
+# the state machine only runs when the write is armed, which is what cron does.
+run_hb() { run_hb_env 1 "$@"; }
+# What a human gets: no cron env line, no flag.
+run_hb_bare() { run_hb_env - "$@"; }
+mtime() { stat -c %Y "$1" 2>/dev/null || echo 0; }
+# Push the state file into the past so a write shows up as a moved mtime; whole
+# -second granularity would otherwise hide a write inside the same second.
+backdate_state() { touch -d "@$(( $(date +%s) - 3600 ))" "$T/state"; }
 
 # Rewrite only the timestamp half of whatever key the script wrote. Tests must
 # not spell the key format out -- it has changed twice (bare state, then two
@@ -322,6 +348,84 @@ mk_listeners 1
 out="$(KTP_TIER2_EXPECTED_LISTENERS=2 run_hb)"
 check "and one is then the fault" "no runner listener" "$(cat "$T/last-payload.json")"
 mk_listeners 1
+
+echo "== 13. A BARE RUN MUST NOT MOVE THE ALERTER'S EDGE =="
+# Running this by hand recomputes the verdict under an environment the cron run
+# never had: cron env lines reach only cron's own child, so KTP_TIER2_WATCH_PREPROD=0
+# is back at its default of 1 and the retired leg re-engages. Saving that is the
+# fault. The alerter keys on transitions, so a stored verdict for a program nobody
+# is running can mask the next real change as a return to normal.
+mk_marker success 3600; mk_checker 0 "in sync"; mk_parent bash
+rm -f "$T/marker-preprod" "$T/state"                 # retired leg: marker frozen
+KTP_TIER2_WATCH_PREPROD=0 run_hb >/dev/null          # cron's own verdict, armed
+armed_state="$(cat "$T/state")"; armed_key="${armed_state%%|*}"   # the file keeps a stamp too
+backdate_state; was="$(mtime "$T/state")"
+# Cleared BEFORE the one bare run under test. Checking a second bare run instead
+# reads the unchanged-key early exit, which posts nothing even when the gate is
+# missing -- so that assertion passed in both directions and proved nothing.
+rm -f "$T/last-payload.json"
+out="$(run_hb_bare)"                                 # now by hand, no cron env
+check "says it is a dry run"            "DRY RUN"       "$out"
+check "and prints the verdict anyway"   "this run   : " "$out"
+check "names the stored key it read"    "$armed_key"    "$out"
+check "the re-engaged leg shows in it"  "preprod=stale" "$out"
+if [ "$(mtime "$T/state")" = "$was" ]; then echo "  ok   state file mtime did not move"; pass=$((pass+1));
+else echo "  FAIL state file mtime moved on a bare run"; fail=$((fail+1)); fi
+check "state file is untouched"        "$armed_state"  "$(cat "$T/state")"
+if [ -f "$T/last-payload.json" ]; then echo "  FAIL a bare run posted to the relay"; fail=$((fail+1));
+else echo "  ok   nothing was posted"; pass=$((pass+1)); fi
+
+echo "== 13b. the other direction: an armed run still writes and still posts =="
+# Same fixtures, same second. Without this, case 13 passes for a script that
+# writes nothing ever, which is a broken alerter rather than a safe one.
+mk_marker failure 3600; mk_checker 0 "in sync"; mk_parent bash; rm -f "$T/state"
+run_hb >/dev/null; backdate_state; was="$(mtime "$T/state")"
+mk_marker success 3600
+out="$(run_hb)"
+if [ "$(mtime "$T/state")" != "$was" ]; then echo "  ok   state file mtime moved on an armed run"; pass=$((pass+1));
+else echo "  FAIL armed run did not write the state file"; fail=$((fail+1)); fi
+check "state advanced"      "main=ok"   "$(cat "$T/state")"
+check "and it posted"       "recovered" "$(cat "$T/last-payload.json")"
+
+echo "== 13c. --write arms an interactive run explicitly =="
+# The unsafe thing has to be askable for, or the next operator edits the script.
+mk_marker failure 3600; mk_checker 0 "in sync"; mk_parent bash; rm -f "$T/state"
+out="$(run_hb_bare --write)"
+check "no dry-run banner"   "a leg failed" "$(cat "$T/last-payload.json")"
+check "state was written"   "main=failed"  "$(cat "$T/state" 2>/dev/null || echo MISSING)"
+
+echo "== 13d. --dry-run refuses even when the cron env says write =="
+mk_marker failure 3600; mk_checker 0 "in sync"; mk_parent bash; rm -f "$T/state"
+out="$(run_hb --dry-run)"
+check "flag beats the env" "DRY RUN" "$out"
+if [ -e "$T/state" ]; then echo "  FAIL --dry-run wrote the state file"; fail=$((fail+1));
+else echo "  ok   --dry-run created no state file"; pass=$((pass+1)); fi
+
+echo "== 13e. a cron PARENT arms it, so a stale /etc/cron.d copy is not silence =="
+# The deployed cron file has drifted weeks behind this repo before. Arming on the
+# env line alone would turn that drift into a watcher that never writes, which is
+# the failure this whole script exists to report.
+mk_marker failure 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+mk_parent cron
+out="$(run_hb_bare)"
+check "cron parent is armed" "main=failed" "$(cat "$T/state" 2>/dev/null || echo MISSING)"
+# Two controls, because "it wrote" on its own only proves the run happened: the
+# gate has to be reading the parent NAME and nothing else in the probe's output.
+for notcron in bash sshd; do
+    mk_parent "$notcron"; rm -f "$T/state"
+    out="$(run_hb_bare)"
+    check "parent '$notcron' is not armed" "DRY RUN" "$out"
+    if [ -e "$T/state" ]; then echo "  FAIL parent '$notcron' wrote state"; fail=$((fail+1));
+    else echo "  ok   parent '$notcron' wrote nothing"; pass=$((pass+1)); fi
+done
+mk_parent bash
+
+echo "== 13f. an unknown flag is refused, not treated as a bare run =="
+# A typo'd flag falling through to the default would be the quiet half of this bug
+# wearing a different hat.
+mk_marker success 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+out="$(run_hb_bare --dryrun || true)"
+check "usage, not a run" "usage:" "$out"
 
 echo
 echo "passed $pass, failed $fail"
