@@ -777,6 +777,57 @@ else
     down+=("hitreg-reg=query-failed")
 fi
 
+# ---- ktp_* tables an analytics session cannot read ----
+# A missing per-table SELECT grant does NOT read as "denied". information_schema
+# hides what the asking account cannot see, so a capability probe reports the table
+# ABSENT, and every consumer downstream concludes the migration never ran. That has
+# now cost three separate wrong calls: a "036 is not applied" verdict on 2026-09-22,
+# five days of the hitreg monitor's own output being unreadable, and a blocked
+# move-census verification on 2026-10-05. The trigger is identical every time -- a
+# new ktp_* table lands and nobody grants it. ktp_aim_vis arrived ungranted the same
+# day the third one was found.
+#
+# A log line would not fix it: this file is root:root 0640 and nobody reads it. So
+# this ALERTS, which it can only afford to do because the reducer filters the tables
+# that are ungranted on purpose -- credential stores, and the dated _bak_/_snap_
+# copies. Ruling behind that filter: coordination knowledge/access-and-self-service.md.
+# A table that is deliberately locked and NOT matched below will page once; add it
+# there with a reason rather than widening the pattern.
+
+# >>> ktp-grants -- extracted verbatim by tests/unit/test_health_grants.py
+# Ungranted table names on stdin, one per line; prints only the unexpected ones.
+# Pure text, no database, so the policy is testable without privileges.
+grants_unexpected() {
+    grep -vE '(_bak|_snap|_snapshot|_dups_bak)(_tzfix)?_[0-9]{8}$|_snap_[a-z0-9]+_[0-9]{8}$' \
+    | grep -vxE 'ktp_ac_download_tokens|ktp_ac_session_tokens|ktp_ac_web_tokens|ktp_ac_first_login_grants|ktp_ac_players|ktp_ac_detector_review_notes|ktp_ac_identity_review_notes' \
+    || true
+}
+# <<< ktp-grants
+
+GRANT_WATCH_USER="${GRANT_WATCH_USER:-'krodssh'@'localhost'}"
+if ungranted=$(mysql -N -B -e "
+        SELECT t.TABLE_NAME
+          FROM information_schema.TABLES t
+          LEFT JOIN information_schema.TABLE_PRIVILEGES p
+            ON p.TABLE_SCHEMA = t.TABLE_SCHEMA AND p.TABLE_NAME = t.TABLE_NAME
+           AND p.GRANTEE = \"${GRANT_WATCH_USER}\" AND p.PRIVILEGE_TYPE = 'SELECT'
+         WHERE t.TABLE_SCHEMA = 'hlstatsx' AND t.TABLE_NAME LIKE 'ktp\\_%'
+           AND p.TABLE_NAME IS NULL
+         ORDER BY t.TABLE_NAME" 2>/dev/null); then
+    _ung=$(printf '%s\n' "$ungranted" | grep -v '^[[:space:]]*$' || true)
+    _unexp=$(printf '%s\n' "$_ung" | grants_unexpected | grep -v '^[[:space:]]*$' || true)
+    _n_all=$(printf '%s\n' "$_ung" | grep -c . || true)
+    _n_unexp=$(printf '%s\n' "$_unexp" | grep -c . || true)
+    if [ "${_n_unexp:-0}" -gt 0 ]; then
+        _list=$(printf '%s\n' "$_unexp" | paste -sd, -)
+        down+=("grants-ungranted")
+        detail["grants-ungranted"]="${_n_unexp} ktp_* table(s) with no SELECT for ${GRANT_WATCH_USER}: ${_list} -- an analytics session sees these as ABSENT, not denied, so a probe will report the migration missing"
+    fi
+    echo "[$now_ts] grants: ${_n_all} ktp_* table(s) ungranted for ${GRANT_WATCH_USER}, ${_n_unexp} unexpected"
+else
+    down+=("grants=query-failed")
+fi
+
 # ---- AC evidence bundles that never reached the API ----
 # Six session bundles were lost in the fortnight to 2026-09-22 and nothing
 # anywhere said a word. Every one was an aborted transfer: the client stopped
