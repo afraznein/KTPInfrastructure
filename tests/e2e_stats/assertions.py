@@ -690,7 +690,8 @@ def check_frag_context_diagnostics(
         *, expected: int, observed: int,
         expected_identities: list[str], observed_identities: list[str],
         unresolved_expected: list[dict],
-        unparsed_observed: list[str]) -> dict:
+        unparsed_observed: list[str],
+        weapon_disagreements: list[dict] | None = None) -> dict:
     """Only intentional BreakDrive injections may miss a stock frag row.
 
     The expected count comes from successful ``[BD] kill flag=`` and
@@ -698,7 +699,13 @@ def check_frag_context_diagnostics(
     with the daemon warnings is load-bearing: subtracting every observed
     warning would turn a genuinely
     dropped ordinary frag into an allowed diagnostic.
+
+    ``weapon_disagreements`` never changes the verdict. It names the one cause
+    that otherwise reads as unexplained frag loss and costs a bisect: the
+    producer publishing a different weapon than the engine logged for the same
+    kill, which the daemon's weapon clause cannot match.
     """
+    weapon_disagreements = list(weapon_disagreements or ())
     result = {
         "code": "frag_context_diagnostics",
         "expected_synthetic_unmatched": expected,
@@ -707,6 +714,7 @@ def check_frag_context_diagnostics(
         "observed_identities": observed_identities,
         "unresolved_expected": unresolved_expected,
         "unparsed_observed": unparsed_observed,
+        "weapon_disagreements": weapon_disagreements,
     }
     expected_multiset = Counter(expected_identities)
     observed_multiset = Counter(observed_identities)
@@ -740,12 +748,26 @@ def check_frag_context_diagnostics(
             f"unresolved_expected={len(unresolved_expected)}, "
             f"unparsed_observed={len(unparsed_observed)}"
         )
+        weapon_detail = ""
+        if weapon_disagreements:
+            named = ", ".join(
+                f"{row['killer_userid']}->{row['victim_userid']} producer "
+                f"{row['producer_weapon']} vs engine "
+                f"{'/'.join(row['engine_weapons'])}"
+                f"{' (ambiguous)' if row['status'] == 'ambiguous' else ''}"
+                for row in weapon_disagreements
+            )
+            weapon_detail = (
+                f"; {len(weapon_disagreements)} producer/engine weapon "
+                f"disagreement(s) in this run, which the daemon's weapon "
+                f"clause cannot match: {named}"
+            )
         return {
             **result,
             "status": "pipeline",
             "detail": f"expected exactly {expected} BreakDrive synthetic "
                       f"frag-context diagnostic(s), observed {observed}; "
-                      f"{mismatch}; {identity_detail}",
+                      f"{mismatch}; {identity_detail}{weapon_detail}",
         }
     return {
         **result,
