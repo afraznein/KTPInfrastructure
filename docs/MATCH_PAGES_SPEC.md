@@ -1,6 +1,11 @@
 # Per-match pages — spec
 
-Drafted 2026-08-14. Not built. Depends on the awards framework landing first.
+Drafted 2026-08-14. 🔻 **CORRECTED 2026-10-07 — this line read "Not built" about something built
+in the same commit that drafted it** (`4794d5e`, 2026-08-14). `sites/wsdod-lan-2026/build_site.py`
+emits `dist/match/<slug>/` per match plus a redirect per raw key, and prints a count when it does.
+The awards-framework dependency landed in that same commit. **Read the spec below as a record of
+what was built, not as a plan.** ⚠️ Built ⇏ published — whether `dodworldseries.com` is serving
+these pages today is a separate question, settled by fetching one, never by this line.
 
 ## Shape
 
