@@ -5,9 +5,13 @@
 # read from `<configsdir>/discord.ini::discord_relay_url`.
 RELAY_URL="https://discord-relay-XXXXX.run.app/reply"
 
-# X-Relay-Auth header value (matches the relay's RELAY_SHARED_SECRET env var,
-# same secret in `discord.ini::discord_auth_secret`).
-RELAY_SECRET="REPLACE-WITH-RELAY-SECRET"
+# X-Relay-Auth header value. LEAVE THIS COMMENTED OUT on a KTP game host: the
+# daemon reads AUTH_SECRET from /etc/ktp/discord-relay.conf at run time, which is
+# the one file a relay-secret rotation reaches, and prefers it over anything here.
+# A local copy is used only when that file supplies nothing. It is what went stale
+# in 2026-09 — the relay answered 401, the daemon burned its five retries, and five
+# simultaneous crashes produced no alert at all.
+#RELAY_SECRET="REPLACE-WITH-RELAY-SECRET"
 
 # #ktp-crashes channel ID (guild 579024206931689482).
 CRASHES_CHANNEL_ID="1497957091107668070"
