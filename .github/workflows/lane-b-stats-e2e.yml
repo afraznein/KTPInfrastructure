@@ -205,13 +205,12 @@ permissions:
   packages: read
 
 concurrency:
-  # One Lane B at a time. Two concurrent runs would each boot hlds and mariadbd
-  # in their own container, which is fine, but serialising keeps the report
-  # artifact unambiguous.
-  # ⚠️ No ref or event in this key, so every caller's run queues here too, and
-  # GitHub kills a PENDING run when the next push or PR arrives. Dispatch into
-  # an idle group and confirm `in_progress`; a cancelled dispatch looks absent.
-  group: lane-b-stats-e2e
+  # One Lane B at a time per caller, event and ref -- not one repo-wide. The
+  # callers all enter through `workflow_call` and inherit the caller's context,
+  # so a constant key queued every nightly, push, PR and dispatch in a single
+  # group, and GitHub drops the PENDING run when the next arrival lands.
+  # ⚠️ A cancelled run still looks absent: confirm `in_progress`, not existence.
+  group: lane-b-stats-e2e-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
