@@ -1660,6 +1660,14 @@ plus **93 waypoint files** covering the real KTP pool — anzio, avalanche, jagd
 donner, flash, kalt, caen, merderet, charlie, sturm. Upstream changelog dated
 13-07-2026; this is maintained software.
 
+🔻 **ANNOTATED 2026-10-07 — the "covering the real KTP pool" framing just
+above was wrong when it was written, and is deliberately LEFT AS WRITTEN because
+this is a dated record of what was believed on 2026-09-14.** Those ten are stock
+DoD maps; five of them do not appear in the fleet's `ktp_maps.ini` at all. The
+measured position is in `build/bots/README.md` — **"The custom competitive pool
+has no waypoints at all."** ⛔ **Do not rewrite the entry to match** — rewriting a
+dated note into a present-tense truth makes the date lie. Read it as of its day.
+
 **`BotSpec.NEW_BOT` now holds facts, not guesses**, read from the shipped
 `_README.txt` / `_COMMANDS.txt`: `addbot {team} {class} {skill} {name}` (team
 accepts allies/axis), `target_players {0-32}` to fill, and the objective knobs

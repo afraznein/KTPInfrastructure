@@ -294,6 +294,20 @@ completely blind AMXX.
 | Deployment plan Units 1-4 | see `docs/ktpr_mcp/KTPR_DEPLOYMENT_PLAN.md` — every step covered but weaponstats, the four cap_break negatives, and cross-flag position clustering |
 | Assertions | written and unit-tested (78 passed) |
 
+🔻 **ANNOTATED 2026-10-07 — about the `new_bot 0.2.2 + 93 waypoints` row, which
+is LEFT AS WRITTEN: this document is a dated snapshot of what one run observed on
+2026-08-09/10, and the row is scoped to the Lane B image, which is the right
+scope.** ✅ **It does NOT carry the "covering the real KTP pool" claim** that
+`tests/e2e_stats/README.md` and the 2026-09-14 changelog fragment did — do not read
+it as one. ⚠️ **"installed" here means installed in the image, never on the
+fleet** — `build/bots/README.md` is explicit that the fleet consumes no images at
+all, and the waypoints cover stock maps, so **"The custom competitive pool has no
+waypoints at all."** ⚠️ **The two numbers in this row are different units:** 93 is
+waypoint FILES in the image, 692 is waypoint NODES inside one map's file. ⛔ **And
+neither figure is re-derivable from a checkout** — 93 here disagrees with the 94 in
+`build/bots/README.md`, both claiming the same built image; settle it by counting
+in the image, not by trusting either line.
+
 ## Assertion posture, as built
 
 `check_carried` returns one of three verdicts rather than pass/fail, because

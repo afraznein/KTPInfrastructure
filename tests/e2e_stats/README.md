@@ -145,10 +145,24 @@ what it ran. Override with `--build-arg NEW_BOT_URL=file:///vendor/...` when the
 Drive link rots or the build host is offline.
 
 Installed and verified in the image: `dod/new_bot/new_bot_mm.so` (442 KB, 0755)
-and **93 waypoint files**, covering the real KTP pool — `dod_anzio`,
-`dod_avalanche`, `dod_jagd`, `dod_donner`, `dod_flash`, `dod_kalt`, `dod_caen`,
-`dod_merderet`, `dod_charlie`, `dod_sturm`. Upstream changelog is dated
-**13-07-2026**, so this is maintained software, not abandonware.
+and waypoint files for **stock** maps — `dod_anzio`, `dod_avalanche`,
+`dod_jagd`, `dod_donner`, `dod_flash`, `dod_kalt`, `dod_caen`, `dod_merderet`,
+`dod_charlie`, `dod_sturm`. Upstream changelog is dated **13-07-2026**, so this
+is maintained software, not abandonware.
+
+🔻 **CORRECTED 2026-10-07 — this passage read "93 waypoint files, covering
+the real KTP pool", and that framing was false.** Those ten are stock DoD maps,
+not the competitive pool: five of them (`dod_jagd`, `dod_flash`, `dod_caen`,
+`dod_charlie`, `dod_sturm`) do not appear in the fleet's `ktp_maps.ini` at all,
+and fifteen maps that do appear in it are not among the ten. The measured
+position is in `build/bots/README.md` — **"The custom competitive pool has no
+waypoints at all."** ⛔ **No replacement "covers N of the pool" figure belongs
+here either:** the competitive pool is not defined in any repo, it is
+`ktp.veto_map` in Supabase, and `keep-the-prac`'s `KTP_MAP_POOL` constant says
+of itself that it is "NOT the competitive pool". ⚠️ **The file count is unsettled
+as well** — this passage said 93 and `build/bots/README.md` says 94, both claiming
+the built image, and neither is re-derivable from a checkout. Count it in the
+image if you need it, with the command in that README.
 
 Because the image now contains a third-party binary that is not ours to
 redistribute, **it must not be pushed to a public registry.** It is a local/CI
