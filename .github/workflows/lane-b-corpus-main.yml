@@ -89,9 +89,9 @@ concurrency:
   # commit that superseded it, so nothing is lost and merges never pile up
   # behind a 60-minute job.
   # Per ref: a PR run must never cancel the verdict on `main`, or vice versa.
-  # ⚠️ Per ref here is not isolation: the called workflow's own key is shared
-  # repo-wide, so another ref's run still cancels this one while it is PENDING
-  # — and that verdict is simply lost, unlike the superseded case above.
+  # ⚠️ This only isolates because the CALLED workflow's key is also per caller,
+  # event and ref. A constant key there outranks this one and silently dropped
+  # a pending verdict — keep both keyed, or neither isolates.
   group: lane-b-corpus-${{ github.ref }}
   cancel-in-progress: true
 
