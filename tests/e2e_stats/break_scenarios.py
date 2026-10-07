@@ -189,6 +189,10 @@ _MANIFEST_RE = re.compile(
     # the two schema-23 fields only as a complete, ordered pair.
     + r'(?:\(map_revision_algorithm "sha256"\) '
     + r'\(map_revision "[0-9a-f]{64}"\) )?'
+    # Schema 26 appends the rewind ceiling in force, signed because
+    # stats_logging emits -1.000 when the cvar pointer is null. Optional for
+    # the same reason as the pair above: this lane also runs older amxx refs.
+    + r'(?:\(sv_maxunlag "(?P<sv_maxunlag>-?\d+(?:\.\d+)?)"\) )?'
     + r'\(sequence "(?P<sequence>\d+)"\) '
     + r'\(event_epoch "(?P<event_epoch>\d+)"\)\r?$',
     re.MULTILINE,
@@ -360,6 +364,9 @@ class BreakDriver:
             default=0,
         )
         manifests = list(_MANIFEST_RE.finditer(log_text, interval_start))
+        # ksc_manifest_repeat re-logs the identical line on a tick while the
+        # half stays confirmed, so count DISTINCT identities: a re-activation
+        # carries a new sequence and epoch, a heartbeat does not.
         matching = []
         foreign = []
         for manifest in manifests:
@@ -369,7 +376,8 @@ class BreakDriver:
                 int(manifest.group("event_epoch")),
             )
             if identity[:2] == (match_id, half):
-                matching.append(identity)
+                if identity not in matching:
+                    matching.append(identity)
             else:
                 foreign.append(identity)
 

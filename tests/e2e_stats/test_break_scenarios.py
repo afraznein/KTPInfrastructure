@@ -319,19 +319,24 @@ def _match_start(match_id, half="1st half"):
 
 
 def _manifest(match_id, half=1, epoch=100, producer="stats_logging",
-              schema=22):
+              schema=22, maxunlag=None):
     revision = ""
-    if schema == 23:
+    if schema >= 23:
         revision = ('(map_revision_algorithm "sha256") '
                     '(map_revision "0123456789abcdef0123456789abcdef'
                     '0123456789abcdef0123456789abcdef") ')
+    unlag = ""
+    if schema >= 26:
+        # stats_logging formats this %.3f and emits -1.000 when the cvar
+        # pointer is null, so the field is signed.
+        unlag = f'(sv_maxunlag "{0.300 if maxunlag is None else maxunlag:.3f}") '
     return (f'L 08/28/2026 - 12:00:00: KTP_CAPTURE_MANIFEST '
             f'(matchid "{match_id}") (half "{half}") '
             f'(map "dod_anzio") (producer "{producer}") '
             f'(producer_version "1.19.0") (schema "{schema}") '
             f'(capabilities "frag_context,damage,position,health") '
             f'(position_interval "2.0") (buffer_entries "128") '
-            f'(life_buffer_entries "64") {revision}(sequence "1") '
+            f'(life_buffer_entries "64") {revision}{unlag}(sequence "1") '
             f'(event_epoch "{epoch}")\n')
 
 
@@ -380,6 +385,90 @@ def test_begin_series_accepts_schema23_map_revision_manifest():
     assert driver.begin_series() is True
     assert driver.series_manifest == ("diagnostic-TEST", 1, 200)
     assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_begin_series_accepts_schema26_sv_maxunlag_manifest():
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=201, schema=26))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("diagnostic-TEST", 1, 201)
+    assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_begin_series_accepts_schema26_null_cvar_sv_maxunlag_manifest():
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=202, schema=26,
+                        maxunlag=-1.0))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("diagnostic-TEST", 1, 202)
+
+
+# Verbatim bytes off nightly run 37621405799, where every diagnostic scenario
+# was skipped because this line did not parse. A hand-built fixture would not
+# have caught it: the real line carries 21 capabilities and a full revision.
+_FIELDED_SCHEMA26_MANIFEST = (
+    'L 10/07/2026 - 12:44:21: KTP_CAPTURE_MANIFEST '
+    '(matchid "1791377046-TEST") (half "1") (map "dod_anzio") '
+    '(producer "stats_logging") (producer_version "1.27.1") (schema "26") '
+    '(capabilities "frag_context,damage,position,assist,life,break,'
+    'flag_state,flag_position,objective_attempt,team_membership,'
+    'grenade_entity,shot,score,duel,player_state,grenade_throw,'
+    'position_state,map_revision,sequence,health,move") '
+    '(position_interval "2.0") (buffer_entries "128") '
+    '(life_buffer_entries "64") (map_revision_algorithm "sha256") '
+    '(map_revision "9663b42b1721147a45e8a489019e6e732d39347cfcd6b4'
+    '8976539cd26a254cfe") (sv_maxunlag "0.499") (sequence "1") '
+    '(event_epoch "1791377061")\n'
+)
+
+
+def test_begin_series_binds_the_manifest_the_fleet_actually_emits():
+    text = ('L 10/07/2026 - 12:44:21: KTP_MATCH_START '
+            '(matchid "1791377046-TEST") (map "dod_anzio") '
+            '(half "1st half") (type "0")\n'
+            + _FIELDED_SCHEMA26_MANIFEST)
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("1791377046-TEST", 1, 1791377061)
+
+
+def test_begin_series_binds_through_the_manifest_heartbeat_repeat():
+    # ksc_manifest_repeat re-logs the SAME bytes every KSC_MANIFEST_REPEAT_TICKS
+    # while the half stays confirmed, so an identical line is a heartbeat, not a
+    # second activation. Counting the repeat aborted the whole diagnostic suite
+    # whenever begin_series landed after one tick.
+    text = ('L 10/07/2026 - 12:44:21: KTP_MATCH_START '
+            '(matchid "1791377046-TEST") (map "dod_anzio") '
+            '(half "1st half") (type "0")\n'
+            + _FIELDED_SCHEMA26_MANIFEST
+            + _FIELDED_SCHEMA26_MANIFEST)
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("1791377046-TEST", 1, 1791377061)
+
+
+def test_begin_series_still_refuses_a_second_distinct_activation():
+    # A real re-activation carries its own sequence and epoch, and must still
+    # read as ambiguous rather than binding either one.
+    text = (_match_start("diagnostic-TEST")
+            + _manifest("diagnostic-TEST", epoch=300, schema=26)
+            + _manifest("diagnostic-TEST", epoch=301, schema=26))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is False
+    assert driver.series_abort_reason == "current_manifest_ambiguous"
+    assert handle.fired == []
 
 
 def test_begin_series_waits_for_unique_binding_before_first_rcon(monkeypatch):
