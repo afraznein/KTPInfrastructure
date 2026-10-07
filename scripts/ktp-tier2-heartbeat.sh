@@ -30,10 +30,11 @@
 # forever and that's correct. If preprod is retired, its nightly leg stops
 # being scheduled, its marker goes stale, and — left alone — this script would
 # alert on that forever, which is now a false alarm about a lane nobody is
-# running. At that point set KTP_TIER2_WATCH_PREPROD=0 (one config line, no
-# code edit) to stop watching it; don't repoint KTP_TIER2_MARKER_PREPROD at
-# the main marker; that silently makes both checks watch the same file, which
-# has the same blind spot as watching one marker.
+# running. preprod is now retired in this repo, so the cron file carries
+# KTP_TIER2_WATCH_PREPROD=0; don't repoint KTP_TIER2_MARKER_PREPROD at the main
+# marker instead, that silently makes both checks watch the same file, which has
+# the same blind spot as watching one marker. Note the switch only reaches the
+# job cron launches — see the write gate below for what that costs a hand run.
 #
 # Also watches for runner stack drift vs the fleet (ktp-tier2-stack-drift.py):
 # a stale module stack makes green runs certify an environment that exists
@@ -77,6 +78,39 @@ MAX_AGE_SECONDS_PREPROD="${KTP_TIER2_MAX_AGE_PREPROD:-$MAX_AGE_SECONDS}"
 # Default to the shared scheduled-report channel (perf-rollup / canary / tier2
 # embeds). Override with TIER2_REPORT_CHANNEL in the relay conf.
 CHANNEL_DEFAULT="1498813261263405097"
+
+# A check that persists its own verdict cannot be exercised by hand: a run under
+# a different environment measures a different program and then saves the answer
+# where the alerter reads it. So writing is opt-in, and cron is the only thing
+# that opts in on its own.
+#
+# The environment is the whole hazard here, not an edge case. Cron env lines reach
+# only the job cron itself launches, so every switch set there — the retired
+# preprod leg below among them — is back at its default in a shell run, and the
+# verdict that re-engaged lane produces is what gets saved. The alerter keys on
+# TRANSITIONS, so that lands either as a spurious page or, worse, as a stored
+# state the next genuine change reads back as a return to normal.
+under_cron() {
+    # Not a tty test: ssh pipes, systemd-run and CI have no tty either, so that
+    # would hand the write straight back to the runs this is guarding.
+    local pcomm
+    pcomm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | head -1 | tr -d ' ' || true)"
+    case "$pcomm" in cron|crond|CRON) return 0 ;; esac
+    return 1
+}
+# Set to 1 by the cron file; the parent check covers a deployed cron file that
+# predates that line, so arming does not wait on a re-install.
+WRITE_STATE="${KTP_TIER2_HEARTBEAT_WRITE:-}"
+case "${1:-}" in
+    ""|--cron) ;;
+    --dry-run) WRITE_STATE=0 ;;
+    --write)   WRITE_STATE=1 ;;
+    *) echo "usage: ${0##*/} [--dry-run|--write]" >&2; exit 64 ;;
+esac
+if [ -z "$WRITE_STATE" ]; then
+    if under_cron; then WRITE_STATE=1; else WRITE_STATE=0; fi
+fi
+[ "$WRITE_STATE" = "1" ] || echo "tier2-heartbeat: DRY RUN — nothing is posted and the state file is not touched (pass --write to arm it)"
 
 # Relay creds (KEY="value" lines). Same file the workflow embed step reads.
 # `if`, not `[ -f x ] && .`: with `set -e` a missing conf made the watcher exit
@@ -283,6 +317,14 @@ if [ "$repeat" = "1" ]; then
     desc="$desc"$'\n\n'"$note"
 fi
 footer="ktp-tier2-heartbeat @ $(TZ=America/New_York date '+%Y-%m-%d %H:%M %Z')"
+
+if [ "$WRITE_STATE" != "1" ]; then
+    printf 'tier2-heartbeat: DRY RUN verdict — state file NOT written, relay NOT posted\n'
+    printf '  state file : %s\n  stored key : %s\n  this run   : %s\n' \
+        "$STATE" "${prev:-<none>}" "$key"
+    printf '  would post : %s\n%s\n' "$title" "$desc"
+    exit 0
+fi
 
 if [ -z "$RELAY_URL" ] || [ -z "$AUTH_SECRET" ]; then
     echo "tier2-heartbeat: relay creds missing in $CONFIG — would have alerted: $title — $desc" >&2

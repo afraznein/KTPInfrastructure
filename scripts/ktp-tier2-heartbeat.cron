@@ -6,4 +6,15 @@
 # promptly. Mirrors the ktp-data-server-health cron.
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
+
+# Arms the state write. The state file is the alerter's memory and it alerts on
+# transitions, so a hand run that saved a verdict could mask the next real change;
+# without this line the script computes and prints, and writes nothing.
+KTP_TIER2_HEARTBEAT_WRITE=1
+
+# preprod is retired in this repo and its branch is deleted, so its marker can
+# never be rewritten and watching it is a permanent false alarm. Do NOT instead
+# repoint KTP_TIER2_MARKER_PREPROD at the main marker: that leaves both checks
+# reading one file, which is the blind spot the second marker exists to close.
+KTP_TIER2_WATCH_PREPROD=0
 0 */6 * * *  root  /usr/local/bin/ktp-tier2-heartbeat.sh >> /var/log/ktp-tier2-heartbeat.log 2>&1
