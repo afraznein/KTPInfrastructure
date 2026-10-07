@@ -41,6 +41,10 @@ except ImportError:
 # Config
 
 CONFIG_PATH = "/etc/ktp/crashreporter.conf"
+# The one file a relay-secret rotation reaches. ktp-scheduled-restart.sh already
+# sources AUTH_SECRET from here at run time for exactly this reason; this daemon
+# kept its own copy and a rotation left it behind.
+SHARED_RELAY_CONF = "/etc/ktp/discord-relay.conf"
 CORE_DIR = Path("/tmp")
 CORE_GLOB = "core.*"
 SCAN_INTERVAL_SEC = 300            # safety-net rescan
@@ -51,22 +55,58 @@ BACKTRACE_FRAMES_IN_EMBED = 20
 BACKTRACE_CHARS_IN_EMBED = 1500    # field-value cap is 1024; we use a 1500-char ceiling and truncate
 
 
-def load_config(path: str) -> dict:
-    cfg = {}
-    if not os.path.exists(path):
-        sys.stderr.write(f"ERROR: config not found at {path}\n")
-        sys.exit(2)
+def _parse_env_file(path: str) -> dict:
+    out = {}
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             k, _, v = line.partition("=")
-            cfg[k.strip()] = v.strip().strip('"').strip("'")
-    for required in ("RELAY_URL", "RELAY_SECRET", "CRASHES_CHANNEL_ID", "KTP_REGION"):
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    return out
+
+
+def load_config(path: str) -> dict:
+    cfg = {}
+    if not os.path.exists(path):
+        sys.stderr.write(f"ERROR: config not found at {path}\n")
+        sys.exit(2)
+    cfg.update(_parse_env_file(path))
+
+    # Prefer the shared conf's AUTH_SECRET over our own stale copy. The relay
+    # answers a wrong secret with 401 and the daemon then burns its five retries
+    # and gives up, so a rotation this file missed is a silent alerting outage:
+    # the core is captured, the .bt is written, and nothing is ever posted.
+    secret_from = None
+    if os.path.exists(SHARED_RELAY_CONF):
+        try:
+            shared = _parse_env_file(SHARED_RELAY_CONF).get("AUTH_SECRET", "")
+        except OSError as exc:
+            shared = ""
+            sys.stderr.write(f"WARN: cannot read {SHARED_RELAY_CONF} ({exc}); "
+                             f"falling back to RELAY_SECRET in {path}\n")
+        if shared:
+            if cfg.get("RELAY_SECRET") and cfg["RELAY_SECRET"] != shared:
+                sys.stderr.write(
+                    f"WARN: RELAY_SECRET in {path} disagrees with AUTH_SECRET in "
+                    f"{SHARED_RELAY_CONF}; using the shared one. Drop the local copy.\n")
+            cfg["RELAY_SECRET"] = shared
+            secret_from = SHARED_RELAY_CONF
+    if cfg.get("RELAY_SECRET") and secret_from is None:
+        secret_from = path
+
+    for required in ("RELAY_URL", "CRASHES_CHANNEL_ID", "KTP_REGION"):
         if not cfg.get(required):
             sys.stderr.write(f"ERROR: missing {required} in {path}\n")
             sys.exit(2)
+    if not cfg.get("RELAY_SECRET"):
+        sys.stderr.write(
+            f"ERROR: no relay secret — set AUTH_SECRET in {SHARED_RELAY_CONF} "
+            f"(preferred) or RELAY_SECRET in {path}\n")
+        sys.exit(2)
+    # Which FILE, never the value: this goes to the journal.
+    sys.stderr.write(f"relay secret sourced from {secret_from}\n")
     return cfg
 
 

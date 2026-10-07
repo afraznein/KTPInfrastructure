@@ -78,7 +78,15 @@ else
     : "${CRASHES_CHANNEL_ID:=1497957091107668070}"
 
     if [[ -z "$RELAY_URL" ]]; then read -rp "Discord Relay URL (full POST URL, ending in /reply): " RELAY_URL; fi
-    if [[ -z "$RELAY_SECRET" ]]; then read -rsp "Discord Relay secret: " RELAY_SECRET; echo; fi
+    # Don't write a SECOND copy of the relay secret when the shared conf has one.
+    # That copy is precisely what a rotation leaves behind, and the daemon prefers
+    # the shared file anyway.
+    if grep -qE '^AUTH_SECRET=.' /etc/ktp/discord-relay.conf 2>/dev/null; then
+        echo "[*] AUTH_SECRET present in /etc/ktp/discord-relay.conf; not storing a second copy"
+        RELAY_SECRET=""
+    elif [[ -z "$RELAY_SECRET" ]]; then
+        read -rsp "Discord Relay secret (no AUTH_SECRET in /etc/ktp/discord-relay.conf): " RELAY_SECRET; echo
+    fi
 
     # The plugin discord.ini already gives us the full POST URL (ends in /reply).
     # Daemon uses RELAY_URL as-is. If a base URL was passed, append /reply for
@@ -91,8 +99,10 @@ else
 
     cat > "$CONF" <<EOF
 # KTP crashreporter — installed by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# The relay secret is read at run time from /etc/ktp/discord-relay.conf::AUTH_SECRET.
+# A RELAY_SECRET line below is a fallback for a host that has no shared conf.
 RELAY_URL="$RELAY_URL"
-RELAY_SECRET="$RELAY_SECRET"
+$([[ -n "$RELAY_SECRET" ]] && printf 'RELAY_SECRET="%s"' "$RELAY_SECRET")
 CRASHES_CHANNEL_ID="$CRASHES_CHANNEL_ID"
 KTP_REGION="$REGION"
 EOF
