@@ -351,6 +351,16 @@ it honest:
 - Adding a unit or a timer to the data server means adding a row here in the
   same change, with its detection path named. "It has `OnFailure=`" is a
   complete answer; "nothing" is also a complete answer, and a legitimate one.
+- A row says who is *told*. Whether the run's findings are still readable next
+  week is a separate question, answered once in
+  [`UNIT_RUN_RECORDS.md`](UNIT_RUN_RECORDS.md) — a dated file per run under the
+  unit's `StateDirectory=`. ⚠️ **A `Type=oneshot` unit with no
+  `TimeoutStartSec=` makes a row here untrue in a third way**, on top of the two
+  in the matrix legend: systemd disables the start timeout for `oneshot` by
+  default, so a wedged run never exits, `OnFailure=` never fires, and the row
+  reads *alerted* about a unit that has silently gone quiet. Measured
+  2026-10-07: nine `Type=oneshot` units in `scripts/systemd/`, zero of them
+  setting it.
 - Every incident that reaches this estate should end with a row in the table at
   the top of this document. That table is the argument for the whole file: five
   entries, five checks that exist now, and each one built after the outage that

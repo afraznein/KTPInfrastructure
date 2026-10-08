@@ -7,8 +7,20 @@ After=mysql.service
 Type=oneshot
 # The report is the product, so it is kept: latest.md for whoever opens the box, and a dated
 # copy so a half flagged in week 3 can still be read beside week 9's. Read-only on MySQL.
-ExecStartPre=/bin/mkdir -p /var/lib/ktp-weekly-outliers
-ExecStart=/bin/sh -c '/usr/local/bin/weekly_outliers.py --out /var/lib/ktp-weekly-outliers/latest.md --tsv /var/lib/ktp-weekly-outliers/latest.tsv; rc=$?; cp /var/lib/ktp-weekly-outliers/latest.md "/var/lib/ktp-weekly-outliers/week-$(date +%%F).md"; exit $rc'
+# StateDirectory= replaces an ExecStartPre mkdir and survives a hardening change.
+StateDirectory=ktp-weekly-outliers
+# `case $rc in 0|1)` rather than an unconditional cp, which is what this line used to do.
+# weekly_outliers.py writes --out before it decides its exit code, so 0 and 1 are exactly
+# the codes that mean "this run wrote the report" -- and 1 is the INTERESTING week, the one
+# where a half scored at or above --alert-z. Exit 2 (no official halves) and a crash leave
+# last week's latest.md in place, and copying that under today's date re-dated a stale
+# report as this week's. Only the records wrapper sees that run now, which is correct.
+ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c '/usr/local/bin/weekly_outliers.py --out /var/lib/ktp-weekly-outliers/latest.md --tsv /var/lib/ktp-weekly-outliers/latest.tsv; rc=$?; case $rc in 0|1) cp /var/lib/ktp-weekly-outliers/latest.md "/var/lib/ktp-weekly-outliers/week-$(date +%%F).md" ;; esac; exit $rc'
+# Weekly, so the whole season of runs is ~57 files at the default horizon.
+# Type=oneshot disables the start timeout BY DEFAULT: without this line a report wedged on
+# MySQL never fails, never fires OnFailure and leaves nothing. It pages the whole season's
+# halves and z-scores them, so this is generous on purpose.
+TimeoutStartSec=30min
 # Exits 1 when a half scores at or above the alert threshold. That fails the unit, which
 # fires the existing ktp-systemd-alert OnFailure wiring -- the same delivery path as
 # hlstatsx-ingest-monitor. A weekly outlier that only lands in a file nobody opens is the
