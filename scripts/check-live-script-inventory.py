@@ -43,6 +43,25 @@ and nobody recorded whether the host got it. That is the gap
 docs/DEPLOY_MANIFEST.md exists to close. Pass --warn-superseded to downgrade the
 leg to advisory if it ever proves noisier than it is worth; do not delete it.
 
+THE PROVENANCE LEG: UNVERIFIABLE-PIN.
+
+A pin is only provenance if a cloner can reach it. Three of the rows name commits
+that are NOT ancestors of main -- one sits on an unmerged feature branch, two are
+reachable from no ref at all -- so nobody who clones this repo can check those
+rows, however carefully. That is invisible on a workstation that happens to still
+hold the dangling object, which is exactly how it survived: the first CI run of
+this script was the first time anything asked.
+
+So REACHABILITY, not object presence, is the test -- `merge-base --is-ancestor`
+against the ref, which gives the same answer in a fresh clone as in a well-fetched
+one. An unreachable pin must carry the token UNVERIFIABLE-PIN, in both directions
+again. Those rows get no md5 and no supersession verdict, because a fresh clone
+cannot compute one; where the object happens to be present, what it says is
+printed as information and gates nothing.
+
+A shallow clone makes every reachability answer unreliable, so it exits 2 up
+front rather than reporting per-row results it cannot stand behind.
+
   python3 scripts/check-live-script-inventory.py
   python3 scripts/check-live-script-inventory.py --selftest
   python3 scripts/check-live-script-inventory.py --live-md5 live.md5   # on/from the box
@@ -54,12 +73,13 @@ To close the live half, on the data server or a game host:
 and feed that file back in. Rows named in the manifest get their live claim
 checked; rows absent from it stay counted as unverified.
 
-Exit 0 = every repo claim verifies and every overtaken row is marked
-     1 = a repo claim is false, or a SUPERSEDED marker is missing or stale
+Exit 0 = every repo claim verifies and every flagged row is marked
+     1 = a repo claim is false, or a SUPERSEDED / UNVERIFIABLE-PIN marker is
+         missing or stale
      2 = the check could not trust itself (doc missing or unparseable, no row
          survived parsing, no row was hard-verifiable, a candidate line the
-         grammar did not accept, or git could not resolve a pinned commit --
-         a shallow clone lands here, which is correct: it cannot see the pins)
+         grammar did not accept, or the clone is shallow -- which is correct:
+         it cannot answer reachability)
 """
 import argparse
 import hashlib
@@ -71,6 +91,7 @@ import tempfile
 
 THIS_REPO = "KTPInfrastructure"
 MARKER = "SUPERSEDED"
+PIN_MARKER = "UNVERIFIABLE-PIN"
 DEFAULT_DOC = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "docs", "LIVE_SCRIPT_INVENTORY.md",
@@ -102,7 +123,7 @@ NO_SOURCE_VERDICTS = frozenset({"EXTERNAL", "THIRD-PARTY"})
 
 
 class Row(object):
-    def __init__(self, lineno, shape, live, md5, verdict, repo, path, commit, marked):
+    def __init__(self, lineno, shape, live, md5, verdict, repo, path, commit, text):
         self.lineno = lineno
         self.shape = shape
         self.live = live
@@ -111,7 +132,8 @@ class Row(object):
         self.repo = repo
         self.path = path
         self.commit = commit
-        self.marked = marked
+        self.marked = MARKER in text
+        self.pin_marked = PIN_MARKER in text
 
     def __str__(self):
         where = "%s:%s" % (self.repo, self.path) if self.path else "--"
@@ -144,6 +166,15 @@ class Git(object):
         out = p.stdout.decode("ascii", "replace").strip()
         return out or None
 
+    def is_shallow(self):
+        p = self._run(["rev-parse", "--is-shallow-repository"])
+        return p.stdout.decode("ascii", "replace").strip() == "true"
+
+    def reachable(self, commit, ref):
+        """Is <commit> an ancestor of <ref>? The only portable provenance test --
+        object presence differs between a fresh clone and a long-lived one."""
+        return self._run(["merge-base", "--is-ancestor", commit, ref]).returncode == 0
+
 
 def parse(text):
     """(rows, structural_problems). A candidate line that does not parse is a problem."""
@@ -155,7 +186,7 @@ def parse(text):
         if m:
             rows.append(Row(lineno, "bullet", m.group("live"), m.group("md5"), "MATCH",
                             m.group("repo"), m.group("path"), m.group("commit"),
-                            MARKER in m.group("tail")))
+                            m.group("tail")))
             continue
         if _BULLET_CANDIDATE.match(line):
             problems.append("L%d: looks like an inventory bullet but the grammar "
@@ -183,7 +214,7 @@ def parse(text):
         md5 = md5.strip("`")
         if verdict in NO_SOURCE_VERDICTS or not source.startswith("`"):
             rows.append(Row(lineno, "pipe", live, md5, verdict, None, None, None,
-                            MARKER in note))
+                            note))
             continue
         sm = _SOURCE.match(source)
         if not sm:
@@ -191,7 +222,7 @@ def parse(text):
                             "nor an em-dash: %s" % (lineno, source))
             continue
         rows.append(Row(lineno, "pipe", live, md5, verdict, sm.group("repo"),
-                        sm.group("path"), sm.group("commit"), MARKER in note))
+                        sm.group("path"), sm.group("commit"), note))
     return rows, problems
 
 
@@ -225,6 +256,10 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
     if head is None:
         say("UNTRUSTWORTHY: cannot resolve ref %r in %s", ref, repo_dir)
         return 2
+    if git.is_shallow():
+        say("UNTRUSTWORTHY: %s is a shallow clone, so no pin's reachability can be "
+            "answered. Fetch full history (actions/checkout fetch-depth: 0).", repo_dir)
+        return 2
 
     rows, problems = parse(text)
     if not rows:
@@ -232,9 +267,10 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
             "doc have diverged, or the tables are gone.", doc_path)
         return 2
 
-    findings, marker_findings, hard_verified = [], [], 0
-    classes = {"repo-pinned": [], "repo-unpinned": [], "other-repo": [], "no-source": []}
-    superseded, marked_ok = [], []
+    findings, marker_findings, pin_findings, hard_verified = [], [], [], 0
+    classes = {"repo-pinned": [], "unreachable-pin": [], "repo-unpinned": [],
+               "other-repo": [], "no-source": []}
+    superseded, marked_ok, unreachable_notes = [], [], []
 
     for row in rows:
         if row.repo is None:
@@ -253,11 +289,31 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
                 hard_verified += 1
             continue
 
+        if not git.reachable(row.commit, ref):
+            # No fresh clone can read this row's blob, so neither the md5 nor the
+            # supersession verdict is computable. The marker is the whole leg.
+            classes["unreachable-pin"].append(row)
+            if not row.pin_marked:
+                pin_findings.append(
+                    "%s -- pinned commit is not an ancestor of %s, so nobody who "
+                    "clones can check this row; add the %s token, or re-pin it after "
+                    "a read on the host" % (row, ref, PIN_MARKER))
+            local = git.blob(row.commit, row.path)
+            if local is not None:
+                current = git.blob(head, row.path)
+                same = current is not None and \
+                    hashlib.md5(current).hexdigest() == hashlib.md5(local).hexdigest()
+                unreachable_notes.append(
+                    "  %s -- this clone happens to hold the object; its bytes %s "
+                    "today's %s. Gates nothing: a fresh clone sees neither."
+                    % (row.live, "equal" if same else "differ from", ref))
+            continue
+        if row.pin_marked:
+            pin_findings.append(
+                "%s -- carries %s but its pin IS reachable from %s; remove the token"
+                % (row, PIN_MARKER, ref))
+
         classes["repo-pinned"].append(row)
-        if git.resolve(row.commit) is None:
-            say("UNTRUSTWORTHY: pinned commit %s (%s) is not in this clone -- a "
-                "shallow fetch cannot check pins.", row.commit, row.path)
-            return 2
         pinned = git.blob(row.commit, row.path)
         if pinned is None:
             findings.append("%s -- path is not present at its own pinned commit"
@@ -309,11 +365,14 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
     say("repo ref:  %s (%s)", ref, head[:10])
     say("")
     say("rows parsed ................ %d", len(rows))
-    for name in ("repo-pinned", "repo-unpinned", "other-repo", "no-source"):
+    for name in ("repo-pinned", "unreachable-pin", "repo-unpinned", "other-repo",
+                 "no-source"):
         say("  %-24s %d", name + " " + "." * (22 - len(name)), len(classes[name]))
     say("rows accounted for ......... %d", accounted)
     say("repo claims hard-verified .. %d", hard_verified)
     say("rows marked %s ..... %d", MARKER, len(marked_ok))
+    say("rows marked %s %d", PIN_MARKER + " " + "." * (11 - len(PIN_MARKER)),
+        len(classes["unreachable-pin"]))
     say("")
     say("LIVE CLAIMS VERIFIED ....... %d of %d", live_checked, live_checked + live_unchecked)
     if not live_md5:
@@ -339,12 +398,15 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
             "would mean nothing.")
         return 2
 
-    if classes["other-repo"] or classes["no-source"] or classes["repo-unpinned"]:
+    if (classes["other-repo"] or classes["no-source"] or classes["repo-unpinned"]
+            or classes["unreachable-pin"]):
         say("NOT DECIDABLE FROM THIS REPO -- these rows need a host read, a sibling")
         say("checkout, or are upstream software; none of them was validated:")
-        for name in ("other-repo", "no-source", "repo-unpinned"):
+        for name in ("unreachable-pin", "other-repo", "no-source", "repo-unpinned"):
             for row in classes[name]:
                 say("  [%s] %s  %s", name, row.live, row.verdict)
+        for note in unreachable_notes:
+            say("%s", note)
         say("")
 
     if superseded:
@@ -365,6 +427,13 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
         for f in findings:
             say("  %s", f)
         rc = 1
+    # Always gates: a pin nobody who clones can reach is a provenance hole, not
+    # noise, and --warn-superseded deliberately does not cover it.
+    if pin_findings:
+        say("%s MARKER:", PIN_MARKER)
+        for f in pin_findings:
+            say("  %s", f)
+        rc = 1
     if marker_findings:
         label = "SUPERSEDED MARKER (advisory)" if warn_superseded else "SUPERSEDED MARKER"
         say("%s:", label)
@@ -373,7 +442,7 @@ def check(doc_path, repo_dir, ref, live_md5=None, warn_superseded=False, out=sys
         if not warn_superseded:
             rc = 1
     if rc == 0 and not marker_findings:
-        say("CLEAN: every repo claim verifies and every overtaken row is marked.")
+        say("CLEAN: every repo claim verifies and every flagged row is marked.")
     return rc
 
 
@@ -465,6 +534,16 @@ def selftest(repo_dir, out=sys.stdout):
          _fixture([pipe % (tip_md5[:8], THIS_REPO, subject, tip_commit, "")])
          + "\n- `/live/w` `%s` = `%s:%s` @ `%s` %s\n"
          % (old_md5[:8], THIS_REPO, subject, old_commit, MARKER)),
+        ("pin unreachable, marker missing", 1,
+         _fixture([pipe % (tip_md5[:8], THIS_REPO, subject, tip_commit, ""),
+                   pipe % ("deadbeef", THIS_REPO, subject, "0" * 40, "")])),
+        ("pin unreachable, marker present", 0,
+         _fixture([pipe % (tip_md5[:8], THIS_REPO, subject, tip_commit, ""),
+                   pipe % ("deadbeef", THIS_REPO, subject, "0" * 40, PIN_MARKER)])),
+        ("reachable pin wrongly carrying the pin marker", 1,
+         _fixture([pipe % (tip_md5[:8], THIS_REPO, subject, tip_commit, PIN_MARKER)])),
+        ("pin marker does not satisfy the supersession leg", 1,
+         _fixture([pipe % (old_md5[:8], THIS_REPO, subject, old_commit, PIN_MARKER)])),
         ("bullet row, pin overtaken, marker missing", 1,
          _fixture([pipe % (tip_md5[:8], THIS_REPO, subject, tip_commit, "")])
          + "\n- `/live/w` `%s` = `%s:%s` @ `%s`\n"

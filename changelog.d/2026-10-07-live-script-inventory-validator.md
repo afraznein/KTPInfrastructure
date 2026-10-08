@@ -18,11 +18,11 @@
   that silently skips what it cannot test is the defect it exists to catch.
 
   Exit codes follow `check-archive-lift.py`: `0` every repo claim verifies, `1` a repo claim is false
-  or a `SUPERSEDED` marker is missing or stale, `2` the check could not trust itself — doc missing, no
-  row parsed, a candidate line the grammar rejected, no row hard-verifiable, or a pinned commit absent
-  (which is where a shallow clone lands, correctly, since it cannot see the pins). `--selftest` builds
-  eleven document fixtures plus both directions of the live-manifest leg from commits derived out of
-  the repo at run time, and runs ahead of the real check in CI.
+  or a `SUPERSEDED` / `UNVERIFIABLE-PIN` marker is missing or stale, `2` the check could not trust
+  itself — doc missing, no row parsed, a candidate line the grammar rejected, no row hard-verifiable,
+  or a shallow clone, which cannot answer reachability at all. `--selftest` builds fifteen document
+  fixtures plus both directions of the live-manifest leg, from commits derived out of the repo at run
+  time, and runs ahead of the real check in CI.
 
 ### Changed
 - `docs/LIVE_SCRIPT_INVENTORY.md` rows whose source path has changed in this repo since their pinned
@@ -40,3 +40,13 @@
   `andsmit9/ktp-coordination`'s `NEIN-DEPLOY.md` records that file installed under `/usr/local/bin/`
   twice after the inventory was taken (`dpl-41f8`, `dpl-9f25`). Re-pinning it needs `md5sum` on the
   box; a newer-looking commit guessed from here would restate the same defect with fresher numbers.
+
+- Three rows pin a commit that is **not an ancestor of `main`**, so nobody who clones this repo can
+  check them: `cf93488405` and `63b45b20cc` are reachable from no ref, and `471aab1c59` sits on an
+  unmerged feature branch. They carry `UNVERIFIABLE-PIN`, and the checker gates on it unconditionally —
+  `--warn-superseded` deliberately does not cover this leg, because a pin nobody can reach is a
+  provenance hole rather than noise. Found by the checker's first CI run, where an `actions/checkout`
+  working tree could not resolve `cf93488405` at all: the workstation that wrote these rows still held
+  the dangling objects, so a local run saw nothing wrong. Reachability (`merge-base --is-ancestor`), not
+  object presence, is therefore the test — it answers the same in a fresh clone as in a long-lived one —
+  and a shallow clone exits 2 up front rather than reporting per-row verdicts it cannot stand behind.

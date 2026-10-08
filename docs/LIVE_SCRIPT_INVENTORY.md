@@ -28,7 +28,7 @@ host: a known file hashed, and a nonexistent path reported missing.
 Files from private repos are counted, not named. Loose scripts in home directories that nothing runs, backups
 left in `/usr/local/bin`, and distro files are excluded.
 
-## SUPERSEDED, and why the rows now carry it
+## SUPERSEDED and UNVERIFIABLE-PIN, and why the rows now carry them
 
 `scripts/check-live-script-inventory.py` holds this file to the repo it points at, and
 `.github/workflows/config-tests.yml` runs it unconditionally on every push and PR. Until it existed nothing
@@ -46,6 +46,15 @@ permanent silencer once someone re-pins a row.
 host; guessing a newer commit would restate the same defect with fresher-looking numbers. The checker takes
 an `md5sum`-format file off a host (`--live-md5`) and will verify the live half when given one — that is the
 one path that closes a row rather than re-dating it.
+
+🔴 **Three rows pin a commit that is NOT an ancestor of `main`, so nobody who clones this repo can check
+them at all** — `cf93488405` (`ktp-data-server-health.sh`) and `63b45b20cc` (`ktp-demo-cleanup-auto.sh`) are
+reachable from no ref, and `471aab1c59` (`ktp-demo-offsite.sh`) sits on an unmerged feature branch. Those
+carry **UNVERIFIABLE-PIN**. 🔑 **A pin is only provenance if a cloner can reach it**, and this was invisible
+for weeks because the workstation that wrote the rows still held the dangling objects — the checker's first
+CI run was the first time anything asked. Reachability is therefore the test, not whether the object happens
+to be in your clone; those rows get no md5 and no supersession verdict, because a fresh clone cannot compute
+one. ⛔ Re-pinning them needs a read on the host, same as a SUPERSEDED row.
 
 ⚠️ **`/usr/local/bin/ktp-data-server-health.sh` is the measured instance, and its row is provably behind the
 box.** This file pins it to `cf93488405`, which has no `ktp-hitreg-reg` marker at all (`origin/main` has two).
@@ -129,10 +138,10 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/usr/local/bin/hltv-restart-all.sh` `036ed8ab` = `KTPInfrastructure:scripts/hltv-restart-all.sh` @ `a26f37f9ca` SUPERSEDED
 - `/usr/local/bin/ktp-ac-retention.sh` `92e7926d` = `KTPInfrastructure:scripts/ktp-ac-retention.sh` @ `c4268ad113` SUPERSEDED
 - `/usr/local/bin/ktp-backup-watchdog.sh` `46f2a66a` = `KTPInfrastructure:scripts/ktp-backup-watchdog.sh` @ `1545ceac6f` SUPERSEDED
-- `/usr/local/bin/ktp-data-server-health.sh` `87393135` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `cf93488405` SUPERSEDED
+- `/usr/local/bin/ktp-data-server-health.sh` `87393135` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `cf93488405` SUPERSEDED UNVERIFIABLE-PIN
 - `/usr/local/bin/ktp-db-offsite.sh` `b17911a5` = `KTPInfrastructure:scripts/ktp-db-offsite.sh` @ `4a1fa4be92`
-- `/usr/local/bin/ktp-demo-cleanup-auto.sh` `b7ccf0e9` = `KTPInfrastructure:scripts/ktp-demo-cleanup-auto.sh` @ `63b45b20cc`
-- `/usr/local/bin/ktp-demo-offsite.sh` `7bfe04b2` = `KTPInfrastructure:scripts/ktp-demo-offsite.sh` @ `471aab1c59`
+- `/usr/local/bin/ktp-demo-cleanup-auto.sh` `b7ccf0e9` = `KTPInfrastructure:scripts/ktp-demo-cleanup-auto.sh` @ `63b45b20cc` UNVERIFIABLE-PIN
+- `/usr/local/bin/ktp-demo-offsite.sh` `7bfe04b2` = `KTPInfrastructure:scripts/ktp-demo-offsite.sh` @ `471aab1c59` UNVERIFIABLE-PIN
 - `/usr/local/bin/ktp-demo-publish.sh` `4e872dbb` = `KTPInfrastructure:scripts/ktp-demo-publish.sh` @ `0583d2ee4d` SUPERSEDED
 - `/usr/local/bin/ktp-demo-retention.sh` `35f1244b` = `KTPInfrastructure:scripts/ktp-demo-retention.sh` @ `750f4f4441` SUPERSEDED
 - `/usr/local/bin/ktp-fastdl-indexes.py` `91d9e391` = `KTPInfrastructure:scripts/ktp-fastdl-indexes.py` @ `0583d2ee4d` SUPERSEDED
