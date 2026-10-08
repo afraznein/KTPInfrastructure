@@ -317,6 +317,12 @@ ORDER BY n;
 --   nobody re-derives the 2026-10-05 null-or-zero figure by accident.
 --   rows_match_id_empty_string above 0 IS a defect, and a different one. It
 --   points at the producer side, not at a missing ktp_matches row.
+--   RECONCILE THE TWO SECTIONS BEFORE BELIEVING EITHER. rows_with_a_match_id
+--   plus rows_match_id_null plus rows_match_id_empty_string must equal section
+--   C's rows_a_bare_COUNT_sees over the same @since_id. They are counted by two
+--   different queries at two different grains, so a disagreement is a defect in
+--   this file or a concurrent insert between the two statements -- not a finding
+--   about the data.
 --   GAP_per_half_join_loses is what a per-half report silently drops. It is
 --   larger than GAP_per_match_join_loses by construction.
 --   case_variant_match_ids above 0 means BINARY and non-BINARY readers of this
