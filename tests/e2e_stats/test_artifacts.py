@@ -36,6 +36,20 @@ def _git(repo, *args):
                    capture_output=True, text=True)
 
 
+# `collect()` refuses a producer whose manifest grammar this harness cannot
+# read, so the fake producer has to carry a real format string — verbatim from
+# KTPAMXX `plugins/dod/ktp_stats_capture.inc`, Pawn `^"` escapes and all. That
+# makes every collect() test below an exercise of the drift guard for free.
+FAKE_CAPTURE_MANIFEST_FORMAT = (
+    'server_print("KTP_CAPTURE_MANIFEST (matchid ^"%s^") (half ^"%d^") '
+    '(map ^"%s^") (producer ^"stats_logging^") (producer_version ^"%s^") '
+    '(schema ^"%d^") (capabilities ^"%s^") (position_interval ^"%.1f^") '
+    '(buffer_entries ^"%d^") (life_buffer_entries ^"%d^") '
+    '(map_revision_algorithm ^"sha256^") (map_revision ^"%s^") '
+    '(sv_maxunlag ^"%.3f^") (sequence ^"%d^") (event_epoch ^"%d^")");'
+)
+
+
 @pytest.fixture
 def amxx_repo(tmp_path):
     """A fake KTPAMXX with two commits, so 'which ref' is a real question."""
@@ -56,7 +70,8 @@ def amxx_repo(tmp_path):
     (repo / "plugins" / "dod" / "stats_logging.sma").write_bytes(
         b"// v2\r\n#include \"ktp_stats_capture.inc\"\r\n")
     (repo / "plugins" / "dod" / "ktp_stats_capture.inc").write_bytes(
-        b"// capture v2\r\nstock ksc_init() {}\r\n")
+        b"// capture v2\r\nstock ksc_init() {}\r\n"
+        + FAKE_CAPTURE_MANIFEST_FORMAT.encode() + b"\r\n")
     for rel in (
         "common.games/master.games.txt",
         "common.games/functions.engine.txt",
