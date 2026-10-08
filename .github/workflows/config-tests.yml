@@ -108,3 +108,16 @@ jobs:
       # skip the only thing that checks it.
       - name: Coordination gate row selection
         run: bash scripts/test-coordination-row-select.sh .github/workflows/coordination-check-reusable.yml
+
+      # Unconditional, and deliberately so. What this guards goes stale when
+      # scripts/ or sites/ changes, so a docs/-scoped path filter would make it
+      # silent in exactly the PRs that break it -- and docs/ is not in the
+      # relevance regex above at all. It needs full history to resolve the pinned
+      # commits, which the checkout step above already fetches (fetch-depth: 0);
+      # a shallow clone makes it exit 2 rather than pass, which is the point.
+      # Selftest first: a checker whose own fixtures have stopped being able to
+      # fail is not evidence about the inventory.
+      - name: Live script inventory pins
+        run: |
+          python3 scripts/check-live-script-inventory.py --selftest
+          python3 scripts/check-live-script-inventory.py
