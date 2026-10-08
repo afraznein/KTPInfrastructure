@@ -110,7 +110,13 @@ ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install \
 # 2. the check (it reads /opt/ktp-infra; nothing to clone)
 ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install-freshness.sh \
             --dest /usr/local/bin/ktp-install-freshness.sh --expect-md5 -
+# The unit now declares StateDirectory= + StateDirectoryMode=0750, so systemd
+# creates /var/lib/ktp-install-freshness; this line only matters if you run the
+# script by hand before the unit has ever started.
 install -d -m 750 /var/lib/ktp-install-freshness
+
+# 2b. the run-record wrapper the unit's ExecStart names
+install -m 0755 scripts/ktp-run-record.sh /usr/local/bin/ktp-run-record.sh
 
 # 3. conf, units, drop-in
 cp scripts/ktp-install-freshness.conf.example /etc/ktp/install-freshness.conf  # then edit
@@ -119,8 +125,15 @@ chmod 600 /etc/ktp/install-freshness.conf
 
 # 4. dry run BEFORE enabling the timer, so the first scheduled run is not the first run
 /usr/local/bin/ktp-install-freshness.sh
-systemctl show -p OnFailure ktp-install-freshness.service   # the check, not a grep
+systemctl show -p OnFailure ktp-install-freshness.service      # the check, not a grep
+systemctl show -p StateDirectory -p TimeoutStartUSec ktp-install-freshness.service
 ```
+
+Each run's output is kept under `/var/lib/ktp-install-freshness/runs/` —
+[`UNIT_RUN_RECORDS.md`](UNIT_RUN_RECORDS.md). This unit earns it more than most:
+its only failure mode is *could not compare*, so the output explaining why **is**
+the whole content of the failure, and before the wrapper it existed only in a
+journal that holds about two days against a daily unit.
 
 ⚠️ **The check FETCHES `/opt/ktp-infra` and never pulls it.** The standing rule is
 that the deploy checkout is not auto-pulled, and that still holds: the fetch uses

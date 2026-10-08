@@ -251,6 +251,18 @@ state-transition alerting and already alerts on the right channel per the
 Rule to hold to until §2.1 is properly scoped: **no new alerting
 implementations.** New checks become producers for an existing one.
 
+Second standing rule, same shape, added 2026-10-07: **no new run-record
+conventions.** A scheduled unit that reports by printing keeps its output in a
+dated file under its own `StateDirectory=`, written by
+`scripts/ktp-run-record.sh`. The estate had grown three answers to the same
+question — an appended log, a dated report in a watched log directory, and a
+state directory per run — with nothing saying which applied when, so the next
+unit picked by coin flip. The decision, the two cases where the other two shapes
+are still right, and how a wedge shows up are in
+[`docs/runbooks/UNIT_RUN_RECORDS.md`](docs/runbooks/UNIT_RUN_RECORDS.md).
+⚠️ Writing a record is not coverage: nothing ages these files yet, and the leg
+that would is a producer for `ktp-data-server-health.sh`, not a sixth watcher.
+
 **Status 2026-09-18.** `scripts/ktp-alert-routing.sh` (90bbe10) is the shared
 helper; `ktp-data-server-health.sh` now routes through it — `page` on a new-down
 run, `recovery` on a clear, channel from `KTP_CHANNEL_PAGE` when the operator

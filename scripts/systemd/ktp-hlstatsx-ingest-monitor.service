@@ -5,7 +5,17 @@ After=mysql.service hlstatsx.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/hlstatsx-ingest-monitor.py --since 90
+# The monitor's /var/lib/ktp/hlstatsx-ingest-monitor.json holds dedup state, not
+# the findings -- those are printed. Wrapped so a finding survives journald's
+# ~2 days. docs/runbooks/UNIT_RUN_RECORDS.md.
+StateDirectory=ktp-hlstatsx-ingest-monitor
+# Hourly, so a dated record per run is ~720 files at this horizon.
+Environment=KTP_RUN_RECORD_KEEP_DAYS=30
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/hlstatsx-ingest-monitor.py --since 90
+# Type=oneshot disables the start timeout BY DEFAULT, so without this line a
+# monitor wedged on MySQL never fails, never fires OnFailure and leaves nothing.
+# Hourly timer, so the timeout has to land well inside one cadence.
+TimeoutStartSec=15min
 # The script exits 1 on a finding, which makes the unit fail, which fires the
 # existing ktp-systemd-alert OnFailure wiring. That is the whole delivery path --
 # a monitor that only writes to a log nobody opens is the failure it exists to fix.
