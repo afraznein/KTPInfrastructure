@@ -49,6 +49,12 @@ _DAEMON_DATETIME_RE = re.compile(
 _ENGINE_MATCH_END_RE = re.compile(
     r"^L \d\d/\d\d/\d{4} - \d\d:\d\d:\d\d: KTP_MATCH_END "
 )
+# PREFIX-ONLY on purpose: this reader locates manifest lines and takes their
+# fields from `properties`, so it is immune to a widened manifest. Its green is
+# therefore NOT corroboration for `break_scenarios._MANIFEST_RE`, which is
+# positional and matched 0 of 46 lines on schema 26 while this stayed happy.
+# test_capture_manifest_grammar_drift asserts that asymmetry rather than leaving
+# it to be re-derived; do not tighten this into the ordered grammar.
 _ENGINE_CAPTURE_MANIFEST_RE = re.compile(
     r"^L \d\d/\d\d/\d{4} - \d\d:\d\d:\d\d: KTP_CAPTURE_MANIFEST "
 )

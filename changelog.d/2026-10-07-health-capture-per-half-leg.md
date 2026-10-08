@@ -43,4 +43,9 @@ if that proves common; do not drop the leg — a watcher that can go blind has t
 
 ⛔ **Merging this does not field it.** `ktp-data-server-health.sh` is installed at
 `/usr/local/bin/`, no workflow in this repo deploys `scripts/`, and `docs/LIVE_SCRIPT_INVENTORY.md`
-pins the live copy to `cf93488405` (2026-08-30). The check starts working when someone installs it.
+pins the live copy to `cf93488405` (2026-08-30) — 🔻 **that pin is not the live copy and citing it
+here was wrong.** `andsmit9/ktp-coordination`'s `NEIN-DEPLOY.md` records that script installed under
+`/usr/local/bin/` on 2026-09-21 (`dpl-41f8`) and again on 2026-09-24 (`dpl-9f25`); neither install
+reached the inventory row, and nothing in a checkout can say what runs there now. The row is marked
+`SUPERSEDED` and `scripts/check-live-script-inventory.py` now fails on an unmarked one.
+**The check starts working when someone installs it**, which is unaffected either way.

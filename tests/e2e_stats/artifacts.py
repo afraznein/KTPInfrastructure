@@ -56,6 +56,27 @@ class BuildError(RuntimeError):
     'run anyway with whatever is on disk'."""
 
 
+def assert_capture_manifest_grammar(plugin_inc: Path) -> None:
+    """Refuse the bundle when the extracted producer outgrows this harness.
+
+    Deliberately at collect time against the extracted `.inc`, because that file
+    IS the producer at the amxx sha under test — nothing here can go stale behind
+    KTPAMXX. Schema 26's `(sv_maxunlag "%.3f")` otherwise surfaced as a 10 s
+    `current_manifest_missing` abort and three downstream scenario failures that
+    named nothing about manifests, which is why it went 14 days undiagnosed on a
+    lane that was already red for other reasons.
+    """
+    from tests.e2e_stats import manifest_contract
+    from tests.e2e_stats.break_scenarios import _MANIFEST_RE
+
+    source = plugin_inc.read_text(encoding="utf-8", errors="replace")
+    try:
+        manifest_contract.assert_reader_accepts(
+            source, _MANIFEST_RE, reader_name="break_scenarios._MANIFEST_RE")
+    except manifest_contract.ManifestContractError as exc:
+        raise BuildError(f"capture manifest grammar drift: {exc}") from exc
+
+
 REQUIRED_BUNDLE_REPOSITORIES = frozenset(
     {"infrastructure", "matchhandler", "amxx", "hlstatsx"}
 )
@@ -631,6 +652,7 @@ class ArtifactSet:
             inst.plugin_inc = extract(
                 amxx_repo, amxx_sha, "plugins/dod/ktp_stats_capture.inc",
                 src / "ktp_stats_capture.inc")
+            assert_capture_manifest_grammar(inst.plugin_inc)
             inst.gamedata_dir = extract_tree(
                 amxx_repo, amxx_sha, "gamedata", build_dir / "gamedata")
             missing_gamedata = [
