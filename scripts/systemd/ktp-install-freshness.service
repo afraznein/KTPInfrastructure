@@ -7,7 +7,23 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ktp-install-freshness.sh
+# This unit's own STATE_DIR already defaults to /var/lib/ktp-install-freshness;
+# StateDirectory= only puts systemd in charge of creating and owning it, and the
+# records land in runs/ beside it. docs/runbooks/UNIT_RUN_RECORDS.md.
+#
+# Worth more here than anywhere else: this unit's whole job is a comparison, and
+# a run that COULD NOT compare is the only thing that fails it -- so the output
+# explaining why is the entire content of the failure, and it had nowhere to go.
+StateDirectory=ktp-install-freshness
+# StateDirectoryMode= defaults to 0755 and is RE-APPLIED on every start, so
+# without this line systemd would quietly relax the 0750 the install runbook
+# sets by hand -- and relax it again after anyone fixed it.
+StateDirectoryMode=0750
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/ktp-install-freshness.sh
+# Type=oneshot disables the start timeout BY DEFAULT, so without this line a
+# fetch that hangs on an unreachable remote never fails and leaves nothing.
+# Daily, and a git fetch over the network is the slow leg.
+TimeoutStartSec=15min
 # A dirty estate is NOT a unit failure. `ktp-install --report` exits 1 whenever
 # anything is stale, and 10 paths are stale today; failing the unit on that
 # would fire the OnFailure alert every single run until someone muted it.

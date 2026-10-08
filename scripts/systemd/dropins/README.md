@@ -50,7 +50,26 @@ found these two under any name and still called them wired, because the defect w
 *contents*. ➡️ `systemctl show <unit> -p OnFailure --value` is the only check that resolves both,
 and it is what the § Verify section above already tells you to use.
 
-## Not covered here
+## 🔻 `ktp-render-banlist` IS covered — corrected 2026-10-07
 
-`ktp-render-banlist.service` has **no** drop-in and is deliberately absent from this set — see its
-TODO card. It is the last unwired unit on the box.
+This section said that unit had **no** drop-in and was *"the last unwired unit on the box"*.
+`scripts/systemd/dropins/ktp-render-banlist.service.d/00-ktp-onfailure-alert.conf` was added by
+`9a29f71` on **2026-08-16** — seven weeks before this correction, and thirteen days before this file
+was last edited, so the claim survived an edit to the file it was wrong in. `ALERT_COVERAGE.md`
+records that unit as alerted on three independent legs.
+
+⛔ **Do not read an inventory section as a measurement.** The sweep this file already prescribes —
+`systemctl show <unit> -p OnFailure --value`, with `hltv-demo-renamer.service` as the control —
+answers it in one call, and nothing else does.
+
+## The alert log is the floor, and it is not a per-unit record
+
+`ktp-systemd-alert` appends every capture to `/var/log/ktp-systemd-alert.log` before the cooldown
+check and before the POST, so a suppressed alert, a dead relay and a rotated journal all still leave
+the failing unit's output on disk. That covers every unit wired here.
+
+What it cannot do is say a run **happened**: it only ever writes on a failure somebody was alerted
+about. A unit whose stdout is its report keeps its own record under its `StateDirectory=` —
+[`../../../docs/runbooks/UNIT_RUN_RECORDS.md`](../../../docs/runbooks/UNIT_RUN_RECORDS.md) has the
+convention and the one unit-file line (`TimeoutStartSec=`) without which a wedged `Type=oneshot`
+never fails and so never reaches either path.
