@@ -111,6 +111,13 @@
 -- the by-design population as defective. That is why its 1.4% is not comparable
 -- to the 2026-09-14 3.1%, and it is the whole reason this file exists.
 --
+-- AN EMPTY-STRING match_id IS NOT THE SAME THING AS NULL, and it gets its own
+-- line rather than being folded into either. The daemon writes the SQL literal
+-- NULL for an untagged sample, so '' can only arrive from a producer that sent
+-- (matchid "") -- and on origin/main that is refused upstream of the INSERT. A
+-- non-zero count there is therefore a finding on its own, not a by-design row,
+-- and it must not be swept into the untagged population where nobody looks.
+--
 -- COLLATION: THE JOIN HAS TWO ANSWERS AND THE CHECKED-IN READERS DISAGREE.
 -- Migration 013 put every KTP table on utf8mb4_unicode_ci, so match_id compares
 -- case-INsensitively unless BINARY is forced. sql/analytics/position_sample_fact.sql
@@ -275,7 +282,8 @@ classified AS (
 d AS (
     SELECT
         SUM(IF(has_match_id, rows_in_pair, 0))                                    AS rows_with_match_id,
-        SUM(IF(has_match_id, 0, rows_in_pair))                                    AS rows_untagged_by_design,
+        SUM(IF(match_id IS NULL, rows_in_pair, 0))                                AS rows_match_id_null,
+        SUM(IF(match_id IS NOT NULL AND match_id = '', rows_in_pair, 0))          AS rows_match_id_empty_string,
         SUM(IF(has_match_id AND NOT match_known, rows_in_pair, 0))                AS orphan_match_rows,
         COUNT(DISTINCT IF(has_match_id AND NOT match_known, match_id, NULL))      AS orphan_match_ids,
         SUM(IF(has_match_id AND match_known AND NOT half_known, rows_in_pair, 0)) AS orphan_half_rows,
@@ -300,12 +308,15 @@ UNION ALL SELECT 10, 'B case_variant_match_ids',     CAST(d.case_variant_match_i
 UNION ALL SELECT 11, 'B orphan_max_id',              CAST(d.orphan_max_id      AS CHAR) FROM d
 UNION ALL SELECT 12, 'B orphan_first_inserted_at',   CAST(d.orphan_min_created AS CHAR) FROM d
 UNION ALL SELECT 13, 'B orphan_last_inserted_at',    CAST(d.orphan_max_created AS CHAR) FROM d
-UNION ALL SELECT 14, 'not_a_defect rows_untagged_by_design', CAST(d.rows_untagged_by_design AS CHAR) FROM d
+UNION ALL SELECT 14, 'not_a_defect rows_match_id_null',  CAST(d.rows_match_id_null AS CHAR) FROM d
+UNION ALL SELECT 15, 'B3 rows_match_id_empty_string',    CAST(d.rows_match_id_empty_string AS CHAR) FROM d
 ORDER BY n;
 
 -- HOW TO READ SECTION D
---   rows_untagged_by_design is printed so it cannot be mistaken for a defect,
---   and so nobody re-derives the 2026-10-05 null-or-zero figure by accident.
+--   rows_match_id_null is printed so it cannot be mistaken for a defect, and so
+--   nobody re-derives the 2026-10-05 null-or-zero figure by accident.
+--   rows_match_id_empty_string above 0 IS a defect, and a different one. It
+--   points at the producer side, not at a missing ktp_matches row.
 --   GAP_per_half_join_loses is what a per-half report silently drops. It is
 --   larger than GAP_per_match_join_loses by construction.
 --   case_variant_match_ids above 0 means BINARY and non-BINARY readers of this
@@ -445,3 +456,15 @@ WHERE p.id > @since_id;
 -- INSERT, so the guarantee lives entirely in the validators above it. Four other
 -- streams share the same expression -- ktp_shot_events, ktp_move_census,
 -- ktp_aim_vis and ktp_flag_state_events -- and this file does not measure them.
+--
+-- A SECOND, INDEPENDENT ORPHAN MECHANISM, from KTPHLStatsX's own service-dev
+-- skill. getProperties' value branch has to be `.*?` -- with `.+?` the lazy
+-- match runs past the closing quote and returns the rest of the log line as the
+-- value, minting a match id no ktp_matches row will ever carry, with nothing
+-- erroring. That is an orphan id of exactly the B1 shape and it arrives from the
+-- parser rather than from the match-context branch, so a fix to one does not
+-- close the other. The same skill records that $g_ktpMatchContext has no
+-- staleness bound and is never cleared on an OT-decided match, so events after
+-- one are tagged to the finished match -- that one mis-attributes to a match
+-- that DOES exist, so it is invisible to both definitions here. Named so the
+-- next reader does not conclude this file covers it.
