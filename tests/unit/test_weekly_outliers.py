@@ -101,3 +101,39 @@ def test_match_anomalies_flag_the_night_not_the_week():
     assert [x["match_id"] for x in out] == ["disaster", "lagcomp"]
     assert out[0]["net_driver"] in ("drops_win", "maxunlag_win")
     assert all(x["match_id"] != "old0" for x in out)  # outside the window, even if extreme
+
+
+def test_recent_change_flags_a_relapse_not_a_chronic_connection():
+    rows = []
+    # Player 1: chronic 60% jitter-worst all season -- no change.
+    rows += [half(1, f"m{i}", 1, start="2026-09-20", jit_share=0.6) for i in range(6)]
+    rows += [half(1, f"n{i}", 1, start="2026-10-05", jit_share=0.6) for i in range(3)]
+    # Player 2: 5% all season, 60% in the last three halves -- a relapse.
+    rows += [half(2, f"m{i}", 1, start="2026-09-20", jit_share=0.05 + 0.01 * (i % 2)) for i in range(6)]
+    rows += [half(2, f"n{i}", 1, start="2026-10-05", jit_share=0.6) for i in range(3)]
+    for p in range(3, 12):
+        rows += [half(p, f"m{i}", 2, start="2026-09-20", jit_share=0.02 + 0.01 * (i % 3)) for i in range(5)]
+    out = wo.recent_change(rows, cutoff="2026-10-01", min_recent=3, min_prior=4)
+    assert [p["player_id"] for p in out] == [2]
+    assert out[0]["change_driver"] == "jit_share"
+    assert out[0]["z_jit_share"] > 2
+
+
+def test_server_offsets_cancel_the_roster():
+    rows = []
+    # Players 1-9 each play two servers; server 7 adds 0.3 to everyone's jitter share, server 8 adds nothing.
+    for p in range(1, 10):
+        base = 0.05 * p
+        rows += [half(p, f"a{i}", 1, server=8, jit_share=base) for i in range(3)]
+        rows += [half(p, f"b{i}", 1, server=7, jit_share=base + 0.3) for i in range(3)]
+    out = {s["server"]: s for s in wo.server_offsets(rows, min_halves=2, min_pairs=8)}
+    assert abs(out[7]["jit_share"] - 0.15) < 1e-9 and abs(out[8]["jit_share"] + 0.15) < 1e-9
+    assert out[7]["pairs"] == 9
+
+
+def test_rank_servers_worst_player_first_and_gaps_last():
+    pings = {(1, 10): 30.0, (2, 10): 90.0, (1, 11): 50.0, (2, 11): 55.0, (1, 12): 10.0}
+    out = wo.rank_servers(pings, [1, 2])
+    assert [r["server"] for r in out] == [11, 10, 12]  # 11: worst 55; 10: worst 90; 12: player 2 unmeasured
+    assert out[2]["missing"] == [2]
+    assert out[1]["worst_pid"] == 2 and out[1]["worst"] == 90.0
