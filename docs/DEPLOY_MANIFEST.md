@@ -120,6 +120,17 @@ reported as clean.
 hand, without `ktp-install`, is in no manifest and is invisible to `--report`.
 `docs/LIVE_SCRIPT_INVENTORY.md` lists what is live and not yet recorded.
 
+⛔ **And that inventory answers a weaker question than this report does, by
+construction: it has no installed bytes to compare, only a commit someone pinned
+once.** `--against-ref` reads the file on the box; nothing in a checkout can.
+`scripts/check-live-script-inventory.py` is the half that *is* checkable from
+here — it verifies each row's md5 against its own pinned blob, and makes a row
+whose source has moved past the pin carry a `SUPERSEDED` token so the inventory
+says which of its rows have gone mute instead of leaving a reader to guess. It
+reports zero verified live claims unless handed an `md5sum` file off a host, and
+it is wired into `config-tests.yml`. A row only stops being `SUPERSEDED` by being
+re-measured on the box — ideally into a manifest here, which is the point.
+
 ## Freshness: `ktp-install --report --repo DIR --against-ref REF`
 
 🔴 **The table above answers "untouched since install", not "current".** They read
