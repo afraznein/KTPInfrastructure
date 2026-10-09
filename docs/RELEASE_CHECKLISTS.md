@@ -2,6 +2,9 @@
 
 Moved out of the stack-root `CLAUDE.md` on 2026-07-27. The **plugin** bump checklist stayed there (short, used constantly); these two are longer and consulted per-release.
 
+> 🔴 **ACTIVATION DAY RULE (operator ruling 2026-10-09): fleet activations happen only on a Monday–Friday morning.** A staged `.new` activates at the 03:00 ET restart of the morning it swaps in, so the rule is judged by the **activation** day, not the staging day — a wave staged Saturday night activates on Sunday (league match day) and is forbidden. **Stage Sunday–Thursday evening only**, and keep fleet config sweeps (`distribute/`, cvars) out of match play the same way.
+> ⛔ **Exception: an emergency patch** (a fix for something broken in production right now) may go out any day, but only as the **operator's named call** — never on an agent's judgment. `stage-wave.py` refuses a Saturday/Sunday activation unless given `--emergency "<reason>"`, and records the reason in the wave ledger.
+
 ### Module / Engine Release Checklist (KTPReHLDS, KTPAMXX, KTPReAPI, KTPAmxxCurl)
 
 **Why this exists:** plugins have the checklist above, which forces a README/CHANGELOG touch on every bump. The C++ layer had no equivalent — it deploys by md5 verification, and docs got updated only when someone remembered. The 2026-07-19 documentation audit found *every* C++ repo had drifted worse than *every* Pawn plugin, including an `extensions.ini` path that was wrong in five files and would silently degrade a server to vanilla HLDS. Step 3 is the leg that was missing.
