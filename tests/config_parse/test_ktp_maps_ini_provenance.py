@@ -3,13 +3,15 @@
 The fleet's map table is owned by `afraznein/KTPDoDServerConfig`. This repo's
 copy is bound into the Docker dev stack by `docker-compose.local.yml` and is the
 default input of `scripts/spatial_map_registry.py`, so it is genuinely loaded —
-but only ever by the dev stack. It was last synced 2026-07-11 and has 32 sections
-to live's 25.
+but only ever by the dev stack. It is a copy of the fleet's file, not a mirror:
+nothing keeps it in sync.
 
 A drifted copy that looks like a source is what sends the next reader to edit the
 file that changes nothing. A header cannot stop that; a failing test can.
 """
 from __future__ import annotations
+
+import re
 
 from .conftest import CONFIG_ROOT
 
@@ -38,3 +40,13 @@ def test_says_it_is_the_dev_profile_and_not_in_sync():
         "the header carried 'MIRROR OF PRODUCTION' for two months after it stopped "
         "being one; it must say plainly that it is not kept in sync"
     )
+
+
+def test_every_bound_config_exists_in_the_dev_stacks_configs_dir():
+    # The dev stack mounts dod-configs/ as dod/configs; a binding to a file not there
+    # is an exec that silently does nothing, so clan mode never arms on that map.
+    configs = CONFIG_ROOT / "local" / "dod-configs"
+    bound = re.findall(r"^\s*config\s*=\s*(\S+)", MAPS_INI.read_text(encoding="utf-8"), re.MULTILINE)
+    assert bound, "no config = lines parsed; the probe is broken, not the file"
+    missing = sorted({name for name in bound if not (configs / name).is_file()})
+    assert not missing, f"config/local/ktp_maps.ini binds configs that do not exist: {missing}"
