@@ -58,6 +58,11 @@ def _isolated_ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("KTP_WAVE_LEDGER_DIR", str(tmp_path / "waves"))
 
 
+@pytest.fixture(autouse=True)
+def _weekday_activation(monkeypatch):
+    monkeypatch.setattr(sw, "weekend_activation", lambda now=None: None)
+
+
 class FakeArtifact:
     """Just the fields the gate reads off deploy-to-fleet's Artifact."""
 
