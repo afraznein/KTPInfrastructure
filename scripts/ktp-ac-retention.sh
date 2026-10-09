@@ -3,7 +3,7 @@
 #
 # The 2026-05-23 weapon-timeline migration promised a "ktp-ac-retention daily
 # cron" that never existed (found in the 2026-07 hardening review, W1-7).
-# This is the canonical implementation. Three sweeps:
+# This is the canonical implementation. Four sweeps:
 #
 #   1. Evidence bundles: /opt/ktp-ac-api/uploads/YYYY-MM-DD/ day-dirs older
 #      than UPLOAD_RETENTION_DAYS. DB session rows (verdicts, review state)
@@ -17,10 +17,16 @@
 #      MySQL (HLStatsX lives on the same instance).
 #   3. Expired session tokens (24h TTL rows were never purged) older than
 #      TOKEN_RETENTION_DAYS past expiry.
+#   4. ktp_net_sessions identity: name + steam_id blanked on rows older than
+#      NET_IDENTITY_RETENTION_DAYS. The only sweep that is an UPDATE rather
+#      than a DELETE -- the operator ruled on 2026-10-08 that the per-connection
+#      netcode metrics are kept indefinitely and only the identity ages out, so
+#      deleting the row would take the measurement with the name. Same
+#      blank-rather-than-delete shape as sweep 1's zip_path.
 #
 # Uses the root MySQL socket (same auth as migrations: `mysql hlstatsx`).
 # Cron: /etc/cron.d/ktp-ac-retention (04:40 ET daily, after ktp-backup).
-# DRY_RUN=1 prints what would be deleted without touching anything.
+# DRY_RUN=1 prints what would be deleted or blanked without touching anything.
 
 set -euo pipefail
 
@@ -39,10 +45,17 @@ WEAPON_RETENTION_DAYS="${WEAPON_RETENTION_DAYS:-365}"
 # its grace now carries the offset between a login and the packaging it keys -- a client
 # retries from when the bundle was written, not from when the session began.
 TOKEN_RETENTION_DAYS="${TOKEN_RETENTION_DAYS:-22}"
+# Ruled 2026-10-08: ktp_net_sessions metrics are kept forever, identity for 90 days. 0 means
+# keep identity forever -- and like UPLOAD_RETENTION_DAYS that guard has to sit at the sweep
+# too, because INTERVAL 0 DAY resolves to NOW() and would blank the whole table.
+NET_IDENTITY_RETENTION_DAYS="${NET_IDENTITY_RETENTION_DAYS:-90}"
 BATCH_SIZE="${BATCH_SIZE:-10000}"
 DRY_RUN="${DRY_RUN:-0}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+# Declared once so the DRY_RUN count and the sweep can never describe different rows.
+net_identity_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND steam_id <> ''"
 
 # ── 1. Upload day-dirs ────────────────────────────────────────────────
 # 0 or unset means RETAIN EVERYTHING. The guard has to be HERE, not only in the
@@ -78,21 +91,22 @@ else
     echo "[$(ts)] ac-retention: WARN $UPLOADS_DIR missing; skipping upload sweep" >&2
 fi
 
-# ── 2 + 3. DB rows, batched ───────────────────────────────────────────
-# Loops until a batch deletes fewer than BATCH_SIZE rows. Each batch is its
+# ── 2 + 3 + 4. DB rows, batched ───────────────────────────────────────
+# Loops until a batch changes fewer than BATCH_SIZE rows. Each batch is its
 # own statement so InnoDB commits between batches and replication/undo stays
-# bounded.
-batched_delete() {
-    local label="$1" sql="$2"
+# bounded. Every table here is InnoDB, so a batch takes row locks and readers
+# are never blocked -- the bound that matters is undo size, not lock scope.
+batched_write() {
+    local label="$1" sql="$2" verb="$3"
     local total=0
     while :; do
-        local deleted
-        deleted=$(mysql hlstatsx -N -e "${sql} LIMIT ${BATCH_SIZE}; SELECT ROW_COUNT();" | tail -1)
-        total=$((total + deleted))
-        [ "$deleted" -lt "$BATCH_SIZE" ] && break
+        local changed
+        changed=$(mysql hlstatsx -N -e "${sql} LIMIT ${BATCH_SIZE}; SELECT ROW_COUNT();" | tail -1)
+        total=$((total + changed))
+        [ "$changed" -lt "$BATCH_SIZE" ] && break
         sleep 1   # breathe between batches; HLStatsX shares this instance
     done
-    echo "[$(ts)] ac-retention: ${label} deleted ${total} row(s)"
+    echo "[$(ts)] ac-retention: ${label} ${verb} ${total} row(s)"
 }
 
 if [ "$DRY_RUN" = "1" ]; then
@@ -100,11 +114,26 @@ if [ "$DRY_RUN" = "1" ]; then
         SELECT CONCAT('DRY_RUN: weapon_hits rows past ${WEAPON_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_ac_weapon_hits    WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY;
         SELECT CONCAT('DRY_RUN: weapon_switches rows past ${WEAPON_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_ac_weapon_switches WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY;
         SELECT CONCAT('DRY_RUN: expired tokens past ${TOKEN_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_ac_session_tokens  WHERE expires_at < NOW() - INTERVAL ${TOKEN_RETENTION_DAYS} DAY;"
+    if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
+        mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: net_sessions identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_net_sessions WHERE ${net_identity_where};"
+    else
+        echo "DRY_RUN: net_sessions identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
+    fi
     exit 0
 fi
 
-batched_delete "weapon_hits"     "DELETE FROM ktp_ac_weapon_hits     WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY"
-batched_delete "weapon_switches" "DELETE FROM ktp_ac_weapon_switches WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY"
-batched_delete "session_tokens"  "DELETE FROM ktp_ac_session_tokens  WHERE expires_at < NOW() - INTERVAL ${TOKEN_RETENTION_DAYS} DAY"
+batched_write "weapon_hits"     "DELETE FROM ktp_ac_weapon_hits     WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY" deleted
+batched_write "weapon_switches" "DELETE FROM ktp_ac_weapon_switches WHERE ingested_at < NOW() - INTERVAL ${WEAPON_RETENTION_DAYS} DAY" deleted
+batched_write "session_tokens"  "DELETE FROM ktp_ac_session_tokens  WHERE expires_at < NOW() - INTERVAL ${TOKEN_RETENTION_DAYS} DAY" deleted
+
+# An UPDATE, not a DELETE: the metrics outlive the identity. The `steam_id <> ''` guard makes
+# the batched loop COMPLETE as well as idempotent -- ROW_COUNT() counts rows CHANGED, so
+# without it batch 2 re-selects rows it already blanked, reports 0, and stops early.
+if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
+    batched_write "net_sessions identity" \
+        "UPDATE ktp_net_sessions SET name = '', steam_id = '' WHERE ${net_identity_where}" blanked
+else
+    echo "[$(ts)] ac-retention: net_sessions identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
+fi
 
 echo "[$(ts)] ac-retention: done"
