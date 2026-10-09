@@ -120,6 +120,30 @@ from people, and none is a verdict on its own:
 A match is **co-occurrence, not intent, and not an accusation.** This is a
 forensic lookup a human reads, deliberately **not** a detector.
 
+## What the table can and cannot answer
+
+A present source does not mean a viewer tried to watch, and an absent one does
+not mean nobody did. Measured 2026-10-09 against a known cast failure:
+
+- **A successful spectator looks exactly like a scanner.** Real viewers query
+  every proxy through the in-game server browser, so of the addresses that
+  actually connected that day the large majority hit 21-24 of the 24 ports and
+  only a few hit exactly one. Neither "a source appears on port X" nor "a source
+  hit exactly one port" shows an attempt to watch on X.
+- **Per-port distinct-source counts barely discriminate.** The first port in scan
+  order normally leads its neighbours by a few sources, so a group's attempts
+  only show as an excess over that lead.
+- **Repeats are invisible.** The hashlimit keeps one row per source per port per
+  hour, so the table cannot count repeated attempts.
+
+What does answer "did viewer X's packets arrive":
+
+- Look up the viewer's public IP with `--ip`. That is an operator lookup; keep
+  the result out of docs and tickets that leave the team.
+- Read the proxy's own journal, `journalctl -u hltv@<port>`, which logs every
+  spectator connect by name. HLTV logs no refuse, full or password lines at all,
+  so a zero there proves nothing about refusals.
+
 ## Verifying a change here
 
 An empty log is the failure mode of every design so far, so never read one as
