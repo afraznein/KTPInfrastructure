@@ -83,6 +83,14 @@ holding it true):
      Stage time is the last moment the base is known, which is why it is a gate
      here and not a reminder in a checklist.
 
+  8. ACTIVATION-DAY GATE. A staged `.new` swaps in at the next 03:00 ET, so the
+     rule is judged by the day it ACTIVATES, not the day it is staged: fleet
+     activations happen Monday-Friday mornings only, and a wave staged Saturday
+     night would swap in on Sunday, a league match day. Refuses when that
+     activation lands on a Saturday or Sunday. `--emergency "<reason>"` is the
+     operator's named call for a fix to something broken in production right
+     now; the reason is written into the wave ledger. Never an agent's judgment.
+
 Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
 permissions are correct), re-verifies md5 24/24, and prints the exact
@@ -131,7 +139,9 @@ import re
 import struct
 import subprocess
 import sys
+import time
 import zlib
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
@@ -208,6 +218,24 @@ def build_stamp(path):
     except Exception:
         return None
     return None
+
+
+def activation_day(now=None):
+    """(epoch, weekday name) of the 03:00 ET swap a stage made at `now` activates on."""
+    now = time.time() if now is None else now
+    epoch = ledger.next_activation(now)
+    if ledger._ET is not None:
+        local = datetime.fromtimestamp(epoch, tz=ledger._ET)
+    else:
+        local = (datetime.fromtimestamp(epoch, tz=timezone.utc)
+                 - timedelta(hours=ledger._et_offset_hours(datetime.fromtimestamp(epoch, tz=timezone.utc))))
+    return epoch, local.strftime("%A")
+
+
+def weekend_activation(now=None):
+    """The weekday name when the next swap lands on Saturday or Sunday, else None."""
+    _, day = activation_day(now)
+    return day if day in ("Saturday", "Sunday") else None
 
 
 def parse_base_pins(values):
@@ -517,6 +545,10 @@ def main():
     ap.add_argument("--allow-unreconciled", action="store_true",
                     help="Skip the row-flip gate (a previous wave activated and its CLAUDE.md row "
                          "is still stale). Fix the row instead -- that clears the gate by itself.")
+    ap.add_argument("--emergency", metavar="REASON",
+                    help="Operator's named call to stage a wave whose swap lands on a Saturday or "
+                         "Sunday (a fix for something broken in production right now). The reason "
+                         "is recorded in the wave ledger. Not for an agent to invoke on its own.")
     ap.add_argument("--preflight-only", action="store_true", help="Run the attribution gate and exit.")
     ap.add_argument("--dry-run", action="store_true", help="Print intent, do not connect to stage.")
     ap.add_argument("--parallel", type=int, default=5)
@@ -546,6 +578,20 @@ def main():
         if unmatched:
             sys.exit(f"FATAL: --ports names {unmatched}, which is not an active instance on "
                      f"{','.join(host_keys)}. Nothing staged.")
+
+    # ---- Activation-day gate (before anything touches the fleet) ----
+    if not args.preflight_only:
+        day = weekend_activation()
+        if args.emergency is not None and not args.emergency.strip():
+            sys.exit("FATAL: --emergency needs a reason. (Nothing staged.)")
+        if day and not args.emergency:
+            sys.exit(f"FATAL: the next 03:00 ET swap is a {day}, a league match day. Fleet "
+                     "activations happen Monday-Friday mornings only: stage Sunday-Thursday "
+                     "evening. An emergency patch needs the operator's named call, then "
+                     '--emergency "<reason>". (Nothing staged.)')
+        if day:
+            print(f"WARNING: --emergency: activating on a {day}: {args.emergency}")
+            print()
 
     # ---- Row-flip gate (before anything touches the fleet) ----
     # The bump checklist's row flip runs AFTER activation, so it depends on
@@ -797,7 +843,8 @@ def main():
                   {s for _, _, b, _, _, s in (saved if args.pull_live else [])
                    if b == a.basename and s}) or None}
              for a in artifacts],
-            hosts=host_keys, targets=len(targets), narrowed=port_filter is not None)
+            hosts=host_keys, targets=len(targets), narrowed=port_filter is not None,
+            emergency=args.emergency.strip() if args.emergency else None)
         print(f"\nWave recorded: {ledger_path}")
     except Exception as ex:
         print(f"\nWARNING: could not record the wave for the row-flip gate: {ex!r}", file=sys.stderr)

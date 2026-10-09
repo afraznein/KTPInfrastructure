@@ -17,9 +17,9 @@ MAPS_INI = ROOT / "config/local/ktp_maps.ini"
 # they must be discovered, and the assertion fails against say-line discovery.
 POOL_MAPS_THE_SAY_LINE_HID = (
     "dod_lennon5_b1",
-    "dod_armory_b6",
-    "dod_saints2_b3e",
-    "dod_railroad2_s9a",
+    "dod_armory_b7",
+    "dod_saints2_b5e",
+    "dod_railroad2_s10a",
     "dod_solitude2",
 )
 
@@ -172,8 +172,8 @@ def test_only_anzio_is_synthetic_ready_and_none_are_competitive_ready():
 
 def test_the_review_queue_leads_with_maps_the_fleet_actually_plays():
     by_map = {item["map_name"]: item for item in real_registry()["maps"]}
-    queue = ("dod_anzio", "dod_lennon5_b1", "dod_armory_b6",
-             "dod_harrington", "dod_saints2_b3e", "dod_thunder2")
+    queue = ("dod_anzio", "dod_lennon5_b1", "dod_armory_b7",
+             "dod_harrington", "dod_saints2_b5e", "dod_thunder2")
     assert [by_map[name]["priority"] for name in queue] == [1, 2, 3, 4, 5, 6]
     assert all(by_map[name]["status"] == "blocked" for name in queue[1:])
 
@@ -203,7 +203,9 @@ def test_cli_writes_machine_and_human_reports(tmp_path):
     assert payload["counts"]["synthetic_ready"] == 1
     assert "dod_anzio | synthetic_ready" in markdown
     assert "dod_lennon5_b1 | blocked" in markdown
-    assert "## Bindings whose match config is missing" in markdown
+    # The section rendered only while the dev profile bound configs it does not ship.
+    assert payload["unresolved_bindings"] == []
+    assert "## Bindings whose match config is missing" not in markdown
     assert "## Match configs no map is bound to" in markdown
 
 

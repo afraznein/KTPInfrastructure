@@ -27,17 +27,17 @@
       "priority": 2,
       "notes": "Most-played map in the pool. It sat here as `dod_lennon_test`, a name no map carries, and the topology claim filed under that name is dropped rather than inherited. Geometry, weights and waypoints unreviewed."
     },
-    "dod_armory_b6": {
+    "dod_armory_b7": {
       "priority": 3,
-      "notes": "Second-most-played map, and missing from this queue entirely until discovery stopped keying on the config say line. Nothing reviewed."
+      "notes": "Second-most-played map, and missing from this queue entirely until discovery stopped keying on the config say line. Listed as dod_armory_b6 until the pool moved to b7. Nothing reviewed."
     },
     "dod_harrington": {
       "priority": 4,
       "notes": "Flag weights must reflect its non-linear first/second layout; bot waypoints are not verified."
     },
-    "dod_saints2_b3e": {
+    "dod_saints2_b5e": {
       "priority": 5,
-      "notes": "It sat here as `dod_saints`, a stock map that is not in the pool, so the linear-topology claim filed under that name is dropped rather than inherited. It is also the only pool map whose BSP authors home flags, so its review cannot assume a neutral-open board."
+      "notes": "It sat here as `dod_saints`, a stock map that is not in the pool, so the linear-topology claim filed under that name is dropped rather than inherited. Listed as dod_saints2_b3e until the pool moved to b5e. It is also the only pool map whose BSP authors home flags, so its review cannot assume a neutral-open board."
     },
     "dod_thunder2": {
       "priority": 6,
