@@ -100,3 +100,78 @@ def test_measure_threads_the_assumed_half_length_into_every_row(tmp_path):
     demo = build_demo(tmp_path, [0.0, 1257.4])
     rows = measure([demo], cli=None, half_seconds=900.0)
     assert [r.half_seconds for r in rows] == [900.0]
+
+
+# --- the engine round clock as the half end -------------------------------------
+
+class FakeCli:
+    """Answers the two queries measure() makes; records the SQL it was sent."""
+
+    def __init__(self, live: str = "", clock: str = ""):
+        self.live, self.clock, self.sent = live, clock, []
+
+    def execute(self, sql: str) -> str:
+        self.sent.append(sql)
+        return self.clock if "round_time_left" in sql else self.live
+
+
+MATCH = "1789953053-CHI1"
+
+
+def test_the_engine_clock_is_the_half_end_and_a_context_live_shift_does_not_move_loss():
+    # The 0.10.176 artifact: context_live 10 s later, demo and engine clock unchanged.
+    early = Coverage(MATCH, 2, "x.dem", track_time=1240.0, live_game_time=95.4, engine_half_end=1292.3)
+    late = Coverage(MATCH, 2, "x.dem", track_time=1240.0, live_game_time=105.4, engine_half_end=1292.3)
+    assert early.end_source == late.end_source == "clock"
+    assert early.half_ends_at == late.half_ends_at == pytest.approx(1292.3)
+    assert late.loss == early.loss == pytest.approx(1292.3 - (1240.0 + DEMO_T0_GAME_TIME))
+
+
+def test_an_overtime_half_needs_no_half_length_override_when_the_clock_is_known():
+    row = Coverage(MATCH, 3, "x.dem", track_time=1497.0, live_game_time=95.4, engine_half_end=1500.0)
+    assert row.loss == pytest.approx(0.0)
+
+
+def test_a_half_without_a_clock_falls_back_to_the_assumed_end_and_says_so():
+    row = Coverage(MATCH, 2, "x.dem", track_time=1289.4, live_game_time=95.4)
+    assert row.end_source == "assumed"
+    assert row.half_ends_at == pytest.approx(95.4 + HALF_SECONDS)
+
+
+def test_measure_takes_the_median_of_score_rows_over_flag_rows_and_context_live(tmp_path):
+    demo = build_demo(tmp_path, [0.0, 1240.0])  # ..._h2-...: match 1789953053-CHI1 half 2
+    clock = "\n".join([
+        f"score\t{MATCH}\t2\t1292.3",
+        f"score\t{MATCH}\t2\t1292.4",
+        f"score\t{MATCH}\t2\t1597.0",   # one late row must not drag the end
+        f"flag\t{MATCH}\t2\t1100.0",    # flag rows are only the fallback
+    ])
+    cli = FakeCli(live=f"{MATCH}\t2\t105.4\n", clock=clock)
+    (row,) = measure([demo], cli=cli)
+    assert row.end_source == "clock"
+    assert row.half_ends_at == pytest.approx(1292.4)
+    assert row.live_game_time == pytest.approx(105.4)
+
+
+def test_measure_uses_flag_state_rows_when_a_half_has_no_score_rows(tmp_path):
+    demo = build_demo(tmp_path, [0.0, 1240.0])
+    cli = FakeCli(live=f"{MATCH}\t2\t105.4\n", clock=f"flag\t{MATCH}\t2\t1292.0\n")
+    (row,) = measure([demo], cli=cli)
+    assert row.half_ends_at == pytest.approx(1292.0)
+
+
+def test_measure_falls_back_to_context_live_when_no_clock_row_exists(tmp_path):
+    demo = build_demo(tmp_path, [0.0, 1240.0])
+    (row,) = measure([demo], cli=FakeCli(live=f"{MATCH}\t2\t95.4\n"))
+    assert row.end_source == "assumed"
+    assert row.half_ends_at == pytest.approx(95.4 + HALF_SECONDS)
+
+
+def test_the_clock_query_drops_an_expired_clock_and_the_no_time_limit_sentinel(tmp_path):
+    # round_time_left 0 is an award after expiry (reads late); -1 is "no time limit".
+    demo = build_demo(tmp_path, [0.0, 1240.0])
+    cli = FakeCli()
+    measure([demo], cli=cli)
+    clock_sql = [q for q in cli.sent if "round_time_left" in q]
+    assert clock_sql and clock_sql[0].count("round_time_left > 0") == 2
+    assert "is_initial = 0" in clock_sql[0]
