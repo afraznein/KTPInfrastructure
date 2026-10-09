@@ -340,7 +340,8 @@ def _publish_new(d: str, stem: str, entry: dict) -> str:
 
 
 def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
-                narrowed: bool = False, staged_at: float | None = None) -> str:
+                narrowed: bool = False, staged_at: float | None = None,
+                emergency: str | None = None) -> str:
     """Write one wave's intent. `artifacts` items: basename, md5, remote_dir, version?, base?
 
     `base` is accepted as None so a hand-recorded or pre-existing wave still
@@ -374,6 +375,7 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
         "hosts": sorted(hosts),
         "targets": targets,
         "narrowed": narrowed,
+        "emergency": emergency,
         "artifacts": [{"basename": a["basename"], "md5": a["md5"].lower(),
                        "remote_dir": a.get("remote_dir", ""), "version": a.get("version"),
                        "base": a.get("base"),
