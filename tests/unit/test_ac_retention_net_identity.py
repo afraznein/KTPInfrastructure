@@ -74,7 +74,7 @@ def limited(stmt):
     verb, table, mid, where, limit = m.groups()
     pick = "SELECT rowid FROM %s WHERE %s LIMIT %s" % (table, where, limit)
     if verb.upper() == "UPDATE":
-        sets = dict(re.findall(r"(\w+)\s*=\s*('(?:[^']|'')*')", mid))
+        sets = dict(re.findall(r"(\w+)\s*=\s*('(?:[^']|'')*'|NULL)", mid))
         if not sets or not mid.upper().startswith("SET"):
             return None
         # ROW_COUNT() on an UPDATE is rows CHANGED, so count only the rows whose
@@ -82,7 +82,8 @@ def limited(stmt):
         cols = list(sets)
         cur = conn.execute("SELECT rowid, %s FROM %s WHERE %s LIMIT %s"
                            % (", ".join(cols), table, where, limit))
-        want = [sets[c].strip("'").replace("''", "'") for c in cols]
+        want = [None if sets[c] == "NULL" else sets[c].strip("'").replace("''", "'")
+                for c in cols]
         rowids = [r[0] for r in cur.fetchall() if list(r[1:]) != want]
         conn.execute("UPDATE %s %s WHERE rowid IN (%s)"
                      % (table, mid, ",".join("?" * len(rowids))), rowids)
@@ -124,8 +125,25 @@ SEED = [
 ]
 
 
-def _seed(db, rows=SEED):
+# Read from information_schema on the data server, 2026-10-09.
+INTERVAL_NAME_COLUMNS = (
+    "lagcomp_first_name", "latency_worst_name", "jitter_worst_name",
+    "maxunlag_excess_worst_name", "shadow_worst_name", "drops_worst_name",
+    "latzero_worst_name", "updates_worst_name", "loss_worst_name",
+    "subinterval_worst_name", "synth_worst_name", "interp_diff_worst_name",
+)
+
+
+def _seed(db, rows=SEED, intervals=()):
     conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE ktp_net_intervals (ts TEXT, latency_worst_ms REAL,"
+                 " latency_worst_slot INT, %s)"
+                 % ", ".join("%s TEXT" % c for c in INTERVAL_NAME_COLUMNS))
+    for offset, latency, slot, names in intervals:
+        cols = ["ts", "latency_worst_ms", "latency_worst_slot", *names]
+        conn.execute("INSERT INTO ktp_net_intervals (%s) VALUES (datetime('now', ?), %s)"
+                     % (", ".join(cols), ", ".join("?" * (len(cols) - 1))),
+                     (offset, latency, slot, *names.values()))
     conn.execute("CREATE TABLE ktp_net_sessions (ts TEXT, name TEXT, steam_id TEXT,"
                  " dur_s INT, latency_avg_ms REAL)")
     for t in ("ktp_ac_weapon_hits", "ktp_ac_weapon_switches"):
@@ -160,7 +178,7 @@ class Run:
         return [r for r in self.sessions() if r[1] == ""]
 
 
-def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1):
+def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1, intervals=()):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "fake_mysql.py").write_text(FAKE_MYSQL, encoding="utf-8")
@@ -178,7 +196,7 @@ def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1):
     db = tmp_path / "hlstatsx.sqlite"
     if db.exists():
         db.unlink()
-    _seed(str(db), rows)
+    _seed(str(db), rows, intervals)
     sql_log = tmp_path / "statements.sql"
     sql_log.write_text("", encoding="utf-8")
 
