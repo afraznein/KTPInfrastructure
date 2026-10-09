@@ -7,6 +7,8 @@
   (md5 `da411a1d0a6ac65b899d0636fa2b1e21`), byte-identical to `afraznein/KTPDoDServerConfig`'s, with no
   lennon2 sections.
   - Below its local-dev header, the file is now a copy of that one: 20 sections instead of 32. The
+    fleet's copy is CRLF and this repo stores `config/local/ktp_maps.ini` as `eol=lf`, so the two
+    match byte for byte only with CR stripped (`6dbf6b00e473d4727356c9bcc69ef051` both ways). The
     2026-09-15 decision to keep the extra entries is reversed, because the pool moved on (`dod_armory_b7`,
     `dod_saints2_b5e`, `dod_railroad2_s10a`) and the old names were what the spatial registry ranked.
   - `config/analytics/spatial_maps/registry.json` re-keys `dod_armory_b6` to `dod_armory_b7` and
