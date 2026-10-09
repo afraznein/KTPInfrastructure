@@ -7,6 +7,10 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/ktp-match-retention.py --apply --days 14
+# Type=oneshot disables the start timeout by default, so a run wedged on a MySQL
+# lock would never fail and never alert. One mysql(1) doing unbatched DELETEs once
+# a day: this is a wedge bound, not a performance budget.
+TimeoutStartSec=30min
 Nice=10
 IOSchedulingClass=idle
 

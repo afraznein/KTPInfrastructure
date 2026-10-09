@@ -345,8 +345,8 @@ and why the weekly audit is the only path that reaches the fleet today, are in
 ## Keeping this true
 
 This document is a snapshot and will rot the way `expected-sysctls.conf` did
-when a key went missing from it — silently, reading as coverage. Two habits keep
-it honest:
+when a key went missing from it — silently, reading as coverage. The habits that
+keep it honest:
 
 - Adding a unit or a timer to the data server means adding a row here in the
   same change, with its detection path named. "It has `OnFailure=`" is a
@@ -360,7 +360,33 @@ it honest:
   default, so a wedged run never exits, `OnFailure=` never fires, and the row
   reads *alerted* about a unit that has silently gone quiet. Measured
   2026-10-07: nine `Type=oneshot` units in `scripts/systemd/`, zero of them
-  setting it.
+  setting it → **closed 2026-10-09: every `Type=oneshot` unit in the repo now
+  either sets `TimeoutStartSec=` or carries a `# no-start-timeout: <reason>`
+  line, held by `tests/unit/test_oneshot_start_timeouts.py`.** ⚠️ **That
+  2026-10-07 sweep was scoped to `scripts/systemd/` and oneshots live outside
+  it**: `scripts/ktp-systemd-alert@.service`,
+  `scripts/ktp-map-coefficients.service` and the pre-move
+  `scripts/ktp-hlstatsx-ingest-monitor.service` were all unbounded and none was
+  in the denominator, so a fix aimed at the directory missed precisely the units
+  that had never moved into it.
+- 🔴 **A wedged `oneshot` reads green on three legs at once, which is why it is
+  a coverage fact and not a unit-file detail.** `activating` is not `failed`, so
+  the `failed-unit:` producer does not see it; the TIMER stays `active`/`enabled`
+  while refusing to re-trigger a job that never finished, so the
+  `CRITICAL_TIMERS` leg does not either; and `OnFailure=` needs an exit.
+  ⛔ **So never read a `CRITICAL_TIMERS` row as cover for the service it
+  starts** — the row is true about the timer and says nothing about the run.
+  `ktp-hltv-liveness` is the sharp case: the watcher built after the 9h48m
+  `Proxy::Init` outage posts through `curl` calls carrying no `--max-time`, on
+  the path it takes only once something is already wrong, and its own wedge
+  would have been invisible to every leg above.
+- ⛔ **`ktp-kernel-reboot.service` is the one deliberate exemption, and bounding
+  it would be worse than the hang.** The script disables its own timer and
+  enables the post-reboot verifier before calling `systemctl reboot`; a SIGTERM
+  inside that window leaves the one-shot permanently disarmed on the old kernel
+  with a verifier armed for someone else's boot. Its real unbounded waits are
+  two `mysql` idle-gate queries, and the place to bound those is the script's own
+  abort path, which already posts and exits 0.
 - Every incident that reaches this estate should end with a row in the table at
   the top of this document. That table is the argument for the whole file: five
   entries, five checks that exist now, and each one built after the outage that

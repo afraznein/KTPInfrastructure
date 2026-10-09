@@ -3,4 +3,7 @@ Description=One-shot kernel reboot (idle-gated)
 
 [Service]
 Type=oneshot
+# no-start-timeout: the script disables its own timer and enables the post-reboot
+# verifier before calling `systemctl reboot`, so a SIGTERM inside that window leaves
+# the one-shot disarmed on the old kernel with a verifier armed for someone else's boot.
 ExecStart=/usr/local/bin/ktp-scheduled-kernel-reboot.sh
