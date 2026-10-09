@@ -2,8 +2,8 @@
 
 Moved out of the stack-root `CLAUDE.md` on 2026-07-27. The **plugin** bump checklist stayed there (short, used constantly); these two are longer and consulted per-release.
 
-> 🔴 **ACTIVATION DAY RULE (operator ruling 2026-10-09): fleet activations happen only on a Monday–Friday morning.** A staged `.new` activates at the 03:00 ET restart of the morning it swaps in, so the rule is judged by the **activation** day, not the staging day — a wave staged Saturday night activates on Sunday (league match day) and is forbidden. **Stage Sunday–Thursday evening only**, and keep fleet config sweeps (`distribute/`, cvars) out of match play the same way.
-> ⛔ **Exception: an emergency patch** (a fix for something broken in production right now) may go out any day, but only as the **operator's named call** — never on an agent's judgment. `stage-wave.py` refuses a Saturday/Sunday activation unless given `--emergency "<reason>"`, and records the reason in the wave ledger.
+> 🔴 **ACTIVATION DAY RULE (operator ruling 2026-10-09): fleet activations happen on a Monday–Saturday morning; SUNDAY is the only forbidden day.** A staged `.new` activates at the 03:00 ET restart of the morning it swaps in, so the rule is judged by the **activation** day, not the staging day — a wave staged Saturday night activates on Sunday, the league match day, and is forbidden — while a Friday-night stage swapping in at Saturday 03:00 is ordinary work, because **Saturday is NOT a match day** and must not be dressed as an emergency. **Stage Sunday–Friday evening**, and keep fleet config sweeps (`distribute/`, cvars) out of match play the same way.
+> ⛔ **Exception: an emergency patch** (a fix for something broken in production right now) may go out any day, but only as the **operator's named call** — never on an agent's judgment. `stage-wave.py` refuses a SUNDAY activation unless given `--emergency "<reason>"`, and records the reason in the wave ledger.
 
 ### Module / Engine Release Checklist (KTPReHLDS, KTPAMXX, KTPReAPI, KTPAmxxCurl)
 
