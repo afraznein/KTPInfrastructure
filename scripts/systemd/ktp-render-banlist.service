@@ -4,4 +4,17 @@ After=network.target ktp-ac-api.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ktp-render-banlist.sh
+StateDirectory=ktp-render-banlist
+# 60-second timer, so a dated record per run would be 1440 files a day of
+# successes nobody opens -- and churn is this unit's own documented hazard. A
+# failing run gets a dated record; a clean one stamps runs/last-ok.txt, which is
+# a "it finished" signal /var/log/ktp-banlist.log cannot be: that log is
+# appended to by a run that died early. docs/runbooks/UNIT_RUN_RECORDS.md.
+Environment=KTP_RUN_RECORD_ONLY_FAILURES=1
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/ktp-render-banlist.sh
+# Type=oneshot disables the start timeout BY DEFAULT. Here that is the mildest
+# of the six -- the health check already keys three legs on this unit's own last
+# exit -- but a wedged render still stops the list updating and says nothing, and
+# a timeout turns it into a failure the drop-in can carry. Generous against the
+# AC API call, and still far under the 15-minute alert cooldown.
+TimeoutStartSec=5min

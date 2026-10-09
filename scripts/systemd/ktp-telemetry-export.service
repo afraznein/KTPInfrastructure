@@ -6,7 +6,17 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ktp-telemetry-export.py
+# This script keeps nothing of its own, so before the wrapper a failing push
+# existed only in the journal. docs/runbooks/UNIT_RUN_RECORDS.md.
+StateDirectory=ktp-telemetry-export
+# Hourly, so a dated record per run is ~720 files at this horizon -- months of
+# history for a push whose empty-window exit is a signal about something else.
+Environment=KTP_RUN_RECORD_KEEP_DAYS=30
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/ktp-telemetry-export.py
+# Type=oneshot disables the start timeout BY DEFAULT, so without this line a
+# wedged push never fails, never fires OnFailure and leaves nothing at all.
+# One rollup query plus one POST, both with their own 60s timeouts.
+TimeoutStartSec=10min
 # Exits non-zero on an HTTP or transport failure AND on an empty window, which
 # fails the unit, which fires the OnFailure drop-in. The empty case is
 # deliberate: it is how a dead ktp-perf-rollup reaches a human, since this
