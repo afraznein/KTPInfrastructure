@@ -99,6 +99,17 @@ RENAMER_STALE_SEC=900
 # systemd watchdog and the cleanup interlock all read healthy while no match
 # window is ever seen. last_read_ok stamps the last clean pass per game host.
 RENAMER_READ_STALE_SEC=1800
+# A page the HLTV liveness check DETECTED but could not deliver. That check exits
+# 4 for it, which marks its unit failed -- but it runs every 5 min and the next
+# run that exits 0/1/2 clears the failure, while this sweep samples hourly. So the
+# failed-unit leg catches a sustained relay outage and misses the common case, a
+# single refused POST, which is what its --fail was added to catch. The check
+# latches the epoch instead and does not clear it on a later success, so the
+# evidence is still here when this sweep arrives. The window exceeds both this
+# cadence and the check's own 3h remind, and self-clears so the item cannot
+# become perpetual.
+LIVENESS_STATE_FILE="${LIVENESS_STATE_FILE:-/var/lib/ktp-hltv-liveness/state}"
+LIVENESS_SEND_FAIL_SEC="${LIVENESS_SEND_FAIL_SEC:-21600}"
 
 # Weekly precache audit, which nothing watched. The audit writes
 # /var/log/ktp-precache-audit-<date>.md on every run; the cron's own .log is
@@ -431,6 +442,26 @@ PY
         fi
     fi
 fi
+
+# >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
+# An HLTV page that was detected and could not be delivered. Keyed on the latched
+# epoch, not on the unit being failed: exit 4 clears at the liveness check's next
+# run, minutes before this hourly sweep looks, so the unit state answers "fine"
+# for the single refused POST that is the common case.
+if [ -r "$LIVENESS_STATE_FILE" ]; then
+    liveness_send_fail=$(sed -n 's/^LAST_SEND_FAIL=\([0-9][0-9]*\)$/\1/p' \
+        "$LIVENESS_STATE_FILE" 2>/dev/null | tail -1)
+    # Absent or unparsable reads as 0 rather than as a fault: an older state file
+    # predates the field, and inventing a page from a missing one would be noise.
+    liveness_send_fail="${liveness_send_fail:-0}"
+    if [ "$liveness_send_fail" -gt 0 ] &&
+       [ $(( $(date +%s) - liveness_send_fail )) -le "$LIVENESS_SEND_FAIL_SEC" ]; then
+        # Fixed token, never the age: the report is a set-diff, so a ticking value
+        # would read as a fresh failure on every hourly run.
+        down+=("hltv-liveness-page=undelivered")
+    fi
+fi
+# <<< ktp-hltv-liveness-page
 
 # >>> ktp-precache-freshness — extracted verbatim by tests/unit/test_health_precache_freshness.py
 # Alert on work DONE, never on process state. The cron sets MAILTO='' and the

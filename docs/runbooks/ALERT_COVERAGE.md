@@ -376,10 +376,59 @@ keep it honest:
   `CRITICAL_TIMERS` leg does not either; and `OnFailure=` needs an exit.
   ⛔ **So never read a `CRITICAL_TIMERS` row as cover for the service it
   starts** — the row is true about the timer and says nothing about the run.
-  `ktp-hltv-liveness` is the sharp case: the watcher built after the 9h48m
-  `Proxy::Init` outage posts through `curl` calls carrying no `--max-time`, on
+  `ktp-hltv-liveness` was the sharp case: the watcher built after the 9h48m
+  `Proxy::Init` outage posted through `curl` calls carrying no `--max-time`, on
   the path it takes only once something is already wrong, and its own wedge
-  would have been invisible to every leg above.
+  would have been invisible to every leg above. Its bounds are in the script now
+  — the pattern below, not the exemption.
+- 🔴 **A bound on the UNIT is not a bound on the alert, so a producer needs both.**
+  `TimeoutStartSec=` kills a wedged run without saying anything, which leaves the
+  matrix reading *alerted* while nothing was delivered. The bound has to live in
+  the script as well, where a failed send can still be reported.
+  `ktp-hltv-liveness.sh` is the worked example: its relay POST and its per-proxy
+  `systemctl is-active` are both bounded, and a fault it detected but could not
+  report exits **4** — deliberately outside that unit's `SuccessExitStatus=0 1 2`,
+  because a forgiven exit would leave the fault with no surface at all.
+- 🔴 **BUT A FAILED UNIT IS A SURFACE WITH A DUTY CYCLE, AND ON ITS OWN IT IS
+  MOSTLY BLIND.** ⛔ **Do not count `exit N` as coverage without comparing the two
+  cadences.** `ktp-hltv-liveness` runs every **5 min** (`OnUnitActiveSec=5min`) and
+  has **no `OnFailure=`**; the next run that exits 0/1/2 clears the failed state;
+  and the only leg that reads `systemctl --failed` is this sweep's `failed-unit:`
+  producer, on an **hourly** cron at **:17**. So the exit is seen for a relay
+  outage that outlives the hour, and **missed for the single refused POST** — which
+  is the common case and the exact case `--fail` exists to catch. 🔑 **The fix is
+  the renamer's, not a louder exit: a durable latch.** The check writes
+  `LAST_SEND_FAIL=<epoch>` into `/var/lib/ktp-hltv-liveness/state` and **does not
+  clear it on a later success**, and this script reads it (`LIVENESS_SEND_FAIL_SEC`,
+  6h) and emits `hltv-liveness-page=undelivered`. The window outruns the hourly
+  sample by design and self-clears so the item cannot go perpetual. ⚠️ **The exit
+  is still worth keeping** — it is the only immediate signal — but it is the weaker
+  half, and the `CRITICAL_TIMERS` row for the timer is cover for neither: that
+  service is in no allowlist.
+- ⚠️ **A send that returns success is not a send that arrived.** `curl -s` exits
+  **0** on an HTTP error, so without `--fail` a page the relay refused is recorded
+  as sent and whatever cooldown the producer keeps is consumed on a message nobody
+  received. ⛔ **Do not read a producer's exit 0 as delivery** unless it checks the
+  outcome. ⚠️ **`--fail` and `-w '%{http_code}'` are NOT equivalent, so do not
+  treat them as interchangeable:** `--fail` keys on **≥400 only**, so a **3xx exits
+  0 with nothing delivered** — the same defect one status class over. Every other
+  outcome-checked producer here uses `-w '%{http_code}'` with an explicit 2xx test,
+  which is strictly stronger.
+  ⚠️ **BOUNDED and OUTCOME-CHECKED are two properties, and most producers have
+  exactly one — do not audit for them together.** Outcome-checked, via
+  `-w '%{http_code}'` and a non-2xx branch that refuses to save state:
+  `ktp-data-server-health.sh`, `ktp-demo-retention.sh`, `ktp-install-freshness.sh`,
+  `ktp-tier2-heartbeat.sh`, `ktp-render-banlist.sh`. Bounded: only
+  `ktp-render-banlist.sh` (`-m 15`) and `ktp-hltv-liveness.sh`. 🔑 **So the
+  delivery check is already widespread and the TIME bound is the thin one** — the
+  reverse of how the line above reads if you take it as one test.
+  The producers that are neither, and post fire-and-forget, carry the full defect
+  today: `hltv-restart-all.sh` — the only other thing that alerts on HLTV at all —
+  `ktp-backup-watchdog.sh`, which prints `(alert sent)` whatever the relay
+  answered, `ktp-post-reboot-verify.sh`, which appends `|| true`, and
+  `ktp-scheduled-kernel-reboot.sh`, which does the same. ⚠️ **The kernel-reboot
+  exemption below is about BOUNDING only** — it does not excuse that producer from
+  the delivery check, and the two are separate properties.
 - ⛔ **`ktp-kernel-reboot.service` is the one deliberate exemption, and bounding
   it would be worse than the hang.** The script disables its own timer and
   enables the post-reboot verifier before calling `systemctl reboot`; a SIGTERM
