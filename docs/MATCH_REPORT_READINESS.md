@@ -132,8 +132,16 @@ Generate the complete KTP match-map inventory with:
 
 ```powershell
 python scripts/spatial_map_registry.py `
-  --output-dir build/spatial-map-readiness
+  --output-dir build/spatial-map-readiness `
+  --database hlstatsx --defaults-extra-file <option-file>
 ```
+
+human_matches is derived, never hand-entered. `--database` counts distinct match
+ids per map in `ktp_capture_manifests` (`--since YYYY-MM-DD` bounds it by
+`event_time`). Without `--database` the count is reported as unknown, not zero,
+and no map can be `competitive_ready`. A `human_matches` typed into
+`registry.json` fails validation, because the typed field read zero on every map
+for weeks while the fleet played dozens of matches on each.
 
 The command inventories maps from `config/local/ktp_maps.ini` — the map-to-config
 bindings KTPMatchHandler itself reads — merges reviewed evidence from
@@ -143,9 +151,9 @@ bindings whose config is missing, and configs whose `say` line names a map they
 do not serve; none of those three is a validation failure.
 `synthetic_ready` requires reviewed overview/flag/
 topology geometry, verified bot waypoints, and five synthetic matches.
-`competitive_ready` additionally requires 20 human matches. At present only
-Anzio is synthetic-ready; no map is competitive-ready. Other maps must not
-inherit Anzio coordinates or objective weights.
+`competitive_ready` additionally requires 20 human matches. Anzio is the only
+map with reviewed geometry, so it is the only one either gate can open for.
+Other maps must not inherit Anzio coordinates or objective weights.
 
 ## Pre-release hardening
 

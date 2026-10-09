@@ -9,7 +9,6 @@
     "objective_topology_reviewed": false,
     "bot_waypoints_verified": false,
     "synthetic_matches": 0,
-    "human_matches": 0,
     "spatial_config": null,
     "notes": "Spatial review has not started."
   },
@@ -21,7 +20,6 @@
       "objective_topology_reviewed": true,
       "bot_waypoints_verified": true,
       "synthetic_matches": 5,
-      "human_matches": 0,
       "spatial_config": "config/analytics/spatial_maps/dod_anzio.json",
       "notes": "The one reviewed reference. It leads the queue for that reason, not for play volume -- three maps are played more."
     },
