@@ -1,0 +1,49 @@
+{
+  "what": "Provenance pin for the vendored copy of the website's shipped map-geometry table.",
+  "upstream_repo": "searse/keep-the-prac",
+  "upstream_visibility": "private",
+  "upstream_path": "src/features/public-match-report/fixtures/map-geometry.json",
+  "upstream_commit": "4dd496f3d55f14e36318b3dbf0eea2b2acf1f96a",
+  "upstream_commit_date": "2026-09-09T16:00:38-04:00",
+  "upstream_commit_subject": "feat: map explorer -- per-match and per-map spatial layers with pan/zoom",
+  "upstream_blob": "a413eaddd8584becbf582562eb3ecfc3ec4448ec",
+  "vendored_file": "map-geometry.json",
+  "bytes": 1473,
+  "sha256_lf": "f4e7c70f65f229a5f08b1dd7fc2846fcfb4799c59589a3e45a900642ade901fa",
+  "sha256_is_over": "the file's bytes with CRLF normalized to LF, so a clone with core.autocrlf=true cannot fail this pin for a line ending nobody changed",
+  "captured_utc": "2026-10-08",
+  "why_vendored": [
+    "This repo is PUBLIC and searse/keep-the-prac is PRIVATE, so no job here holds a credential that can read the upstream path.",
+    "config-tests.yml runs tests/unit/ on every PR with no network and no gh auth, so fetching the table at test time is not available -- not merely slower.",
+    "A committed copy is therefore the only way the PR-time gate can compare against the bytes the site ships."
+  ],
+  "what_this_pin_proves": "That the vendored copy still holds the bytes captured from upstream_blob. The test hashes the file and compares it to sha256_lf, so editing the reference to make a comparison pass fails loudly and names the file.",
+  "what_this_pin_does_NOT_prove": "That upstream still holds these bytes. Nothing reachable from public CI can answer that. If the site's table is hand-edited upstream, this copy goes stale and the suite stays green -- that is the one residual hole, and it is named here rather than papered over.",
+  "drift_directions": {
+    "our config/analytics/spatial_maps/*.json changes": "CAUGHT at PR time -- the derivation no longer reproduces the vendored table and test_the_derivation_reproduces_the_shipped_table fails.",
+    "this vendored copy is edited": "CAUGHT at PR time -- the sha256 self-check fails before any comparison runs.",
+    "a map is dropped from the vendored copy": "CAUGHT at PR time -- the non-vacuity assertions pin the map set, so a shrinking fixture fails instead of silently comparing less.",
+    "upstream fixture is hand-edited in keep-the-prac": "NOT CAUGHT. Refresh this pin with the command below; the deployable table in config/analytics/spatial_maps/ stays authoritative over whatever the payload says."
+  },
+  "verify_upstream_is_unchanged": [
+    "The vendored file is byte-identical to upstream_blob, so git's own object id settles both halves with no hashing:",
+    "  git rev-parse :tests/fixtures/site_map_geometry/map-geometry.json     # this copy -- must equal upstream_blob",
+    "  git -C <keep-the-prac> rev-parse origin/main:<upstream_path>          # upstream today -- must equal upstream_blob",
+    "Run the second from any checkout that can read the private repo. If it differs, upstream moved and this pin is stale: refresh below."
+  ],
+
+  "refresh": [
+    "Run from a checkout that can read the private upstream, e.g. the keep-the-prac clone on the workstation:",
+    "  git -C <keep-the-prac> fetch origin main",
+    "  git -C <keep-the-prac> show origin/main:src/features/public-match-report/fixtures/map-geometry.json > tests/fixtures/site_map_geometry/map-geometry.json",
+    "  git -C <keep-the-prac> rev-parse origin/main:src/features/public-match-report/fixtures/map-geometry.json   # -> upstream_blob",
+    "  git -C <keep-the-prac> log -1 --format=%H origin/main -- src/features/public-match-report/fixtures/map-geometry.json   # -> upstream_commit",
+    "  python -c \"import hashlib;b=open('tests/fixtures/site_map_geometry/map-geometry.json','rb').read();print(len(b),hashlib.sha256(b.replace(b'\\r\\n',b'\\n')).hexdigest())\"   # -> bytes, sha256_lf",
+    "Then update every field above in the same commit as the refreshed bytes. A refresh that moves the bytes without moving sha256_lf fails the suite, which is the intended order of operations."
+  ],
+  "coverage_caveat": {
+    "dod_anzio": "registry.json marks all four review flags true. The equality is meaningful in both directions.",
+    "dod_thunder2": "registry.json leaves all four review flags at their false defaults and records no matches. The equality proves the shipped table matches the generator; it does NOT prove either is right for that map.",
+    "dod_lennon5_b1": "Shipped by the site, but this repo has no spatial_config for it and the generator cannot make one without ktp_flag_positions rows. Deferred by operator ruling 2026-10-08; it is asserted as shipped-but-unconfigured rather than silently skipped."
+  }
+}
