@@ -303,7 +303,13 @@ def test_a_relay_that_never_answers_is_bounded_and_still_reports(box):
     elapsed = time.monotonic() - start
     assert elapsed < 20, f"the relay POST was not bounded: {elapsed:.0f}s"
     assert second.returncode == 4, second.stderr
-    assert "FAILED (curl exit 28)" in second.stderr
+    # A timeout is reported as UNKNOWN, not as a refusal: the relay fronts Discord
+    # and may already have forwarded the page, so "not delivered" would be a guess
+    # curl cannot support. It still withholds the LAST_ALERT stamp and still
+    # exits 4 -- an unknown delivery is treated as a lost one.
+    assert "TIMED OUT after 2s" in second.stderr
+    assert "delivery UNKNOWN" in second.stderr
+    assert "not delivered there" not in second.stderr, "a timeout was called a refusal"
     assert payloads(box) == []
 
 
@@ -340,6 +346,85 @@ def test_an_undelivered_all_clear_keeps_the_state_so_it_retries(box):
     assert payloads(box)[-1]["embeds"][0]["title"] == "✅ HLTV proxies recovered"
 
 
+def sendfail(box):
+    m = re.search(r"LAST_SEND_FAIL=(\d+)", box["state_file"].read_text())
+    return int(m.group(1)) if m else None
+
+
+def test_a_lost_page_is_latched_durably_and_survives_the_next_success(box):
+    """exit 4 is a ~5-minute surface and the only sweep that reads failed units is
+    hourly, so the exit alone is a 5-in-60 sample of the common case. The latch is
+    what the sweep can actually find, and the recovery write is the one that would
+    otherwise erase it -- so the test follows a lost page all the way through a
+    delivered all-clear."""
+    one_proxy_stale(box)
+    box["env"]["FAKE_CURL_HTTP"] = "503"
+    run(box, LIVENESS)
+    assert run(box, LIVENESS).returncode == 4
+    lost_at = sendfail(box)
+    assert lost_at and lost_at > 0, "the lost page left no durable record"
+
+    # The next run delivers. The unit stops being failed here; the latch must not.
+    box["env"]["FAKE_CURL_HTTP"] = "200"
+    assert run(box, LIVENESS).returncode == 1
+    assert sendfail(box) == lost_at, "a delivered page erased the record of the lost one"
+
+    # And the recovery write, which rewrites the whole file.
+    all_fresh(box)
+    assert run(box, LIVENESS).returncode == 0
+    assert sendfail(box) == lost_at, "the recovery write erased the lost-page record"
+
+
+def test_a_healthy_run_latches_nothing(box):
+    """The other direction: the latch must stay 0 when every page landed, or the
+    hourly sweep reports an undelivered page forever."""
+    one_proxy_stale(box)
+    liveness_twice(box)
+    assert payloads(box), "no page was delivered, so this proves nothing"
+    assert sendfail(box) == 0
+
+
+def test_the_relay_conf_cannot_rewrite_this_runs_verdict(box):
+    """$CONF is sourced inside send_alert, so it lands AFTER the guards are set.
+    Measured before the allowlist: ALERT_FAILED=1 in the conf exited 4 on a
+    DELIVERED page, every cadence; FAILS=0 stopped the counter ever reaching the
+    threshold again. The conf is operator-edited, so this is a mis-edit away."""
+    for inject, label in (("ALERT_FAILED=1", "a delivered page escalating to exit 4"),
+                          ("FAILS=0", "the failure counter being reset"),
+                          ("LAST_ALERT=9999999999", "the remind window being frozen")):
+        box["conf"].write_text(
+            "RELAY_URL=http://relay.invalid\nAUTH_SECRET=x\n"
+            f"CHANNEL_HLTV_STATUS=1\n{inject}\n", newline="\n")
+        for f in box["state"].iterdir():
+            f.unlink()
+        box["curl_log"].unlink(missing_ok=True)
+        one_proxy_stale(box)
+        run(box, LIVENESS)
+        second = run(box, LIVENESS)
+        assert payloads(box), f"{inject}: the page was not delivered, so this proves nothing"
+        assert second.returncode == 1, f"{inject}: {label}"
+        assert "FAILS=2" in box["state_file"].read_text(), f"{inject}: {label}"
+        m = re.search(r"LAST_ALERT=(\d+)", box["state_file"].read_text())
+        assert m and int(m.group(1)) > 0, f"{inject}: {label}"
+        assert abs(int(m.group(1)) - time.time()) < 300, f"{inject}: {label}"
+
+
+def test_an_unanswered_ss_does_not_blame_24_healthy_proxies(box):
+    """A dead probe used to render as `24 of 24 proxies are not bound` plus
+    `systemd may still report active`, sending the operator to inspect 24 healthy
+    proxies for a wrapper/binary split that is not there. The severity was right
+    and the cause was wrong."""
+    all_fresh(box)
+    box["env"].update(FAKE_SS_HANG="1", SS_SECONDS="1")
+    second = liveness_twice(box)
+    assert second.returncode == 1, second.stderr
+    (alert,) = payloads(box)
+    desc = alert["embeds"][0]["description"]
+    assert "did not answer" in desc and "UNKNOWN, not known-bad" in desc
+    assert "the binary can die while the wrapper survives" not in desc, "still blames the wrapper"
+    assert "proxies are not bound" not in desc, "still enumerates ports it never observed"
+
+
 def test_a_slow_but_answering_relay_is_still_delivered(box):
     """The other direction, and the one a bound gets wrong: a POST that is slow but
     inside the budget must still land and still stamp the remind window. Sized too
@@ -357,15 +442,29 @@ def test_a_slow_but_answering_relay_is_still_delivered(box):
 
 
 def test_the_bounds_do_not_fire_on_tools_that_answer_normally(box):
-    """The no-op control for the three `timeout` wrappers. With nothing hanging,
-    a healthy fleet must still read healthy -- a bound that fires here would page
-    on every cadence, and `timeout` exits 124 only when it actually killed."""
+    """The no-op control for all three `timeout` wrappers. A bound that fires on a
+    tool that answered pages on every cadence, and `timeout` exits 124 only when
+    it actually killed. The healthy-fleet leg below never reaches the per-proxy
+    `is-active` wrapper -- MISSING is empty, so the alert block does not run --
+    which is why the unbound-proxy leg is here too."""
     all_fresh(box)
     box["env"].update(SYSTEMCTL_SECONDS="1", SS_SECONDS="1")
     r = liveness_twice(box)
     assert r.returncode == 0, r.stderr
     assert payloads(box) == []
     assert "did not answer" not in r.stderr
+
+    # One proxy down, so the is-active wrapper IS exercised under a 1s bound. It
+    # is asserted in the embed, not stderr: that is where the string is written.
+    for f in box["state"].iterdir():
+        f.unlink()
+    box["env"]["FAKE_BOUND"] = " ".join(p for p in PORTS if p != "27035")
+    demo(box, "27035", 3 * 3600)
+    assert liveness_twice(box).returncode == 1
+    (alert,) = payloads(box)
+    desc = alert["embeds"][0]["description"]
+    assert "port 27035 — unit: active" in desc, desc
+    assert "did not answer" not in desc, "a bound fired on a systemctl that answered"
 
 
 def test_a_set_but_empty_channel_is_not_a_silent_success(box):
@@ -415,7 +514,12 @@ def test_an_external_channel_failing_alone_does_not_re_page_the_primary(box):
     assert second.returncode == 1, second.stderr
     assert "channel 2 FAILED" in second.stderr
     assert "channel 1 FAILED" not in second.stderr
-    assert "LAST_ALERT=0" not in box["state_file"].read_text()
+    # Asserted as a number, not as "not LAST_ALERT=0": the string form passes for
+    # any value at all, including garbage that would later make the -eq test emit
+    # "integer expression expected" and silently evaluate false.
+    m = re.search(r"LAST_ALERT=(\d+)", box["state_file"].read_text())
+    assert m and int(m.group(1)) > 0 and abs(int(m.group(1)) - time.time()) < 300
+    assert sendfail(box) == 0, "the primary landed, so nothing should be latched"
     assert [p["channelId"] for p in payloads(box)] == ["1"]
 
 
@@ -463,8 +567,11 @@ def test_an_ss_that_never_answers_pages_rather_than_hanging(box):
     assert time.monotonic() - start < 25, "the ss dump was not bounded"
     assert second.returncode == 1, second.stderr
     (alert,) = payloads(box)
+    # It still pages -- a probe that cannot answer is not healthy. What it must
+    # NOT do is state 24 proxies as observed-down; that wording is asserted by
+    # test_an_unanswered_ss_does_not_blame_24_healthy_proxies.
     assert alert["embeds"][0]["title"] == "🔴 HLTV proxy DOWN"
-    assert f"**{len(PORTS)} of {len(PORTS)}** proxies are not bound" in alert["embeds"][0]["description"]
+    assert f"exit {124}" in alert["embeds"][0]["description"], "the kill is not named"
 
 
 # -- restart: active is not connected -----------------------------------------

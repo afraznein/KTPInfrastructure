@@ -388,14 +388,32 @@ keep it honest:
   `ktp-hltv-liveness.sh` is the worked example: its relay POST and its per-proxy
   `systemctl is-active` are both bounded, and a fault it detected but could not
   report exits **4** — deliberately outside that unit's `SuccessExitStatus=0 1 2`,
-  because a forgiven exit would leave the fault with no surface at all. The leg
-  that then sees it is the `failed-unit:` catch-all, not the `CRITICAL_TIMERS`
-  row for its timer: that service is in no allowlist.
+  because a forgiven exit would leave the fault with no surface at all.
+- 🔴 **BUT A FAILED UNIT IS A SURFACE WITH A DUTY CYCLE, AND ON ITS OWN IT IS
+  MOSTLY BLIND.** ⛔ **Do not count `exit N` as coverage without comparing the two
+  cadences.** `ktp-hltv-liveness` runs every **5 min** (`OnUnitActiveSec=5min`) and
+  has **no `OnFailure=`**; the next run that exits 0/1/2 clears the failed state;
+  and the only leg that reads `systemctl --failed` is this sweep's `failed-unit:`
+  producer, on an **hourly** cron at **:17**. So the exit is seen for a relay
+  outage that outlives the hour, and **missed for the single refused POST** — which
+  is the common case and the exact case `--fail` exists to catch. 🔑 **The fix is
+  the renamer's, not a louder exit: a durable latch.** The check writes
+  `LAST_SEND_FAIL=<epoch>` into `/var/lib/ktp-hltv-liveness/state` and **does not
+  clear it on a later success**, and this script reads it (`LIVENESS_SEND_FAIL_SEC`,
+  6h) and emits `hltv-liveness-page=undelivered`. The window outruns the hourly
+  sample by design and self-clears so the item cannot go perpetual. ⚠️ **The exit
+  is still worth keeping** — it is the only immediate signal — but it is the weaker
+  half, and the `CRITICAL_TIMERS` row for the timer is cover for neither: that
+  service is in no allowlist.
 - ⚠️ **A send that returns success is not a send that arrived.** `curl -s` exits
   **0** on an HTTP error, so without `--fail` a page the relay refused is recorded
   as sent and whatever cooldown the producer keeps is consumed on a message nobody
-  received. ⛔ **Do not read a producer's exit 0 as delivery** unless it checks
-  `--fail` or `-w '%{http_code}'`.
+  received. ⛔ **Do not read a producer's exit 0 as delivery** unless it checks the
+  outcome. ⚠️ **`--fail` and `-w '%{http_code}'` are NOT equivalent, so do not
+  treat them as interchangeable:** `--fail` keys on **≥400 only**, so a **3xx exits
+  0 with nothing delivered** — the same defect one status class over. Every other
+  outcome-checked producer here uses `-w '%{http_code}'` with an explicit 2xx test,
+  which is strictly stronger.
   ⚠️ **BOUNDED and OUTCOME-CHECKED are two properties, and most producers have
   exactly one — do not audit for them together.** Outcome-checked, via
   `-w '%{http_code}'` and a non-2xx branch that refuses to save state:
@@ -407,7 +425,10 @@ keep it honest:
   The producers that are neither, and post fire-and-forget, carry the full defect
   today: `hltv-restart-all.sh` — the only other thing that alerts on HLTV at all —
   `ktp-backup-watchdog.sh`, which prints `(alert sent)` whatever the relay
-  answered, and `ktp-post-reboot-verify.sh`, which appends `|| true`.
+  answered, `ktp-post-reboot-verify.sh`, which appends `|| true`, and
+  `ktp-scheduled-kernel-reboot.sh`, which does the same. ⚠️ **The kernel-reboot
+  exemption below is about BOUNDING only** — it does not excuse that producer from
+  the delivery check, and the two are separate properties.
 - ⛔ **`ktp-kernel-reboot.service` is the one deliberate exemption, and bounding
   it would be worse than the hang.** The script disables its own timer and
   enables the post-reboot verifier before calling `systemctl reboot`; a SIGTERM

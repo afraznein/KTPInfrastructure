@@ -32,14 +32,46 @@ the bounds inside the script, sized to fire first and report.
   for one cadence. Every conf key is read with `:-` now.
 - **`exit 4` means detected, could not report.** It is withheld from the unit's
   `SuccessExitStatus` on purpose: 1 and 2 are forgiven because the script says what happened
-  itself, and saying so is the one thing this case cannot do. The failed unit is then the
-  surface, reached by the `failed-unit:` producer in `ktp-data-server-health.sh`, which is a
-  catch-all rather than an allowlist. ⛔ The `CRITICAL_TIMERS` row for `ktp-hltv-liveness.timer`
-  is not cover for it — the service is in no allowlist, and that row is true about the timer.
+  itself, and saying so is the one thing this case cannot do.
+- 🔴 **But a failed unit turned out to be a ~5-in-60 surface, so `exit 4` ALONE would have been
+  a coverage claim that was mostly false.** The check runs every 5 min, has no `OnFailure=`, and
+  the next run exiting 0/1/2 clears the failed state — while the only leg that reads
+  `systemctl --failed` is the hourly `:17` cron in `ktp-data-server-health.sh`. That catches a
+  sustained relay outage and misses the single refused POST, which is the common case and the
+  one `--fail` was added for. ➡️ **So the real surface is a durable latch, the renamer's pattern:**
+  `LAST_SEND_FAIL=<epoch>` is written into the liveness state file and **is not cleared by a
+  later success or by the recovery write**, and a new leg in `ktp-data-server-health.sh` reads it
+  for 6h and emits the fixed token `hltv-liveness-page=undelivered`. The window outruns the
+  hourly sample by design and self-clears, so the item cannot become perpetual. ⚠️ **The spool
+  was the obvious alternative and was rejected for cause:** `ktp_alert_spool_line` writes to
+  `ops-daily.jsonl`, and `drain_digest_lines` has **no caller** and no cron or timer drains that
+  lane — a line there would be a durable record nothing reads. ⛔ The `CRITICAL_TIMERS` row for
+  `ktp-hltv-liveness.timer` is cover for neither surface: the service is in no allowlist, and
+  that row is true about the timer.
+- 🔑 **The conf is read through an allowlist now, because `. "$CONF"` could rewrite the verdict.**
+  It is sourced inside `send_alert`, which runs after the guards are set, and it is
+  operator-edited. Measured: `ALERT_FAILED=1` in `discord-relay.conf` exited **4 on a DELIVERED
+  page**, every cadence; `FAILS=0` stopped the counter ever reaching the threshold again. Only
+  the four keys the send needs now cross into the script.
+- ⚠️ **A `--max-time` abort is reported as UNKNOWN, not as a refusal.** Exit 22 is a known
+  non-delivery; exit 28 means we gave up, and the relay fronts Discord and may already have
+  forwarded it. Both still withhold the `LAST_ALERT` stamp and still exit 4 — an unknown
+  delivery is treated as a lost one — but the log no longer asserts a fact curl cannot support.
+- ⚠️ **An unanswered `ss` no longer blames 24 healthy proxies.** Its rc is captured like the
+  enumeration's, and the page says the bound-port probe did not answer and that proxy state is
+  unknown. It used to render `24 of 24 proxies are not bound` next to *the binary can die while
+  the wrapper survives* — right about severity, wrong about cause, and the wrong thing to hand
+  someone at 03:00.
+- **The enumeration rc is now checked unconditionally, not only on an empty set.** A kill that
+  still emitted some units would have passed the fail-closed gate and silently narrowed the
+  fleet being watched. `timeout` also gets `-k 2s` at all three sites — which closes the
+  ignores-TERM case, not a true uninterruptible wait; the comments say so rather than implying
+  the bound is absolute.
 - **A lost all-clear no longer clears the state.** The all-clear is the only message that ends a
   page; writing `FAILS=0` after an undelivered one left the page open with nothing able to close
   it. State is left alone and the next run retries.
-- ⚠️ **The per-proxy demo scan is deliberately left unbounded, and the script says so.** It is a
+- ⚠️ **The per-proxy demo scan is deliberately left unbounded, and now the script says so too
+  (it did not when this was first written).** It is a
   `-maxdepth 1` read of a local directory, and a bound there is the one that could manufacture a
   false *not recording* out of a merely slow scan — the false-alarm direction the start-timeout
   work warned about. The 4min backstop covers the pathological case instead.
