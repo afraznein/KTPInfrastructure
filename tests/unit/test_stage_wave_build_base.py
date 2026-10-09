@@ -60,7 +60,7 @@ def _isolated_ledger(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _weekday_activation(monkeypatch):
-    monkeypatch.setattr(sw, "weekend_activation", lambda now=None: None)
+    monkeypatch.setattr(sw, "match_day_activation", lambda now=None: None)
 
 
 class FakeArtifact:

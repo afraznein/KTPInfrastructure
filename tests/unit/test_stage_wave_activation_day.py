@@ -1,7 +1,8 @@
-"""stage-wave.py refuses a wave whose 03:00 ET swap lands on a Saturday or Sunday.
+"""stage-wave.py refuses a wave whose 03:00 ET swap lands on a Sunday.
 
 The rule is judged by activation day: Saturday evening activates Sunday morning
-(forbidden), Sunday evening activates Monday morning (fine). The clock is passed
+(forbidden), Sunday evening activates Monday morning (fine), and Friday evening
+activates Saturday morning (fine -- Saturday is not a match day). The clock is passed
 in, so nothing here depends on when the suite runs.
 """
 
@@ -45,23 +46,24 @@ def at(y, m, d, hh, mm=0):
 
 # 2026-10-10 is a Saturday.
 def test_saturday_evening_stage_activates_sunday_and_is_flagged():
-    assert sw.weekend_activation(at(2026, 10, 10, 21)) == "Sunday"
+    assert sw.match_day_activation(at(2026, 10, 10, 21)) == "Sunday"
 
 
 def test_sunday_evening_stage_activates_monday_and_is_not_flagged():
-    assert sw.weekend_activation(at(2026, 10, 11, 21)) is None
+    assert sw.match_day_activation(at(2026, 10, 11, 21)) is None
 
 
-def test_friday_evening_stage_activates_saturday_and_is_flagged():
-    assert sw.weekend_activation(at(2026, 10, 9, 21)) == "Saturday"
+def test_friday_evening_stage_activates_saturday_and_is_allowed():
+    # The window the 2026-10-09 correction granted: Saturday is not a match day.
+    assert sw.match_day_activation(at(2026, 10, 9, 21)) is None
 
 
 def test_early_saturday_before_the_swap_activates_the_same_morning():
-    assert sw.weekend_activation(at(2026, 10, 10, 1)) == "Saturday"
+    assert sw.match_day_activation(at(2026, 10, 10, 1)) is None
 
 
 def test_thursday_evening_is_fine():
-    assert sw.weekend_activation(at(2026, 10, 8, 21)) is None
+    assert sw.match_day_activation(at(2026, 10, 8, 21)) is None
 
 
 def test_ledger_stores_the_emergency_reason(tmp_path, monkeypatch):

@@ -85,9 +85,9 @@ holding it true):
 
   8. ACTIVATION-DAY GATE. A staged `.new` swaps in at the next 03:00 ET, so the
      rule is judged by the day it ACTIVATES, not the day it is staged: fleet
-     activations happen Monday-Friday mornings only, and a wave staged Saturday
-     night would swap in on Sunday, a league match day. Refuses when that
-     activation lands on a Saturday or Sunday. `--emergency "<reason>"` is the
+     activations happen Monday-Saturday mornings, and a wave staged Saturday
+     night would swap in on Sunday, the one league match day. Refuses when that
+     activation lands on a Sunday. `--emergency "<reason>"` is the
      operator's named call for a fix to something broken in production right
      now; the reason is written into the wave ledger. Never an agent's judgment.
 
@@ -232,10 +232,15 @@ def activation_day(now=None):
     return epoch, local.strftime("%A")
 
 
-def weekend_activation(now=None):
-    """The weekday name when the next swap lands on Saturday or Sunday, else None."""
+def match_day_activation(now=None):
+    """The weekday name when the next swap lands on league match day, else None.
+
+    Sunday only. Saturday is NOT a match day (operator, 2026-10-09), so a Friday-night
+    stage activating Saturday 03:00 is ordinary and must not need --emergency. Naming
+    this `weekend_*` was the bug: it read as both weekend days and enforced both.
+    """
     _, day = activation_day(now)
-    return day if day in ("Saturday", "Sunday") else None
+    return day if day == "Sunday" else None
 
 
 def parse_base_pins(values):
@@ -546,8 +551,9 @@ def main():
                     help="Skip the row-flip gate (a previous wave activated and its CLAUDE.md row "
                          "is still stale). Fix the row instead -- that clears the gate by itself.")
     ap.add_argument("--emergency", metavar="REASON",
-                    help="Operator's named call to stage a wave whose swap lands on a Saturday or "
-                         "Sunday (a fix for something broken in production right now). The reason "
+                    help="Operator's named call to stage a wave whose swap lands on a Sunday, "
+                         "the league match day (a fix for something broken in production right "
+                         "now). The reason "
                          "is recorded in the wave ledger. Not for an agent to invoke on its own.")
     ap.add_argument("--preflight-only", action="store_true", help="Run the attribution gate and exit.")
     ap.add_argument("--dry-run", action="store_true", help="Print intent, do not connect to stage.")
@@ -581,12 +587,12 @@ def main():
 
     # ---- Activation-day gate (before anything touches the fleet) ----
     if not args.preflight_only:
-        day = weekend_activation()
+        day = match_day_activation()
         if args.emergency is not None and not args.emergency.strip():
             sys.exit("FATAL: --emergency needs a reason. (Nothing staged.)")
         if day and not args.emergency:
-            sys.exit(f"FATAL: the next 03:00 ET swap is a {day}, a league match day. Fleet "
-                     "activations happen Monday-Friday mornings only: stage Sunday-Thursday "
+            sys.exit(f"FATAL: the next 03:00 ET swap is a {day}, the league match day. Fleet "
+                     "activations happen Monday-Saturday mornings: stage Sunday-Friday "
                      "evening. An emergency patch needs the operator's named call, then "
                      '--emergency "<reason>". (Nothing staged.)')
         if day:
