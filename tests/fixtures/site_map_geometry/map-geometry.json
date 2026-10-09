@@ -1,0 +1,128 @@
+{
+ "dod_anzio": {
+  "geometry_version": "goldsrc_spectator_v1-4640b7dfd7ce",
+  "dimensions": {
+   "height": 768,
+   "width": 1024
+  },
+  "world_to_pixel": [
+   [
+    0,
+    -0.13875,
+    563.7149
+   ],
+   [
+    -0.13875,
+    0,
+    426.604575
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "pixel_to_world": [
+   [
+    0,
+    -7.20720720721,
+    3074.62756757
+   ],
+   [
+    -7.20720720721,
+    0,
+    4062.81009009
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "technical_validation": "passed"
+ },
+ "dod_lennon5_b1": {
+  "geometry_version": "goldsrc_spectator_v1-fbffa6ad1334",
+  "dimensions": {
+   "height": 768,
+   "width": 1024
+  },
+  "world_to_pixel": [
+   [
+    0,
+    -0.1425,
+    570.2825
+   ],
+   [
+    -0.1425,
+    0,
+    353.0775
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "pixel_to_world": [
+   [
+    0,
+    -7.01754385965,
+    2477.73684211
+   ],
+   [
+    -7.01754385965,
+    0,
+    4001.98245614
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "technical_validation": "passed"
+ },
+ "dod_thunder2": {
+  "geometry_version": "goldsrc_spectator_v1-351fb0ba405a",
+  "dimensions": {
+   "height": 768,
+   "width": 1024
+  },
+  "world_to_pixel": [
+   [
+    0,
+    -0.14375,
+    532.697125
+   ],
+   [
+    -0.14375,
+    0,
+    370.2
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "pixel_to_world": [
+   [
+    0,
+    -6.95652173913,
+    2575.30434783
+   ],
+   [
+    -6.95652173913,
+    0,
+    3705.71913043
+   ],
+   [
+    0,
+    0,
+    1
+   ]
+  ],
+  "technical_validation": "passed"
+ }
+}
