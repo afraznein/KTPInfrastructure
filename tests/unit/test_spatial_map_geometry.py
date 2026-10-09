@@ -147,6 +147,57 @@ class NonVacuity(unittest.TestCase):
                          "refresh the pin.")
 
 
+class RegistryPending(unittest.TestCase):
+    """The pool maps this equality does NOT cover are named here, so they are
+    pending rather than silently absent. Each assertion fails when a map gains a
+    config or a review, which is the point: arriving work has to be noticed."""
+
+    REVIEW_FLAGS = ("overview_transform_reviewed", "flag_geometry_reviewed",
+                    "objective_topology_reviewed", "bot_waypoints_verified")
+
+    def registry(self):
+        path = SPATIAL_MAPS / "registry.json"
+        registry = json.loads(path.read_text(encoding="utf-8-sig"))
+        self.assertTrue(registry.get("maps"), f"no maps in {path}")
+        return registry
+
+    def reviewed(self, entry, registry):
+        defaults = registry.get("defaults", {})
+        return {flag for flag in self.REVIEW_FLAGS
+                if entry.get(flag, defaults.get(flag, False))}
+
+    def test_the_maps_without_a_config_are_named_as_pending(self):
+        registry = self.registry()
+        pending = {name for name, entry in registry["maps"].items()
+                   if not entry.get("spatial_config")}
+        self.assertEqual(
+            pending,
+            {"dod_lennon5_b1", "dod_armory_b6", "dod_harrington", "dod_saints2_b3e"},
+            "the set of pool maps with no spatial_config moved. A map that gained one "
+            "belongs in the equality above; a map that lost one needs saying out loud.")
+        for name in sorted(pending):
+            self.assertEqual(self.reviewed(registry["maps"][name], registry), set(),
+                             f"{name} has no config yet reports a review")
+
+    def test_the_configured_maps_are_the_ones_compared(self):
+        registry = self.registry()
+        configured = {name for name, entry in registry["maps"].items()
+                      if entry.get("spatial_config")}
+        self.assertEqual(configured, set(COMPARABLE),
+                         "registry.json and the comparison disagree about which maps have "
+                         "an overview to check")
+
+    def test_only_anzio_is_reviewed_so_equality_is_not_read_as_a_review(self):
+        """Pins the caveat instead of leaving it in prose: on dod_thunder2 the
+        equality proves the shipped table matches the generator, not that either is
+        right for that map. If that map is reviewed later, this test says so."""
+        registry = self.registry()
+        fully_reviewed = {name for name, entry in registry["maps"].items()
+                          if self.reviewed(entry, registry) == set(self.REVIEW_FLAGS)}
+        self.assertEqual(fully_reviewed, {"dod_anzio"})
+        self.assertEqual(self.reviewed(registry["maps"]["dod_thunder2"], registry), set())
+
+
 class ShippedTable(unittest.TestCase):
 
     def assertMatrixEqual(self, derived, expected, label):

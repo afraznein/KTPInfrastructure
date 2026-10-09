@@ -31,6 +31,11 @@ sha256.
   the equality proves the shipped table matches the generator and **not** that either is right
   for that map. `dod_lennon5_b1` ships on the site with no config here; it is asserted as
   shipped-but-unconfigured rather than skipped, and stays deferred until a capture exists.
+- The pool maps the equality does not cover are named as pending rather than left silently absent:
+  `registry.json`'s set of maps with no `spatial_config` is pinned, each is asserted to claim no
+  review, and the configured set must equal the set actually compared. The `dod_thunder2` caveat is
+  pinned the same way, so it is a checked fact rather than prose — if that map is reviewed later the
+  test says so instead of letting a stale warning stand.
 - Version strings are still not compared. The site's `geometry_version` carries this scheme's
   prefix and a digest nothing in either repo computes, so it reads like a derived identity and is
   not one; re-measured against the fact set and seven serialization variants, none reproduces it.
