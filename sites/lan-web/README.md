@@ -87,6 +87,9 @@ python tools/lan_admin.py add-player  --team "Test Team" --display you \
 5. Install `deploy/lan-web.service`; add `deploy/nginx-lan.conf.example` to the
    TLS server block; reload nginx.
 
+Deploy from a Linux checkout or with CR stripped. A Windows-side copy lands as CRLF and every file then
+looks behind `main` when it is not; `docs/LIVE_SCRIPT_INVENTORY.md` has the comparison that tells the two apart.
+
 ## Blocked on (external prerequisites)
 
 - **Domain + TLS** — Discord OAuth needs an HTTPS redirect; no bare-IP http.
