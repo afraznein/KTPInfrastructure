@@ -6,6 +6,13 @@ itself reads. Discovery used to regex the `say KTP <map> Match Config Executed`
 line out of each `ktp_*.cfg`, which is chat text bound to nothing: `ktp_saints.cfg`
 announces `dod_saints` while serving `dod_saints2_b3e`, and most of the custom
 pool was invisible to every count this script produced.
+
+`human_matches` is derived, never hand-entered: it is the number of distinct
+match ids per map in `ktp_capture_manifests`, read with --database. The registry
+JSON used to carry it as a typed field nobody updated, so every map read zero
+while the fleet had played dozens. A JSON that still carries one is a
+validation error. Point --database at the production schema: the synthetic
+lanes write their own.
 """
 
 from __future__ import annotations
@@ -16,6 +23,11 @@ import re
 import sys
 from pathlib import Path
 from typing import Any
+
+try:  # direct script execution
+    from team_score_telemetry import MysqlCli, MysqlCommandError
+except ModuleNotFoundError:  # package import in tests/tooling
+    from scripts.team_score_telemetry import MysqlCli, MysqlCommandError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,6 +46,36 @@ REVIEW_FIELDS = (
     "objective_topology_reviewed",
     "bot_waypoints_verified",
 )
+
+
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def human_match_counts(cli: Any, since: str | None = None) -> dict[str, int]:
+    """Map name -> distinct captured match ids, from the production manifests."""
+    where = ""
+    if since is not None:
+        if not DATE.fullmatch(since):
+            raise ValueError(f"--since must be YYYY-MM-DD, got {since!r}")
+        where = f"WHERE event_time >= '{since}' "
+    rows = cli.execute(
+        "SELECT map_name, COUNT(DISTINCT match_id) FROM ktp_capture_manifests "
+        f"{where}GROUP BY map_name;"
+    )
+    counts: dict[str, int] = {}
+    for line in rows.splitlines():
+        if not line.strip():
+            continue
+        map_name, count = line.split("\t")
+        counts[normalise_map_name(map_name)] = int(count)
+    return counts
+
+
+def hand_entered_human_matches(config: dict[str, Any]) -> list[str]:
+    where = ["defaults"] if "human_matches" in (config.get("defaults") or {}) else []
+    where += sorted(name for name, entry in (config.get("maps") or {}).items()
+                    if "human_matches" in (entry or {}))
+    return where
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -146,7 +188,8 @@ def discover_configs(config_dir: Path, maps_ini: Path, root: Path = ROOT) -> Dis
 def readiness_status(entry: dict[str, Any], minimum_synthetic: int,
                      minimum_human: int) -> str:
     reviewed = all(entry.get(field) is True for field in REVIEW_FIELDS)
-    if reviewed and int(entry.get("human_matches", 0)) >= minimum_human:
+    human = entry.get("human_matches")
+    if reviewed and human is not None and int(human) >= minimum_human:
         return "competitive_ready"
     if reviewed and int(entry.get("synthetic_matches", 0)) >= minimum_synthetic:
         return "synthetic_ready"
@@ -155,10 +198,13 @@ def readiness_status(entry: dict[str, Any], minimum_synthetic: int,
 
 def build_registry(config: dict[str, Any], config_dir: Path,
                    maps_ini: Path | None = None,
-                   root: Path = ROOT) -> dict[str, Any]:
+                   root: Path = ROOT,
+                   human_matches: dict[str, int] | None = None) -> dict[str, Any]:
     found = discover_configs(config_dir, maps_ini or (root / DEFAULT_MAPS_INI), root)
     discovered = found.maps
     errors = found.errors
+    for where in hand_entered_human_matches(config):
+        errors.append(f"{where}: human_matches is derived from ktp_capture_manifests, never hand-entered")
     defaults = config.get("defaults") or {}
     overrides = config.get("maps") or {}
     minimum_synthetic = int(config.get("minimum_synthetic_matches", 5))
@@ -174,6 +220,8 @@ def build_registry(config: dict[str, Any], config_dir: Path,
         entry.update(overrides.get(map_name) or {})
         entry["map_name"] = map_name
         entry["match_configs"] = config_paths
+        # Unknown, not zero, when nothing was counted: a zero reads as a measurement.
+        entry["human_matches"] = None if human_matches is None else human_matches.get(map_name, 0)
         entry["status"] = readiness_status(entry, minimum_synthetic, minimum_human)
 
         spatial_config = entry.get("spatial_config")
@@ -205,6 +253,7 @@ def build_registry(config: dict[str, Any], config_dir: Path,
         "schema_version": 2,
         "minimum_synthetic_matches": minimum_synthetic,
         "minimum_human_matches": minimum_human,
+        "human_matches_source": "ktp_capture_manifests" if human_matches is not None else None,
         "valid": not errors,
         "errors": errors,
         "counts": counts,
@@ -232,6 +281,10 @@ def render_markdown(registry: dict[str, Any]) -> str:
         f"{registry['minimum_synthetic_matches']} synthetic matches exist. `competitive_ready` additionally requires at least "
         f"{registry['minimum_human_matches']} human matches. Blocked maps must not inherit Anzio geometry or weights.",
         "",
+        "Human matches are counted from `ktp_capture_manifests`, never hand-entered."
+        if registry.get("human_matches_source") else
+        "Human matches were not counted (no --database), so no map can be `competitive_ready` in this report.",
+        "",
         "| Map | Status | Overview | Flags | Topology | Bot waypoints | Bot matches | Human matches | KTP configs |",
         "|---|---|---:|---:|---:|---:|---:|---:|---|",
     ]
@@ -245,7 +298,7 @@ def render_markdown(registry: dict[str, Any]) -> str:
                 topology=mark(item.get("objective_topology_reviewed")),
                 waypoints=mark(item.get("bot_waypoints_verified")),
                 synthetic=int(item.get("synthetic_matches", 0)),
-                human=int(item.get("human_matches", 0)),
+                human="—" if item.get("human_matches") is None else int(item["human_matches"]),
                 configs="<br>".join(item["match_configs"]),
             )
         )
@@ -301,13 +354,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="KTPMatchHandler map->config bindings; the source of map discovery",
     )
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--database", help="schema holding ktp_capture_manifests; without it human_matches is not counted")
+    parser.add_argument("--defaults-extra-file", type=Path, help="MySQL option file with the credentials")
+    parser.add_argument("--since", help="count only manifests with event_time on or after this YYYY-MM-DD")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     try:
-        registry = build_registry(read_json(args.registry), args.config_dir, args.maps_ini)
+        counts = None
+        if args.database:
+            cli = MysqlCli(database=args.database, defaults_extra_file=args.defaults_extra_file)
+            counts = human_match_counts(cli, args.since)
+        registry = build_registry(read_json(args.registry), args.config_dir, args.maps_ini,
+                                  human_matches=counts)
         args.output_dir.mkdir(parents=True, exist_ok=True)
         (args.output_dir / "spatial-map-registry.json").write_text(
             json.dumps(registry, indent=2) + "\n", encoding="utf-8"
@@ -315,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         (args.output_dir / "SPATIAL_MAP_READINESS.md").write_text(
             render_markdown(registry), encoding="utf-8"
         )
-    except (OSError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, json.JSONDecodeError, MysqlCommandError) as exc:
         print(f"spatial map registry: {exc}", file=sys.stderr)
         return 2
     print(

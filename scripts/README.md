@@ -87,6 +87,8 @@ publication. A bare sanitized score DTO is deliberately rejected.
 `spatial_map_registry.py` inventories KTP match maps from the `ktp_maps.ini`
 bindings the server reads and produces the map readiness matrix; it does not
 infer geometry or waypoints, and it does not read a config's `say` line.
+Its `human_matches` column is counted from `ktp_capture_manifests` with
+`--database`, never typed into the registry.
 
 `match_fixture_storage.py` measures SQL archive/transfer size and match-tagged
 payload without mislabeling that value as InnoDB allocation or a human-match
