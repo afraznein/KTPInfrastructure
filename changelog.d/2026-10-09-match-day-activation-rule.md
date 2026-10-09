@@ -1,0 +1,3 @@
+### `scripts`: `stage-wave.py` refuses a wave that would activate on a weekend (2026-10-09)
+
+Fleet activations happen only on a Monday-Friday morning. Because a staged `.new` swaps in at the next 03:00 ET, the check is on the activation day, not the staging day: a wave staged Saturday night would activate on Sunday, a league match day. `stage-wave.py` now refuses that unless the operator's named call is passed as `--emergency "<reason>"`, and the reason is stored in the wave ledger entry. Mon-Fri activations behave exactly as before. The rule is also stated at the top of `docs/RELEASE_CHECKLISTS.md`.

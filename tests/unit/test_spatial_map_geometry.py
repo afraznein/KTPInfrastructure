@@ -172,7 +172,7 @@ class RegistryPending(unittest.TestCase):
                    if not entry.get("spatial_config")}
         self.assertEqual(
             pending,
-            {"dod_lennon5_b1", "dod_armory_b6", "dod_harrington", "dod_saints2_b3e"},
+            {"dod_lennon5_b1", "dod_armory_b7", "dod_harrington", "dod_saints2_b5e"},
             "the set of pool maps with no spatial_config moved. A map that gained one "
             "belongs in the equality above; a map that lost one needs saying out loud.")
         for name in sorted(pending):
