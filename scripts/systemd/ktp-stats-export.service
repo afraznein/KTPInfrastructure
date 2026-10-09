@@ -6,7 +6,22 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/ktp-stats-export.py --hours 48
+# Wrapped so the run's output outlives journald's ~2 days: the embed is what
+# somebody reads, /var/lib/ktp-stats-export/runs/ is what somebody can go back
+# to. docs/runbooks/UNIT_RUN_RECORDS.md.
+#
+# sent.json already lives in this directory; StateDirectory= only puts systemd
+# in charge of creating and owning it.
+StateDirectory=ktp-stats-export
+# The timer is *:0/10, so a dated record per run would be 144 files a day of
+# successes nobody opens. Failures still get one; a clean run stamps
+# runs/last-ok.txt, which is the "it finished" signal to age.
+Environment=KTP_RUN_RECORD_ONLY_FAILURES=1
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/ktp-stats-export.py --hours 48
+# Type=oneshot disables the start timeout BY DEFAULT, so without this line a
+# wedged export never fails, never fires OnFailure and leaves nothing at all.
+# Well inside the 10-minute cadence: 48 hours of box scores over one HTTPS call.
+TimeoutStartSec=5min
 # Exits non-zero on an HTTP or transport failure, which fails the unit, which
 # fires the existing ktp-systemd-alert OnFailure wiring. A silent exporter is
 # the same defect as the empty stats pages it exists to fill.
