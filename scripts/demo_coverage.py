@@ -28,24 +28,23 @@ so a remote demo costs one range read for the 544-byte header and one for the
 directory -- not a transfer.
 
 LOSS IS A DIFFERENCE BETWEEN TWO SOURCES AND ONLY ONE OF THEM IS THE DEMO. The
-half's clock is `ktp_life_events.reason='context_live'` plus --half-seconds, and
-that row is written by the `stats_logging` PRODUCER rather than by the engine:
-`ksc_sync_life_context` queues it from a 0.5 s poll and retries whenever the
-dedicated life buffer is full. So a producer change that moves the first
-`context_live` row of a half moves `loss` by the same amount WITH NO CHANGE TO
-ANY DEMO, and "the producer regressed demo coverage" is not separable from "the
-producer moved this reference point" by `loss` alone.
+half's end is taken from the ENGINE clock: every score row (schema 25,
+stats_logging 1.26.1+) carries `round_time_left`, read off the game's own
+mp_timelimit countdown, so `game_time + round_time_left` is the half end in the
+same game_time frame the demo model uses. It holds to 0.1 s across a half and
+nothing the producer decides about baselining can move it. `ktp_flag_state_events`
+carries the same column and is used when a half has no score rows.
 
-Before reading a `loss` shift as a demo regression, run the control: compare
-`MIN(game_time) WHERE reason='context_live'` for the SAME halves across the two
-producer versions. The `live_at` column exists so that input is visible beside
-the demo's rather than folded into one number.
+The old reference -- `ktp_life_events.reason='context_live'` plus --half-seconds
+-- is kept ONLY as the fallback for halves with no clock (a producer before
+1.26.1), and those rows print `assumed` in the `end_src` column. That reference is
+written by the producer, not the engine: KTPMatchHandler 0.10.176 moved go-live
+onto the real RoundState=1 and with it the first context_live row, which read as
+a fleet-wide +10 s of demo loss with no demo changed. It also cannot see an
+overtime or a short half, because the half length is assumed.
 
---half-seconds is an ASSUMPTION, not a measurement -- nothing in the feed states
-the half length. A half that did not run the configured mp_timelimit (overtime,
-an early clinch, a half closed by hand) reports a `loss` wrong by the
-difference, and outliers in BOTH directions are that signature rather than a
-demo's.
+`live_at` is still printed so a producer-side move of context_live stays visible
+beside the demo's own number.
 """
 from __future__ import annotations
 
@@ -74,9 +73,8 @@ DIRECTORY_OFFSET = 540  # last field of the header
 # not of the delay, so the fix does not move it.
 DEMO_T0_GAME_TIME = 3.0
 
-# Default only. Nothing in the feed states a half's length, so this is the
-# configured timelimit assumed -- override it per run rather than reading a
-# wrong loss for an overtime or short half.
+# Fallback only, for halves with no engine clock: the configured timelimit
+# assumed, which is wrong for an overtime or short half.
 HALF_SECONDS = 1200.0
 
 
@@ -92,13 +90,22 @@ class Coverage:
     track_time: float
     live_game_time: float | None
     half_seconds: float = HALF_SECONDS
+    engine_half_end: float | None = None
 
     @property
     def covers_to(self) -> float:
         return DEMO_T0_GAME_TIME + self.track_time
 
     @property
+    def end_source(self) -> str | None:
+        if self.engine_half_end is not None:
+            return "clock"
+        return None if self.live_game_time is None else "assumed"
+
+    @property
     def half_ends_at(self) -> float | None:
+        if self.engine_half_end is not None:
+            return self.engine_half_end
         return None if self.live_game_time is None else self.live_game_time + self.half_seconds
 
     @property
@@ -160,7 +167,7 @@ def live_game_times(cli: MysqlCli, match_ids: list[str]) -> dict[tuple[str, int]
     """(match_id, half) -> game_time the half went live, from the engine feed."""
     if not match_ids:
         return {}
-    quoted = ",".join("'" + m.replace("'", "''") + "'" for m in sorted(set(match_ids)))
+    quoted = _quoted(match_ids)
     rows = cli.execute(
         "SELECT match_id, half, MIN(game_time) FROM ktp_life_events "
         f"WHERE reason='context_live' AND match_id IN ({quoted}) "
@@ -173,6 +180,37 @@ def live_game_times(cli: MysqlCli, match_ids: list[str]) -> dict[tuple[str, int]
         match_id, half, game_time = line.split("\t")
         out[(match_id, int(half))] = float(game_time)
     return out
+
+
+def _quoted(match_ids: list[str]) -> str:
+    return ",".join("'" + m.replace("'", "''") + "'" for m in sorted(set(match_ids)))
+
+
+def engine_half_ends(cli: MysqlCli, match_ids: list[str]) -> dict[tuple[str, int], float]:
+    """(match_id, half) -> game_time the round clock reaches zero, from the engine.
+
+    Median of `game_time + round_time_left` over the half's score rows, else its
+    flag-state rows. A clock at 0 is excluded (an award after expiry reads late)
+    and so is the producer's -1 for "no time limit".
+    """
+    if not match_ids:
+        return {}
+    quoted = _quoted(match_ids)
+    rows = cli.execute(
+        "SELECT 'score', match_id, half, game_time + round_time_left FROM ktp_score_events "
+        f"WHERE match_id IN ({quoted}) AND round_time_left > 0 "
+        "UNION ALL "
+        "SELECT 'flag', match_id, half, game_time + round_time_left FROM ktp_flag_state_events "
+        f"WHERE match_id IN ({quoted}) AND round_time_left > 0 AND is_initial = 0;"
+    )
+    ends: dict[tuple[str, int], dict[str, list[float]]] = {}
+    for line in rows.splitlines():
+        if not line.strip():
+            continue
+        source, match_id, half, end = line.split("\t")
+        ends.setdefault((match_id, int(half)), {}).setdefault(source, []).append(float(end))
+    return {key: statistics.median(by_source.get("score") or by_source["flag"])
+            for key, by_source in ends.items()}
 
 
 def collect_demos(args: argparse.Namespace) -> list[str | Path]:
@@ -201,7 +239,9 @@ def measure(demos: list[str | Path], cli: MysqlCli | None, half_seconds: float =
             continue
         parsed.append((demo, name, meta))
 
-    live = live_game_times(cli, [m.match_id for _, _, m in parsed]) if cli else {}
+    ids = [m.match_id for _, _, m in parsed]
+    live = live_game_times(cli, ids) if cli else {}
+    clock = engine_half_ends(cli, ids) if cli else {}
 
     out = []
     for demo, name, meta in parsed:
@@ -211,7 +251,8 @@ def measure(demos: list[str | Path], cli: MysqlCli | None, half_seconds: float =
             print(f"skip: {exc}", file=sys.stderr)
             continue
         out.append(Coverage(meta.match_id, meta.half, name, track_time,
-                            live.get((meta.match_id, meta.half)), half_seconds))
+                            live.get((meta.match_id, meta.half)), half_seconds,
+                            clock.get((meta.match_id, meta.half))))
     return out
 
 
@@ -227,8 +268,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     db.add_argument("--defaults-extra-file", type=Path, help="MySQL option file with the credentials")
     db.add_argument("--no-database", action="store_true", help="report playback length only, no half clock")
     ap.add_argument("--half-seconds", type=float, default=HALF_SECONDS,
-                    help=f"assumed half length in seconds (default: {HALF_SECONDS:.0f}); "
-                         "an overtime or short half needs its own value or loss is wrong by the difference")
+                    help=f"fallback half length for halves with no engine clock (default: {HALF_SECONDS:.0f})")
     ap.add_argument("--max-loss", type=float, help="exit 1 if any half loses more than this many seconds")
     return ap.parse_args(argv)
 
@@ -257,20 +297,23 @@ def main(argv: list[str] | None = None) -> int:
     # live_at is printed because loss is a difference between a producer-written
     # row and a demo; folding them leaves a producer-side shift of the reference
     # looking exactly like a demo regression.
-    print(f"{'match':24} {'half':>4} {'live_at':>9} {'covers_to':>10} {'half_ends':>10} {'loss_s':>8}")
+    print(f"{'match':24} {'half':>4} {'live_at':>9} {'covers_to':>10} {'half_ends':>10} {'end_src':>8} {'loss_s':>8}")
     losses = []
     for row in sorted(rows, key=lambda r: (r.match_id, r.half)):
         live_at = "" if row.live_game_time is None else f"{row.live_game_time:9.1f}"
         end = "" if row.half_ends_at is None else f"{row.half_ends_at:10.1f}"
         loss = "" if row.loss is None else f"{row.loss:8.1f}"
-        print(f"{row.match_id:24} {row.half:>4} {live_at:>9} {row.covers_to:10.1f} {end:>10} {loss:>8}")
+        src = row.end_source or ""
+        print(f"{row.match_id:24} {row.half:>4} {live_at:>9} {row.covers_to:10.1f} {end:>10} {src:>8} {loss:>8}")
         if row.loss is not None:
             losses.append(row.loss)
 
     if losses:
         print(f"\n{len(losses)} halves: min {min(losses):.1f} s, "
               f"median {statistics.median(losses):.1f} s, max {max(losses):.1f} s")
-        print(f"half clock: producer-written context_live + {args.half_seconds:.0f} s assumed half")
+        assumed = sum(r.end_source == "assumed" for r in rows)
+        print(f"half end: {len(losses) - assumed} from the engine round clock, "
+              f"{assumed} assumed (context_live + {args.half_seconds:.0f} s, no clock on those rows)")
         if args.max_loss is not None and max(losses) > args.max_loss:
             print(f"FAIL: {sum(l > args.max_loss for l in losses)} halves lose more than "
                   f"{args.max_loss:.1f} s", file=sys.stderr)
