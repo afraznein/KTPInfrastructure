@@ -3,7 +3,7 @@
 #
 # The 2026-05-23 weapon-timeline migration promised a "ktp-ac-retention daily
 # cron" that never existed (found in the 2026-07 hardening review, W1-7).
-# This is the canonical implementation. Four sweeps:
+# This is the canonical implementation. Five sweeps:
 #
 #   1. Evidence bundles: /opt/ktp-ac-api/uploads/YYYY-MM-DD/ day-dirs older
 #      than UPLOAD_RETENTION_DAYS. DB session rows (verdicts, review state)
@@ -23,6 +23,9 @@
 #      netcode metrics are kept indefinitely and only the identity ages out, so
 #      deleting the row would take the measurement with the name. Same
 #      blank-rather-than-delete shape as sweep 1's zip_path.
+#   5. ktp_net_intervals identity: the per-interval worst-player name columns
+#      set to NULL on rows older than the same NET_IDENTITY_RETENTION_DAYS. The
+#      interval metrics and the *_slot columns stay; only the names age out.
 #
 # Uses the root MySQL socket (same auth as migrations: `mysql hlstatsx`).
 # Cron: /etc/cron.d/ktp-ac-retention (04:40 ET daily, after ktp-backup).
@@ -56,6 +59,19 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 # Declared once so the DRY_RUN count and the sweep can never describe different rows.
 net_identity_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND steam_id <> ''"
+
+# Every player-name column of ktp_net_intervals, as read from information_schema on the
+# data server; a column added there and not here keeps its names forever.
+NET_INTERVAL_NAME_COLUMNS="lagcomp_first_name latency_worst_name jitter_worst_name
+    maxunlag_excess_worst_name shadow_worst_name drops_worst_name latzero_worst_name
+    updates_worst_name loss_worst_name subinterval_worst_name synth_worst_name
+    interp_diff_worst_name"
+net_interval_set="" net_interval_named=""
+for c in $NET_INTERVAL_NAME_COLUMNS; do
+    net_interval_set="${net_interval_set:+$net_interval_set, }$c = NULL"
+    net_interval_named="${net_interval_named:+$net_interval_named OR }$c IS NOT NULL"
+done
+net_interval_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND (${net_interval_named})"
 
 # ── 1. Upload day-dirs ────────────────────────────────────────────────
 # 0 or unset means RETAIN EVERYTHING. The guard has to be HERE, not only in the
@@ -91,7 +107,7 @@ else
     echo "[$(ts)] ac-retention: WARN $UPLOADS_DIR missing; skipping upload sweep" >&2
 fi
 
-# ── 2 + 3 + 4. DB rows, batched ───────────────────────────────────────
+# ── 2 + 3 + 4 + 5. DB rows, batched ───────────────────────────────────────
 # Loops until a batch changes fewer than BATCH_SIZE rows. Each batch is its
 # own statement so InnoDB commits between batches and replication/undo stays
 # bounded. Every table here is InnoDB, so a batch takes row locks and readers
@@ -116,8 +132,9 @@ if [ "$DRY_RUN" = "1" ]; then
         SELECT CONCAT('DRY_RUN: expired tokens past ${TOKEN_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_ac_session_tokens  WHERE expires_at < NOW() - INTERVAL ${TOKEN_RETENTION_DAYS} DAY;"
     if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
         mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: net_sessions identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_net_sessions WHERE ${net_identity_where};"
+        mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: net_intervals identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_net_intervals WHERE ${net_interval_where};"
     else
-        echo "DRY_RUN: net_sessions identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
+        echo "DRY_RUN: net_sessions and net_intervals identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
     fi
     exit 0
 fi
@@ -129,11 +146,14 @@ batched_write "session_tokens"  "DELETE FROM ktp_ac_session_tokens  WHERE expire
 # An UPDATE, not a DELETE: the metrics outlive the identity. The `steam_id <> ''` guard makes
 # the batched loop COMPLETE as well as idempotent -- ROW_COUNT() counts rows CHANGED, so
 # without it batch 2 re-selects rows it already blanked, reports 0, and stops early.
+# net_intervals needs the same completeness guard: any name still set, or the loop stops early.
 if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
     batched_write "net_sessions identity" \
         "UPDATE ktp_net_sessions SET name = '', steam_id = '' WHERE ${net_identity_where}" blanked
+    batched_write "net_intervals identity" \
+        "UPDATE ktp_net_intervals SET ${net_interval_set} WHERE ${net_interval_where}" blanked
 else
-    echo "[$(ts)] ac-retention: net_sessions identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
+    echo "[$(ts)] ac-retention: net_sessions and net_intervals identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
 fi
 
 echo "[$(ts)] ac-retention: done"
