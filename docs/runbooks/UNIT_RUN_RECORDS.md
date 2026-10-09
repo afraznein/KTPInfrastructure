@@ -136,7 +136,7 @@ nobody reads, and a unit's successes are not what anyone goes looking for.
 | `ktp-stats-export` | `*:0/10` | `ONLY_FAILURES=1` | failures + `last-ok.txt` |
 | `ktp-render-banlist` | `OnUnitActiveSec=60s` | `ONLY_FAILURES=1` | failures + `last-ok.txt` |
 
-## How a wedge shows up — and the line every oneshot here is missing
+## How a wedge shows up — and the line every oneshot now carries
 
 🔴 **`TimeoutStartSec=` defaults to *disabled* for `Type=oneshot`.** From
 `systemd.service(5)`: *"Defaults to `DefaultTimeoutStartSec=` from the manager
@@ -151,6 +151,19 @@ nothing is written anywhere. That is the `hltv-demo-renamer` shape (53 hours
 and `Restart=`/`OnFailure=`/`systemctl is-active` are all blind to it by
 construction. `ktp-identity-reconcile` is the only one of the seven that sets a
 timeout, at 15 minutes.
+
+🔻 **Both figures above are a dated snapshot and both are now spent — do not read
+them as current, and do not replace them with new numbers.** They also disagree
+with each other (*zero of nine* against *one of seven*) in one paragraph, which
+is what a count in prose does. ✅ **The property that holds instead, as of
+2026-10-09: every `Type=oneshot` unit tracked in this repo either sets
+`TimeoutStartSec=` or carries a `# no-start-timeout: <reason>` line**, and
+`tests/unit/test_oneshot_start_timeouts.py` fails the build if one appears that
+does neither. ⚠️ **The 2026-10-07 sweep's scope is the part worth carrying
+forward: it counted `scripts/systemd/` only, and three unbounded oneshots sat
+outside that directory**, so the fix aimed at the directory could not reach them.
+`docs/runbooks/ALERT_COVERAGE.md` records why a wedged oneshot reads green on
+three alert legs at once, and which unit is exempt on purpose.
 
 With a timeout set, a wedge is readable three ways:
 

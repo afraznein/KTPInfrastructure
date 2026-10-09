@@ -11,6 +11,10 @@ WorkingDirectory=/opt/ktp-reports/KTPInfrastructure
 # Never commits to main and never merges: the whole point is that a human
 # reads the diff. A run that changes nothing exits 0 having opened nothing.
 ExecStart=/usr/local/bin/ktp-map-coefficients-refit.sh
+# Type=oneshot disables the start timeout by default; the refit's git fetch, git
+# push and `gh pr create` are unbounded network calls, and one wedged weekly run
+# blocks every later one with nothing failed for anything to report.
+TimeoutStartSec=30min
 Nice=10
 IOSchedulingClass=idle
 PrivateTmp=true

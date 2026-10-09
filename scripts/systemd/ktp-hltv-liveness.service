@@ -5,6 +5,10 @@ Documentation=https://github.com/afraznein/KTPInfrastructure
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/ktp-hltv-liveness.sh
+# Type=oneshot disables the start timeout by default, so a wedged run sits in
+# `activating`: the timer never re-fires, `systemctl --failed` cannot see it, and
+# OnFailure= needs an exit. Inside the 5min cadence; the alert curls are unbounded.
+TimeoutStartSec=4min
 # exit 1 = proxies missing, exit 2 = probe broken. Both are reported by the
 # script itself; do not let systemd mark the unit failed and stop the timer.
 SuccessExitStatus=0 1 2

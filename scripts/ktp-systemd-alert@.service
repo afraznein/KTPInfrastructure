@@ -8,6 +8,10 @@ Type=oneshot
 # in the watched unit's [Unit] block — systemd substitutes %n with the failing
 # unit's full name and %i in this template receives that as the instance arg).
 ExecStart=/usr/local/bin/ktp-systemd-alert %i
+# Type=oneshot disables the start timeout by default, and the SuccessExitStatus
+# note below means nothing watches this unit, so a start timeout is the only thing
+# that can end a wedged alert. Above the script's own bounds so its paths win.
+TimeoutStartSec=180
 
 # Don't cascade alerts on alert-script failure — that would create a loop if
 # the relay is unreachable. Failures are best-effort; ktp-data-server-health
