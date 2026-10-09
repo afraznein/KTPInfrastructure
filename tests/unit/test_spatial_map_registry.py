@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import spatial_map_registry as registry
 
 
@@ -205,3 +207,93 @@ def test_cli_writes_machine_and_human_reports(tmp_path):
     assert payload["unresolved_bindings"] == []
     assert "## Bindings whose match config is missing" not in markdown
     assert "## Match configs no map is bound to" in markdown
+
+
+# --- human_matches is derived from ktp_capture_manifests, never hand-entered ----
+
+class FakeCli:
+    def __init__(self, rows: str = ""):
+        self.rows, self.sent = rows, []
+
+    def execute(self, sql: str) -> str:
+        self.sent.append(sql)
+        return self.rows
+
+
+# The 2026-10-09 production read, counted with --since 2026-09-15.
+MEASURED = "dod_anzio\t73\ndod_harrington\t70\ndod_lennon5_b1\t60\ndod_saints2_b5e\t40\n"
+
+
+def test_a_hand_entered_human_matches_is_a_validation_error(tmp_path):
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    (config_dir / "ktp_example.cfg").write_text("// present\n", encoding="utf-8")
+    maps_ini = tmp_path / "ktp_maps.ini"
+    maps_ini.write_text("[dod_example]\nconfig = ktp_example.cfg\n", encoding="utf-8")
+    config = {"defaults": {"human_matches": 0}, "maps": {"dod_example": {"human_matches": 25}}}
+    result = registry.build_registry(config, config_dir, maps_ini, tmp_path)
+    assert not result["valid"]
+    assert [e for e in result["errors"] if "never hand-entered" in e] == [
+        "defaults: human_matches is derived from ktp_capture_manifests, never hand-entered",
+        "dod_example: human_matches is derived from ktp_capture_manifests, never hand-entered",
+    ]
+    # And the typed 25 is not what the entry reports.
+    assert result["maps"][0]["human_matches"] is None
+
+
+def test_the_shipped_registry_types_no_human_matches():
+    config = registry.read_json(ROOT / "config/analytics/spatial_maps/registry.json")
+    assert registry.hand_entered_human_matches(config) == []
+
+
+def test_without_a_count_human_matches_is_unknown_not_zero():
+    result = real_registry()
+    assert result["human_matches_source"] is None
+    assert all(item["human_matches"] is None for item in result["maps"])
+
+
+def test_counted_human_matches_land_on_every_map_and_open_the_competitive_gate():
+    config = registry.read_json(ROOT / "config/analytics/spatial_maps/registry.json")
+    counts = registry.human_match_counts(FakeCli(MEASURED))
+    result = registry.build_registry(config, CONFIG_DIR, MAPS_INI, ROOT, human_matches=counts)
+    by_map = {item["map_name"]: item for item in result["maps"]}
+    assert result["valid"], result["errors"]
+    assert result["human_matches_source"] == "ktp_capture_manifests"
+    assert by_map["dod_anzio"]["human_matches"] == 73
+    assert by_map["dod_lennon5_b1"]["human_matches"] == 60
+    # A bound map with no manifest is a counted zero, not unknown.
+    assert by_map["dod_donner"]["human_matches"] == 0
+    # Anzio is the one fully reviewed map, so 73 >= 20 makes it competitive_ready.
+    assert by_map["dod_anzio"]["status"] == "competitive_ready"
+    assert by_map["dod_lennon5_b1"]["status"] == "blocked"
+
+
+def test_the_count_query_is_distinct_match_ids_per_map_with_an_optional_since():
+    cli = FakeCli()
+    registry.human_match_counts(cli)
+    registry.human_match_counts(cli, since="2026-09-15")
+    assert all("COUNT(DISTINCT match_id) FROM ktp_capture_manifests" in q for q in cli.sent)
+    assert "WHERE" not in cli.sent[0]
+    assert "WHERE event_time >= '2026-09-15'" in cli.sent[1]
+
+
+def test_since_must_be_a_date():
+    with pytest.raises(ValueError):
+        registry.human_match_counts(FakeCli(), since="2026-09-15' OR 1=1 -- ")
+
+
+def test_cli_counts_from_the_database_when_asked(tmp_path, monkeypatch):
+    seen = {}
+
+    class Cli(FakeCli):
+        def __init__(self, *, database, defaults_extra_file=None):
+            super().__init__(MEASURED)
+            seen["database"] = database
+
+    monkeypatch.setattr(registry, "MysqlCli", Cli)
+    assert registry.main(["--output-dir", str(tmp_path), "--database", "hlstatsx"]) == 0
+    payload = json.loads((tmp_path / "spatial-map-registry.json").read_text())
+    markdown = (tmp_path / "SPATIAL_MAP_READINESS.md").read_text(encoding="utf-8")
+    assert seen["database"] == "hlstatsx"
+    assert {m["map_name"]: m["human_matches"] for m in payload["maps"]}["dod_harrington"] == 70
+    assert "counted from `ktp_capture_manifests`, never hand-entered" in markdown
