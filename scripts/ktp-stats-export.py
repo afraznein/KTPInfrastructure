@@ -350,6 +350,72 @@ def fetch_objective_points(db: Db, mid: str) -> dict[int, int]:
     return {r["playerId"]: int(r["flags"]) for r in rows}
 
 
+def _side_int(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def sides_by_half(life_sides: list[dict]) -> dict[int, dict[int, int]]:
+    """(half -> player_id -> engine side) from the life feed."""
+    out: dict[int, dict[int, int]] = {}
+    for row in life_sides:
+        half = _side_int(row.get("half"))
+        pid = _side_int(row.get("playerId"))
+        team = _side_int(row.get("team"))
+        if half and pid is not None and team in (1, 2):
+            out.setdefault(half, {})[pid] = team
+    return out
+
+
+def canonical_teams(life_sides: list[dict]) -> dict[int, int]:
+    """player_id -> canonical team, labelled by the final half's sides.
+
+    ⚠️ Canonical copy is `scripts/roster_teams.py::canonical_teams`, which this
+    file cannot import for the same reason as OFFICIAL_MATCH_TYPES above: it
+    deploys standalone to /usr/local/bin with no package. Keep the two in step
+    -- `tests/unit/test_stats_export_canonical_teams.py` fails on any drift.
+
+    Empty when the feed is missing or only one half is present: with nothing to
+    compare against, the roster's own team is as good as it gets.
+    """
+    sides = sides_by_half(life_sides)
+    halves = sorted(sides)
+    if len(halves) < 2:
+        return {}
+    final = halves[-1]
+    canonical = dict(sides[final])
+    for half in reversed(halves[:-1]):
+        same = sum(1 for pid, side in sides[half].items()
+                   if canonical.get(pid) == side)
+        swapped = sum(1 for pid, side in sides[half].items()
+                      if canonical.get(pid) == (2 if side == 1 else 1))
+        if same == 0 and swapped == 0:
+            continue
+        flip = swapped > same
+        for pid, side in sides[half].items():
+            if pid not in canonical:
+                canonical[pid] = (2 if side == 1 else 1) if flip else side
+    return canonical
+
+
+def fetch_life_sides(db: Db, mid: str) -> list[dict]:
+    """Every (half, player, engine side) the life feed recorded for one match.
+
+    Same guards as `sql/analytics/life_boundary_fact.sql`, so the correction
+    this feeds reaches the same answer the match report does. No collation
+    crossing here: both sides of the filter are ktp_* .
+    """
+    return db.json_rows(
+        "select json_arrayagg(json_object("
+        "  'half', half, 'playerId', player_id, 'team', team)) "
+        "from ktp_life_events "
+        f"where match_id = {sql_str(mid)} and half > 0 "
+        "  and game_time >= 0 and event_epoch > 0 and team in (1, 2)"
+    )
+
+
 def fetch_players(db: Db, mid: str) -> list[dict]:
     """Roster for one match. steam_id here is already `Y:Z`, no universe digit.
 
@@ -375,6 +441,16 @@ def build_match(db: Db, m: dict, quiet: bool) -> dict | None:
     if not roster:
         return None
 
+    # `ktp_match_players.team` is the side held in the LAST half a player
+    # appeared in, and sides swap at the break -- so a player who leaves at
+    # half keeps a side that by then belongs to the OPPONENT, and the site
+    # files him on the enemy roster (and, since he is registered elsewhere,
+    # marks the stint a RINGER for the team he played against). Measured on
+    # 1789952635-NY1: 16 players across 16 matches since 2026-08-31.
+    # KTPInfrastructure#496 corrected the match report and deliberately left
+    # this field alone; the site reads this field and nothing else.
+    canonical = canonical_teams(fetch_life_sides(db, mid))
+
     box = fetch_box_score(db, mid)
     # Kills and deaths come from the events, not from dodx's counter in
     # ktp_match_stats; the rest of that row (headshots, damage, score...) still
@@ -392,6 +468,12 @@ def build_match(db: Db, m: dict, quiet: bool) -> dict | None:
         stats = box.get(row["playerId"], {})
         truth = scoreboard.get(row["playerId"], {})
         team = row["team"] if row["team"] in (1, 2) else None
+        # A no-op for everyone present at match end: the canonical labels
+        # ARE the final half's sides, so only the rows the roster got
+        # wrong move. `gameTeam` keeps its meaning (the side the player's
+        # team held at match end) and starts being true for half-leavers.
+        if canonical.get(row["playerId"]) in (1, 2):
+            team = canonical[row["playerId"]]
         entry = {
             "steamId64": sid64,
             "kills": truth.get("kills", 0),
