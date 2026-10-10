@@ -25,6 +25,28 @@ Samples pulled via SSH+grep from each instance's `~/dod-<port>/log/console/` —
 
 Window: current + today-rotated log ≈ 12-48h depending on restart timing. Adjust the grep command if you need a specific window.
 
+### Three traps when sweeping console logs by hand
+
+Each cost a conclusion in the 2026-10 sweeps of `[KTP_PROFILE] push:` records. The scripts here avoid
+the first two only because they use a wildcard and never read a filename.
+
+- ⛔ **Only the first instance's live log is `dodserver-console.log`.** The name is LinuxGSM's
+  `selfname`, so 27016–27019 write `dodserver2-console.log` … `dodserver5-console.log`
+  (`docs/LINUXGSM.md` § Directory Structure). **A glob anchored on the 27015 name silently drops four
+  instances' current day per host and reads as a clean zero** on hosts that were in fact busy. Keep the
+  `*-console.log` form.
+- ⛔ **A rotated log's FILENAME is one day later than its contents.** Rotation happens at the 03:00 ET
+  restart, so the file named for a day holds the previous day's play. **Dating records by filename
+  shifts a whole day forward** — it put a counter's first firing a day late on 2026-10-04, corrected
+  only once the records were dated from their own lines. ➡️ **Date a record from the line, never from
+  the file.**
+- ⚠️ **Flood-kick counts are not comparable across 2026-10-05.** The fleet's
+  `sv_rehlds_movecmdrate_max_avg` / `sv_rehlds_stringcmdrate_max_avg` moved from the engine defaults
+  1800 / 250 to 10000 / 800 on all 24 that day
+  (`changelog.d/2026-10-05-dodserver-cfg-cmdrate-avg.md`), so a client that stalls and then catches up
+  stops being kicked for move-command flooding. **A fall in kicks across that date is the rule
+  changing, not the clients** — compare within a regime, or label the boundary.
+
 **Scripts** (added 2026-04-25, after running this twice):
 - `pull_fleet_fps.py <suffix> [--label X] [--description Y]` — paramiko fan-out to all 5 game servers, greps `[KTP_PROFILE]` from each `~/dod-<port>/log/console/*-console.log`, writes `fleet_fps_<suffix>.json`. ~5-10s wall time for ~140k samples.
 - `diff_fleet_fps.py <pre.json> <post.json>` — prints fleet/per-host/per-instance deltas with focus on σ compression, p50 shift, NFO-window %, and ATL:27016 normalization (the pre-JIT anomaly target).
