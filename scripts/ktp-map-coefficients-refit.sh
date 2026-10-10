@@ -35,15 +35,44 @@ git commit --quiet -m "map coefficients: weekly refit $(date -u +%Y-%m-%d)
 Proposed by ktp-map-coefficients.timer. The diff is the review: each line is
 a claim that a map now plays differently than the committed table says.
 Merging accepts it; closing rejects it and the table stands."
-git push --quiet origin "$BRANCH"
 
-gh pr create --base main --head "$BRANCH" \
-  --title "map coefficients: weekly refit $(date -u +%Y-%m-%d)" \
-  --body "$(python3 -m scripts.fit_map_coefficients --check 2>&1 || true)
+# PUSHING IS OPTIONAL. This host holds a read-only deploy key -- it pulls, it
+# does not push -- so requiring an authenticated `gh` made the install wait on a
+# credential decision nobody needed to take. If push and PR work, they happen;
+# otherwise the refit has still produced everything a human needs and says where
+# it is. The review requirement is A DIFF SOMEONE READS, not a pull request.
+PROPOSAL="${PROPOSAL:-/var/lib/ktp-map-coefficients}"
+mkdir -p "$PROPOSAL"
+git format-patch --quiet -1 -o "$PROPOSAL" HEAD
+cp config/map_coefficients.json "$PROPOSAL/map_coefficients.proposed.json"
+python3 -m scripts.fit_map_coefficients --check > "$PROPOSAL/diff.txt" 2>&1 || true
 
-Automated weekly refit. Review the diff in \`config/map_coefficients.json\`:
-each changed line says a map plays differently than we currently believe.
-Merging accepts the new numbers; closing leaves the table as it is.
+# The body is the diff plus the trailer the coordination gate requires. Without
+# `Coordination-Workstream` the check fails, so an auto-opened PR would have
+# gone red every week over a missing line.
+cp "$PROPOSAL/diff.txt" "$PROPOSAL/body.md"
+echo ""                                                            >> "$PROPOSAL/body.md"
+echo "Automated weekly refit. Each changed line says a map plays"  >> "$PROPOSAL/body.md"
+echo "differently than the committed table believes. Merging"      >> "$PROPOSAL/body.md"
+echo "accepts the new numbers; closing leaves the table as it is." >> "$PROPOSAL/body.md"
+echo ""                                                            >> "$PROPOSAL/body.md"
+echo "Coordination-Workstream: infra-hidden-value-plays"           >> "$PROPOSAL/body.md"
 
-Coordination-Workstream: infra-hidden-value-plays"
-echo "pull request opened from $BRANCH"
+if git push --quiet origin "$BRANCH" 2>/dev/null; then
+  if gh pr create --base main --head "$BRANCH" \
+       --title "map coefficients: weekly refit $(date -u +%Y-%m-%d)" \
+       --body-file "$PROPOSAL/body.md" 2>/dev/null; then
+    echo "pull request opened from $BRANCH"
+  else
+    echo "pushed $BRANCH but could not open a PR -- open one from that branch"
+  fi
+else
+  echo "no push rights, which is expected on this host: the proposal is in $PROPOSAL"
+  echo "  map_coefficients.proposed.json   the new table"
+  echo "  diff.txt                         what moved"
+  echo "  body.md                          a ready PR body, trailer included"
+  echo "  0001-*.patch                     apply elsewhere with: git am"
+  echo "Nothing was pushed and nothing was merged. The table on main stands"
+  echo "until a human takes this to a pull request."
+fi
+git checkout --quiet -      # leave the checkout on the branch we found it on
