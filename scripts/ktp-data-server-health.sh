@@ -362,6 +362,13 @@ done
 # and accepted (an unused snap hook, say). Empty by default on purpose -- the
 # first run after deploy reports everything, once, and the operator decides.
 FAILED_UNIT_IGNORE="${FAILED_UNIT_IGNORE:-}"
+# ktp-weekly-outliers.service exits 1 when the Monday report finds a half past
+# its alert threshold -- that exit IS the finding, and the OnFailure embed has
+# already carried it. A oneshot stays `failed` until its next run, so for six
+# days this sweep would re-report a delivered finding as a broken unit (it did,
+# 2026-10-05..10-10). Its timer is still in CRITICAL_TIMERS, so a report that
+# stops running is still caught; only its weekly "found something" exit is not.
+FAILED_UNIT_IGNORE="$FAILED_UNIT_IGNORE ktp-weekly-outliers.service"
 while read -r unit _; do
     if [ -z "${unit:-}" ]; then continue; fi
     skip=0
