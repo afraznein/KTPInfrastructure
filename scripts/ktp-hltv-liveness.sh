@@ -30,6 +30,10 @@
 # Deliberately NOT rcon: rcon needs the admin password on the command line, and
 # a proxy can be bound-but-wedged in ways rcon would catch — but rcon failing
 # is also how a busy proxy looks. Port-bound is the cheap unambiguous signal.
+#
+# Reproduce an unbound-name death in a script FILE, never `bash -c`: -c exits 127
+# instead of 1, inverting whether the unit forgives it. And `set -u` does not abort
+# inside a command substitution at all, so V=$(... ${UNSET} ...) is unguarded here.
 set -uo pipefail
 
 STATE_DIR="${KTP_HLTV_LIVENESS_STATE_DIR:-/var/lib/ktp-hltv-liveness}"

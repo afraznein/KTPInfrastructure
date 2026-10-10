@@ -79,6 +79,8 @@ net_interval_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND
 # entire archive rather than none of it.
 # Directory tested first and separately: one combined guard called the store
 # missing whenever retention was merely off, and the two need opposite responses.
+# Both messages interpolate, so grep the format string — the rendered phrase
+# returns zero on a script that plainly emits it, and reads as "not in the file".
 if [ ! -d "$UPLOADS_DIR" ]; then
     echo "[$(ts)] ac-retention: WARN $UPLOADS_DIR missing; skipping upload sweep" >&2
 elif [ "${UPLOAD_RETENTION_DAYS}" -le 0 ]; then
