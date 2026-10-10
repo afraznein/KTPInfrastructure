@@ -137,6 +137,44 @@ For emergency production fixes that can't wait for CI:
 The bypass is logged in PR history; rare-use convention is the only thing
 keeping it from becoming a hole. Audit usage quarterly.
 
+### Before calling a PR green, compare the run list to the required contexts
+
+⛔ **Do not read the checks panel.** A **MISSING** required check and a
+**FAILING** one are indistinguishable from the PR page: both render as
+`BLOCKED`, and a missing one shows nothing red, nothing queued and nothing
+waiting. Only the per-sha run list tells them apart.
+
+```bash
+python scripts/check-pr-required-contexts.py --repo afraznein/<repo> --pr <n>
+```
+
+It resolves the PR's HEAD sha, reads the required contexts off the base
+branch, and reports each one as `PASSING` / `FAILING` / `PENDING` / `MISSING`.
+Exit `0` only when every required context reported success **on that sha**;
+`1` if any is missing, failing or pending; `3` if branch protection could not
+be read, which is undecidable rather than clean.
+
+⚠️ **This happened, and nothing was broken:** on 2026-10-05 a push to
+`afraznein/KTPAntiCheat`#522 delivered no `synchronize` event. Eight of ten
+workflows never saw the new sha; the two that ran were triggered by a **PR-body
+edit**, being the only two whose `types:` list includes `edited`. Two required
+contexts had simply never been reported. ⛔ **A path filter cannot explain
+that shape** — `dotnet tests` has a bare `pull_request:` with no paths at all
+and still never fired, so do not go looking for one.
+
+🔑 **The remedy is NOT `gh run rerun`** — a manual re-run replays the stale
+payload against the old sha. **Close and reopen the PR.** That emits
+`reopened`, which both a bare `pull_request:` and a `paths:`-only filter
+accept, since both default to `opened, synchronize, reopened`.
+
+⚠️ **And do not reach for `gh pr view --json statusCheckRollup` instead:** it
+returns **superseded** runs beside live ones, so a re-run leaves two entries
+per context and reading the first answers about whichever the API ordered
+first. The script resolves each context to its latest attempt, and unions
+Actions check-runs with commit statuses — a required context produced by an
+external reporter lives at the other endpoint and reads as missing if you only
+check one.
+
 ---
 
 ## 4. Per-repo: workflow files
