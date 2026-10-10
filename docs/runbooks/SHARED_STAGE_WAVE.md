@@ -163,10 +163,13 @@ Making the box canonical is what turns three people into one record. To migrate:
 1. Copy the workstation's `~/.ktp/waves/*.json` into `/var/lib/ktp-deploy/waves/`.
    They are all reconciled, so this is history and not state. Old entries have
    no `staged_by`; `status` prints `NOT RECORDED` for them rather than guessing.
-2. From then on, **stage only through `ktp-deploy` on the box.** The operator
-   included: `ssh <operator-account>@<data server> ktp-deploy stage ...`. A stage
-   from the workstation would write the workstation ledger and miss the lock. It
-   would also bring back exactly the split this design exists to close.
+2. 🔴 **SUPERSEDED BY THE D3 RULING BELOW — do not follow as written.** It said:
+   stage only through `ktp-deploy` on the box, the operator included, because a
+   stage from the workstation would write the workstation ledger and miss the
+   lock. **D3 was ruled NO on 2026-10-05**: the operator keeps staging from his
+   workstation. The hazard the sentence names is real and now unaddressed, so the
+   workstation path has to reach the box's ledger and lock. See § Operator
+   decisions.
 3. Move the scheduled wave sweep to the box: the repo's `systemd/ktp-wave-sweep.service`
    with `KTP_CLAUDE_MD=/var/lib/ktp-deploy/fleet-versions.md` and
    `KTP_WAVE_LEDGER_DIR=/var/lib/ktp-deploy/waves`. Then retire the workstation
@@ -212,7 +215,39 @@ path that bypasses all of this until it is narrowed.
 
 ## Operator decisions
 
-| # | Decision | Recommendation |
+🔴 **These were RULED on 2026-10-05 and three went against the recommendation.
+The ruling, not the Recommendation column, is what the install implements:**
+
+| # | Ruled | Against the recommendation? |
+|---|---|---|
+| D1 | **Yes** — `krodssh` gets `dodserver` access as his own key. | no |
+| D2 | **Yes** — per-person keys, not the shared password. | no |
+| D3 | **NO** — the operator keeps staging from his workstation too; the box is not the only staging place. | **yes** |
+| D4 | **Yes** — the version rows live on the box. | no |
+| D5 | **NO** — mid-day HUD-observer restarts stay allowed, done carefully. | **yes** |
+| D6 | **NO** — `cadaver` keeps his game-host sudo; no narrowing. | **yes** |
+| D7 | **Yes** — both join `ktp-deploy`. | no |
+
+⛔ **D3=NO with D4=YES is the one that changes the design, and the wave-ledger
+section above is still written for D3=YES.** Read step 2 there — *"stage only
+through `ktp-deploy` on the box"* — as superseded: following it either breaks the
+operator's own path or reopens the two-ledger split this file exists to close.
+➡️ **Resolve it before any install.** Either the workstation `stage-wave.py`
+reads `/var/lib/ktp-deploy/fleet-versions.md` and writes `/var/lib/ktp-deploy/waves/`
+over SSH — both are group-writable by `ktp-deploy` by design, which is the hook
+that makes this possible — or the rows move to the box and the workstation reads
+them there. A workstation stage that writes a second ledger is the out-of-band
+blind spot, and nothing downstream reports it.
+
+⚠️ **D5=NO also moves a line above:** the HUD-observer section says activation is
+the 03:00 swap "and not a mid-day restart". A mid-day restart is permitted; what
+is not permitted is restarting a game server without explicit permission in the
+moment, which is a different rule and still holds.
+
+The original recommendations, kept because the reasoning behind each is still the
+argument anyone revisiting one has to answer:
+
+| # | Decision | Recommendation (2026-10-03, superseded where the table above says so) |
 |---|---|---|
 | D1 | Give `krodssh` a credential that reaches `dodserver` on all 24 instances. | **Yes, as a per-person key (option B).** Note that his existing data-server sudo already reaches the fleet password at rest, so this does not widen what he *can* reach. It makes his access explicit, attributable and revocable on its own. |
 | D2 | Shared password (A) or one key per person (B). | **B.** Same reach, but it adds attribution on the game hosts and lets one person be revoked without a fleet-wide rotation. Keep A only as the fallback the wrapper already supports. |
@@ -224,7 +259,9 @@ path that bypasses all of this until it is narrowed.
 
 ## Install
 
-For the operator to run, once D1–D4 are decided. The ⚠️ lines write to the fleet.
+For the operator to run. D1–D7 are ruled (see above); ⛔ the D3 consequence for
+the wave ledger is **not** yet resolved in this file, so settle that first. The
+⚠️ lines write to the fleet.
 
 ```bash
 # data server, as root

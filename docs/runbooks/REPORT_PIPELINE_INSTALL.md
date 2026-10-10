@@ -168,6 +168,14 @@ under `/opt/ktp-tier2-runner`, which is CI scratch and gets wiped. Not
 `/opt/ktp-infra` either — that is a separate, deliberately stale copy that the
 weekly fleet audit runs from and that never pulls.
 
+🔴 **Getting that wrong is not recoverable by re-running.** `report_sync` POSTs on
+`(match_id, schema_version, revision)` and never corrects an existing row, so a
+generation driven from an older tree writes those matches' reports once and they
+stay wrong. There is no re-push that fixes it and nothing flags it: the run exits
+0 and the site serves the bad report. Confirm the tree before generating, not
+after — a pending-deploy note once named `/opt/ktp-infra` here, and following it
+would have poisoned every match in the run.
+
 To inspect this checkout, run git as its owner: `sudo runuser -u ktpreports -- git -C /opt/ktp-reports/KTPInfrastructure log -1`.
 Root's git refuses a repository it does not own and prints an empty remote, which reads as
 "there is no checkout here".

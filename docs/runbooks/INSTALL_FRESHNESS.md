@@ -100,6 +100,22 @@ that is the only thing the drop-in should ever see.
 **A failed relay post does not save the transition**, so the next run
 re-announces it rather than swallowing a change nobody saw.
 
+**Why the fetch is not optional, and where the same blindness lives twice.**
+`--against-ref origin/main` resolves a *remote-tracking ref inside the checkout*,
+not GitHub. `/opt/ktp-infra` is detached and never pulled, so without a refresh
+that ref is only as new as the last fetch somebody happened to run, and a
+freshness check whose reference is behind reports **fresh** — the failure runs in
+the reassuring direction and nothing contradicts it. Measured 2026-10-06: that
+checkout's HEAD was `dc7a1e7` (11:10) while its own `origin/main` ref was
+`d8a2d67` (15:06), so it was behind a ref that was itself stale. The script now
+refuses rather than reporting (`die "fetch failed; a freshness check that could
+not refresh its reference must not report freshness"`).
+
+⚠️ **The `hltv-api` drift checker compares against that identical never-pulled
+tree.** Same mechanism, second instance, and the two must not be answered
+separately: one of them refreshing its reference while the other does not leaves
+a second checker quietly reporting *fresh* forever.
+
 ### Install steps (not performed)
 
 ```bash

@@ -93,6 +93,10 @@ CHANNEL_DEFAULT="1498813261263405097"
 under_cron() {
     # Not a tty test: ssh pipes, systemd-run and CI have no tty either, so that
     # would hand the write straight back to the runs this is guarding.
+    # A fallback, not the arming mechanism: cron execs through SHELL, so a bash
+    # that forks instead of exec-ing makes $PPID's comm `bash` and the scheduled
+    # run silently stops writing — and the tests stub `ps`, so none of them sees
+    # the real parent. Install the cron file; its WRITE=1 is the measured path.
     local pcomm
     pcomm="$(ps -o comm= -p "${PPID:-0}" 2>/dev/null | head -1 | tr -d ' ' || true)"
     case "$pcomm" in cron|crond|CRON) return 0 ;; esac

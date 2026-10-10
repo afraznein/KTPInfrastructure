@@ -1,10 +1,12 @@
 # Runbook: data-server config traps
 
-**What:** four ways a routine change on the data server produces a result that
-looks right and is not. Each one has cost real time; each has a cheap check.
+**What:** ways a routine change on the data server produces a result that looks
+right and is not. Each one has cost real time; each has a cheap check. No count
+here on purpose: this opened with "four" while the file carried more, which is
+the same silent-staleness shape the runbook is about.
 
-**When:** before editing nginx vhosts, changing observability retention, or
-reporting a disk number.
+**When:** before editing nginx vhosts, adding a line to a `cron.d` file,
+changing observability retention, or reporting a disk number.
 
 ---
 
@@ -63,6 +65,39 @@ Two cautions from applying it:
 
 A regex `location` outranks prefix locations, so check it cannot shadow an ACME
 challenge block — give that block `^~` if it is a prefix match.
+
+## An env line APPENDED to a `cron.d` file never reaches the job
+
+cron builds each job's environment from the assignments it has read **so far**,
+in file order. So a variable added at the end of `/etc/cron.d/<name>` sits below
+the job line and is never exported into it. The string is in the file, a
+`grep -c` for it returns 1, and the job runs on its script's default.
+
+This is the ordinary way a one-line retention or switch install becomes a silent
+no-op: the obvious edit — append — is the wrong one. Put assignments **above**
+the schedule line, which is where every file under `scripts/cron.d/` already has
+them.
+
+Verify by reconstructing the environment the job actually gets, not by grepping
+the file:
+
+```bash
+awk '/^[0-9*]/{exit} /^[A-Za-z_][A-Za-z0-9_]*=/{print}' /etc/cron.d/<name>
+```
+
+That output **is** the job's environment. The failure to look for is the gap
+between the two reads: `grep -c VAR` returns 1 while the `awk` output does not
+list `VAR`. Carry a variable already known to be live as the positive control —
+if it is missing from the `awk` output too, the probe is wrong, not the install.
+
+⚠️ **Some of these installs have no verify-by-effect at all, so this structural
+check is the only evidence.** `WEAPON_RETENTION_DAYS` is the worked example: at
+both the 365-day default and the ruled 36500 the nightly sweep deletes 0 rows
+until the oldest row ages out, so the log line is byte-identical either way.
+
+⚠️ **And `ops/cron-inventory/data/cron.d/` is a snapshot of the box, not the
+box.** After any hand install there, that copy is stale and a later reader
+diffing against it reads the install as absent. Refresh it in the same change.
 
 ## Observability config that changes format, not just volume
 
