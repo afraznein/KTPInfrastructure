@@ -250,6 +250,25 @@ ktp-deploy stage -f ~/X.amxx --expect X.amxx=<md5> --base X.amxx=<owner/repo@sha
 ktp-deploy ledger reconcile
 ```
 
+### check-pr-required-contexts.py
+**Reads GitHub, writes nothing.** Compares a PR's required contexts against what
+actually reported for its HEAD sha, because a **MISSING** required check and a
+**FAILING** one are identical from the PR page — both read `BLOCKED` with nothing
+red. Only the per-sha run list distinguishes them.
+
+```bash
+python scripts/check-pr-required-contexts.py --repo afraznein/<repo> --pr <n>
+```
+
+Exit `0` only if every required context reported success on that sha; `1` on any
+missing/failing/pending; `3` if branch protection is unreadable, which is
+undecidable rather than clean. It resolves each context to its **latest** attempt
+(`statusCheckRollup` returns superseded runs) and unions check-runs with commit
+statuses (a required context may be produced by either). When something is
+missing the remedy is to **close and reopen the PR**, not `gh run rerun` — a
+manual re-run replays the stale payload. Background: `docs/CI_SETUP.md`
+§ Before calling a PR green.
+
 ### ktp_script_freshness.py
 **Not a script to run — a gate the fleet-writing scripts call on themselves.** A checkout that has fallen
 behind `origin/main` stages a wave perfectly happily: the older copy never sees the flags it lacks, so
