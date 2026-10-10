@@ -44,6 +44,7 @@ class PlaysConfig:
     sneak_seconds: float = 20.0      # excursion length that makes a cap a "sneak" rather than a run-through
     attempt_distance: float = 600.0  # closest approach that makes a capless excursion an attempt
     ahead_units: float = 1200.0      # teammate gap at a rear touch that means the capper was out in front
+    brink_tolerance: float = 3.0     # a cap this close to a brink is the cap that reached it
 
     def validate(self) -> None:
         if self.merge_gap <= 0 or self.per_player < 1 or self.match_top < 1:
@@ -170,11 +171,29 @@ def build_plays(
     excursions: Sequence[dict[str, Any]] | None = None,
     config: PlaysConfig | None = None,
     touches: Sequence[dict[str, Any]] | None = None,
+    brinks: Sequence[dict[str, Any]] | None = None,
     *,
     source_status: str | None = "available",
 ) -> dict[str, Any]:
     cfg = config or PlaysConfig()
     cfg.validate()
+    # A cap that leaves the enemy one flag from losing the round is not an
+    # ordinary cap: measured over 963 of them, the side converts a cap-out
+    # within 90 s 26.1% of the time against 13.4% for the same sides taking
+    # one flag fewer. The swing model cannot see that -- its curve flattens
+    # exactly there -- so the play is TAGGED and left at its measured value.
+    # Pricing the threat belongs to infra-mmr-ratings, which has the ledger;
+    # inventing a number here would put an unfitted figure in a public block.
+    brink_times: dict[tuple[int, int], list[float]] = {}
+    for row in brinks or []:
+        at = _f(row.get("game_time"))
+        half_of = _i(row.get("half"))
+        if at is None or half_of is None:
+            continue
+        for pid_ in row.get("credited") or []:
+            key = (half_of, _i(pid_))
+            if key[1] is not None:
+                brink_times.setdefault(key, []).append(at)
     envelope: dict[str, Any] = {
         "definition": DEFINITION,
         "definition_version": DEFINITION_VERSION,
@@ -266,6 +285,14 @@ def build_plays(
                 touch = next((t for t in touch_by_key.get((half, pid), [])
                               if any(abs((_f(t.get("game_time")) or 0) - ct) <= 3 for ct in cap_times)), None)
                 tags = _tags(kills, deaths, caps, denials, exc_info, cfg, completions, touch)
+                reached_brink = any(
+                    abs(bt - ct) <= cfg.brink_tolerance
+                    for bt in brink_times.get((half, pid), ())
+                    for ct in cap_times)
+                if reached_brink and "cap-out" not in tags:
+                    # Not on a completed cap-out: there the round is over and
+                    # the threat is moot. This marks the ones that did not land.
+                    tags = tags + ["brink"]
                 plays.append({
                     "half": half, "player_id": pid, "player_name_at_match": names[pid],
                     "team": teams.get(pid), "side": side_of(half, pid),
@@ -279,7 +306,8 @@ def build_plays(
                     "teammate_gap_at_touch": (touch or {}).get("teammate_gap"),
                     "excursion": exc_info,
                     "tags": tags,
-                    "summary": _summary(names[pid], kills, deaths, caps, denials, exc_info, tags),
+                    "summary": _summary(names[pid], kills, deaths, caps, denials, exc_info, tags)
+                                + (" — put them one flag from a cap-out" if "brink" in tags else ""),
                 })
 
     plays.sort(key=lambda p: (-p["value"], p["half"], p["start"]))

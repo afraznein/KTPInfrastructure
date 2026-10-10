@@ -201,3 +201,53 @@ def test_three_players_on_the_flag_split_the_round_win():
 def test_an_ordinary_cap_still_prices_on_the_flag_delta():
     play = build_plays([flag(300, 0.2, [1])], ROSTER, LIVES)["match_top"][0]
     assert abs(play["value"] - 0.2) < 1e-9
+
+
+def brink(t, credited, half=1):
+    return {"half": half, "game_time": t, "credited": list(credited)}
+
+
+def only(out):
+    """The single play, read off the public envelope (there is no raw list)."""
+    return out["match_top"][0]
+
+
+# A cap that leaves the enemy one flag from losing is TAGGED, never repriced:
+# measured 2x cap-out conversion over 963 brinks, which the swing curve cannot
+# show because it flattens exactly there. Pricing belongs to infra-mmr-ratings.
+def test_a_cap_that_reached_the_brink_is_tagged():
+    play = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES,
+                            brinks=[brink(100.0, [1])]))
+    assert "brink" in play["tags"]
+    assert "one flag from a cap-out" in play["summary"]
+
+
+def test_an_ordinary_cap_is_not_tagged_as_a_brink():
+    play = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES, brinks=[]))
+    assert "brink" not in play["tags"]
+
+
+def test_a_brink_credited_to_someone_else_does_not_tag_this_play():
+    play = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES,
+                            brinks=[brink(100.0, [2])]))
+    assert "brink" not in play["tags"]
+
+
+def test_a_brink_in_another_half_does_not_tag_this_play():
+    play = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES,
+                            brinks=[brink(100.0, [1], half=2)]))
+    assert "brink" not in play["tags"]
+
+
+def test_a_distant_brink_does_not_tag_this_play():
+    play = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES,
+                            brinks=[brink(400.0, [1])]))
+    assert "brink" not in play["tags"]
+
+
+def test_the_brink_tag_does_not_change_the_value():
+    plain = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES, brinks=[]))
+    tagged = only(build_plays([flag(100.0, 0.2, [1])], ROSTER, LIVES,
+                              brinks=[brink(100.0, [1])]))
+    assert plain["value"] == tagged["value"]
+    assert plain["event_value"] == tagged["event_value"]
