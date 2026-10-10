@@ -68,6 +68,21 @@ class Site:
         self.log = root / "mysql.log"
         (self.fastdl / "dod" / "maps").mkdir(parents=True)
         (self.fastdl / "dod" / "maps" / "dod_anzio.bsp").write_bytes(b"bsp")
+        # The overview pack is part of a clean run, so the tree carries its inputs too:
+        # without them the generator warns, and this suite's whole point is a run that
+        # warns about nothing. The pack itself is covered in test_fastdl_overview_pack.
+        overviews = self.fastdl / "dod" / "overviews"
+        overviews.mkdir()
+        (overviews / "dod_anzio.txt").write_text("global\n{\n\tZOOM\t1.0\n}\n",
+                                                 encoding="utf-8")
+        (overviews / "dod_anzio.bmp").write_bytes(b"BM" + bytes(512))
+        self.maps_ini = root / "ktp_maps.ini"
+        self.maps_ini.write_text(
+            "; ==========================================\n"
+            "; SEASONAL MAPS (S10, in schedule order)\n"
+            "; ==========================================\n\n"
+            "[dod_anzio]\nconfig = ktp_anzio.cfg\nname = Anzio\ntype = competitive\n",
+            encoding="utf-8")
         for sub, names in DEMO_FILES.items():
             d = self.demos / sub
             d.mkdir(parents=True)
@@ -91,7 +106,8 @@ class Site:
         start = time.monotonic()
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--apply", "--fastdl", str(self.fastdl),
-             "--demos", str(self.demos), "--db-timeout", timeout, *extra],
+             "--demos", str(self.demos), "--db-timeout", timeout,
+             "--maps-ini", str(self.maps_ini), *extra],
             env=env, capture_output=True, text=True, timeout=90)
         proc.elapsed = time.monotonic() - start
         return proc
