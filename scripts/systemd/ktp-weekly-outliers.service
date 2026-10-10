@@ -1,5 +1,5 @@
 [Unit]
-Description=KTP weekly outlier report: rank the week's official player-halves against each player's own history
+Description=KTP weekly outlier report: rank the week's player-halves (every match type) against each player's own history
 Documentation=https://github.com/afraznein/KTPInfrastructure
 After=mysql.service
 

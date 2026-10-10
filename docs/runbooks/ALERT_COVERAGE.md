@@ -120,7 +120,7 @@ that never "failed", and alerts on state transitions only.
 | `hltv-restart.service` | yes | no | yes |
 | `ktp-identity-reconcile.service` | yes | no | yes |
 | `ktp-hlstatsx-ingest-monitor.service` | yes | no | yes |
-| `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery; the report is at `/var/lib/ktp-weekly-outliers/latest.md` |
+| `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery (the embed carries the top rows from stdout); the report is at `/var/lib/ktp-weekly-outliers/latest.md`. The unit then sits `failed` until next Monday, which is the finding, not a fault — it is in the health sweep's `FAILED_UNIT_IGNORE` for that reason (added 2026-10-10 after six days of re-reports) |
 | `ktp-reports.service` | yes, once the unit from `systemd/` is reinstalled; the live unit has none | no | a failing run alerts; `ktp-reports.timer` is not in `CRITICAL_TIMERS`, so a timer that stops firing does not. The journal only says `exit-code`; the cause is in `/var/log/ktp-report-service.log` |
 | `ktp-admin-bot.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
 | `ktp-frag-diag-tail.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
