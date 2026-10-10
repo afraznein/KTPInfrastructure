@@ -77,7 +77,13 @@ net_interval_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND
 # 0 or unset means RETAIN EVERYTHING. The guard has to be HERE, not only in the
 # default: "-0 days" resolves to TODAY, so a bare default of 0 would sweep the
 # entire archive rather than none of it.
-if [ -d "$UPLOADS_DIR" ] && [ "${UPLOAD_RETENTION_DAYS}" -gt 0 ]; then
+# Directory tested first and separately: one combined guard called the store
+# missing whenever retention was merely off, and the two need opposite responses.
+if [ ! -d "$UPLOADS_DIR" ]; then
+    echo "[$(ts)] ac-retention: WARN $UPLOADS_DIR missing; skipping upload sweep" >&2
+elif [ "${UPLOAD_RETENTION_DAYS}" -le 0 ]; then
+    echo "[$(ts)] ac-retention: upload sweep is off (UPLOAD_RETENTION_DAYS=${UPLOAD_RETENTION_DAYS}); retaining all bundles"
+else
     cutoff=$(date -d "-${UPLOAD_RETENTION_DAYS} days" '+%Y-%m-%d')
     swept=0
     for d in "$UPLOADS_DIR"/????-??-??; do
@@ -103,8 +109,6 @@ if [ -d "$UPLOADS_DIR" ] && [ "${UPLOAD_RETENTION_DAYS}" -gt 0 ]; then
         fi
     done
     echo "[$(ts)] ac-retention: uploads swept ${swept} day-dir(s) older than ${cutoff}"
-else
-    echo "[$(ts)] ac-retention: WARN $UPLOADS_DIR missing; skipping upload sweep" >&2
 fi
 
 # ── 2 + 3 + 4 + 5. DB rows, batched ───────────────────────────────────────
