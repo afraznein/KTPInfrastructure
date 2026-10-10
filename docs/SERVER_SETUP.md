@@ -52,9 +52,15 @@ Game servers generate heavy UDP traffic. Default Linux buffer sizes cause packet
 
 **Check for UDP errors:**
 ```bash
-cat /proc/net/snmp | grep "Udp:" | tail -1
-# Look at column 5 (RcvbufErrors; column 6 is SndbufErrors) - should be 0 or not climbing
+cat /proc/net/snmp | grep "Udp:" | tail -1 | awk '{print "RcvbufErrors:", $6, "SndbufErrors:", $7}'
+# Both should be 0, or at least not climbing between two reads
 ```
+
+> **`awk` counts the `Udp:` label as `$1`, so RcvbufErrors is `$6`, not `$5`.** `$5` is
+> `OutDatagrams` and reads in the billions on a healthy host. Printed under the wrong label it reads as
+> catastrophic packet loss, and normalising it per uptime-day does not help —
+> that normalises outbound traffic, so the busiest host looks worst. Read the header line and match
+> names when in doubt; the same off-by-one was fixed once already in `scripts/*_monitor.py`.
 
 **Check current buffer sizes:**
 ```bash

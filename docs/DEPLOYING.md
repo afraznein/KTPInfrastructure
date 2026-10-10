@@ -486,12 +486,21 @@ uptime
 # Packet loss to upstream
 ping -c 10 8.8.8.8
 
-# Interface errors
+# Interface errors -- read `errors`, and do NOT read `dropped` as game-packet loss
 ip -s link show | grep -E 'errors|dropped'
 
 # Current bandwidth usage
 cat /sys/class/net/*/statistics/rx_bytes; sleep 5; cat /sys/class/net/*/statistics/rx_bytes
 ```
+
+> **`dropped` in `ip -s link` / `/proc/net/dev` is not lost game traffic on the baremetals.** The
+> hardware counters are the ones that mean loss (`ethtool -S <iface>`: `rx_missed_errors`,
+> `rx_no_buffer_count`, `rx_crc_errors`, `rx_fifo_errors`) and they read 0. Sampled twice 30 minutes
+> apart on 2026-10-10, three of the five game hosts dropped an **identical absolute count** in the
+> window while carrying very different traffic — a fixed-rate stream of frames the stack discards, not
+> loss. A per-million rate computed from the cumulative total therefore just reports which host
+> receives fewer packets: it read roughly 2x higher on the quietest host than on the busiest one with
+> the same absolute drip. **Sample twice and compare absolute deltas plus the hardware counters.**
 
 **3. If server metrics are healthy:**
 
@@ -509,6 +518,6 @@ The lag is likely upstream/network-related:
   logs (spike fingerprints roll up daily via `ktp-spike-digest`)
 - The perf-rollup Discord embeds (fps baseline deviations per instance)
 - `journalctl` on the data server for service-side anomalies
-- Ad-hoc: `uptime`, `/proc/net/snmp` UDP counters (column 5 = RcvbufErrors)
+- Ad-hoc: `uptime`, `/proc/net/snmp` UDP counters — **RcvbufErrors is `awk` field `$6`** (`$1` is the `Udp:` label, `$5` is `OutDatagrams` and reads in the billions on a healthy host)
 
 **Key insight:** If ALL players experience lag simultaneously, it's likely upstream (datacenter/provider network). If only some players lag, it's routing/ISP-specific.
