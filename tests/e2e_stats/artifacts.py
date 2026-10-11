@@ -77,6 +77,29 @@ def assert_capture_manifest_grammar(plugin_inc: Path) -> None:
         raise BuildError(f"capture manifest grammar drift: {exc}") from exc
 
 
+def assert_capture_event_types_registered(plugin_inc: Path) -> None:
+    """Refuse the bundle when the producer emits a stream the daemon never heard of.
+
+    The grammar check above sees `capabilities` as a format SPEC and never as a
+    set, so it is blind to this. An unregistered type fails `capture_health` for
+    every half of every match -- `move` and `aim_vis` each did exactly that over
+    a stream that was working, and each was patched by hand afterwards rather
+    than caught. Same collect-time placement and same reason: the extracted
+    `.inc` IS the producer at the amxx sha under test.
+    """
+    from scripts.match_analytics import (
+        CAPTURE_EVENT_TYPES, CAPTURE_EVENT_TYPES_OPTIONAL)
+    from tests.e2e_stats import manifest_contract
+
+    source = plugin_inc.read_text(encoding="utf-8", errors="replace")
+    try:
+        manifest_contract.assert_event_types_registered(
+            source, CAPTURE_EVENT_TYPES, CAPTURE_EVENT_TYPES_OPTIONAL,
+            registry_name="match_analytics.CAPTURE_EVENT_TYPES")
+    except manifest_contract.ManifestContractError as exc:
+        raise BuildError(f"capture event-type registration drift: {exc}") from exc
+
+
 REQUIRED_BUNDLE_REPOSITORIES = frozenset(
     {"infrastructure", "matchhandler", "amxx", "hlstatsx"}
 )
@@ -653,6 +676,7 @@ class ArtifactSet:
                 amxx_repo, amxx_sha, "plugins/dod/ktp_stats_capture.inc",
                 src / "ktp_stats_capture.inc")
             assert_capture_manifest_grammar(inst.plugin_inc)
+            assert_capture_event_types_registered(inst.plugin_inc)
             inst.gamedata_dir = extract_tree(
                 amxx_repo, amxx_sha, "gamedata", build_dir / "gamedata")
             missing_gamedata = [

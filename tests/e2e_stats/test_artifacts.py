@@ -36,10 +36,12 @@ def _git(repo, *args):
                    capture_output=True, text=True)
 
 
-# `collect()` refuses a producer whose manifest grammar this harness cannot
-# read, so the fake producer has to carry a real format string — verbatim from
-# KTPAMXX `plugins/dod/ktp_stats_capture.inc`, Pawn `^"` escapes and all. That
-# makes every collect() test below an exercise of the drift guard for free.
+# `collect()` refuses a producer whose manifest grammar or event-type set this
+# harness cannot read, so the fake producer carries both, verbatim from KTPAMXX
+# `plugins/dod/ktp_stats_capture.inc` — Pawn `^"` escapes and all. That makes
+# every collect() test below an exercise of both drift guards for free, and it
+# is why the fixture is not the one-line stub it could be: a fixture simpler
+# than the production shape passes checks the real producer would fail.
 FAKE_CAPTURE_MANIFEST_FORMAT = (
     'server_print("KTP_CAPTURE_MANIFEST (matchid ^"%s^") (half ^"%d^") '
     '(map ^"%s^") (producer ^"stats_logging^") (producer_version ^"%s^") '
@@ -47,6 +49,33 @@ FAKE_CAPTURE_MANIFEST_FORMAT = (
     '(buffer_entries ^"%d^") (life_buffer_entries ^"%d^") '
     '(map_revision_algorithm ^"sha256^") (map_revision ^"%s^") '
     '(sv_maxunlag ^"%.3f^") (sequence ^"%d^") (event_epoch ^"%d^")");'
+)
+
+# The event-type pair the registration guard reads: the enum, and the name
+# table it is sized by. Trimmed to the required streams plus one optional,
+# because the guard's rule is that the registry COVERS the producer's set,
+# not that the two are equal.
+FAKE_CAPTURE_EVENT_TYPES = (
+    "enum {\n"
+    "\tKSC_EVENT_LIFE = 0,\n"
+    "\tKSC_EVENT_DAMAGE,\n"
+    "\tKSC_EVENT_POSITION,\n"
+    "\tKSC_EVENT_FRAG,\n"
+    "\tKSC_EVENT_ASSIST,\n"
+    "\tKSC_EVENT_BREAK,\n"
+    "\tKSC_EVENT_FLAG_STATE,\n"
+    "\tKSC_EVENT_FLAG_POSITION,\n"
+    "\tKSC_EVENT_OBJECTIVE_ATTEMPT,\n"
+    "\tKSC_EVENT_TEAM_MEMBERSHIP,\n"
+    "\tKSC_EVENT_GRENADE_ENTITY,\n"
+    "\tKSC_EVENT_SHOT,\n"
+    "\tKSC_EVENT_COUNT\n"
+    "}\n"
+    'new const g_kscEventNames[KSC_EVENT_COUNT][] = {\n'
+    '\t"life", "damage", "position", "frag", "assist", "break",\n'
+    '\t"flag_state", "flag_position", "objective_attempt", "team_membership",\n'
+    '\t"grenade_entity", "shot"\n'
+    "}\n"
 )
 
 
@@ -71,7 +100,8 @@ def amxx_repo(tmp_path):
         b"// v2\r\n#include \"ktp_stats_capture.inc\"\r\n")
     (repo / "plugins" / "dod" / "ktp_stats_capture.inc").write_bytes(
         b"// capture v2\r\nstock ksc_init() {}\r\n"
-        + FAKE_CAPTURE_MANIFEST_FORMAT.encode() + b"\r\n")
+        + FAKE_CAPTURE_MANIFEST_FORMAT.encode() + b"\r\n"
+        + FAKE_CAPTURE_EVENT_TYPES.replace("\n", "\r\n").encode())
     for rel in (
         "common.games/master.games.txt",
         "common.games/functions.engine.txt",
