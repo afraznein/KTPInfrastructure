@@ -44,6 +44,23 @@ are. Current fit: **k=11.06**, `within_class_sd` 0.9697 (≈1, the sanity check
 that the units are right), class 14 −0.5018 → **−0.4202**, class 5 −0.4404 →
 **−0.3298**.
 
+#### Share-weighted, not a primary class
+
+The offset follows the share of his lives a player actually spent in each
+class, rather than collapsing the match to whichever class led. Picking a
+primary looked like the simple honest choice and is wrong for the player it
+matters most to: over S10 one player has lives in **eight** classes and played
+more than one in **37 of his 39 matches**. A primary would hand him the
+rifleman's ~0 offset while he spent a third of the match sniping, so the
+correction would systematically under-serve exactly the flex players whose
+contribution the rating already struggles to see -- and it was a flex player's
+rating that raised this. Share weighting is also continuous, so a player
+drifting between roles stops jumping between corrections.
+
+The fit still scores a match-player under his majority class, which is the
+right unit there: it estimates what the class does to the component, not what
+a mixed match does to a player.
+
 #### What it does not do
 
 **It does not close the match that raised it.** Both players there were class

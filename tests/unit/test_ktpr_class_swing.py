@@ -33,7 +33,7 @@ class ClassSwingCorrection(unittest.TestCase):
     def test_absent_offsets_change_nothing(self):
         plain = self.build([3.0, 1.0, -1.0, -3.0])
         self.assertFalse(plain["class_swing_adjustment"]["applied"])
-        with_map = self.build([3.0, 1.0, -1.0, -3.0], class_of={0: 14})
+        with_map = self.build([3.0, 1.0, -1.0, -3.0], class_of={0: {14: 1.0}})
         self.assertEqual(
             [p["rating"] for p in plain["players"]],
             [p["rating"] for p in with_map["players"]])
@@ -42,7 +42,7 @@ class ClassSwingCorrection(unittest.TestCase):
         """Player 0 and 1 post identical swing; only 0 is a sniper."""
         base = self.build([2.0, 2.0, -2.0, -2.0])
         fixed = self.build([2.0, 2.0, -2.0, -2.0],
-                           class_of={0: 14, 1: 1, 2: 1, 3: 1},
+                           class_of={0: {14: 1.0}, 1: {1: 1.0}, 2: {1: 1.0}, 3: {1: 1.0}},
                            offsets={"14": -0.419})
         by_id = {p["player_id"]: p for p in fixed["players"]}
         flat = {p["player_id"]: p for p in base["players"]}
@@ -60,14 +60,14 @@ class ClassSwingCorrection(unittest.TestCase):
         consumer once applied a second z-transform after reading it
         (keep-the-prac #679/#691). The claim has to stay exactly true."""
         fixed = self.build([2.0, 1.0, -1.0, -2.0],
-                           class_of={0: 14, 1: 14, 2: 1, 3: 6},
+                           class_of={0: {14: 1.0}, 1: {14: 1.0}, 2: {1: 1.0}, 3: {6: 1.0}},
                            offsets={"14": -0.419, "6": 0.27})
         swing = [p["components"]["swing"] for p in fixed["players"]]
         self.assertAlmostEqual(sum(swing) / len(swing), 0.0, places=6)
 
     def test_same_class_ordering_is_untouched(self):
         fixed = self.build([3.0, 1.0, -1.0, -3.0],
-                           class_of={i: 14 for i in range(4)},
+                           class_of={i: {14: 1.0} for i in range(4)},
                            offsets={"14": -0.419})
         order = [p["player_id"] for p in fixed["players"]]
         self.assertEqual(order, [0, 1, 2, 3])
@@ -78,21 +78,54 @@ class ClassSwingCorrection(unittest.TestCase):
 
     def test_what_was_applied_is_published(self):
         fixed = self.build([2.0, 1.0, -1.0, -2.0],
-                           class_of={0: 14, 1: 1, 2: 1, 3: 1},
+                           class_of={0: {14: 1.0}, 1: {1: 1.0}, 2: {1: 1.0}, 3: {1: 1.0}},
                            offsets={"14": -0.419, "5": -0.334})
         adj = fixed["class_swing_adjustment"]
         self.assertTrue(adj["applied"])
         # Only the offset actually used is reported, not the whole table.
         self.assertEqual(adj["offsets_used"], {"14": -0.419})
 
+    def test_a_split_match_gets_the_blend_he_actually_played(self):
+        """The reason shares replaced a primary class.
+
+        One S10 player has lives in EIGHT classes and played more than one in
+        37 of his 39 matches. Collapsing that to "rifleman" would apply a ~0
+        offset to someone who spent a third of the match sniping, under-serving
+        exactly the flex players the rating already struggles to see.
+        """
+        half = self.build([2.0, 2.0, 2.0, 2.0],
+                          class_of={0: {14: 0.5, 1: 0.5}, 1: {1: 1.0},
+                                    2: {1: 1.0}, 3: {1: 1.0}},
+                          offsets={"14": -0.4})
+        full = self.build([2.0, 2.0, 2.0, 2.0],
+                          class_of={0: {14: 1.0}, 1: {1: 1.0},
+                                    2: {1: 1.0}, 3: {1: 1.0}},
+                          offsets={"14": -0.4})
+        gap = lambda out: ({p["player_id"]: p["components"]["swing"]
+                            for p in out["players"]})
+        # Half the sniper time earns half the lift over an identical rifleman.
+        self.assertAlmostEqual(gap(half)[0] - gap(half)[1], 0.2, places=3)
+        self.assertAlmostEqual(gap(full)[0] - gap(full)[1], 0.4, places=3)
+
+    def test_shares_come_from_lives_not_rows(self):
+        from scripts.ktpr_v2 import class_shares
+        rows = ([{"player_id": 7, "player_class": 14}] * 3
+                + [{"player_id": 7, "player_class": 1}]
+                + [{"player_id": 8, "player_class": 1}])
+        shares = class_shares(rows)
+        self.assertAlmostEqual(shares[7][14], 0.75)
+        self.assertAlmostEqual(shares[7][1], 0.25)
+        self.assertEqual(shares[8], {1: 1.0})
+        self.assertAlmostEqual(sum(shares[7].values()), 1.0)
+
     def test_an_unknown_class_is_left_alone(self):
         fixed = self.build([2.0, 1.0, -1.0, -2.0],
-                           class_of={0: 99}, offsets={"14": -0.419})
+                           class_of={0: {99: 1.0}}, offsets={"14": -0.419})
         self.assertFalse(fixed["class_swing_adjustment"]["applied"])
 
     def test_no_swing_component_is_not_an_error(self):
         out = build_ktpr_v2_shadow(players(3), None, None,
-                                   class_of={0: 14},
+                                   class_of={0: {14: 1.0}},
                                    class_swing_offsets={"14": -0.419})
         self.assertFalse(out["class_swing_adjustment"]["applied"])
         self.assertNotIn("swing", out["components_used"])

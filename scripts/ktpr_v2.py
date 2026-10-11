@@ -64,15 +64,28 @@ def load_class_swing_offsets(path=None) -> dict[str, float]:
         return {}
 
 
-def primary_class(life_rows) -> dict[int, int]:
-    """Each player's class for the match: the one he spent most lives in.
+def class_shares(life_rows) -> dict[int, dict[int, float]]:
+    """Each player's share of his lives per class, from `player_class`.
 
-    The same rule the offsets were fitted under (coordination
-    `hv_class_bias.py`, and `scripts/fit_class_swing_offsets.py`), read from the
-    same `ktp_life_events.player_class` column, so the fit and its application
-    cannot disagree about who counts as a sniper. A player who switches
-    mid-match is attributed to his main, which per-life attribution would fix
-    only if the rating were decomposed per life, and it is not.
+    NOT the single class he played most. Picking a primary looked like the
+    simple honest choice and it is wrong for the player it matters most to:
+    measured over S10, one player has lives in EIGHT classes and played more
+    than one in 37 of his 39 matches. Collapsing that match to "rifleman"
+    applies a ~0 offset to someone who spent a third of it sniping, so the
+    correction would systematically under-serve exactly the flex players whose
+    contribution the rating already struggles to see — and it was a flex
+    player's rating that raised this in the first place.
+
+    A share-weighted offset is also continuous, so a player drifting between
+    roles across a season stops jumping between corrections.
+
+    Read from the same `ktp_life_events.player_class` column the offsets were
+    fitted on (coordination `hv_class_bias.py`,
+    `scripts/fit_class_swing_offsets.py`), so the fit and its application
+    cannot disagree about who was sniping. The fit still scores a match-player
+    under his majority class, which is the right unit there: it is estimating
+    what the class does to the component, not what a mixed match does to a
+    player.
     """
     tally: dict[int, dict[int, int]] = {}
     for row in life_rows or ():
@@ -85,8 +98,12 @@ def primary_class(life_rows) -> dict[int, int]:
             continue
         tally.setdefault(pid, {})
         tally[pid][code] = tally[pid].get(code, 0) + 1
-    return {pid: max(by.items(), key=lambda kv: kv[1])[0]
-            for pid, by in tally.items() if by}
+    shares: dict[int, dict[int, float]] = {}
+    for pid, by in tally.items():
+        lives = sum(by.values())
+        if lives:
+            shares[pid] = {code: n / lives for code, n in by.items()}
+    return shares
 
 
 def _apply_class_swing_offsets(z, ids, class_of, offsets):
@@ -116,11 +133,15 @@ def _apply_class_swing_offsets(z, ids, class_of, offsets):
                 "reason": "no swing component, no class map, or no offsets"}
     shifted, used = {}, {}
     for pid in ids:
-        code = class_of.get(pid)
-        offset = offsets.get(str(code)) if code is not None else None
-        shifted[pid] = z["swing"][pid] - float(offset or 0.0)
-        if offset:
-            used[str(code)] = round(float(offset), 4)
+        # Share-weighted: a player who split the match across roles gets the
+        # blend he actually played, not whichever class happened to lead.
+        correction = 0.0
+        for code, share in (class_of.get(pid) or {}).items():
+            offset = offsets.get(str(code))
+            if offset:
+                correction += float(share) * float(offset)
+                used[str(code)] = round(float(offset), 4)
+        shifted[pid] = z["swing"][pid] - correction
     mean = sum(shifted.values()) / len(shifted)
     z["swing"] = {pid: value - mean for pid, value in shifted.items()}
     return {"applied": bool(used), "offsets_used": used,
@@ -134,7 +155,7 @@ def build_ktpr_v2_shadow(
     flag_fight_players: Sequence[dict[str, Any]] | None,
     flag_swing_players: Sequence[dict[str, Any]] | None,
     config: KtprV2Config | None = None,
-    class_of: Mapping[int, int] | None = None,
+    class_of: Mapping[int, Mapping[int, float]] | None = None,
     class_swing_offsets: Mapping[str, float] | None = None,
 ) -> dict[str, Any]:
     """Blend the merged per-player components into one shadow rating.

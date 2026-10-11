@@ -71,7 +71,7 @@ from scripts.report_team_convention import (  # noqa: E402
 from scripts.ktpr_v2 import (  # noqa: E402
     build_ktpr_v2_shadow,
     load_class_swing_offsets,
-    primary_class,
+    class_shares,
 )
 from scripts.positional_shadow import (  # noqa: E402
     PositionalConfig,
@@ -2289,7 +2289,7 @@ def build_report(
         # attributes flag control and a sniper holds mid without standing on
         # it, so the component read the role as absence. Measured attribution
         # error, not lower contribution -- see ktpr_v2._apply_class_swing_offsets.
-        class_of=primary_class(life_boundaries),
+        class_of=class_shares(life_boundaries),
         class_swing_offsets=load_class_swing_offsets(),
     )
     highlight_windows = build_highlight_windows(
