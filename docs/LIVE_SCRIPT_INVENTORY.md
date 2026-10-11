@@ -54,23 +54,34 @@ host; guessing a newer commit would restate the same defect with fresher-looking
 an `md5sum`-format file off a host (`--live-md5`) and will verify the live half when given one — that is the
 one path that closes a row rather than re-dating it.
 
-🔴 **Three rows pin a commit that is NOT an ancestor of `main`, so nobody who clones this repo can check
-them at all** — `cf93488405` (`ktp-data-server-health.sh`) and `63b45b20cc` (`ktp-demo-cleanup-auto.sh`) are
-reachable from no ref, and `471aab1c59` (`ktp-demo-offsite.sh`) sits on an unmerged feature branch. Those
-carry **UNVERIFIABLE-PIN**. 🔑 **A pin is only provenance if a cloner can reach it**, and this was invisible
+🔴 **Some rows pin a commit that is NOT an ancestor of `main`, so nobody who clones this repo can check
+them at all** — `63b45b20cc` (`ktp-demo-cleanup-auto.sh`) is reachable from no ref, and `471aab1c59`
+(`ktp-demo-offsite.sh`) sits on an unmerged feature branch. Those carry **UNVERIFIABLE-PIN**; the checker
+counts them, so read the count off a run rather than off this paragraph. *(`cf93488405`,
+`ktp-data-server-health.sh`, was a third until 2026-10-10, when a host read re-pinned that row — see below.)*
+🔑 **A pin is only provenance if a cloner can reach it**, and this was invisible
 for weeks because the workstation that wrote the rows still held the dangling objects — the checker's first
 CI run was the first time anything asked. Reachability is therefore the test, not whether the object happens
 to be in your clone; those rows get no md5 and no supersession verdict, because a fresh clone cannot compute
 one. ⛔ Re-pinning them needs a read on the host, same as a SUPERSEDED row.
 
-⚠️ **`/usr/local/bin/ktp-data-server-health.sh` is the measured instance, and its row is provably behind the
-box.** This file pins it to `cf93488405`, which has no `ktp-hitreg-reg` marker at all (`origin/main` has two).
-`andsmit9/ktp-coordination`'s `NEIN-DEPLOY.md` records that script installed to `/usr/local/bin/` **twice**
-since this inventory was taken — `dpl-41f8` on 2026-09-21 18:43 with the hitreg block, and `dpl-9f25` on
-2026-09-24 with the aborted-transfer producer. Neither install reached this row. ⛔ **So the pin is not
-merely old, it is wrong about the box** — and what the box runs *today* is still unknown, because that needs
-a read there. ⚠️ **Do not cite this row as the live revision**;
-`changelog.d/2026-10-07-health-capture-per-half-leg.md` did exactly that and had to be walked back.
+## Two rows closed by a host read, 2026-10-10
+
+✅ **`/usr/local/bin/ktp-data-server-health.sh` and `/usr/local/bin/ktp-hltv-liveness.sh` are re-pinned from a
+read on the data server**, so both rows are current and carry neither token. The live `md5sum` of each path
+equals the blob at its new pin, which is also the tip of that path on `main`: health `065f4ad7…` at
+`1ae8b9c09f`, liveness `a6eb2520…` at `9aecea8752`. Controls on the probe: both real paths hashed, and a
+nonexistent path under the same directory reported missing rather than silently skipped. The box's own
+`ktp-install --report` agrees on both bytes and names the same source commits, and `NEIN-DEPLOY.md` records
+the installs (`dpl-f806` for liveness, with `9d7072d0` → `a6eb2520`).
+
+🔑 **THE TRAP THAT MADE THIS WORTH DOING, AND IT IS THE INVERSE OF THE ONE ABOVE: a SUPERSEDED row reads as
+evidence that nothing was installed.** The health row was cited as the live revision and had to be walked back
+(`changelog.d/2026-10-07-health-capture-per-half-leg.md`) — that is the documented direction. But the same row
+was then cited the OTHER way: *the inventory still pins the superseded blob, so nothing was installed.* Both
+installs had in fact happened, and the box's `ktp-install --report` had said so the whole time. ⛔ **A mute row
+is mute in both directions.** ➡️ **`ktp-install --report` on the host is the current record; this file is a
+baseline that predates it.** A row here settles nothing about the box without a read there.
 
 ## Data server
 
@@ -145,7 +156,7 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/usr/local/bin/hltv-restart-all.sh` `036ed8ab` = `KTPInfrastructure:scripts/hltv-restart-all.sh` @ `a26f37f9ca` SUPERSEDED
 - `/usr/local/bin/ktp-ac-retention.sh` `92e7926d` = `KTPInfrastructure:scripts/ktp-ac-retention.sh` @ `c4268ad113` SUPERSEDED
 - `/usr/local/bin/ktp-backup-watchdog.sh` `46f2a66a` = `KTPInfrastructure:scripts/ktp-backup-watchdog.sh` @ `1545ceac6f` SUPERSEDED
-- `/usr/local/bin/ktp-data-server-health.sh` `87393135` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `cf93488405` SUPERSEDED UNVERIFIABLE-PIN
+- `/usr/local/bin/ktp-data-server-health.sh` `065f4ad7` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `1ae8b9c09f`
 - `/usr/local/bin/ktp-db-offsite.sh` `b17911a5` = `KTPInfrastructure:scripts/ktp-db-offsite.sh` @ `4a1fa4be92`
 - `/usr/local/bin/ktp-demo-cleanup-auto.sh` `b7ccf0e9` = `KTPInfrastructure:scripts/ktp-demo-cleanup-auto.sh` @ `63b45b20cc` UNVERIFIABLE-PIN
 - `/usr/local/bin/ktp-demo-offsite.sh` `7bfe04b2` = `KTPInfrastructure:scripts/ktp-demo-offsite.sh` @ `471aab1c59` UNVERIFIABLE-PIN
@@ -155,7 +166,7 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/usr/local/bin/ktp-fastdl-prune-configs.sh` `1b2ba512` = `KTPInfrastructure:scripts/ktp-fastdl-prune-configs.sh` @ `e471b192dd`
 - `/usr/local/bin/ktp-hltv-connection-ingest.py` `54b35fcf` = `KTPInfrastructure:scripts/ktp-hltv-connection-ingest.py` @ `ca6d4046de`
 - `/usr/local/bin/ktp-hltv-correlate.py` `ae51ed0d` = `KTPInfrastructure:scripts/ktp-hltv-correlate.py` @ `ca6d4046de`
-- `/usr/local/bin/ktp-hltv-liveness.sh` `fcec14db` = `KTPInfrastructure:scripts/ktp-hltv-liveness.sh` @ `a26f37f9ca` SUPERSEDED
+- `/usr/local/bin/ktp-hltv-liveness.sh` `a6eb2520` = `KTPInfrastructure:scripts/ktp-hltv-liveness.sh` @ `9aecea8752`
 - `/usr/local/bin/ktp-organize-hltv-demos.sh` `42ca9ab8` = `KTPInfrastructure:scripts/ktp-organize-hltv-demos.sh` @ `220c9053b8`
 - `/usr/local/bin/ktp-perf-rollup` `9bc872e1` = `KTPInfrastructure:scripts/ktp-perf-rollup.py` @ `1ea13102c7` SUPERSEDED
 - `/usr/local/bin/ktp-post-reboot-verify.sh` `9fdebeab` = `KTPInfrastructure:scripts/ktp-post-reboot-verify.sh` @ `1545ceac6f`
