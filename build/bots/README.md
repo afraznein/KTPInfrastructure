@@ -161,14 +161,20 @@ answers "were these built from the same commit", nothing about the fleet.
 
   | have waypoints | do NOT |
   |---|---|
-  | `dod_anzio` `dod_flash` `dod_donner` `dod_kalt` `dod_avalanche` `dod_merderet` `dod_jagd` | `dod_saints2_b3e` `dod_railyard_s9d` `dod_armory_b6` `dod_halle` `dod_thunder2` `dod_lennon5_b1` `dod_railroad2_s9a` |
+  | `dod_anzio` `dod_flash` `dod_donner` `dod_kalt` `dod_avalanche` `dod_merderet` `dod_jagd` | `dod_saints2_b5e` `dod_armory_b7` `dod_halle` `dod_thunder2` `dod_lennon5_b1` `dod_railroad2_s10a` |
+
+  The right-hand stems are the live pool as of `config/local/ktp_maps.ini`
+  (owned by `afraznein/KTPDoDServerConfig`). Re-derive them from there rather
+  than trusting this table — a re-cut map changes its stem, and nothing here
+  notices. ⛔ Not from a checkout on a server: `/opt/ktp-infra` is pulled by
+  hand and has sat months behind, naming stems the fleet stopped playing.
 
   This bounds the feature more than anything else here. In particular
-  **cap-break testing on `saints2_b3e` / `railyard_s9d` is not possible** —
-  those are the maps where cap-breaks concentrate (one area-brush flag of five),
-  and they are exactly the ones with no bot coverage. An unwaypointed map gives
-  bots that connect and stand still, which reads as a broken pipeline rather
-  than an unwaypointed map. List what is available with:
+  **cap-break testing on `saints2_b5e` is not possible** — that is the map where
+  cap-breaks concentrate (one area-brush flag of five), and it has no bot
+  coverage. An unwaypointed map gives bots that connect and stand still, which
+  reads as a broken pipeline rather than an unwaypointed map. List what is
+  available with:
 
   ```sh
   docker run --rm --entrypoint bash ktp-gameserver-bots:$VERSION \
