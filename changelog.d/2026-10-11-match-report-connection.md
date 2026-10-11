@@ -19,3 +19,8 @@ state. Three instruments, kept apart, each `null` where it was not recording.
   invisible.
 - Schema 29 → 30 regenerates the corpus (~15 min on the data server); the contract fixture has no
   net tables, so the integration report reads the block as `unavailable`, which is the test.
+- **Deploy step, before the regen**: `ktpreports`@`localhost` needs `SELECT` on
+  `hlstatsx.ktp_net_intervals` and `hlstatsx.ktp_net_sessions` (runbook grant block updated;
+  `check_report_grants` derives it). Without them the tables are invisible to the capability
+  probe and every report publishes the block as `unavailable` with no fault anywhere — the
+  exact failure the grants check exists to catch. Measured 2026-10-11: the box holds neither.
