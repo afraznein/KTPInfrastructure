@@ -182,3 +182,107 @@ def assert_reader_accepts(source: str, reader: re.Pattern, *, reader_name: str) 
         + "; ".join(detail)
         + f". Rendered line was: {line!r}"
     )
+
+
+# -- the event-type set, which the manifest grammar above does not cover ------
+#
+# `capabilities` is a manifest FIELD, so the grammar leg sees its format spec
+# and never its contents. The set of streams the producer can actually emit
+# lives in its own name table, and the daemon-side registry that has to know
+# them is `scripts/match_analytics.py`'s CAPTURE_EVENT_TYPES. Nothing compared
+# the two: `move` (2026-09-29) and `aim_vis` (2026-10-05) each landed as an
+# unregistered type, each took four Lane B assertions and a report
+# authorization down over a stream that was working, and each was "fixed" by
+# editing a list by hand afterwards.
+#
+# Same discipline as above: the producer's table is the authority and this
+# module copies none of it.
+
+# `new const g_kscEventNames[KSC_EVENT_COUNT][] = { "life", "damage", ... }`.
+_EVENT_NAME_TABLE = re.compile(
+    r"g_kscEventNames\s*\[[^\]]*\]\s*\[[^\]]*\]\s*=\s*\{(?P<body>[^}]*)\}")
+_EVENT_NAME = re.compile(r'"(?P<name>[a-z_][a-z0-9_]*)"')
+# The enum the table is sized by. A member appended without a name leaves Pawn
+# zero-filling that slot, so the type emits under an EMPTY name -- invisible in
+# the source and fatal in the daemon.
+# `` on the sentinel is load-bearing, the same way the trailing ` \(` is on
+# the manifest marker: unanchored, renaming it to KSC_EVENT_COUNT2 still matched
+# by prefix and the check passed on a source it could no longer read.
+_EVENT_ENUM = re.compile(
+    r"enum\s*\{(?P<body>[^}]*?)KSC_EVENT_COUNT\b", re.DOTALL)
+_EVENT_MEMBER = re.compile(r"^\s*(?P<name>KSC_EVENT_[A-Z0-9_]+)\s*(?:=\s*-?\d+)?\s*,")
+_PAWN_LINE_COMMENT = re.compile(r"//[^\n]*")
+
+
+def _one(pattern: re.Pattern, source: str, what: str) -> str:
+    """The single `body` group `pattern` finds, or a refusal naming the count.
+
+    Zero means the thing was renamed and every check downstream would pass by
+    vacuum; more than one means two producers and this check covers an
+    arbitrary one. Same guard as `extract_format_string`.
+    """
+    found = {match.group("body") for match in pattern.finditer(source)}
+    if len(found) != 1:
+        raise ManifestContractError(
+            f"expected exactly 1 {what} in the producer source, found "
+            f"{len(found)} -- it was renamed or duplicated, and every "
+            f"event-type check downstream of this would otherwise pass by vacuum"
+        )
+    return found.pop()
+
+
+def producer_event_types(source: str) -> tuple[str, ...]:
+    """Ordered event-type names from the producer's own name table."""
+    body = _one(_EVENT_NAME_TABLE, source, "g_kscEventNames table")
+    return tuple(match.group("name") for match in _EVENT_NAME.finditer(body))
+
+
+def producer_event_enum(source: str) -> tuple[str, ...]:
+    """Ordered `KSC_EVENT_*` members, excluding the COUNT sentinel."""
+    body = _PAWN_LINE_COMMENT.sub("", _one(_EVENT_ENUM, source, "KSC_EVENT enum"))
+    return tuple(
+        match.group("name")
+        for match in (_EVENT_MEMBER.match(line) for line in body.split("\n"))
+        if match
+    )
+
+
+def assert_event_types_registered(source, required, optional, *, registry_name):
+    """Fail unless every type the producer can emit is one the registry knows.
+
+    Three findings, and the directions are not symmetric:
+
+      * a producer type in neither list is the `move`/`aim_vis` defect -- the
+        daemon fails `capture_health` for every half of every match;
+      * a REQUIRED type the producer cannot emit means a stream the daemon
+        demands was dropped;
+      * an OPTIONAL type with no producer is FINE and deliberate. `aim_vis` was
+        registered before any build emitted it, precisely so the first one that
+        does is not an outage.
+    """
+    produced = producer_event_types(source)
+    enum_members = producer_event_enum(source)
+    if len(produced) != len(enum_members):
+        raise ManifestContractError(
+            f"the producer's event enum has {len(enum_members)} member(s) and "
+            f"its name table {len(produced)}. Pawn zero-fills the short tail, so "
+            f"the unnamed type(s) emit under an empty name: "
+            f"enum {list(enum_members)}, names {list(produced)}"
+        )
+
+    known = set(required) | set(optional)
+    unregistered = [name for name in produced if name not in known]
+    dropped = [name for name in required if name not in produced]
+    detail = []
+    if unregistered:
+        detail.append(
+            f"producer emits but {registry_name} does not know: {unregistered} -- "
+            f"add each to CAPTURE_EVENT_TYPES_OPTIONAL, which is what keeps a "
+            f"fleet mid-rollout passing"
+        )
+    if dropped:
+        detail.append(
+            f"{registry_name} requires but the producer no longer emits: {dropped}"
+        )
+    if detail:
+        raise ManifestContractError("; ".join(detail))
