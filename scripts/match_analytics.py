@@ -104,7 +104,7 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 29  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show
+SCHEMA_VERSION = 30  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show; 30: `connection` -- per player, the share of 10 s windows in which they were the server's worst client for jitter/latency/drops (ktp_net_intervals), ping at each shot where shot-detail was on (ktp_shot_events.shot_ping), and the engine session that ended in this match (ktp_net_sessions); per match, drops/window and lag-compensation state. Match page only by ruling (drew 2026-10-11): never a general stat, never a rating input
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
@@ -407,6 +407,16 @@ SELECT
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_ac_weapon_fires')
     AS ac_weapon_fires,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_net_intervals')
+    AS net_intervals,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_net_sessions')
+    AS net_sessions,
+  EXISTS(SELECT 1 FROM information_schema.columns
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_shot_events'
+      AND column_name = 'shot_ping')
+    AS shot_ping,
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'hlstats_Events_Statsme')
     AS statsme,
@@ -1834,6 +1844,133 @@ def render_markdown(report: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+CONNECTION_DEFINITION = (
+    "How each player's connection behaved during this match, from the server's side. "
+    "worst_share is the fraction of 10 s windows in which the player was the server's "
+    "worst client for that gauge -- relative to the other eleven, never an absolute level. "
+    "shot_ping is the player's own round trip sampled at each shot, this match only. "
+    "session is the engine's counters for the connection that ended during this match "
+    "and spans everything since it connected (session_seconds)."
+)
+CONNECTION_CAVEATS = (
+    "worst_share compares players on the same server in the same window; a clean "
+    "server still has a worst client every window.",
+    "shot_ping exists only where the shot-detail stream was on (12-mans all season, "
+    "officials from 2026-10-10); null means not measured, not zero.",
+    "session counters cover the whole connection, not this match alone; a player who "
+    "stayed connected for the next match has no session row here.",
+    "Not a general stat and not a rating input: a bad connection explains a half, it "
+    "does not score it.",
+)
+
+
+def _f(value: Any) -> float | None:
+    if value is None or value == "NULL" or value == "":
+        return None
+    return float(value)
+
+
+def _i(value: Any) -> int | None:
+    f = _f(value)
+    return None if f is None else int(f)
+
+
+def build_connection(
+    interval_rows: list[dict[str, Any]],
+    worst_rows: list[dict[str, Any]],
+    session_rows: list[dict[str, Any]],
+    shot_rows: list[dict[str, Any]],
+    players: list[dict[str, Any]],
+    sources: dict[str, bool],
+) -> dict[str, Any]:
+    """Per-player and per-match connection quality (schema 30). Three instruments,
+    each published only when it was recording, none substituted for another:
+    worst-of shares from ktp_net_intervals (server-relative, every match),
+    per-shot ping from ktp_shot_events (exact, this match, only where shot-detail
+    was on) and the engine session from ktp_net_sessions (whole connection)."""
+    if not sources.get("net_intervals", False):
+        return {"status": "unavailable", "reason": "ktp_net_intervals not present",
+                "definition_version": 1, "definition": CONNECTION_DEFINITION,
+                "caveats": list(CONNECTION_CAVEATS), "match": None, "players": []}
+    head = interval_rows[0] if interval_rows else {}
+    windows = _i(head.get("windows")) or 0
+    if windows == 0:
+        return {"status": "unavailable", "reason": "no telemetry windows inside the played halves",
+                "definition_version": 1, "definition": CONNECTION_DEFINITION,
+                "caveats": list(CONNECTION_CAVEATS), "match": None, "players": []}
+    match = {
+        "windows": windows,
+        "window_seconds": 10,
+        "drops_per_window": _f(head.get("drops_per_window")),
+        "jitter_worst_avg_ms": _f(head.get("jitter_worst_avg_ms")),
+        "latency_worst_avg_ms": _f(head.get("latency_worst_avg_ms")),
+        "windows_ge300": _i(head.get("windows_ge300")),
+        "lagcomp_off_windows": _i(head.get("lagcomp_off_windows")),
+        "maxunlag_hits_per_window": _f(head.get("maxunlag_hits_per_window")),
+        "choke_windows": _i(head.get("choke_windows")),
+    }
+    worst_by_name = {r.get("worst_name"): r for r in worst_rows}
+    shots_by_id = {_i(r.get("player_id")): r for r in shot_rows}
+    session_by_id: dict[int | None, dict[str, Any]] = {}
+    for r in session_rows:  # ordered longest-first per player by the query
+        session_by_id.setdefault(_i(r.get("player_id")), r)
+    out = []
+    for p in players:
+        pid = _i(p.get("player_id"))
+        name = p.get("player_name_at_match")
+        w = worst_by_name.get(name, {})
+        s = shots_by_id.get(pid)
+        se = session_by_id.get(pid)
+        out.append({
+            "player_id": pid,
+            "player_name_at_match": name,
+            "team": p.get("team"),
+            "worst_share": {
+                "jitter": round((_i(w.get("jitter_worst_windows")) or 0) / windows, 3),
+                "latency": round((_i(w.get("latency_worst_windows")) or 0) / windows, 3),
+                "drops": round((_i(w.get("drops_worst_windows")) or 0) / windows, 3),
+            },
+            "drops_when_worst": _i(w.get("drops_when_worst")) or 0,
+            "latency_spikes_ge300": _i(w.get("latency_spikes_ge300")) or 0,
+            "jitter_when_worst_ms": _f(w.get("jitter_when_worst_ms")),
+            "latency_when_worst_max_ms": _f(w.get("latency_when_worst_max_ms")),
+            "shot_ping": None if not s else {
+                "shots": _i(s.get("shots_with_ping")),
+                "avg_ms": _f(s.get("shot_ping_avg_ms")),
+                "sd_ms": _f(s.get("shot_ping_sd_ms")),
+                "max_ms": _f(s.get("shot_ping_max_ms")),
+                "dropped": _i(s.get("shot_net_dropped")),
+            },
+            "session": None if not se else {
+                "seconds": _i(se.get("session_seconds")),
+                "packets": _i(se.get("session_packets")),
+                "drops": _i(se.get("session_drops")),
+                "drop_rate_pct": (round(100 * (_i(se.get("session_drops")) or 0) / _i(se.get("session_packets")), 3)
+                                  if _i(se.get("session_packets")) else None),
+                "latency_avg_ms": _f(se.get("session_latency_avg_ms")),
+                "latency_max_ms": _f(se.get("session_latency_max_ms")),
+                "jitter_avg_ms": _f(se.get("session_jitter_avg_ms")),
+                "loss_avg_pct": _f(se.get("session_loss_avg_pct")),
+                "loss_max_pct": _f(se.get("session_loss_max_pct")),
+            },
+        })
+    return {
+        "status": "available",
+        "definition_version": 1,
+        "definition": CONNECTION_DEFINITION,
+        "caveats": list(CONNECTION_CAVEATS),
+        "instruments": {
+            "worst_share": "available",
+            # unavailable = the table/column is not there; not-recorded = it is, and the
+            # stream was off for this match. The page wants to say which.
+            "shot_ping": "available" if shot_rows else ("not-recorded" if sources.get("shot_ping") else "unavailable"),
+            "session": "available" if session_rows else ("not-recorded" if sources.get("net_sessions") else "unavailable"),
+        },
+        "match": match,
+        "players": out,
+    }
+
+
 def build_report(
     db: EphemeralMysql,
     match_id: str,
@@ -2308,6 +2445,13 @@ def build_report(
         "duels_by_side": duels_by_side,
         "player_classes": player_classes,
         "in_game_result": in_game_result,
+        "connection": build_connection(
+            query_rows(db, "net_interval_fact.sql", match_id) if sources.get("net_intervals") else [],
+            query_rows(db, "net_worst_fact.sql", match_id) if sources.get("net_intervals") else [],
+            query_rows(db, "net_session_fact.sql", match_id) if sources.get("net_sessions") else [],
+            query_rows(db, "shot_ping_fact.sql", match_id) if sources.get("shot_ping") else [],
+            players, sources,
+        ),
         "duel_matrix": duel_matrix,
         # Wave 2 (migration 033): None until a 1.22.0 producer's half lands.
         "duel_stats": duel_stats,
