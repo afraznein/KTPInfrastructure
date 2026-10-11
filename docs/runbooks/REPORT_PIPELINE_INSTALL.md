@@ -82,6 +82,8 @@ GRANT SELECT ON hlstatsx.ktp_life_events                    TO 'ktpreports'@'loc
 GRANT SELECT ON hlstatsx.ktp_match_players                  TO 'ktpreports'@'localhost';
 GRANT SELECT ON hlstatsx.ktp_match_stats                    TO 'ktpreports'@'localhost';
 GRANT SELECT ON hlstatsx.ktp_matches                        TO 'ktpreports'@'localhost';
+GRANT SELECT ON hlstatsx.ktp_net_intervals                  TO 'ktpreports'@'localhost';
+GRANT SELECT ON hlstatsx.ktp_net_sessions                   TO 'ktpreports'@'localhost';
 GRANT SELECT ON hlstatsx.ktp_objective_attempt_events       TO 'ktpreports'@'localhost';
 GRANT SELECT ON hlstatsx.ktp_position_samples               TO 'ktpreports'@'localhost';
 GRANT SELECT ON hlstatsx.ktp_score_events                   TO 'ktpreports'@'localhost';

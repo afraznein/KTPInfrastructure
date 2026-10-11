@@ -476,8 +476,34 @@ class Sanitize(unittest.TestCase):
         ph = sanitize_report(internal_report())["player_halves"]
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
-    def test_contract_is_v1_12_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.12.0")
+    def test_contract_is_v1_13_0(self):
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.13.0")
+
+    def test_connection_block_is_published_and_names_only(self):
+        rep = internal_report()
+        rep["connection"] = {
+            "status": "available", "definition_version": 1, "definition": "d", "caveats": ["c"],
+            "instruments": {"worst_share": "available", "shot_ping": "not-recorded", "session": "available"},
+            "match": {"windows": 221, "window_seconds": 10, "drops_per_window": "4.57"},
+            "players": [{"player_id": 7, "player_name_at_match": "A", "team": 1,
+                         "worst_share": {"jitter": "0.801", "latency": 0.059, "drops": 0.466},
+                         "drops_when_worst": "618", "latency_spikes_ge300": 2,
+                         "jitter_when_worst_ms": 79.2, "latency_when_worst_max_ms": None,
+                         "shot_ping": None,
+                         "session": {"seconds": 3249, "packets": 583612, "drops": 5, "drop_rate_pct": 0.001,
+                                     "latency_avg_ms": 27.9, "latency_max_ms": 203.1, "jitter_avg_ms": 5.1,
+                                     "loss_avg_pct": 0, "loss_max_pct": 73}}],
+        }
+        dto = sanitize_report(rep)
+        c = dto["connection"]
+        self.assertEqual(c["status"], "available")
+        self.assertEqual(c["players"][0]["name"], "A")
+        self.assertEqual(c["players"][0]["worst_share"]["jitter"], 0.801)
+        self.assertEqual(c["players"][0]["drops_when_worst"], 618)
+        self.assertEqual(c["match"]["drops_per_window"], 4.57)
+        self.assertNotIn("player_id", json.dumps(c))
+        assert_sanitized(dto)
+        self.assertEqual(sanitize_report(internal_report())["connection"]["status"], "unavailable")
 
     def test_a_team_of_unmeasured_players_has_no_total_not_zero(self):
         rep = internal_report()

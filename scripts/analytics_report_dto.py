@@ -30,7 +30,7 @@ from scripts.in_game_result import unavailable as in_game_unavailable
 from scripts.kill_streaks import DEFINITION as KILL_STREAK_DEFINITION
 from scripts.kill_streaks import DEFINITION_VERSION as KILL_STREAK_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.12.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.13.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -405,6 +405,7 @@ def sanitize_report(report: dict) -> dict:
         "lane_analytics": _positional_block(se, names_by_id),
         "spatial": _spatial_block(report),
         "in_game_result": _in_game_result_block(report),
+        "connection": _connection_block(report),
         "key_moments": _key_moments_block(se, names_by_id),
         "progression": _progression_block(se, names_by_id),
         "plays": _plays_block(se, names_by_id),
@@ -769,6 +770,45 @@ def _plays_block(se: dict, names_by_id: dict) -> dict:
             }
             for row in pl.get("per_player") or []
         ],
+    }
+
+
+def _connection_block(report: dict) -> dict:
+    """Public form of the producer's `connection` block (schema 30): per player,
+    the share of windows they were the server's worst client, their per-shot
+    ping where shot-detail was on, and the engine session that ended in this
+    match; per match, drops per window and lag-compensation state. Names only.
+    Match page only by ruling (2026-10-11) -- not a general stat, not a rating
+    input. A report built before schema 30 has none and reads unavailable."""
+    c = report.get("connection")
+    if not c:
+        return {"status": "unavailable", "reason": "not-in-report", "definition": None,
+                "definition_version": None, "caveats": [], "instruments": None,
+                "match": None, "players": []}
+    players = []
+    for row in c.get("players") or []:
+        shot = row.get("shot_ping")
+        session = row.get("session")
+        players.append({
+            "name": _name(row.get("player_name_at_match")),
+            "team": row.get("team"),
+            "worst_share": {k: _num(v) for k, v in (row.get("worst_share") or {}).items()},
+            "drops_when_worst": _num(row.get("drops_when_worst")),
+            "latency_spikes_ge300": _num(row.get("latency_spikes_ge300")),
+            "jitter_when_worst_ms": _num(row.get("jitter_when_worst_ms")),
+            "latency_when_worst_max_ms": _num(row.get("latency_when_worst_max_ms")),
+            "shot_ping": None if not shot else {k: _num(v) for k, v in shot.items()},
+            "session": None if not session else {k: _num(v) for k, v in session.items()},
+        })
+    return {
+        "status": c.get("status") or "unavailable",
+        "reason": c.get("reason"),
+        "definition": c.get("definition"),
+        "definition_version": c.get("definition_version"),
+        "caveats": list(c.get("caveats") or []),
+        "instruments": dict(c.get("instruments") or {}) or None,
+        "match": None if not c.get("match") else {k: _num(v) for k, v in c["match"].items()},
+        "players": players,
     }
 
 

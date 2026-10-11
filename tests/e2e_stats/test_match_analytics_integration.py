@@ -296,6 +296,9 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "grenade_throws": False,
         "shot_events": False,
         "ac_weapon_fires": False,
+        "net_intervals": False,
+        "net_sessions": False,
+        "shot_ping": False,
     }
     assert all(player[key] is None for player in report["players"]
                for key in analytics.WAVE_PLAYER_KEYS + analytics.AIM_PLAYER_KEYS)
@@ -335,7 +338,11 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 29
+    assert report["schema_version"] == 30
+    # The contract fixture carries no net telemetry tables, so the block must
+    # say so rather than publish zeros.
+    assert report["connection"]["status"] == "unavailable"
+    assert report["connection"]["players"] == []
     assert report["shadow_timelines"]["status"] == "available"
     assert len(report["shadow_timelines"]["opening_duels"]) == 2
     assert report["shadow_timelines"]["fast_multikills"] == []
