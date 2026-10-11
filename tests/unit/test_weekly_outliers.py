@@ -137,3 +137,21 @@ def test_rank_servers_worst_player_first_and_gaps_last():
     assert [r["server"] for r in out] == [11, 10, 12]  # 11: worst 55; 10: worst 90; 12: player 2 unmeasured
     assert out[2]["missing"] == [2]
     assert out[1]["worst_pid"] == 2 and out[1]["worst"] == 90.0
+
+
+def test_engine_session_drop_rate_flags_a_loss_the_worst_of_share_hides():
+    # Player 1 loses 1.3% of packets every match but a noisier neighbour is always drops-worst,
+    # so their worst-of share is tiny; the engine counter is what catches them.
+    rows = [half(1, f"m{i}", 1, drop_share=0.05, sess_drop_pct=1.3, sess_jitter=4.0) for i in range(6)]
+    for p in range(2, 14):
+        rows += [half(p, f"m{i}", 2, drop_share=0.06 + 0.01 * (i % 3), sess_drop_pct=0.02 + 0.005 * (i % 4), sess_jitter=4.0 + (p % 3)) for i in range(6)]
+    wo.zscores(rows, min_prior=4)
+    chron = wo.chronic(rows, min_prior=4)
+    assert chron and chron[0]["player_id"] == 1 and chron[0]["net_driver"] == "sess_drop_pct"
+
+
+def test_rows_without_a_session_are_scored_on_what_they_have():
+    rows = [half(1, f"m{i}", 1, sess_jitter=None, sess_drop_pct=None, sess_lat_max=None, sess_loss_max=None) for i in range(6)]
+    rows += [half(p, f"m{i}", 2) for p in range(2, 8) for i in range(5)]
+    wo.zscores(rows, min_prior=4)
+    assert rows[0]["z_own_sess_jitter"] is None and rows[0]["score"] is not None

@@ -70,7 +70,8 @@ from collections import defaultdict
 TYPES = "(0,1,2,4)"  # official, scrim, 12-man, official; --types narrows it
 TYPE_NAME = {0: "official", 1: "scrim", 2: "12man", 4: "official"}
 CORE = ["k100", "on_target", "reg", "hs_pct", "dmg_shot", "deaths"]
-NET = ["ping_avg", "ping_sd", "jit_share", "lat_share", "drop_share", "rewind_share"]
+NET = ["ping_avg", "ping_sd", "jit_share", "lat_share", "drop_share", "rewind_share",
+       "sess_jitter", "sess_lat_max", "sess_loss_max", "sess_drop_pct"]
 
 
 def q(sql: str, db: str) -> list[list[str]]:
@@ -118,6 +119,22 @@ WITH m AS (
     ON f.match_id = m.match_id COLLATE utf8mb4_0900_ai_ci
    AND f.fired_at_utc BETWEEN m.s_utc AND m.e_utc
   GROUP BY 1,2,3
+), sess AS (
+  -- The engine's own per-client counters (KTP-ReHLDS net_session, ingested since 09-21):
+  -- latency, jitter, loss and drops for the whole connection that ENDED in this match.
+  -- Not a worst-of flag -- a real per-player series, which is what the worst-of share
+  -- was standing in for. One session spans everything since connect, so a player who
+  -- reconnected has several rows; the longest one is the connection that played.
+  SELECT match_id, player_id, jitter_avg_ms, latency_max_ms, loss_max,
+         CASE WHEN pkts > 0 THEN 100.0 * drops / pkts END AS drop_pct
+  FROM (
+    SELECT m.match_id, pl.player_id, s.jitter_avg_ms, s.latency_max_ms, s.loss_max, s.drops, s.pkts,
+           ROW_NUMBER() OVER (PARTITION BY m.match_id, pl.player_id ORDER BY s.dur_s DESC) AS rn
+    FROM (SELECT DISTINCT match_id FROM m) m
+    JOIN ktp_net_sessions s ON s.match_id = m.match_id
+    JOIN (SELECT match_id, player_id, MIN(steam_id) steam_id FROM ktp_match_players GROUP BY 1,2) pl
+      ON pl.match_id = m.match_id AND s.steam_id = CONCAT('STEAM_0:', pl.steam_id)
+  ) x WHERE rn = 1
 ), ping AS (
   SELECT m.match_id, m.half, l.playerId player_id, AVG(l.ping) ping_avg, STDDEV(l.ping) ping_sd
   FROM m JOIN hlstats_Events_Latency l
@@ -127,7 +144,8 @@ WITH m AS (
 SELECT m.match_id, m.half, m.match_type, m.map_name, m.server_id, m.start_time, s.player_id, p.player_name,
        COALESCE(lt.player_name, p.player_name) latest_name,
        s.kills, s.deaths, s.headshots, s.damage,
-       fi.shots, fi.traced, fi.registered, pg.ping_avg, pg.ping_sd
+       fi.shots, fi.traced, fi.registered, pg.ping_avg, pg.ping_sd,
+       se.jitter_avg_ms, se.latency_max_ms, se.loss_max, se.drop_pct
 FROM ktp_match_stats s
 JOIN m ON m.match_id = s.match_id AND m.half = s.half
 JOIN p ON p.match_id = s.match_id AND p.player_id = s.player_id
@@ -135,6 +153,7 @@ LEFT JOIN latest lt ON lt.player_id = s.player_id
 LEFT JOIN fires fi ON fi.match_id = m.match_id AND fi.half = m.half
                   AND fi.steam_id = CONCAT('STEAM_0:', p.steam_id) COLLATE utf8mb4_0900_ai_ci
 LEFT JOIN ping pg ON pg.match_id = m.match_id AND pg.half = m.half AND pg.player_id = s.player_id
+LEFT JOIN sess se ON se.match_id = m.match_id AND se.player_id = s.player_id
 ORDER BY m.start_time, m.half, s.player_id
 """
 
@@ -216,7 +235,7 @@ def load(db: str, since: str, types: str = TYPES) -> list[dict]:
     rows = []
     for r in q(halves_sql(since, types), db):
         (mid, half, mtype, map_name, sid, start, pid, name, latest_name, k, d, hs, dmg, shots, traced, reg,
-         ping_avg, ping_sd) = r
+         ping_avg, ping_sd, sess_jitter, sess_lat_max, sess_loss_max, sess_drop_pct) = r
         k, d, hs, dmg = int(k), int(d), int(hs), int(dmg)
         shots, traced, reg = num(shots), num(traced), num(reg)
         rows.append({
@@ -230,6 +249,9 @@ def load(db: str, since: str, types: str = TYPES) -> list[dict]:
             "hs_pct": 100 * hs / k if k else None,
             "dmg_shot": dmg / shots if shots else None,
             "ping_avg": num(ping_avg), "ping_sd": num(ping_sd),
+            # Session counters repeat on both halves of a match: they are per connection.
+            "sess_jitter": num(sess_jitter), "sess_lat_max": num(sess_lat_max),
+            "sess_loss_max": num(sess_loss_max), "sess_drop_pct": num(sess_drop_pct),
         })
     # worst-of shares, keyed by (match, half, name)
     totals: dict[tuple, int] = defaultdict(int)
@@ -247,7 +269,7 @@ def load(db: str, since: str, types: str = TYPES) -> list[dict]:
     return rows
 
 
-CHRONIC = ["jit_share", "drop_share", "lat_share", "rewind_share"]
+CHRONIC = ["jit_share", "drop_share", "lat_share", "rewind_share", "sess_jitter", "sess_drop_pct"]
 
 
 def chronic(rows: list[dict], min_prior: int, flag_z: float = 2.0) -> list[dict]:
@@ -281,7 +303,7 @@ def chronic(rows: list[dict], min_prior: int, flag_z: float = 2.0) -> list[dict]
                   key=lambda p: -p["net_score"])
 
 
-CHANGE = ["jit_share", "drop_share", "on_target", "k100"]
+CHANGE = ["jit_share", "drop_share", "sess_jitter", "sess_drop_pct", "on_target", "k100"]
 
 
 def recent_change(rows: list[dict], cutoff: str, min_recent: int = 3, min_prior: int = 4,
@@ -499,12 +521,16 @@ def report(rows: list[dict], window: list[dict], top: int, alert_z: float, min_p
     L += ["", f"## Chronic connections (season, official halves, {len(chron)} players at z >= 2 vs the league)", "",
           "Mean share of 10 s windows in which the player was the server's worst client. Bad in every half never "
           "shows against the player's own baseline; this is the list to hand to the player.", "",
-          "| player | halves | driver | jitter-worst | drops-worst | latency-worst | rewind-worst | ping |",
-          "|---|---|---|---|---|---|---|---|"]
+          "| player | halves | driver | jitter-worst | drops-worst | latency-worst | rewind-worst | ping | engine jitter ms | engine drop % |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
     for p in chron[:top]:
         L.append(f"| {p['player']} | {p['halves']} | {p['net_driver']} z={p['net_score']:+.1f} "
                  f"| {fmt((p['jit_share'] or 0) * 100, 0)}% | {fmt((p['drop_share'] or 0) * 100, 0)}% "
-                 f"| {fmt((p['lat_share'] or 0) * 100, 0)}% | {fmt((p['rewind_share'] or 0) * 100, 0)}% | {fmt(p['ping_avg'], 0)} |")
+                 f"| {fmt((p['lat_share'] or 0) * 100, 0)}% | {fmt((p['rewind_share'] or 0) * 100, 0)}% | {fmt(p['ping_avg'], 0)} "
+                 f"| {fmt(p.get('sess_jitter'), 1)} | {fmt(p.get('sess_drop_pct'), 3)} |")
+    L += ["", "engine jitter / drop % are the player's own per-connection counters (`ktp_net_sessions`, since 09-21): "
+              "a real level, not a worst-of share. kroD- reads 76% jitter-worst and 4-5 ms engine jitter at once -- "
+              "the share says 'worst on the box', the level says 'clean base with rare stalls'."]
     movers = movers or []
     L += ["", f"## Short-term movers (last {change_days} days vs the player's own earlier halves, {len(movers)} at |z| >= 2)", "",
           "A connection or a game that changed recently. Chronic never shows here; a relapse or a fix does.", "",
