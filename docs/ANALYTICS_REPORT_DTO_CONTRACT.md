@@ -24,6 +24,7 @@ meaning is not obvious from their names.
 
 | `analytics-report-dto-v1.12.0` | 25 | Adds top-level `glossary`: a reader-facing `what` and a declared `unit` for every published box-score, `flag_swing` and `accumulation` field, plus the metric contract it was transcribed from. The ratings block already carried its own `definition` and `display_scale`; everything else was published with no definition a reader could reach, which produced two misreadings of a 100-centred index (a KAST of 125 read as a percentage; and earlier, keep-the-prac #679/#691, a second z-transform applied to an already-scaled value). The multikill window in the `fast_*k` definitions is read off `shadow_timelines.config` per report rather than restated, so it cannot drift from the config the numbers were built with |
 | `analytics-report-dto-v1.13.0` | 30 | Adds top-level `connection` (see below): per player, the share of 10 s windows in which they were the server's worst client for jitter / latency / drops, their own ping sampled at each shot where the shot-detail stream was on, and the engine session that ended in this match; per match, drops per window and lag-compensation state. Match page only by ruling (2026-10-11): not a general stat, not a rating input. No other key changes |
+| `analytics-report-dto-v1.14.0` | 30 | `connection.players[]` removed before any renderer consumed it: per-player connection numbers are own-row-only by ruling (2026-10-11, revising the same day's "match page only") and are served by the private player tier, never the public report. `connection` keeps the server-level `match` figures and `instruments`, and gains a `privacy` sentence. No other key changes |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a
@@ -37,37 +38,26 @@ The report `schema_version` changes whenever `build_report` output changes, and
 `report_service generate` regenerates every in-season match that has no report
 at the current schema. `report_sync` then inserts those as new rows.
 
-## `connection` (v1.13.0)
+## `connection` (v1.13.0, players removed in v1.14.0)
 
-Per-player connection quality for this match, from the server's side. Three instruments, published separately and never substituted for one another:
+Server-level connection quality for this match. **Per-player rows are not here**: ruled 2026-10-11 that a player's own connection numbers (worst-of shares, per-shot ping, engine session) are visible only to that player on their own stats page. The producer's report still carries them under `connection.players[]`; the private player tier reads them there, keyed to the signed-in player. The public block:
 
 ```json
 "connection": {
   "status": "available",
   "definition": "...", "definition_version": 1, "caveats": ["..."],
+  "privacy": "Per-player connection numbers are visible only to that player ...",
   "instruments": {"worst_share": "available", "shot_ping": "available|unavailable|not-recorded", "session": "available|unavailable|not-recorded"},
   "match": {"windows": 221, "window_seconds": 10, "drops_per_window": 4.7, "jitter_worst_avg_ms": 83.5,
             "latency_worst_avg_ms": 168.0, "windows_ge300": 2, "lagcomp_off_windows": 0,
-            "maxunlag_hits_per_window": 0.1, "choke_windows": 3},
-  "players": [{
-    "name": "kroD-", "team": 1,
-    "worst_share": {"jitter": 0.801, "latency": 0.059, "drops": 0.466},
-    "drops_when_worst": 618, "latency_spikes_ge300": 2,
-    "jitter_when_worst_ms": 79.0, "latency_when_worst_max_ms": 381.0,
-    "shot_ping": {"shots": 148, "avg_ms": 37.0, "sd_ms": 7.0, "max_ms": 78, "dropped": 0},
-    "session": {"seconds": 3249, "packets": 583612, "drops": 5, "drop_rate_pct": 0.001,
-                "latency_avg_ms": 27.9, "latency_max_ms": 203.1, "jitter_avg_ms": 5.1,
-                "loss_avg_pct": 0.0, "loss_max_pct": 73.0}
-  }]
+            "maxunlag_hits_per_window": 0.1, "choke_windows": 3}
 }
 ```
 
-- `worst_share.*` is the fraction of the match's 10 s windows in which this player was the **server's worst** client for that gauge (`ktp_net_intervals` keeps only the worst per window). It is relative to the other players on the box: a clean server still has a worst client every window, so read 0.8 as "worst on the box for 80% of the match", not as a level. `drops_when_worst` is the packets dropped in the windows the player was drops-worst; `latency_spikes_ge300` counts windows the player was latency-worst at ≥ 300 ms.
-- `shot_ping` is the player's own round trip sampled at each of their shots — exact and this match only. It exists where the shot-detail stream was on: 12-mans all season, officials from 2026-10-10. `null` means not measured; `instruments.shot_ping` says whether the column was absent (`unavailable`) or the stream was off (`not-recorded`).
-- `session` is the engine's per-client counters for the connection that **ended during this match** (`ktp_net_sessions`, whose `match_id` is the match open at disconnect). It spans everything since the player connected — `seconds` says how much — so it describes the night's connection, not this match alone. A player who stayed connected into the next match has no session row here (`null`).
-- `match.*` is the box: mean drops per window across all clients, mean worst jitter / latency, windows with any client past 300 ms, windows with lag compensation off, rewind-cap hits per window, windows with choke.
-- Names only. No steam ids, no client slots, no per-window series.
-- **Match page only.** Ruled 2026-10-11: this block explains a half, it does not score one. It is not published in season aggregates and is not a rating input.
+- `match.*` is the box: mean drops per window across all clients, mean worst jitter / latency, windows with any client past 300 ms, windows with lag compensation off, rewind-cap hits per window, windows with choke. Nothing in it names or isolates a player.
+- `instruments` says which per-player instruments were recording for this match (`worst_share` from `ktp_net_intervals`, every match; `shot_ping` where the shot-detail stream was on — 12-mans all season, officials from 2026-10-10; `session` from `ktp_net_sessions`), so a player's own page can explain a `null` as not-measured rather than zero.
+- The per-player rows in the producer's report, for the private tier: `worst_share.{jitter,latency,drops}` as a fraction of the match's 10 s windows in which the player was the **server's worst** client for that gauge (server-relative — a clean server still has a worst client every window); `drops_when_worst`, `latency_spikes_ge300`, `jitter_when_worst_ms`, `latency_when_worst_max_ms`; `shot_ping {shots, avg_ms, sd_ms, max_ms, dropped}` (the player's own round trip at each shot, this match only); `session {seconds, packets, drops, drop_rate_pct, latency_avg_ms, latency_max_ms, jitter_avg_ms, loss_avg_pct, loss_max_pct}` for the connection that **ended during this match**, spanning everything since it connected (`seconds`).
+- Not a general stat and not a rating input, on either tier.
 - A report built before schema 30 reads `{"status": "unavailable", "reason": "not-in-report", ...}`.
 
 ## `in_game_result`

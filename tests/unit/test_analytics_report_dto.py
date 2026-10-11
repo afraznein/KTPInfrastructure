@@ -476,10 +476,10 @@ class Sanitize(unittest.TestCase):
         ph = sanitize_report(internal_report())["player_halves"]
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
-    def test_contract_is_v1_13_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.13.0")
+    def test_contract_is_v1_14_0(self):
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.14.0")
 
-    def test_connection_block_is_published_and_names_only(self):
+    def test_connection_block_publishes_the_box_and_never_a_player(self):
         rep = internal_report()
         rep["connection"] = {
             "status": "available", "definition_version": 1, "definition": "d", "caveats": ["c"],
@@ -497,11 +497,14 @@ class Sanitize(unittest.TestCase):
         dto = sanitize_report(rep)
         c = dto["connection"]
         self.assertEqual(c["status"], "available")
-        self.assertEqual(c["players"][0]["name"], "A")
-        self.assertEqual(c["players"][0]["worst_share"]["jitter"], 0.801)
-        self.assertEqual(c["players"][0]["drops_when_worst"], 618)
         self.assertEqual(c["match"]["drops_per_window"], 4.57)
-        self.assertNotIn("player_id", json.dumps(c))
+        self.assertEqual(c["instruments"]["shot_ping"], "not-recorded")
+        # Own-row-only ruling: no per-player key, no name, no number from a player's row.
+        self.assertNotIn("players", c)
+        body = json.dumps(c)
+        for leaked in ("drops_when_worst", "shot_ping\": {", "session\": {", "0.801", "618", "27.9", "\"A\""):
+            self.assertNotIn(leaked, body, leaked)
+        self.assertIn("own stats page", c["privacy"])
         assert_sanitized(dto)
         self.assertEqual(sanitize_report(internal_report())["connection"]["status"], "unavailable")
 
