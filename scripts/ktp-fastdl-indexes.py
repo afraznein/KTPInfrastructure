@@ -18,13 +18,27 @@ hlstatsx.ktp_match_players. It is the only part that touches a database, so it i
 part allowed to be missing: if the read fails the page is removed and everything else is
 written exactly as before.
 
-Idempotent: only ever writes index.html and players.html (and removes players.html when
-the lookup cannot be built). Usage: fastdl_indexes.py [--apply] [--out-root DIR]
+The /dod page also publishes overviews/ktp-s10-overviews.zip: every command-map overview
+for the current map pool in one archive. Individual links mean a player fetches nine pairs
+and then works out where they go, which is the step that loses people. The pool is read
+from the fleet's own ktp_maps.ini under /home/dod/distribute, never from a repo checkout --
+/opt/ktp-infra is deliberately never auto-pulled, and a map re-cut mid-season (dod_saints2_b3e
+became _b5e) would be packed under a name no BSP carries. The archive is byte-deterministic,
+so an unchanged pool rewrites nothing; a pool that cannot be resolved in full leaves the
+published archive alone rather than replacing it with a partial one.
+
+Idempotent: only ever writes index.html, players.html and that archive (and removes
+players.html when the lookup cannot be built). Usage: fastdl_indexes.py [--apply] [--out-root DIR]
 """
-import argparse, collections, html, json, os, re, subprocess, time
+import argparse, collections, html, io, json, os, re, subprocess, time, zipfile
 
 FASTDL = "/var/www/fastdl"
 DEMOS = "/home/hltvserver/hlds/dod/demos"
+# The fleet's own copy of the map list, not the repo's: the distributor sends this file to
+# all 24 instances, so it is what the servers actually run.
+MAPS_INI = "/home/dod/distribute/addons/ktpamx/configs/ktp_maps.ini"
+PACK_NAME = "ktp-s10-overviews.zip"
+PACK_NOTE = "KTP-OVERVIEWS-README.txt"
 
 # Stamped into every footer. The archive is a generated static site, so "what is
 # on this page" and "what is on disk" are only the same as of the last build --
@@ -441,11 +455,93 @@ def player_lookup_page(entries, rosters):
                  extra_js=PLAYER_JS), len(rows), len(demos))
 
 
+# ------------------------------------------------- S10 overview pack
+# A section heading in ktp_maps.ini is a comment naming MAPS in capitals, and the seasonal
+# block runs from its own heading to the next one. Keying on the heading rather than on a
+# list of map names is what survives a re-cut: three stems changed mid-S10 and anything
+# holding its own copy of the pool shipped the dead ones.
+INI_HEADING = re.compile(r"^\s*;\s*(.*\bMAPS\b.*?)\s*$")
+INI_SECTION = re.compile(r"^\s*\[([^\]\s]+)\]")
+
+
+def pool_from_ini(path):
+    """Map stems of the seasonal block, in the file's own schedule order."""
+    stems, inside = [], False
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            heading = INI_HEADING.match(line)
+            if heading:
+                if re.search(r"\bSEASONAL\b", heading.group(1), re.I):
+                    inside = True
+                elif inside:
+                    break
+                continue
+            section = INI_SECTION.match(line)
+            if inside and section:
+                stems.append(section.group(1))
+    return stems
+
+
+def pack_entries(fastdl, pool):
+    """(entries, missing) -- the overview pair for every pool map, or what is absent.
+
+    Both halves or neither: the engine asks for overviews/<map>.txt and overviews/<map>.bmp
+    separately, and either one alone draws no usable overview.
+    """
+    entries, missing = [], []
+    for stem in pool:
+        names = [stem + ext for ext in (".txt", ".bmp")]
+        paths = [os.path.join(fastdl, "dod", "overviews", n) for n in names]
+        if all(os.path.isfile(x) for x in paths):
+            entries.extend(zip(names, paths))
+        else:
+            missing.append(stem)
+    return entries, missing
+
+
+def pack_note(entries, stamp):
+    """CRLF because this is read in Notepad on the way to a Steam folder."""
+    maps = sorted({n.rsplit(".", 1)[0] for n, _ in entries})
+    return ("KTP command-map overviews -- ktpleague.gg\r\n\r\n"
+            "Copy every .txt and .bmp in here into:\r\n\r\n"
+            "    <Steam>\\steamapps\\common\\Day of Defeat\\dod\\overviews\\\r\n\r\n"
+            "Nothing needs renaming -- the engine asks for overviews/<mapname>.txt and\r\n"
+            "overviews/<mapname>.bmp by name. Overwriting an older copy is safe.\r\n\r\n"
+            "Maps in this archive:\r\n"
+            + "".join("    " + m + "\r\n" for m in maps)
+            + "\r\nAssets dated " + time.strftime("%Y-%m-%d", time.localtime(stamp))
+            + ". Rebuilt from https://fastdl.ktpdod.com/dod/overviews/\r\n")
+
+
+def pack_bytes(entries):
+    """A byte-deterministic archive, so "rewrite only when it changed" is a comparison.
+
+    Every member carries its source mtime rather than the build clock. An hourly job that
+    stamped now() would hand every visitor a fresh 7 MB download of identical assets.
+    """
+    stamp = max(int(os.path.getmtime(path)) for _, path in entries)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        for arcname, path in list(entries) + [(PACK_NOTE, None)]:
+            when = stamp if path is None else int(os.path.getmtime(path))
+            info = zipfile.ZipInfo(arcname, time.localtime(when)[:6])
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            if path is None:
+                archive.writestr(info, pack_note(entries, stamp))
+            else:
+                with open(path, "rb") as handle:
+                    archive.writestr(info, handle.read())
+    return buf.getvalue()
+
+
 ap = argparse.ArgumentParser()
 ap.add_argument("--apply", action="store_true")
 ap.add_argument("--fastdl", default=FASTDL)
 ap.add_argument("--demos", default=DEMOS)
 ap.add_argument("--out-root", help="write pages under this directory instead of in place")
+ap.add_argument("--maps-ini", default=MAPS_INI,
+                help="ktp_maps.ini whose seasonal block enumerates the pool")
 ap.add_argument("--db-timeout", type=float, default=20.0)
 args = ap.parse_args()
 FASTDL, DEMOS = args.fastdl, args.demos
@@ -496,6 +592,36 @@ if other_loose:
     loose_cards += ('<h2>' + str(len(other_loose)) + ' other loose files</h2>'
                     '<div class="files">' + file_rows(FASTDL + "/dod", other_loose) + '</div>')
 
+# The ini is the spec. An archive assembled from a map list written anywhere else ships a
+# stem the fleet has already re-cut past, which is the one failure this pack must not have.
+pack_cards, pack_blob = "", None
+pool = pool_from_ini(args.maps_ini) if os.path.isfile(args.maps_ini) else []
+if not pool:
+    print("WARNING: overview pack omitted: no seasonal block in " + args.maps_ini)
+else:
+    pack_files, pack_missing = pack_entries(FASTDL, pool)
+    if pack_missing:
+        # Partial is worse than absent: the page promises every pool map, so a player finds
+        # the gap in game, on the one map they were about to play.
+        print("WARNING: overview pack omitted: no overview pair for "
+              + ", ".join(pack_missing))
+    else:
+        pack_blob = pack_bytes(pack_files)
+        pack_cards = (
+            '<h2 id="overviews">Overview pack for the current pool</h2>'
+            '<p class="note">Command-map overviews for the maps in rotation, in one archive. '
+            'Unzip it into <code>Day of Defeat\\dod\\overviews\\</code> and every map in the '
+            'pool has its overview &mdash; nothing to rename, and overwriting an older copy '
+            'is safe. Grab the individual files below if you only want one map.</p>'
+            '<div class="files">'
+            + card('<span class="h">' + PACK_NAME + '</span><span class="sz">'
+                   + human(len(pack_blob)) + '</span>', "overviews/" + PACK_NAME,
+                   "overview pack archive zip", cls="f")
+            + '</div><div class="files">' + "".join(
+                card('<span class="h">' + html.escape(n) + '</span><span class="sz">'
+                     + human(os.path.getsize(f)) + '</span>', "overviews/" + n, cls="f")
+                for n, f in pack_files) + '</div>')
+
 body = ('<div class="crumb"><a href="/">fastdl</a> / dod</div>'
         '<h1>Client <span class="accent">download</span> files</h1>'
         '<p class="lede">These are the files your client pulls automatically when it joins a KTP '
@@ -503,7 +629,7 @@ body = ('<div class="crumb"><a href="/">fastdl</a> / dod</div>'
         'here by hand.</b> The list is browsable if you want to fetch one file directly.</p>'
         '<p class="note">' + str(len(present)) + ' directories, ' + str(len(loose))
         + ' loose files. Served over HTTP as <code>sv_downloadurl</code>.</p>'
-        + SEARCH + "".join(cards)
+        + SEARCH + pack_cards + "".join(cards)
         + '<h2>Other directories</h2><div class="row2">' + "".join(
             card('<div class="t">' + d + '/</div>', d + "/")
             for d in sorted(present - {x for _, ds in DOD_GROUPS for x in ds})) + '</div>'
@@ -792,6 +918,18 @@ if args.apply:
     if player_page is None and os.path.exists(dest(PLAYERS_PAGE)):
         os.remove(dest(PLAYERS_PAGE))
         print("removed " + dest(PLAYERS_PAGE))
+    if pack_blob is not None:
+        d = dest(FASTDL + "/dod/overviews/" + PACK_NAME)
+        if args.out_root:
+            os.makedirs(os.path.dirname(d), exist_ok=True)
+        # Deterministic bytes, so an unchanged pool rewrites nothing: the archive keeps its
+        # mtime and a player's conditional request stays a 304.
+        if os.path.exists(d) and open(d, "rb").read() == pack_blob:
+            print("unchanged " + d)
+        else:
+            open(d, "wb").write(pack_blob)
+            os.chmod(d, 0o644)
+            print("wrote " + d)
     for p, b in out:
         d = dest(p)
         if args.out_root:
@@ -803,4 +941,7 @@ else:
     for p, _ in out[:6]:
         print("   " + p)
     print("   ... (%d more)" % max(0, len(out) - 6))
+    if pack_blob is not None:
+        print("   " + FASTDL + "/dod/overviews/" + PACK_NAME
+              + " (%s)" % human(len(pack_blob)))
     print("DRY RUN — nothing written.")
