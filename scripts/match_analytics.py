@@ -1867,7 +1867,9 @@ CONNECTION_CAVEATS = (
 def _f(value: Any) -> float | None:
     if value is None or value == "NULL" or value == "":
         return None
-    return float(value)
+    # MySQL FLOAT columns come back as 127.0999984741211; three decimals keeps
+    # every share (0.801) and every millisecond figure honest without the noise.
+    return round(float(value), 3)
 
 
 def _i(value: Any) -> int | None:
