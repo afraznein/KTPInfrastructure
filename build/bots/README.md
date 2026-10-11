@@ -166,7 +166,8 @@ answers "were these built from the same commit", nothing about the fleet.
   The right-hand stems are the live pool as of `config/local/ktp_maps.ini`
   (owned by `afraznein/KTPDoDServerConfig`). Re-derive them from there rather
   than trusting this table — a re-cut map changes its stem, and nothing here
-  notices.
+  notices. ⛔ Not from a checkout on a server: `/opt/ktp-infra` is pulled by
+  hand and has sat months behind, naming stems the fleet stopped playing.
 
   This bounds the feature more than anything else here. In particular
   **cap-break testing on `saints2_b5e` is not possible** — that is the map where
