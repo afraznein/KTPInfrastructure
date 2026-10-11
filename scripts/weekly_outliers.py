@@ -618,6 +618,18 @@ def main() -> int:
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text)
+        # The journal is what the OnFailure embed carries, and for this unit the journal is
+        # the only copy anyone sees before Monday coffee: say what was found, not just that
+        # something was. Top rows only; the file has the rest.
+        flagged = [r for r in window if r["score"] is not None and r["score"] >= a.alert_z]
+        print(f"weekly outliers: {len(flagged)} player-half(s) at |z| >= {a.alert_z}, "
+              f"{len(movers)} short-term mover(s), {len(anomalies)} pathological match(es); report: {a.out}")
+        for r in sorted(flagged, key=lambda r: -r["score"])[:8]:
+            d = r["driver"]
+            print(f"  {r['score']:.1f}  {r['player']}  {r['match_id']} h{r['half']} {r['type']}  {d} z={r[f'z_own_{d}']:+.1f}")
+        for p in movers[:4]:
+            d = p["change_driver"]
+            print(f"  mover  {p['player']}  {d} z={p[f'z_{d}']:+.1f}  now {fmt(p[f'now_{d}'], 3)} was {fmt(p[f'was_{d}'], 3)}")
     else:
         sys.stdout.write(text)
     if a.tsv:
