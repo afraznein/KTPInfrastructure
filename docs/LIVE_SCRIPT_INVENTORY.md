@@ -65,15 +65,28 @@ CI run was the first time anything asked. Reachability is therefore the test, no
 to be in your clone; those rows get no md5 and no supersession verdict, because a fresh clone cannot compute
 one. ⛔ Re-pinning them needs a read on the host, same as a SUPERSEDED row.
 
-## Two rows closed by a host read, 2026-10-10
+## Two rows re-pinned by a host read, 2026-10-10
 
-✅ **`/usr/local/bin/ktp-data-server-health.sh` and `/usr/local/bin/ktp-hltv-liveness.sh` are re-pinned from a
-read on the data server**, so both rows are current and carry neither token. The live `md5sum` of each path
-equals the blob at its new pin, which is also the tip of that path on `main`: health `065f4ad7…` at
-`1ae8b9c09f`, liveness `a6eb2520…` at `9aecea8752`. Controls on the probe: both real paths hashed, and a
-nonexistent path under the same directory reported missing rather than silently skipped. The box's own
-`ktp-install --report` agrees on both bytes and names the same source commits, and `NEIN-DEPLOY.md` records
-the installs (`dpl-f806` for liveness, with `9d7072d0` → `a6eb2520`).
+✅ **`/usr/local/bin/ktp-hltv-liveness.sh` is CLOSED** — re-pinned from a read on the data server and
+carrying neither token. Its live `md5sum` `a6eb2520…` equals the blob at `9aecea8752`, which is also the
+tip of that path on `main`. Controls on the probe: both real paths hashed, and a nonexistent path under the
+same directory reported missing rather than silently skipped. The box's own `ktp-install --report` agrees on
+the bytes and names the same source commit, and `NEIN-DEPLOY.md` records the install (`dpl-f806`, `9d7072d0`
+→ `a6eb2520`).
+
+⚠️ **`/usr/local/bin/ktp-data-server-health.sh` is re-pinned and VERIFIED against the box — and it
+carries SUPERSEDED again, correctly.** Its live `md5sum` `065f4ad7…` equals the blob at `1ae8b9c09f`, so
+the pin is right about what is installed; but `ce8989a312` touched that same path on 2026-10-10 17:20, about
+seven hours after the read, so the repo now sits ahead of the box. ⛔ **Do not “fix” that by re-pinning to
+`ce8989a312`:** the live md5 is `1ae8b9c09f`'s blob, not `ce8989a312`'s (`dce19827…`), so a fresher-looking
+pin would restate the precise defect this file exists to catch.
+
+🔑 **THE TWO TOKENS ARE NOT THE SAME KIND OF CLAIM, WHICH IS WHY ONE CLOSED FOR GOOD AND THE OTHER CAME
+STRAIGHT BACK.** `UNVERIFIABLE-PIN` is a defect in the ROW — it pinned a commit reachable from no ref, so no
+cloner could check it — and a host read fixes that permanently. `SUPERSEDED` is a statement about the BOX:
+the repo has moved past what is installed, and **only an install clears it.** ➡️ **So read this row's
+SUPERSEDED as an install being owed, not as the row being stale** — the owed install here is `ce8989a312`,
+which stops the health sweep re-reporting a delivered weekly-outlier finding as a failed unit.
 
 🔑 **THE TRAP THAT MADE THIS WORTH DOING, AND IT IS THE INVERSE OF THE ONE ABOVE: a SUPERSEDED row reads as
 evidence that nothing was installed.** The health row was cited as the live revision and had to be walked back
@@ -156,7 +169,7 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/usr/local/bin/hltv-restart-all.sh` `036ed8ab` = `KTPInfrastructure:scripts/hltv-restart-all.sh` @ `a26f37f9ca` SUPERSEDED
 - `/usr/local/bin/ktp-ac-retention.sh` `92e7926d` = `KTPInfrastructure:scripts/ktp-ac-retention.sh` @ `c4268ad113` SUPERSEDED
 - `/usr/local/bin/ktp-backup-watchdog.sh` `46f2a66a` = `KTPInfrastructure:scripts/ktp-backup-watchdog.sh` @ `1545ceac6f` SUPERSEDED
-- `/usr/local/bin/ktp-data-server-health.sh` `065f4ad7` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `1ae8b9c09f`
+- `/usr/local/bin/ktp-data-server-health.sh` `065f4ad7` = `KTPInfrastructure:scripts/ktp-data-server-health.sh` @ `1ae8b9c09f` SUPERSEDED
 - `/usr/local/bin/ktp-db-offsite.sh` `b17911a5` = `KTPInfrastructure:scripts/ktp-db-offsite.sh` @ `4a1fa4be92`
 - `/usr/local/bin/ktp-demo-cleanup-auto.sh` `b7ccf0e9` = `KTPInfrastructure:scripts/ktp-demo-cleanup-auto.sh` @ `63b45b20cc` UNVERIFIABLE-PIN
 - `/usr/local/bin/ktp-demo-offsite.sh` `7bfe04b2` = `KTPInfrastructure:scripts/ktp-demo-offsite.sh` @ `471aab1c59` UNVERIFIABLE-PIN
