@@ -32,6 +32,35 @@ model, sound, sprite, skybox face and WAD the map needs. A `.res` that omits a
 that omits a sound gives silence. Neither logs anything: the map just reads as
 broken.
 
+### A map already in the pool already has its pair — do not go looking for art
+
+⛔ **This section builds the pair for a NEW `.bsp`. It is not an invitation to source one for a
+map the league already plays.** Every stem the live pool binds already ships a `.txt`/`.bmp`
+pair: ours, authored here (the descriptors say so), carrying real `ZOOM`/`ORIGIN`/`ROTATED`,
+and already in every place that serves one — FastDL, the data-server docroot,
+`/home/dod/distribute/overviews`, the game hosts and the local staging tree, md5-identical.
+
+🔑 **An asset-sourcing hunt was run and the answer was that there was nothing to source.** The
+premise it refuted — *"Steam ships stock maps only and no overview was found for the custom
+pool"* — described a search, not the world: the pairs are not Steam's. **That is the kind of
+answer that gets re-opened as a work item**, so it is written here rather than left in a
+measurement nobody can find.
+
+➡️ **Re-derive it rather than trusting this paragraph.** Take the stems from the seasonal
+section of `config/local/ktp_maps.ini` (a copy of the owner's file in
+`afraznein/KTPDoDServerConfig`, which is what the fleet loads), then probe both halves:
+
+```bash
+curl -sI https://fastdl.ktpdod.com/dod/overviews/<stem>.txt   # expect 200
+curl -sI https://fastdl.ktpdod.com/dod/overviews/<stem>.bmp   # expect 200
+```
+
+⚠️ **A RETIRED stem still answers 200, so a probe built on a stale map list passes and
+certifies coverage the pool does not have.** FastDL keeps superseded revisions: predecessors of
+current pool maps answer `200` on both halves long after nothing binds them. **Derive the stem
+list; never type one from memory**, and carry a nonsense stem as the `404` control so a probe
+that answers 200 for everything is visible as one.
+
 ## 2. Build the bundle
 
 Build RESGen once (it is GPL-2.0 third-party code and is not vendored here):
