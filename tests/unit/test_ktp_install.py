@@ -106,6 +106,49 @@ def test_upgrade_banks_backup_keeps_mode_and_records_previous_md5(env):
     assert not (env["dest"] / "tool.sh.new").exists()
 
 
+def _foreign_ownership():
+    """An (uid, gid) this process does not already have but is allowed to set, or None.
+
+    Unprivileged that means a supplementary group, since chgrp to one needs no privilege;
+    as root it means any other account. Either is enough, because the defect is that the
+    swap's new inode lands on the INSTALLER's ids, so the assertion fails for the same
+    reason whichever leg supplies them.
+    """
+    if os.geteuid() == 0:
+        import pwd
+
+        for p in pwd.getpwall():
+            if p.pw_uid not in (0, os.geteuid()) and p.pw_gid not in (0, os.getegid()):
+                return p.pw_uid, p.pw_gid
+        return None
+    others = [g for g in os.getgroups() if g != os.getegid()]
+    return (os.geteuid(), others[0]) if others else None
+
+
+def test_upgrade_preserves_the_files_own_owner_not_the_installers(env):
+    want = _foreign_ownership()
+    if want is None:
+        pytest.skip("no uid/gid this process may set that it does not already have")
+    assert want != (os.geteuid(), os.getegid()), "control: the install must have to restore these"
+    install(env, env["c1"], "-")
+    dest = env["dest"] / "tool.sh"
+    os.chown(dest, want[0], want[1])
+    os.chmod(dest, 0o750)
+    p = install(env, env["c2"], md5(V1))
+    assert p.returncode == 0, p.stderr
+    st = os.stat(dest)
+    assert (st.st_uid, st.st_gid) == want
+    assert st.st_mode & 0o777 == 0o750
+
+
+def test_a_fresh_install_has_no_prior_owner_to_preserve(env):
+    """Regression guard, not evidence: the preserve step must not fire with nothing to carry."""
+    p = install(env, env["c1"], "-")
+    assert p.returncode == 0, p.stderr
+    st = os.stat(env["dest"] / "tool.sh")
+    assert (st.st_uid, st.st_gid) == (os.geteuid(), os.getegid())
+
+
 def test_wrong_expected_md5_refuses_and_changes_nothing(env):
     install(env, env["c1"], "-")
     p = install(env, env["c2"], "0" * 32)
