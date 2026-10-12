@@ -1,0 +1,84 @@
+{
+  "between_class_sd": 0.2916,
+  "classes": {
+    "1": {
+      "n": 147,
+      "offset": -0.0258,
+      "own_offset": -0.0277,
+      "se": 0.08,
+      "shrinkage_weight": 0.93
+    },
+    "10": {
+      "n": 79,
+      "offset": -0.1468,
+      "own_offset": -0.1674,
+      "se": 0.1091,
+      "shrinkage_weight": 0.8772
+    },
+    "11": {
+      "n": 35,
+      "offset": 0.1562,
+      "own_offset": 0.2056,
+      "se": 0.1639,
+      "shrinkage_weight": 0.7599
+    },
+    "12": {
+      "n": 34,
+      "offset": -0.0417,
+      "own_offset": -0.0553,
+      "se": 0.1663,
+      "shrinkage_weight": 0.7546
+    },
+    "13": {
+      "n": 76,
+      "offset": 0.3051,
+      "own_offset": 0.3495,
+      "se": 0.1112,
+      "shrinkage_weight": 0.873
+    },
+    "14": {
+      "n": 57,
+      "offset": -0.4202,
+      "own_offset": -0.5018,
+      "se": 0.1284,
+      "shrinkage_weight": 0.8375
+    },
+    "2": {
+      "n": 2,
+      "offset": 0.0569,
+      "own_offset": 0.3718,
+      "se": 0.6857,
+      "shrinkage_weight": 0.1532
+    },
+    "3": {
+      "n": 6,
+      "offset": 0.0927,
+      "own_offset": 0.2636,
+      "se": 0.3959,
+      "shrinkage_weight": 0.3517
+    },
+    "5": {
+      "n": 33,
+      "offset": -0.3298,
+      "own_offset": -0.4404,
+      "se": 0.1688,
+      "shrinkage_weight": 0.749
+    },
+    "6": {
+      "n": 87,
+      "offset": 0.2674,
+      "own_offset": 0.3014,
+      "se": 0.104,
+      "shrinkage_weight": 0.8872
+    }
+  },
+  "corpus_since": "2026-09-13",
+  "definition": "ktpr_class_swing_offsets_v1",
+  "fitted_at": "2026-10-11T21:22:07Z",
+  "matches": 46,
+  "min_n_for_spread_estimate": 10,
+  "pooled_target": 0.0,
+  "scope": "official_match_types_0_4",
+  "shrinkage_k": 11.06,
+  "within_class_sd": 0.9697
+}
