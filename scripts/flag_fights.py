@@ -9,6 +9,15 @@ Private shadow only: no database writes, no public API output, no rating
 impact. All membership uses the producer clock (half + game_time), the
 same domain the objective-attempt ledger records, so daemon receipt delay
 cannot move an event across a window boundary.
+
+`capturing_team` must arrive in REPORT-team convention. The column it comes
+from, `ktp_objective_attempt_events.capturing_team`, is the engine side, and
+this module weighs it against a frag's killer team and against the corrected
+roster -- both report teams. Fed the raw side, every window in a swapped half
+is judged against the opponent: `won_by_capturing_team` inverts, the clutch
+winner resolves to the other side, and `build_entry_shadow` picks its entrant
+from the DEFENDERS. `match_analytics` translates the feed through
+`report_team_convention.translate_objective_attempts` before calling in.
 """
 from __future__ import annotations
 

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from scripts.report_team_convention import (
+    engine_side_for_report_team,
     report_team1_engine_side,
     translate_capouts,
     translate_map_control,
+    translate_objective_attempts,
     translate_objective_timeline,
     translate_recap_speed,
     translate_team_series,
@@ -175,3 +177,83 @@ def test_an_unavailable_block_still_declares_its_convention():
     translate_recap_speed(rs, {})
     assert rs["teams"] == [] and rs["team_convention"] == "report_team"
     assert rs["caveats"] == [], "nothing was dropped, so nothing is claimed"
+
+
+# Report team 1 played engine Axis (2) in half 1 and Allies (1) in half 2 --
+# the guaranteed swap, and the only condition the two conventions disagree in.
+SWAP = {1: 2, 2: 1}
+
+
+def attempt(half, attempt_id, capturing_team, kind="start"):
+    return {"half": half, "attempt_id": attempt_id, "event_kind": kind,
+            "flag_index": 3, "flag_name": "mid",
+            "capturing_team": capturing_team, "game_time": 100.0}
+
+
+def test_a_capture_in_the_swapped_half_is_credited_to_the_right_team():
+    rows = translate_objective_attempts([attempt(1, 1, 2), attempt(1, 2, 1)], SWAP)
+    assert [r["capturing_team"] for r in rows] == [1, 2]
+    assert [r["engine_side"] for r in rows] == [2, 1], "the side is kept beside it"
+
+
+def test_the_terminal_half_does_not_move():
+    # Half 2's conventions agree by construction: this is the built-in control
+    # for every change on this layer.
+    rows = translate_objective_attempts([attempt(2, 5, 1), attempt(2, 6, 2)], SWAP)
+    assert [r["capturing_team"] for r in rows] == [1, 2]
+
+
+def test_an_unresolvable_half_keeps_the_row_with_no_team():
+    # A window is assembled from a START plus its TERMINAL rows. Dropping one
+    # of a pair would read as an incomplete window rather than an
+    # untranslatable one, and every flag_fights consumer already skips a
+    # window whose capturing_team is not 1 or 2.
+    rows = translate_objective_attempts(
+        [attempt(1, 1, 2), attempt(1, 1, 2, kind="complete")], {})
+    assert len(rows) == 2
+    assert [r["capturing_team"] for r in rows] == [None, None]
+    assert all("engine_side" not in r for r in rows)
+
+
+def test_a_capturing_team_that_is_not_a_side_is_not_invented():
+    rows = translate_objective_attempts([attempt(1, 1, 0), attempt(1, 2, None)], SWAP)
+    assert [r["capturing_team"] for r in rows] == [None, None]
+
+
+def test_attempt_rows_are_copied_not_mutated():
+    feed = [attempt(1, 1, 2)]
+    translate_objective_attempts(feed, SWAP)
+    assert feed[0]["capturing_team"] == 2
+
+
+def test_everything_else_on_the_row_survives_translation():
+    rows = translate_objective_attempts(
+        [attempt(1, 7, 2, kind="complete") | {"stop_reason": None,
+                                              "peak_progress": 0.9}], SWAP)
+    assert rows[0]["attempt_id"] == 7 and rows[0]["event_kind"] == "complete"
+    assert rows[0]["flag_name"] == "mid" and rows[0]["peak_progress"] == 0.9
+
+
+def test_engine_side_for_report_team_is_the_inverse_of_the_translators():
+    # positional_shadow's depth is engine-side geometry, so it needs the
+    # mapping run the other way.
+    assert engine_side_for_report_team(1, 1, SWAP) == 2
+    assert engine_side_for_report_team(2, 1, SWAP) == 1
+    assert engine_side_for_report_team(1, 2, SWAP) == 1
+    assert engine_side_for_report_team(2, 2, SWAP) == 2
+
+
+def test_engine_side_round_trips_through_the_capture_translator():
+    # The two directions must agree, or one of them is a second resolver.
+    for half in (1, 2):
+        for engine in (1, 2):
+            report = translate_objective_attempts(
+                [attempt(half, 1, engine)], SWAP)[0]["capturing_team"]
+            assert engine_side_for_report_team(report, half, SWAP) == engine
+
+
+def test_engine_side_refuses_an_unresolvable_half_or_team():
+    assert engine_side_for_report_team(1, 3, SWAP) is None, "no side for half 3"
+    assert engine_side_for_report_team(0, 1, SWAP) is None
+    assert engine_side_for_report_team(None, 1, SWAP) is None
+    assert engine_side_for_report_team(1, None, SWAP) is None

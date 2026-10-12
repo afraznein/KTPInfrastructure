@@ -21,6 +21,17 @@ Geometry
   the frag-context coverage ceiling never biases the rates); "ahead" =
   depth > own frontline + `ahead_margin`.
 
+Team spaces -- the trap here
+  Everything geometric on this page is ENGINE SIDE, because `orient` is
+  resolved from `ktp_position_samples.team`. The frag feed's team is a
+  REPORT team (`ktp_match_players`, corrected by `roster_teams`), and the
+  two are opposite in half 1 of every two-half match. So the frag loop
+  translates through `team1_engine_side` before touching `depth`; without
+  it, half 1 measures every player from the opponent's end and the ahead
+  rates roughly double. The sample loop needs no translation -- each row
+  carries its own side. `map_control` is translated the other way, on the
+  way OUT, by `report_team_convention.translate_map_control`.
+
 Everything stays visibility private_shadow_only; the website DTO decides
 what crosses (team-level curve, per-player scalars).
 """
@@ -31,6 +42,8 @@ import statistics
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Sequence
+
+from scripts.report_team_convention import engine_side_for_report_team
 
 DEFINITION_VERSION = 1
 
@@ -101,6 +114,7 @@ def build_positional_shadow(
     players: Sequence[dict[str, Any]],
     config: PositionalConfig | None = None,
     *,
+    team1_engine_side: dict[int, int] | None = None,
     source_available: bool = True,
     temporal_valid: bool = True,
 ) -> dict[str, dict[str, Any]]:
@@ -238,8 +252,20 @@ def build_positional_shadow(
         if f is None:
             continue
         counted = False
-        for role, px, py, pid, team in located:
+        for role, px, py, pid, report_team in located:
             x, y = _f(px), _f(py)
+            # `depth` is engine-side geometry (own end resolved per half from
+            # the sample feed's own side), but the frag feed's team is a report
+            # team. Translate, or the half the sides swapped measures from the
+            # opponent's end -- for every player, not just a half-leaver.
+            # `is not None`, not truthiness: an EMPTY map means the life feed
+            # resolved no half, and guessing there is what this fixes. A caller
+            # that passes nothing is a standalone one with no feed to translate
+            # through. Measured: of the 247 published reports where this block
+            # is available, every one has a life feed, so the empty case is not
+            # a coverage trade.
+            team = (engine_side_for_report_team(report_team, half, team1_engine_side)
+                    if team1_engine_side is not None else report_team)
             if x is None or y is None or team not in (1, 2) or pid is None:
                 continue
             arc, _lat = project(poly, x, y)

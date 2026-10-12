@@ -179,3 +179,100 @@ class PrototypeReproduction(unittest.TestCase):
             if c:
                 self.assertLessEqual(p["deaths_located"], c["deaths"])
                 self.assertLessEqual(p["kills_located"], c["kills"])
+
+
+class ReportTeamSpace(unittest.TestCase):
+    """The frag feed's team is a REPORT team; depth is engine-side geometry.
+
+    Half 1 is the swapped half (report team 1 played engine side 2); half 2 is
+    the terminal half, where the conventions agree by construction and nothing
+    may move. Same rows, same geometry -- only the space of the label changes.
+    """
+
+    # Half 1: engine side 1 at x=500 (arc .125), side 2 at x=3500 (arc .875).
+    # Half 2: those positions swap, so `orient` flips with them.
+    ROWS = samples(1, 120, 500.0, 3500.0) + samples(2, 120, 3500.0, 500.0)
+    SWAP = {1: 2, 2: 1}
+    CFG = PositionalConfig(min_position_samples=100)
+
+    @staticmethod
+    def frag(half, x):
+        # A report-team-1 killer. Victim carries no position, so only the kill
+        # side of the row counts and the assertion stays one-dimensional.
+        return {"producer_half": half, "game_time": 40.0,
+                "killer_id": 1, "killer_team": 1,
+                "killer_pos_x": x, "killer_pos_y": 0.0,
+                "victim_id": 7, "victim_team": 2,
+                "victim_pos_x": None, "victim_pos_y": None}
+
+    def over(self, frags, team1_engine_side):
+        out = build_positional_shadow(
+            self.ROWS, FLAGS, frags, PLAYERS, self.CFG,
+            team1_engine_side=team1_engine_side)
+        self.assertEqual(out["overextension"]["status"], "available")
+        rows = out["overextension"]["players"]
+        return {r["player_id"]: r for r in rows}
+
+    def test_a_swapped_half_kill_in_his_own_end_is_not_ahead(self):
+        # x=3000 is arc .75. Report team 1 played engine side 2 in half 1, and
+        # side 2's own end that half is arc 1 -- so this kill is BEHIND the
+        # frontline. Read as engine side 1 it looks deep in enemy territory.
+        frags = [self.frag(1, 3000.0)]
+        raw = self.over(frags, None)
+        fixed = self.over(frags, self.SWAP)
+        self.assertEqual(raw[1]["kills_located"], 1)
+        self.assertEqual(raw[1]["kills_ahead"], 1, "untranslated: wrong end")
+        self.assertEqual(fixed[1]["kills_located"], 1, "the row does not vanish")
+        self.assertEqual(fixed[1]["kills_ahead"], 0)
+
+    def test_the_terminal_half_does_not_move(self):
+        # The built-in control: in half 2 report team 1 IS engine side 1, so
+        # the translation is the identity and the number must be untouched.
+        frags = [self.frag(2, 500.0)]
+        raw = self.over(frags, None)
+        fixed = self.over(frags, self.SWAP)
+        self.assertEqual(raw[1]["kills_ahead"], 1)
+        self.assertEqual(fixed[1]["kills_ahead"], 1)
+        self.assertEqual(raw[1], fixed[1], "byte-identical in the terminal half")
+
+    def test_no_row_is_lost_to_the_translation(self):
+        # Unlike the frag-feed defects, this one never dropped a row -- it got
+        # the value wrong. A fix that silently shrank the denominator would be
+        # a different bug, so the count is pinned on both sides.
+        frags = [self.frag(1, 3000.0), self.frag(1, 500.0),
+                 self.frag(2, 500.0), self.frag(2, 3000.0)]
+        raw = self.over(frags, None)
+        fixed = self.over(frags, self.SWAP)
+        self.assertEqual(raw[1]["kills_located"], 4)
+        self.assertEqual(fixed[1]["kills_located"], 4)
+
+    def test_an_unresolvable_half_drops_the_frag_rather_than_guessing(self):
+        # No side for half 1: translating is impossible, and counting it under
+        # either end would be a confident wrong answer. With nothing left to
+        # measure the block fails closed rather than publishing an empty rate.
+        out = build_positional_shadow(
+            self.ROWS, FLAGS, [self.frag(1, 3000.0)], PLAYERS, self.CFG,
+            team1_engine_side={2: 1})
+        self.assertEqual(out["overextension"]["status"], "insufficient_samples")
+        self.assertEqual(out["overextension"]["players"], [])
+
+    def test_an_empty_side_map_fails_closed_rather_than_falling_back(self):
+        # The distinction is `is not None`, not truthiness: {} means the life
+        # feed resolved nothing, and silently reverting to the raw label there
+        # is the defect. Passing nothing at all is the standalone caller.
+        empty = build_positional_shadow(
+            self.ROWS, FLAGS, [self.frag(1, 3000.0)], PLAYERS, self.CFG,
+            team1_engine_side={})
+        self.assertEqual(empty["overextension"]["players"], [])
+        absent = self.over([self.frag(1, 3000.0)], None)
+        self.assertEqual(absent[1]["kills_ahead"], 1, "legacy caller unchanged")
+
+    def test_the_sample_fed_blocks_are_untouched_by_the_frag_space(self):
+        # map_control and depth_profiles come from the sample feed, where every
+        # row carries its own side. The fix must not reach them.
+        frags = [self.frag(1, 3000.0)]
+        raw = build_positional_shadow(self.ROWS, FLAGS, frags, PLAYERS, self.CFG)
+        fixed = build_positional_shadow(self.ROWS, FLAGS, frags, PLAYERS, self.CFG,
+                                        team1_engine_side=self.SWAP)
+        self.assertEqual(raw["map_control"], fixed["map_control"])
+        self.assertEqual(raw["depth_profiles"], fixed["depth_profiles"])

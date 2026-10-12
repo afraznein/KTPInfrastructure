@@ -60,6 +60,7 @@ from scripts.plays import build_plays  # noqa: E402
 from scripts.progression import build_progression  # noqa: E402
 from scripts.roster_teams import (  # noqa: E402
     apply_canonical_teams,
+    restamp_damage_teams,
     restamp_frag_teams,
 )
 from scripts.flag_swing import (  # noqa: E402
@@ -69,6 +70,7 @@ from scripts.report_team_convention import (  # noqa: E402
     report_team1_engine_side,
     translate_capouts,
     translate_map_control,
+    translate_objective_attempts,
     translate_objective_timeline,
     translate_recap_speed,
     translate_team_series,
@@ -2069,6 +2071,15 @@ def build_report(
     # kills rather than merely mislabeling them. Restamp from the corrected
     # roster before the trade and multikill analyzers read it.
     frag_timeline = restamp_frag_teams(frag_timeline, players)
+    # `frag_context_fact.sql` and `damage_timeline_fact.sql` join that same
+    # roster table, so the enriched feeds carried it too -- and seven analyzers
+    # read them. Four DROP a row whose two sides read the same team:
+    # damage_conversion (both feeds), progression's kill series,
+    # life_exploration and weapon_engagement, each on its own same-team guard.
+    if frag_context is not None:
+        frag_context = restamp_frag_teams(frag_context, players)
+    if damage_timeline is not None:
+        damage_timeline = restamp_damage_teams(damage_timeline, players)
     objective_attempts = (
         query_rows(db, "objective_attempt_timeline_fact.sql", match_id)
         if sources.get("objective_attempts", False) else []
@@ -2152,6 +2163,12 @@ def build_report(
     # raw engine side -- this is the one resolver everything below
     # translates through (scripts/report_team_convention.py).
     team1_engine_side = report_team1_engine_side(life_boundaries, players_public)
+    # `capturing_team` is the engine side. flag_fights weighs it against a frag's
+    # killer team and the corrected roster, both report-team convention, so it
+    # needs the translated feed; `interruptions` resolves a frag's side from the
+    # life feed itself and is correct on the raw one, so it keeps that.
+    objective_attempts_report = translate_objective_attempts(
+        objective_attempts, team1_engine_side)
     resolved_objective_config = objective_config or ObjectivePressureConfig()
     expected_live_seconds = float((match or {}).get("duration_seconds") or 0)
     if (
@@ -2232,7 +2249,7 @@ def build_report(
         temporal_valid=source_mode != "replay",
     )
     flag_fights = build_flag_fight_shadow(
-        objective_attempts,
+        objective_attempts_report,
         frag_context,
         assist_timeline,
         shadow_timelines.get("trades", []),
@@ -2398,6 +2415,7 @@ def build_report(
         frag_context,
         players_public,
         positional_config or PositionalConfig(),
+        team1_engine_side=team1_engine_side,
         source_available=bool(
             sources.get("positions", False) and sources.get("flag_positions", False)),
         temporal_valid=source_mode != "replay",

@@ -112,15 +112,36 @@ def restamp_frag_teams(frags: Sequence[dict[str, Any]],
     Takes the corrected `players` rather than the life feed on purpose: one place
     decides a player's team, and this reads its answer.
     """
+    return _restamp(frags, players, ("killer", "victim"))
+
+
+def restamp_damage_teams(damage: Sequence[dict[str, Any]],
+                         players: Sequence[dict[str, Any]],
+                         ) -> list[dict[str, Any]]:
+    """`attacker_team`/`victim_team` from the corrected roster.
+
+    `sql/analytics/damage_timeline_fact.sql` joins the same roster table as the
+    frag feeds, so a half-time leaver's hits carry the opponent's label too --
+    and `damage_conversion._normalize_damage` drops a row whose two sides read
+    the same team as `self_or_team`, so his damage leaves the denominator
+    entirely rather than landing on the wrong side of it.
+    """
+    return _restamp(damage, players, ("attacker", "victim"))
+
+
+def _restamp(rows: Sequence[dict[str, Any]],
+             players: Sequence[dict[str, Any]],
+             roles: Sequence[str],
+             ) -> list[dict[str, Any]]:
     team_by_pid: dict[int, int] = {}
     for player in players or []:
         pid, team = _int(player.get("player_id")), _int(player.get("team"))
         if pid is not None and team in (1, 2):
             team_by_pid[pid] = team
     out: list[dict[str, Any]] = []
-    for frag in frags or []:
-        row = dict(frag)
-        for prefix in ("killer", "victim"):
+    for source in rows or []:
+        row = dict(source)
+        for prefix in roles:
             pid = _int(row.get(f"{prefix}_id"))
             want = team_by_pid.get(pid) if pid is not None else None
             if want in (1, 2) and _int(row.get(f"{prefix}_team")) != want:

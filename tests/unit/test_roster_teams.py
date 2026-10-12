@@ -4,6 +4,7 @@ from __future__ import annotations
 from scripts.roster_teams import (
     apply_canonical_teams,
     canonical_teams,
+    restamp_damage_teams,
     restamp_frag_teams,
 )
 
@@ -120,3 +121,52 @@ def test_no_life_feed_means_no_restamping():
     out = restamp_frag_teams([frag(1, 4, 2, 5, 2)],
                              apply_canonical_teams(players, None))
     assert out[0]["killer_team"] == 2, "nothing to correct from, so nothing moves"
+
+
+def damage(half, attacker, attacker_team, victim, victim_team, amount=50):
+    return {"event_id": f"d{half}{attacker}{victim}", "half": half,
+            "attacker_id": attacker, "attacker_team": attacker_team,
+            "victim_id": victim, "victim_team": victim_team,
+            "game_time": 10.0, "damage_capped": amount}
+
+
+def test_the_leavers_hits_stop_reading_as_friendly_fire():
+    # damage_timeline_fact.sql joins the same roster table, and
+    # damage_conversion drops a same-team row as `self_or_team` -- so his
+    # damage leaves the denominator rather than landing on the wrong side.
+    feed = [damage(1, 4, 2, 5, 2), damage(1, 5, 2, 4, 2)]
+    out = restamp_damage_teams(feed, corrected_players())
+    assert [r["attacker_team"] for r in out] == [1, 2]
+    assert [r["victim_team"] for r in out] == [2, 1]
+    assert all(r["attacker_team"] != r["victim_team"] for r in out)
+
+
+def test_a_restamped_damage_row_records_what_the_roster_said():
+    out = restamp_damage_teams([damage(1, 4, 2, 5, 2)], corrected_players())
+    assert out[0]["attacker_roster_team"] == 2
+    assert "victim_roster_team" not in out[0], "player 5 was never wrong"
+
+
+def test_real_friendly_fire_is_still_friendly_fire():
+    # The guard exists for a reason: two teammates really hitting each other
+    # must stay same-team after the correction, or the fix would launder it.
+    out = restamp_damage_teams([damage(1, 1, 2, 2, 2)], corrected_players())
+    assert out[0]["attacker_team"] == out[0]["victim_team"] == 1
+
+
+def test_damage_rows_in_the_terminal_half_are_untouched():
+    feed = [damage(2, 1, 1, 5, 2), damage(2, 6, 2, 3, 1)]
+    assert restamp_damage_teams(feed, corrected_players()) == feed
+
+
+def test_damage_rows_are_copied_not_mutated():
+    feed = [damage(1, 4, 2, 5, 2)]
+    restamp_damage_teams(feed, corrected_players())
+    assert feed[0]["attacker_team"] == 2
+
+
+def test_damage_restamp_leaves_the_killer_prefix_alone():
+    # Shared implementation with the frag restamp; a role mix-up would write
+    # killer_team onto a damage row and silently do nothing useful.
+    out = restamp_damage_teams([damage(1, 4, 2, 5, 2)], corrected_players())
+    assert "killer_team" not in out[0] and "killer_roster_team" not in out[0]
