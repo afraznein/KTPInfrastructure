@@ -193,6 +193,58 @@ def translate_objective_timeline(
     return out
 
 
+def translate_objective_attempts(
+    attempts: Sequence[dict[str, Any]], team1_engine_side: dict[int, int],
+) -> list[dict[str, Any]]:
+    """Capture-attempt rows -> report-team convention, keeping the engine side.
+
+    `ktp_objective_attempt_events.capturing_team` is the engine side the
+    producer saw taking the flag. `flag_fights` compares it against a frag's
+    killer team and against the corrected roster -- both report-team convention
+    -- so in a swapped half every window was judged against the OPPONENT: the
+    opening duel's `won_by_capturing_team` inverted, the clutch winner resolved
+    to the other side, and `build_entry_shadow` picked its entrant from the
+    DEFENDERS. `interruptions.py` reads the same column correctly by resolving
+    the frag's side from the life feed, so it keeps the untranslated feed.
+
+    An unresolvable half keeps its row with `capturing_team` set to None rather
+    than being dropped: a window is assembled from a START and its TERMINAL
+    rows, so discarding one of a pair would read as an incomplete window
+    instead of an untranslatable one. Every `flag_fights` consumer already
+    skips a window whose `capturing_team` is not 1 or 2.
+    """
+    out: list[dict[str, Any]] = []
+    for row in attempts or []:
+        half = _int_or_none(row.get("half"))
+        team = _int_or_none(row.get("capturing_team"))
+        engine_side = team1_engine_side.get(half) if half is not None else None
+        translated = dict(row)
+        if engine_side is None or team not in (1, 2):
+            translated["capturing_team"] = None
+        else:
+            translated["engine_side"] = team
+            translated["capturing_team"] = 1 if team == engine_side else 2
+        out.append(translated)
+    return out
+
+
+def engine_side_for_report_team(
+    team: Any, half: Any, team1_engine_side: dict[int, int],
+) -> int | None:
+    """Report team 1/2 -> the engine side it played that half.
+
+    The inverse of the translators above, for a consumer whose model is
+    engine-side GEOMETRY rather than a team label. `positional_shadow` depth is
+    side-normalized per half off `ktp_position_samples.team`, so a report team
+    handed to it measures from the wrong end of the map in a swapped half.
+    """
+    half_i, team_i = _int_or_none(half), _int_or_none(team)
+    engine_side = team1_engine_side.get(half_i) if half_i is not None else None
+    if engine_side is None or team_i not in (1, 2):
+        return None
+    return engine_side if team_i == 1 else (1 if engine_side == 2 else 2)
+
+
 def translate_recap_speed(
     recap_speed: dict[str, Any], team1_engine_side: dict[int, int],
 ) -> None:

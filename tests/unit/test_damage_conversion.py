@@ -216,3 +216,85 @@ def test_invalid_config_is_rejected(kwargs):
         build_damage_conversion(
             [], [], [], DamageConversionConfig(**kwargs), life_boundaries=[]
         )
+
+
+# ---------------------------------------------------------------------------
+# Half-leaver team space. Both feeds this module reads join
+# ktp_match_players.team, so a player who leaves at the break carries the
+# opponent's label on every row -- and both normalizers DROP a row whose two
+# sides read the same team. `match_analytics` restamps the feeds from the
+# corrected roster before calling in; these pin what that recovers.
+# ---------------------------------------------------------------------------
+from scripts.roster_teams import (  # noqa: E402
+    apply_canonical_teams, restamp_damage_teams, restamp_frag_teams)
+
+# Report team 1 = 1,2 (+3, who leaves at half). Team 2 = 7,8.
+# Half 1: team 1 on engine side 2. Half 2: sides swap, and 3 is gone.
+LEAVER_LIVES = (
+    [{"half": 1, "player_id": p, "team": 2, "boundary_kind": "start"} for p in (1, 2, 3)]
+    + [{"half": 1, "player_id": p, "team": 1, "boundary_kind": "start"} for p in (7, 8)]
+    + [{"half": 2, "player_id": p, "team": 1, "boundary_kind": "start"} for p in (1, 2)]
+    + [{"half": 2, "player_id": p, "team": 2, "boundary_kind": "start"} for p in (7, 8)]
+)
+# The daemon leaves player 3 on his half-1 side (2), which in half 2 is the
+# opponent's -- so the roster files him with 7 and 8.
+LEAVER_ROSTER = ([{"player_id": p, "team": 1} for p in (1, 2)]
+                 + [{"player_id": p, "team": 2} for p in (3, 7, 8)])
+
+
+def _leaver_feeds():
+    """Player 3 kills 7 in half 1. The feed hands both of them team 2."""
+    dmg = [damage(1, 10, 3, 7, attacker_team=2, victim_team=2, amount=70)]
+    frg = [frag(10, 12, 3, 7, killer_team=2, victim_team=2)]
+    lives = [death(100, 12, 7, frag_event_id=10)]
+    return dmg, frg, lives
+
+
+def _conversion(dmg, frg, lives):
+    return build_damage_conversion(dmg, frg, [], DamageConversionConfig(),
+                                   life_boundaries=LEAVER_LIVES + lives)
+
+
+def test_the_leavers_damage_is_dropped_from_both_feeds_untouched():
+    dmg, frg, lives = _leaver_feeds()
+    report = _conversion(dmg, frg, lives)
+    assert report["excluded_rows"]["self_or_team"] == 1, "his hit read as friendly fire"
+    assert report["source_coverage"]["damage"]["rows_usable"] == 0
+    assert report["source_coverage"]["producer_frag_clock"]["rows_usable"] == 0
+
+
+def test_restamping_both_feeds_recovers_the_row_and_its_damage():
+    dmg, frg, lives = _leaver_feeds()
+    players = apply_canonical_teams(LEAVER_ROSTER, LEAVER_LIVES)
+    assert {p["player_id"]: p["team"] for p in players}[3] == 1, "fixture precondition"
+    report = _conversion(restamp_damage_teams(dmg, players),
+                         restamp_frag_teams(frg, players), lives)
+    assert report["excluded_rows"]["self_or_team"] == 0
+    assert report["source_coverage"]["damage"]["rows_usable"] == 1
+    assert report["source_coverage"]["producer_frag_clock"]["rows_usable"] == 1
+    by_player = {p["player_id"]: p for p in report["players"]}
+    assert by_player[3]["damage_total"] == 70
+    assert by_player[3]["damage_to_own_kill"] == 70, "his hit converted his own kill"
+
+
+def test_a_terminal_half_row_comes_out_byte_identical():
+    # The built-in control: nobody is mislabeled in the terminal half, so
+    # restamping must not move a single number.
+    dmg = [damage(1, 10, 1, 7, attacker_team=1, victim_team=2, amount=70, half=2)]
+    frg = [frag(10, 12, 1, 7, killer_team=1, victim_team=2, half=2)]
+    lives = [death(100, 12, 7, half=2, frag_event_id=10)]
+    players = apply_canonical_teams(LEAVER_ROSTER, LEAVER_LIVES)
+    assert _conversion(dmg, frg, lives) == _conversion(
+        restamp_damage_teams(dmg, players), restamp_frag_teams(frg, players), lives)
+
+
+def test_real_friendly_fire_is_still_excluded_after_restamping():
+    # The same-team guard is there for a reason; the fix must not launder a
+    # genuine teammate hit into the denominator.
+    dmg = [damage(1, 10, 1, 2, attacker_team=1, victim_team=1, amount=70, half=2)]
+    frg = [frag(10, 12, 1, 7, killer_team=1, victim_team=2, half=2)]
+    lives = [death(100, 12, 7, half=2, frag_event_id=10)]
+    players = apply_canonical_teams(LEAVER_ROSTER, LEAVER_LIVES)
+    report = _conversion(restamp_damage_teams(dmg, players),
+                         restamp_frag_teams(frg, players), lives)
+    assert report["excluded_rows"]["self_or_team"] == 1
