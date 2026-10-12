@@ -28,13 +28,17 @@ after the outage rather than before it:
 | 2026-08-12 | `ktp-render-banlist` ran every minute and failed every minute, keeping its exit timestamp fresh | Until the three-legged check was added |
 | 2026-09-08→22 | Six AC evidence bundles were lost to aborted uploads; nginx logs the cause at `info`, below the default `error` level, so `api.ktpdod.com.error.log` has been 0 bytes since 2026-07-18 | The whole fortnight — found by reading the access log, not by an alert |
 | 2026-10-07 | A match-half had 100% of eleven event types rejected. `capture-loss` was watching, running hourly, and silent: it averages a flat 24 hours, so the dead half landed under its 5% warn | Found by an evidence pass over the rows, not by the alert built for exactly this |
+| 2026-10-12 | `ktp-weekly-outliers.service` exited `203/EXEC` — systemd could not execute the wrapper its `ExecStart` names, because the wrapper was never installed. `OnFailure` fired, into the channel this board rules EXPECTED; and the health sweep's ignore entry for that unit matched on the unit NAME, so it accepted an exec failure exactly as it accepts the by-design exit 1 | A week's report. Both alarms worked and both were muffled by design; found by hand |
 
 The pattern is the same every time: **a component that is dead in a way its
 watcher cannot see**. The 10-07 entry is the variant worth knowing, because the
 watcher existed and ran: **a check can be live, correct and still unable to see
-the fault, because of the shape of its aggregation**. The two shapes that do
-that are below the matrix legend. This table is the inventory that makes the
-next one findable before it costs a match.
+the fault, because of the shape of its aggregation**. The 10-12 entry is the
+variant after that: **a watcher deliberately silenced for one accepted failure
+accepts every other failure of the same unit**, because the thing it was keyed
+on was the name and not the status. The shapes that do this are below the matrix
+legend. This table is the inventory that makes the next one findable before it
+costs a match.
 
 ## How to read the matrix
 
@@ -45,11 +49,11 @@ next one findable before it costs a match.
 A row that is detected but not alerted is a report nobody reads. A row that is
 alerted but not remediated is fine, and is most of this estate.
 
-## Two shapes that make a `yes` in this matrix untrue
+## Four shapes that make a `yes` in this matrix untrue
 
-Both have already happened here, and neither leaves a gap a reader of the matrix
+Every one has already happened here, and none leaves a gap a reader of the matrix
 can see — the row says *alerted*, the check runs on schedule, and the fault goes
-past it anyway. Test a new row against both before writing `yes`.
+past it anyway. Test a new row against all four before writing `yes`.
 
 - **A cumulative counter under a windowed headline makes the worst night and an
   ordinary one produce the same number.** The headline is an average, and an
@@ -72,6 +76,26 @@ past it anyway. Test a new row against both before writing `yes`.
   and the same figure can be far too tight on one and unreachable on the other.
   A threshold worth keeping also has a test that goes red when somebody pushes
   it out of reach.
+- **An ignore keyed on a NAME accepts every way that thing can fail.** A unit
+  silenced because one of its exits is a finding rather than a fault is then
+  silenced when it cannot start at all. `ktp-weekly-outliers.service` exits 1
+  when the Monday report finds an outlier; on 2026-10-12 it exited `203/EXEC`
+  because its `ExecStart` wrapper was not installed, and the name glob swallowed
+  that too. **Key an accepted failure on the STATUS** — `FAILED_UNIT_IGNORE_EXIT`
+  takes `glob=status` pairs for exactly this. ⚠️ `ExecMainStatus` alone is not
+  enough: a unit killed by a signal reports the SIGNAL NUMBER there, so `=1`
+  would accept a `SIGHUP` death as the accepted exit. `ExecMainCode` is the
+  `CLD_*` reason (1 is `CLD_EXITED`) and both must agree. And a status that
+  cannot be read must REPORT — an unreadable property inheriting an ignore is
+  the same hole one level down.
+- **A counter can record THAT something was rejected and not WHY, and the gap is
+  invisible because the counter is non-zero.** `ktp_capture_health` has one
+  reason column, `correlation_failure_count`, and on the 2026-10-06 lost half it
+  accounted for **1,869 of 11,700 rejections — 16%**. The other 84% are rejected
+  with every reason column at zero, there is no second reason column and no
+  rejection-reason table in `hlstatsx`, so the row proves a loss happened and
+  cannot say what caused it. **A rejection counter needs a reason beside it, or
+  the alert it feeds can only ever page a human to go and read logs.**
 
 ---
 
@@ -181,10 +205,85 @@ Cron-scheduled work is outside both mechanisms entirely:
 | Tier 2 suite goes quiet | yes | yes | `ktp-tier2-heartbeat.sh` |
 | Perf spike signatures | yes | yes | `ktp-profile-aggregator` → MySQL → Discord, `posted_alert` dedup |
 | Stats daemon rejecting the fleet's capture events | yes | yes | `ktp-data-server-health.sh`, `capture-loss:<event_type>` — trailing 24h per event type from `ktp_capture_health`, warn 5% / clear 2%, floor 200 received. Added after the 09-02→09-08 loss went six days unnoticed. ⛔ **This leg is an average and cannot see one bad half** — that is what the next two rows are for |
-| **One match-half** loses its events, on a day that otherwise looks fine | yes (2026-10-07, in the repo) | yes | `ktp-data-server-health.sh`, `capture-half-loss` — worst `(half, event_type)` in a trailing 24h by `emitted - daemon_accepted` over `emitted`, floor 200 emitted, one constant key with the half named in the body. Scored against the producer's own `emitted`, not against `daemon_received`, so a half that arrived as nothing scores 100% instead of 0/0. ⚠️ **Warn 50 / clear 25 are PROVISIONAL** — bracketed by migration 035's ~0.1% measured transit loss and the 10-07 half's 100%, not taken from the per-half distribution, which nobody has looked at. The query that would settle it is at the constant. **Open on the data server**: `scripts/` has no deploy workflow, so merging does not field it |
-| A match-half **never reconciles at all** (health rows missing, not rejected) | yes (2026-10-07, in the repo) | yes | `ktp-data-server-health.sh`, `capture-half-unreconciled` — `ktp_capture_manifests` rows with no `ktp_capture_health` row after a 180-minute grace, warn 1. No rejection rate can see this: a missing row is not a 100% rate, and health rows travel the same one-way UDP path as the events. ⚠️ **Known false positive**: an abandoned half (map change mid-half, `.forcereset`, crash) never sends health either. **Open on the data server** for the same reason as the row above |
+| **One match-half** loses its events, on a day that otherwise looks fine | yes (2026-10-07) | yes | `ktp-data-server-health.sh`, `capture-half-loss` — worst `(half, event_type)` in a trailing 24h by `emitted - daemon_accepted` over `emitted`, floor 200 emitted, one constant key with the half named in the body. Scored against the producer's own `emitted`, not against `daemon_received`, so a half that arrived as nothing scores 100% instead of 0/0. ✅ **FIELDED — verified 2026-10-12 by md5, not by a ledger**: `/usr/local/bin/ktp-data-server-health.sh` is `dce19827a34941ba1bf82b4dd4c73c38` / 84,274 bytes, byte-identical to this repo's blob at `ce8989a`, and carries both leg names (controls: `health_state` 5 lines, two nonsense tokens 0). ✅ **And the reducer is demonstrated against a real lost half** — see § Capture loss, the 2026-10-12 determination. ⚠️ **Warn 50 / clear 25 are now MEASURED-BRACKETED rather than guessed, and the band between them is empty** — of 6,325 `(half, event_type)` streams over 200 emitted in the trailing 30 days, 4,354 sit at exactly 0% loss, 1,637 under 1%, 271 between 1 and 5%, **12 between 5 and 25%, ZERO between 25 and 100%, and 51 at exactly 100%**. So warn 50 sits in a gap nothing has ever occupied, and the distribution is bimodal rather than continuous: picking a number inside the gap is an operator preference, not a measurement problem |
+| A match-half **never reconciles at all** (health rows missing, not rejected) | yes (2026-10-07) | yes | `ktp-data-server-health.sh`, `capture-half-unreconciled` — `ktp_capture_manifests` rows with no `ktp_capture_health` row after a 180-minute grace, warn 1. No rejection rate can see this: a missing row is not a 100% rate, and health rows travel the same one-way UDP path as the events. ✅ **FIELDED, same md5 as the row above.** ⚠️ **Known false positive**: an abandoned half (map change mid-half, `.forcereset`, crash) never sends health either. Measured 2026-10-12: **one** such half in the last 30 days (2026-09-18), so the false-positive rate this leg actually carries is about one a month, not a daily page |
 | Hits stop turning into damage (registration regresses) | yes (2026-09-18) | yes | `ktp-data-server-health.sh`, `hitreg-reg` — clean live-enemy trace hits vs `ktp_damage_events` within 300 ms, per finished 12-man half in `ktp_hitreg_quality` (KTPHLStatsX 036), trailing 48h, warn 10 / clear 5 per thousand missed, floor 300 hits. Measured normal 0–2. `hitreg-reg=stale` when 12-mans ran for 7d and none was scorable — the watcher saying it has gone blind, not a clean 100%. Lane B runs the same predicate pre-deploy (`check_hit_registration`) |
 | AC evidence bundle never reaches the API (aborted upload) | yes (2026-09-23) | yes | `ktp-data-server-health.sh`, `ac-upload-abort` — a request on `/api/session/upload` that nginx answered itself (`urt=-`) with a 4xx/5xx, over a trailing 6h of `api.ktpdod.com.access.log`, warn 1. The discriminator is `urt`, never the status: a 400 the API produced carries a duration and is a rejected bundle, not a lost one. `ac-upload-abort=unmeasurable` fires when the window holds lines with no `rt`/`urt`/`rl` — the fields only exist from the 2026-09-16 `log_format` change, and a rotated file from before it scores 0 aborts out of real traffic |
+
+---
+
+## Capture loss — the 2026-10-12 determination
+
+The 10-07 card asked which of three mechanisms had returned — UDP lines lost
+between game host and daemon, correlation failure, or producer drop — and said
+the discriminator was whether the shortfall equals the sequence-gap count.
+**Run against the rows, that discriminator PARTITIONS the loss rather than
+naming it, and the answer is none of the three.** Measured read-only on
+`hlstatsx` 2026-10-12, over every half in the last 60 days at or above 50% loss.
+
+**There are exactly two mechanisms in that population, and they are not the same
+fault:**
+
+- **Class A, "arrived as nothing".** `daemon_received = 0`, so the whole stream
+  was lost before the daemon saw it. 60 halves, every one between 2026-08-31 and
+  **2026-09-18**, and none since — 24 days quiet against a table whose newest
+  row is 2026-10-12. This is the class `capture-half-loss`' `emitted`
+  denominator exists for: the ratio `rejected / received` is `0/0` here and the
+  old floor discarded the row.
+- **Class B, rejected AFTER full receipt — this is the one that returned.** The
+  daemon got the stream and refused it. Eight halves: `1.3-rdy-DAL1` h1+h2
+  (09-02), `1.3-6755-DAL1` h1 (09-07), `1.3-6904-NY1` h1 (09-26),
+  `1.3-confirm-NY1` h1+h2 (09-29), `1.3-confirm-ATL1` h1+h2 (10-06) — 87% to 92%
+  loss, on three different hosts over five weeks, most recently 2026-10-06.
+
+**All three of the card's candidates are ruled out for Class B, by measurement:**
+
+| candidate | measured on `1.3-confirm-ATL1` h1 | verdict |
+|---|---|---|
+| producer drop | `dropped = 0` on all 17 event types; `attempted = enqueued = emitted` on every row | ruled out |
+| UDP transit loss | `emitted - daemon_received = 16`, and `SUM(sequence_gap_count) = 16` — the shortfall equals the gap count exactly, at 0.13%, in line with migration 035's ~0.1% baseline | fully accounted for, and 700× too small to be the fault |
+| correlation failure | `correlation_failure_count = 1,869` against `daemon_rejected = 11,700` | **16% of it only** |
+
+**What it actually is: a rejection partitioned cleanly BY EVENT TYPE, identical
+across all eight halves.** Five types are always accepted — `break`, `damage`,
+`flag_position`, `flag_state`, `frag` — and every extended type is always
+rejected: `assist`, `life`, `move`, `position`, `shot` with no reason recorded at
+all, and `duel`, `grenade_entity`, `grenade_throw`, `objective_attempt`,
+`player_state`, `score` with `correlation_failure_count` set. Eleven rejected
+types, which is where the card's *"eleven event types"* comes from. ✅ **Control:
+`1.3-6986-ATL1`, a healthy half on the SAME host 40 minutes after
+`1.3-confirm-ATL1`, has 0 rejections across 16 of 17 types** — so the host, the
+daemon process and the network were all fine; the half was not.
+
+🔑 **A partition that stable is a contract disagreement about which event types
+are admissible for that half, not a transport or correlation event.** The
+`correlation_failure_count` subset is a consequence rather than a cause: those
+are the types carrying a player or entity reference, which cannot resolve once
+the half is not admitted.
+
+⛔ **Two hypotheses tested and REFUTED, so nobody re-runs them:**
+
+1. *"A reused test `match_id` has no matching `ktp_matches` row."* It is true that
+   `1.3-confirm-<SERVER>` is a fixed per-server id reused on every confirm-flow
+   test — `ktp_matches` holds one pair per server, all dated January to July, so
+   the October confirm halves correlate against a February match on a different
+   map. **But `1.3-6755-DAL1` h1 and `1.3-6904-NY1` h1 both have same-day
+   `ktp_matches` rows with the correct map and show the identical partition.**
+   The stale row is a coincidence of which halves got tested, not the cause.
+2. *"The resend repair never ran."* `repaired_count` is 0 on six of the eight
+   Class-B halves and 9 and 14 on the two 10-06 ones — so the repair ran and did
+   almost nothing, which is consistent with it targeting transit gaps rather than
+   rejections. It is not the missing leg.
+
+⚠️ **AND THE SCHEMA CANNOT FINISH THIS ANSWER, WHICH IS THE THIRD DEFECT HERE.**
+`correlation_failure_count` is the only reason column `ktp_capture_health` has,
+and it explains 16% of the rejections. The remaining **9,831 of 11,700 are
+rejected with every reason column at zero**, there is no rejection-reason table
+in `hlstatsx` (`SHOW TABLES LIKE 'ktp_capture%'` returns exactly
+`ktp_capture_health` and `ktp_capture_manifests`; `LIKE '%reject%'` returns
+none), so **the loss is visible and its cause is unrecorded.** Naming the
+rejection reason per type is owed on the daemon side; until it lands, this
+determination is as far as the rows can be taken.
 
 ---
 
