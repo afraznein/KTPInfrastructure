@@ -362,24 +362,75 @@ done
 # and accepted (an unused snap hook, say). Empty by default on purpose -- the
 # first run after deploy reports everything, once, and the operator decides.
 FAILED_UNIT_IGNORE="${FAILED_UNIT_IGNORE:-}"
+#
+# FAILED_UNIT_IGNORE_EXIT: `glob=status` pairs, for a unit whose failure is
+# accepted at ONE exit status and at no other. A name-only ignore accepts every
+# way a unit can fail, which is how 2026-10-12's missed Monday report stayed
+# silent: ktp-weekly-outliers.service exited 203/EXEC -- systemd could not
+# execute the program at all, because the wrapper its ExecStart names was not
+# installed -- and the name glob swallowed that exactly as it swallows the
+# by-design exit 1. The timer leg cannot cover it either: the timer was healthy
+# and fired on schedule; the unit ran and could not exec.
+#
+# ExecMainStatus alone is not enough. A unit killed by a signal reports the
+# SIGNAL NUMBER there, so `=1` would accept a SIGHUP death as the accepted
+# exit. ExecMainCode is the CLD_* reason -- 1 is CLD_EXITED -- so both must
+# agree before a failure is ignored.
+# >>> ktp-failed-unit-ignore -- extracted verbatim by tests/unit/test_health_failed_unit_ignore.py
+FAILED_UNIT_IGNORE_EXIT="${FAILED_UNIT_IGNORE_EXIT:-}"
 # ktp-weekly-outliers.service exits 1 when the Monday report finds a half past
 # its alert threshold -- that exit IS the finding, and the OnFailure embed has
 # already carried it. A oneshot stays `failed` until its next run, so for six
 # days this sweep would re-report a delivered finding as a broken unit (it did,
-# 2026-10-05..10-10). Its timer is still in CRITICAL_TIMERS, so a report that
-# stops running is still caught; only its weekly "found something" exit is not.
-FAILED_UNIT_IGNORE="$FAILED_UNIT_IGNORE ktp-weekly-outliers.service"
+# 2026-10-05..10-10). Any OTHER exit from it is a real fault and must report.
+FAILED_UNIT_IGNORE_EXIT="$FAILED_UNIT_IGNORE_EXIT ktp-weekly-outliers.service=1"
+
+# Is this failed unit's failure one we have accepted? Prints `ignore` or
+# `report`, and `report` whenever the status cannot be established -- an
+# unreadable property must not inherit an ignore.
+failed_unit_accepted() {
+    local unit="$1" pair pat want code reason
+    for pat in $FAILED_UNIT_IGNORE; do
+        case "$unit" in $pat) printf 'ignore\n'; return ;; esac
+    done
+    for pair in $FAILED_UNIT_IGNORE_EXIT; do
+        pat="${pair%=*}"; want="${pair##*=}"
+        case "$unit" in $pat) ;; *) continue ;; esac
+        [ -n "$want" ] || continue
+        code=$(systemctl show "$unit" -p ExecMainStatus --value 2>/dev/null || true)
+        reason=$(systemctl show "$unit" -p ExecMainCode --value 2>/dev/null || true)
+        if [ "$reason" = "1" ] && [ "$code" = "$want" ]; then
+            printf 'ignore\n'; return
+        fi
+        # Named, but not at the accepted status: say which, so the embed does
+        # not read as the weekly finding it is not.
+        printf 'report exit=%s code=%s\n' "${code:-unknown}" "${reason:-unknown}"
+        return
+    done
+    printf 'report\n'
+}
+# <<< ktp-failed-unit-ignore
 while read -r unit _; do
     if [ -z "${unit:-}" ]; then continue; fi
     skip=0
     for svc in "${CRITICAL_SERVICES[@]}"; do
         if [ "$unit" = "$svc" ]; then skip=1; fi
     done
-    for pat in $FAILED_UNIT_IGNORE; do
-        case "$unit" in $pat) skip=1 ;; esac
-    done
     if [ "$skip" -eq 0 ]; then
-        down+=("failed-unit:${unit}")
+        read -r fu_verdict fu_why <<< "$(failed_unit_accepted "$unit")"
+        if [ "$fu_verdict" = "ignore" ]; then
+            skip=1
+        else
+            # CONSTANT key, status in `detail`. A key carrying the exit status
+            # would change when the status does, and the set comparison would
+            # announce a recovery for a unit that only failed a new way.
+            key="failed-unit:${unit}"
+            down+=("$key")
+            if [ -n "${fu_why:-}" ]; then
+                detail[$key]="failed at ${fu_why} -- an accepted exit is configured for this unit and this is not it"
+            fi
+            skip=1
+        fi
     fi
 done <<< "$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' || true)"
 
