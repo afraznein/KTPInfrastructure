@@ -133,7 +133,19 @@ once by the `failed-unit:` producer.
 
 ## Data server — timers and scheduled work
 
-`CRITICAL_TIMERS` covers ten timers as of 2026-09-16; before that, three of ten.
+⛔ **Do not read a count here — derive it.** This line said *"covers ten timers as of
+2026-09-16"* and the list had moved twice since. Both numbers that matter are one command
+each, and a disagreement between them is itself the finding:
+
+```bash
+sed -n '/CRITICAL_TIMERS=(/,/^)/p' scripts/ktp-data-server-health.sh | grep -cE '^\s+[a-z0-9-]+\.timer'
+ssh <data> "sed -n '/CRITICAL_TIMERS=(/,/^)/p' /usr/local/bin/ktp-data-server-health.sh | grep -cE '^\s+[a-z0-9-]+\.timer'"
+ssh <data> "systemctl list-timers --all --no-legend | awk '{print \$NF}' | grep -E '^(ktp|support|hltv)-' | sort"
+```
+
+🔑 **And the number to compare it against is the LIVE timer list, not this table** — a timer
+that exists on the box and appears in neither is invisible to both mechanisms and to this
+document, which is how four of them sat here unlisted until 2026-10-12.
 
 | Timer | In `CRITICAL_TIMERS` | If it silently stops |
 |---|---|---|
@@ -148,12 +160,36 @@ once by the `failed-unit:` producer.
 | `ktp-roster-history-audit.timer` | yes (2026-09-16) | audit stops silently |
 | `ktp-identity-reconcile.timer` | yes (2026-09-16) | the *service* has `OnFailure=`, so a failing run alerts; a timer that stops firing does not |
 | `ktp-monday-reminder.timer` | **no** | reminder stops; human-visible |
+| `ktp-reports.timer` | **no** | report regeneration stops; the last files stay in place and read current. A failing RUN alerts (`OnFailure=` present) — the journal only says `exit-code`, and the cause is in `/var/log/ktp-report-service.log`. Fires at `:04,:19,:34,:49` |
+| `ktp-telemetry-export.timer` | **no** | the baseline export stops; the last baseline stays in place and reads current, so the site's telemetry page goes stale with no error. A failing RUN alerts (`OnFailure=` present). Hourly at `:40` |
+| `ktp-ac-flagged-payload-retention.timer` | **no** | the weekly flagged-payload sweep stops, so payloads are retained past their window — the direction that keeps evidence rather than losing it, which is why this is the least urgent of the four. ⚠️ **No `OnFailure=`** (measured 2026-10-12, against `ktp-stats-export.service` as a control that has one), so a failing run is caught only by the hourly sweep's generic `failed-unit:` leg — and only because it is weekly, so the oneshot sits `failed` long enough to be seen. `Sun 05:30` ET |
+| `support-poller.timer` | **no** | 🔴 **the `/servers` push stops and the site goes stale with no error anywhere** — the same silent staleness that exit code 8 names from the other side. ⚠️ **No `OnFailure=`, and at `OnUnitActiveSec=60s` an intermittent failure is re-run and cleared long before the hourly `failed-unit:` sweep looks**, so the one mechanism that could catch it is the one this timer outruns. Of the four this is the gap worth closing first |
+
+🔑 **THE LAST FOUR ROWS WERE ADDED 2026-10-12 AND THEIR ABSENCE WAS THE FINDING.** This
+document's own rule is that adding a timer means adding a row here in the same change, and
+four live timers had none — so a reader checking coverage here was told about twelve of the
+box's sixteen and had no way to notice the other four. ⚠️ **A board note had this as
+*three*; it missed `ktp-reports.timer`, which is discussed in the service table above and
+still had no row in this one.** ➡️ **So reconcile the table against the live list, not
+against a remembered figure**, and scope any grep to this table: `ktp-telemetry-export`
+resolved once in this file and the hit was a prose mention 140 lines below, which reads
+exactly like a row.
 
 The distinction that matters: `OnFailure=` fires when a unit **runs and fails**.
 Nothing fires when a unit **stops running at all**. Five of the incidents in the
 table at the top are that exact shape, which is why `CRITICAL_TIMERS` exists.
-Only `ktp-monday-reminder.timer` is deliberately left out: a reminder that fails
-to arrive is noticed by the people expecting it.
+⚠️ **And there is a third mechanism, which is why two of the rows above distinguish a
+failing run from a stopped timer:** the hourly health sweep's generic `failed-unit:` leg
+reports any unit left in `failed` state (`FAILED_UNIT_IGNORE` is empty by default and is
+empty on the box). It catches a oneshot whose failure PERSISTS — so it covers the weekly
+sweep and not a 60-second one.
+
+⛔ **`ktp-monday-reminder.timer` is the only one deliberately left out** — a reminder that
+fails to arrive is noticed by the people expecting it. 🔻 **That sentence used to read
+*"Only `ktp-monday-reminder.timer` is deliberately left out"* of `CRITICAL_TIMERS`, which is
+false and was load-bearing:** four other live timers are out of that list too, and nothing
+about them is deliberate. **Deliberately excluded and merely absent are different facts, and
+this sentence was the only place the difference was recorded.**
 
 Cron-scheduled work is outside both mechanisms entirely:
 
