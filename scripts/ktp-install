@@ -292,9 +292,11 @@ def install(a):
         raise SystemExit("%s already has md5 %s; nothing to install" % (a.dest, new_md5))
 
     mode = a.mode
+    owner = None
     if current != "-":
         st = os.stat(a.dest)
         mode = mode if mode is not None else (st.st_mode & 0o7777)
+        owner = (st.st_uid, st.st_gid)
         bdir = backup_dir()
         os.makedirs(bdir, exist_ok=True)
         bk = os.path.join(bdir, "%s.%s.%s" % (os.path.basename(a.dest), current[:8],
@@ -312,6 +314,17 @@ def install(a):
         f.flush()
         os.fsync(f.fileno())
     os.chmod(tmp, mode)
+    # The swap writes a new inode, so the mode has to be re-applied -- and so does the owner,
+    # which carrying only the mode silently drops. A 750 file owned by a service account came
+    # back root:root with its mode intact, and 750 then gave that account nothing.
+    if owner is not None and owner != (os.geteuid(), os.getegid()):
+        try:
+            os.chown(tmp, owner[0], owner[1])
+        except OSError as e:
+            os.unlink(tmp)
+            raise SystemExit("cannot preserve %s's owner %d:%d (%s); refusing rather than "
+                             "installing a file its own service cannot read"
+                             % (a.dest, owner[0], owner[1], e.strerror))
     if md5_file(tmp) != new_md5:
         os.unlink(tmp)
         raise SystemExit("%s did not write back as %s" % (tmp, new_md5))
