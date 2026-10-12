@@ -149,6 +149,21 @@ fleet produced three wrong answers in one session. Drive it from `ktp_hosts.py`
 **Is FastDL serving it?** `curl -sI` each of the four paths plus any new WAD, and
 confirm `200` and a `Content-Length` matching the manifest's `bytes`.
 
+⚠️ **The two questions are not interchangeable, and the host-side one is the half that
+fails silently.** Clients fetch overviews from FastDL, so a player sees a correct overview
+on a host holding neither file — only the server-side spectator path reads the host's own
+copies. **A clean FastDL probe and a match nobody complained about are both consistent with
+a host that is missing the pair**, which is how a region can run degraded spectator
+overviews for weeks with no symptom anyone would report.
+
+✅ **That gap is covered standing, so it does not have to be a habit.**
+`scripts/audit-distribute-drift.py`, run weekly by the **Fleet Audit** workflow, takes its
+scope from the distributor's live `WatchPatterns` — which carry `*.bmp` and `*.txt`, so every
+pair under `/home/dod/distribute/overviews` is in it — and reports `shape=absent` for a path
+that is on no instance. ⛔ **Its invariant is source-to-instance, not pool coverage:** a pair
+deleted from the source syncs as a deletion to all 24 and then reads as no drift at all.
+Shapes and triage: `docs/runbooks/DISTRIBUTE_DRIFT.md`.
+
 ---
 
 ## Where the RESGen numbers came from

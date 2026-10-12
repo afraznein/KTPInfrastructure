@@ -70,13 +70,17 @@ def test_instruments_say_why_they_are_missing():
     assert empty["status"] == "unavailable" and "no telemetry windows" in empty["reason"]
 
 
-def test_public_block_carries_names_only_and_passes_the_forbidden_scan():
+def test_public_block_is_the_box_only_and_passes_the_forbidden_scan():
     c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES)
     dto = _connection_block({"connection": c})
     assert_sanitized(dto)
-    assert [p["name"] for p in dto["players"]] == ["kroD-", "nicholson", "quiet"]
-    assert "player_id" not in str(dto) and "steam" not in str(dto).lower()
-    assert dto["players"][0]["worst_share"]["jitter"] == 0.801
-    assert dto["players"][1]["session"]["latency_avg_ms"] == 27.9
+    assert "players" not in dto
+    assert dto["match"]["windows"] == 221 and dto["instruments"]["session"] == "available"
+    body = str(dto)
+    # instruments.worst_share names the instrument, which is fine; a player's VALUES are not.
+    for leaked in ("kroD-", "nicholson", "0.801", "618", "27.9", "drops_when_worst", "shot_ping': {"):
+        assert leaked not in body, leaked
+    # The producer's own report still carries the rows: the private tier reads them there.
+    assert [p["player_name_at_match"] for p in c["players"]] == ["kroD-", "nicholson", "quiet"]
     old = _connection_block({"schema_version": 29})
     assert old["status"] == "unavailable" and old["reason"] == "not-in-report"
