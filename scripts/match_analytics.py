@@ -58,7 +58,10 @@ from scripts.brinks import build_brinks  # noqa: E402
 from scripts.interruptions import build_interruptions  # noqa: E402
 from scripts.plays import build_plays  # noqa: E402
 from scripts.progression import build_progression  # noqa: E402
-from scripts.roster_teams import apply_canonical_teams  # noqa: E402
+from scripts.roster_teams import (  # noqa: E402
+    apply_canonical_teams,
+    restamp_frag_teams,
+)
 from scripts.flag_swing import (  # noqa: E402
     build_flag_swing_shadow,
 )
@@ -66,6 +69,8 @@ from scripts.report_team_convention import (  # noqa: E402
     report_team1_engine_side,
     translate_capouts,
     translate_map_control,
+    translate_objective_timeline,
+    translate_recap_speed,
     translate_team_series,
 )
 from scripts.ktpr_v2 import (  # noqa: E402
@@ -2059,6 +2064,11 @@ def build_report(
     # swap). Correct it from the per-half life feed before anything rolls
     # players up by team.
     players = apply_canonical_teams(players, life_boundaries)
+    # The frag feed joins its team columns to the same roster table, so it
+    # carried the same error -- and there it dropped the leaver's frags as team
+    # kills rather than merely mislabeling them. Restamp from the corrected
+    # roster before the trade and multikill analyzers read it.
+    frag_timeline = restamp_frag_teams(frag_timeline, players)
     objective_attempts = (
         query_rows(db, "objective_attempt_timeline_fact.sql", match_id)
         if sources.get("objective_attempts", False) else []
@@ -2136,6 +2146,12 @@ def build_report(
         legacy_damage=legacy_damage,
     )
     players_public = public_players(players)
+    # DoD swaps Allies/Axis at halftime; report team 1 is the roster's
+    # terminal-half slot, guaranteed opposite this in half 1 of every
+    # two-half match. flag_swing/positional_shadow/progression compute in
+    # raw engine side -- this is the one resolver everything below
+    # translates through (scripts/report_team_convention.py).
+    team1_engine_side = report_team1_engine_side(life_boundaries, players_public)
     resolved_objective_config = objective_config or ObjectivePressureConfig()
     expected_live_seconds = float((match or {}).get("duration_seconds") or 0)
     if (
@@ -2156,8 +2172,13 @@ def build_report(
     # Producer-context rows deliberately include malformed/legacy rows so the
     # timed analyzers can report their coverage. Feeding a NULL producer half
     # into generic grouping would either crash or silently invent half zero.
+    # The capture feed is engine side and the frag feed is now report team, so
+    # the objective-conversion test compared two different spaces: in a swapped
+    # half it matched the opponent's captures.
     shadow_timelines = build_shadow_timelines(
-        frag_timeline, objective_timeline, resolved_timeline_config,
+        frag_timeline,
+        translate_objective_timeline(objective_timeline, team1_engine_side),
+        resolved_timeline_config,
         temporal_valid=source_mode != "replay",
         source_available={
             "frags": True,
@@ -2250,6 +2271,10 @@ def build_report(
         source_available=bool(sources.get("flag_ownership", False)),
         temporal_valid=source_mode != "replay",
     )
+    # Keyed on the flag's owning engine side, and the page renders it as a
+    # report team: in a swapped half every recap reads as the opponent's, and
+    # the per-team totals sum two halves that belong to different rosters.
+    translate_recap_speed(recap_speed, team1_engine_side)
     cap_participation = (
         query_rows(db, "cap_participation_fact.sql", match_id)
         if sources.get("capture_credits", True) else [])
@@ -2261,12 +2286,6 @@ def build_report(
     credit_timeline = (
         query_rows(db, "capture_credit_timeline_fact.sql", match_id)
         if sources.get("capture_credits", True) else [])
-    # DoD swaps Allies/Axis at halftime; report team 1 is the roster's
-    # terminal-half slot, guaranteed opposite this in half 1 of every
-    # two-half match. flag_swing/positional_shadow/progression compute in
-    # raw engine side -- this is the one resolver everything below
-    # translates through (scripts/report_team_convention.py).
-    team1_engine_side = report_team1_engine_side(life_boundaries, players_public)
     flag_swing = build_flag_swing_shadow(
         flag_states if sources.get("flag_ownership", False) else None,
         frag_context,
