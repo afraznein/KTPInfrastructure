@@ -4,6 +4,11 @@ Continues the research handover
 (`ktp_stats/handover/INFRA_CONTROL_PLANE_RESEARCH_HANDOVER_20260910.md`).
 Measured 2026-09-10, read-only, against the repo and the live data server.
 
+⚠️ **Sequencing items 1 and 2 were re-measured 2026-10-12 and item 1's premise
+did not survive** — read § *Re-measured 2026-10-12* before acting on anything
+this plan says about frag, which was the outlier in September and is the
+cleanest rejecting stream now.
+
 Season 10 opens 2026-09-13.
 
 ---
@@ -200,6 +205,63 @@ daily frag percentages in `tests/unit/test_health_capture_loss.py`: one alert on
 3. Confirm whether the 09-08 16:34 restart picked up new code or simply cleared
    accumulated state. That decides whether the broad loss can return.
 
+### Re-measured 2026-10-12 — the loss is no longer frag-shaped, and sequencing items 1 and 2 are answered
+
+Read-only, from a workstation, against `ktp_capture_health` on the data server
+(15,989 rows, 2026-08-31 → 2026-10-12). **Everything above about frag being the
+outlier was true when written and is now inverted.** Trailing 14 days, daemon
+rejection as a share of `daemon_received`:
+
+| event_type | received | rejected | rate |
+|---|---|---|---|
+| grenade_entity | 220,430 | 2,646 | 1.200% |
+| grenade_throw | 110,262 | 1,318 | 1.195% |
+| assist | 17,871 | 213 | 1.192% |
+| player_state | 236,066 | 2,572 | 1.090% |
+| life | 261,290 | 2,834 | 1.085% |
+| shot | 1,007,038 | 10,924 | 1.085% |
+| move | 187,177 | 1,922 | 1.027% |
+| position | 2,280,956 | 23,302 | 1.022% |
+| duel | 19,498 | 199 | 1.021% |
+| objective_attempt | 14,151 | 144 | 1.018% |
+| score | 21,487 | 217 | 1.010% |
+| **frag** | **119,999** | **256** | **0.213%** |
+| flag_position / flag_state / break / damage | 272,540 | 0 | 0.000% |
+
+🔑 **Frag is now the cleanest rejecting type, by a factor of five.** So open
+question 2 below — *"nine other event types are now at exactly zero, so whatever
+the reason is, it is frag-specific"* — is refuted: rejection today is **broad and
+low** where it was **narrow and bursty**, and only four types sit at exactly
+zero. The remaining ~1% is a property of eleven streams at once, which is a
+different question from the one this section was written to ask, and it is
+`infra-stat-capture`'s rather than this plan's.
+
+Trailing 24 hours every type is ≤ 0.289% and frag is 0.026%. Worst frag
+match-half over 14 days is **9.19%** (`1790733686-DAL1` half 2, 25 of 272), well
+under the 21–25% pair above.
+
+⚠️ **The positive control is what makes that a measurement rather than a quiet
+query:** the same ranking over ALL time still surfaces the original bursts —
+51.59% on `1.3-6733-NY1` half 1 (09-05) and 48.89% on `1788989435-NY2` half 2
+(09-09) — so the probe can see a 50% burst and reports 9.19% as the 14-day
+worst. Two negative controls (a nonsense `event_type`, and a window entirely in
+the future) both returned 0.
+
+✅ **Sequencing item 2 is DONE and the answer is clean.** `ktp-monitor-patch-check.sh`'s
+logic, taken from `origin/main` rather than any installed copy, run against every
+instance of all five game hosts: **24/24 parse under `bash -n`, the dangerous
+old-type branch reads `disabled` on 24/24**, and the two legitimate branches
+(`duppid`, `samesocket`) read `armed` as LinuxGSM intends. Every host is
+**v25.2.0**, so the v26.2.0 range that orphans an `elif` is not in play.
+Controls: 24 files found, and a nonsense needle matched 0 of them.
+
+⛔ **That is a point-in-time answer, not a standing one.** `./dodserver update-lgsm`
+overwrites the patched file, so this re-opens silently on the next LinuxGSM
+upgrade — which is the reason the script exists and the reason the Philly LAN box
+ran nine days broken. The standing cover is `audit-fleet-drift.py`, which uploads
+and parses this script weekly; a hand run like this one is corroboration, never a
+replacement.
+
 ## §2.2 — incident view
 
 The handover's case for this is now concrete rather than hypothetical.
@@ -281,22 +343,29 @@ Conservative, and shaped by what is live rather than by what is elegant.
 
 | # | Item | Why here |
 |---|---|---|
-| 1 | Investigate the residual frag loss | Nine event types fixed by the 09-08 daemon restart; frag alone still bursting to ~22-25% on some matches. Read-only |
-| 2 | Run `ktp-monitor-patch-check.sh` against the fleet | Built, unrun. One read-only sweep answers handover §3 Q3 |
+| 1 | Investigate the residual frag loss | ~~Nine event types fixed by the 09-08 daemon restart; frag alone still bursting to ~22-25% on some matches~~ — **SUPERSEDED 2026-10-12: frag is now the cleanest rejecting type and the loss is no longer frag-shaped.** See § Re-measured 2026-10-12 |
+| 2 | Run `ktp-monitor-patch-check.sh` against the fleet | **DONE 2026-10-12 — clean on 24/24, handover §3 Q3 answered.** See § Re-measured 2026-10-12 |
 | 3 | Capture success-rate alert | After 1 explains the cause. As a producer for the existing health check |
 | 4 | Trends page in `support-web` | Data is ready and complete; this is rendering |
 | 5 | Close the §2.3 drift | Live-host rollout, per-host sign-off, quiet window |
 | 6 | Incident view | Real value, meaningful build, reuses 4's plumbing |
 | 7 | Unify alerting | Refactor of working code. Not during the season |
 
-Items 1 and 2 need the operator. Items 3 and 4 are ordinary repo work.
+~~Items 1 and 2 need the operator.~~ **Neither did, and that line parked two
+read-only items behind a person for a month** — both were taken from a
+workstation on 2026-10-12, item 1 as a read-only query and item 2 as a read-only
+parse of files nobody writes. Items 3 and 4 are ordinary repo work.
 
 ## Open questions
 
 1. Did the 2026-09-08 16:34 restart of `hlstatsx.service` pick up new code, or
    just clear accumulated state? That decides whether the broad loss can return.
-2. What does the daemon reject a frag *for*? Nine other event types are now at
-   exactly zero, so whatever the reason is, it is frag-specific.
+2. ~~What does the daemon reject a frag *for*? Nine other event types are now at
+   exactly zero, so whatever the reason is, it is frag-specific.~~
+   🔻 **REFUTED 2026-10-12 — the premise, not the answer.** Eleven types now
+   reject at 1.01–1.20% over 14 days while frag rejects at 0.213%, so the
+   question to ask is what the daemon rejects ~1% of *everything* for. That is
+   `infra-stat-capture`'s, not this plan's. See § Re-measured 2026-10-12.
 3. Are the matches from 09-02 to 09-08 that lost 22-34% of their frags going to
    be re-ingested, corrected, or accepted as degraded?
 4. Does anything read `ktp_capture_health` today other than the Lane B suite and
