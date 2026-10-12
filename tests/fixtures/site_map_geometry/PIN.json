@@ -11,6 +11,8 @@
   "bytes": 1473,
   "sha256_lf": "f4e7c70f65f229a5f08b1dd7fc2846fcfb4799c59589a3e45a900642ade901fa",
   "sha256_is_over": "the file's bytes with CRLF normalized to LF, so a clone with core.autocrlf=true cannot fail this pin for a line ending nobody changed",
+  "equality_grade": "rounded",
+  "equality_grade_is": "Which gate the equality runs under, set by scripts/emit_site_map_geometry.py --refresh-pin from a comparison, never by hand. 'rounded': upstream still ships the hand-typed table, whose pixel_to_world is cut to about twelve significant figures, so only the relative tolerance in tests/unit/test_spatial_map_geometry.py can hold. 'generated': upstream is this emitter's own bytes, and tests/unit/test_site_map_geometry_emitter.py compares them exactly.",
   "captured_utc": "2026-10-08",
   "why_vendored": [
     "This repo is PUBLIC and searse/keep-the-prac is PRIVATE, so no job here holds a credential that can read the upstream path.",
@@ -31,7 +33,6 @@
     "  git -C <keep-the-prac> rev-parse origin/main:<upstream_path>          # upstream today -- must equal upstream_blob",
     "Run the second from any checkout that can read the private repo. If it differs, upstream moved and this pin is stale: refresh below."
   ],
-
   "refresh": [
     "Run from a checkout that can read the private upstream, e.g. the keep-the-prac clone on the workstation:",
     "  git -C <keep-the-prac> fetch origin main",
