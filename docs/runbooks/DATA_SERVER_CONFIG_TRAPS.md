@@ -95,6 +95,24 @@ check is the only evidence.** `WEAPON_RETENTION_DAYS` is the worked example: at
 both the 365-day default and the ruled 36500 the nightly sweep deletes 0 rows
 until the oldest row ages out, so the log line is byte-identical either way.
 
+✅ **One half of that worked example is now a refusal rather than a warning.**
+`0` used to mean opposite things to the two families of sweep in
+`scripts/ktp-ac-retention.sh`: `UPLOAD_RETENTION_DAYS` and
+`NET_IDENTITY_RETENTION_DAYS` are each tested at their own sweep, so `0` is a
+documented hold — while `WEAPON_RETENTION_DAYS` and `TOKEN_RETENTION_DAYS` went
+straight into `INTERVAL ${n} DAY`, where `NOW() - INTERVAL 0 DAY` is `NOW()` and
+a zero deletes **every row up to now**, successfully and with an ordinary-looking
+count in the log. A negative was worse: `INTERVAL -5 DAY` reaches five days into
+the future and takes rows that have not aged at all. 🔑 **The hazard was the
+ADJACENCY, not any ruled value** — the ruled `36500` sits directly beneath a
+comment block saying `0` is inert, which is true of uploads and false of weapons,
+**and a comment cannot refuse.** The script now requires those two to be positive
+before any sweep runs, and still accepts `0` on the other two, which is their
+hold. ⛔ **Do not "simplify" that asymmetry away:** `UPLOAD_RETENTION_DAYS`
+defaults to `0`, so tightening it would turn every host's correct configuration
+into a nightly failure. `tests/unit/test_ac_retention_positive_horizons.py` holds
+both directions and carries the mutation that tightens it.
+
 ⚠️ **And `ops/cron-inventory/data/cron.d/` is a snapshot of the box, not the
 box.** After any hand install there, that copy is stale and a later reader
 diffing against it reads the install as absent. Refresh it in the same change.

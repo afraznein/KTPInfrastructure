@@ -59,6 +59,46 @@ DRY_RUN="${DRY_RUN:-0}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
+# ⛔ 0 MEANS OPPOSITE THINGS TO THE TWO FAMILIES OF SWEEP ABOVE, AND ONLY ONE FAMILY IS
+# GUARDED. UPLOAD_ and NET_IDENTITY_RETENTION_DAYS are wrapped in their own test at the sweep,
+# so 0 there is a documented hold. WEAPON_ and TOKEN_RETENTION_DAYS go straight into
+# `INTERVAL ${n} DAY`, where 0 resolves to NOW() and deletes every row up to now -- succeeding,
+# and logging a count like any ordinary night. A NEGATIVE is worse still: NOW() - INTERVAL -5
+# DAY is five days in the FUTURE, so it takes rows that have not aged at all.
+#
+# Neither of those two has a hold to express, so there is no value of theirs that should mean
+# "off" and nothing for a comment to warn about. They are required to be positive here, before
+# any sweep runs, rather than part-way through one -- a refusal after sweep 2 has deleted is
+# not a refusal.
+#
+# ⚠ The hazard was the ADJACENCY, not any ruled value: the ruled `WEAPON_RETENTION_DAYS=36500`
+# sits directly beneath a comment block saying 0 is inert, which is true of uploads and false
+# of weapons. A comment cannot refuse.
+require_positive_days() {
+    if [[ ! "$2" =~ ^-?[0-9]+$ ]]; then
+        echo "[$(ts)] ac-retention: FATAL $1='$2' is not an integer; refusing to sweep" >&2
+        exit 2
+    fi
+    if [ "$2" -le 0 ]; then
+        echo "[$(ts)] ac-retention: FATAL $1=$2 would delete every row up to now, and this sweep has no OFF switch; set a positive horizon (36500 is the ruled hold)" >&2
+        exit 2
+    fi
+}
+
+# The two that DO accept 0. Checked for shape only, so a typo names itself instead of reaching
+# `[ "$x" -le 0 ]` and dying as a bare bash "integer expression expected" with no variable name.
+require_integer_days() {
+    if [[ ! "$2" =~ ^-?[0-9]+$ ]]; then
+        echo "[$(ts)] ac-retention: FATAL $1='$2' is not an integer; refusing to sweep" >&2
+        exit 2
+    fi
+}
+
+require_integer_days UPLOAD_RETENTION_DAYS "${UPLOAD_RETENTION_DAYS}"
+require_integer_days NET_IDENTITY_RETENTION_DAYS "${NET_IDENTITY_RETENTION_DAYS}"
+require_positive_days WEAPON_RETENTION_DAYS "${WEAPON_RETENTION_DAYS}"
+require_positive_days TOKEN_RETENTION_DAYS "${TOKEN_RETENTION_DAYS}"
+
 # Declared once so the DRY_RUN count and the sweep can never describe different rows.
 net_identity_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND steam_id <> ''"
 
