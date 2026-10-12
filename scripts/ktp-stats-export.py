@@ -454,7 +454,8 @@ def build_match(db: Db, m: dict, quiet: bool) -> dict | None:
     box = fetch_box_score(db, mid)
     # Kills and deaths come from the events, not from dodx's counter in
     # ktp_match_stats; the rest of that row (headshots, damage, score...) still
-    # does, and `score` keeps its known savedScore undercount -- the site does
+    # does, and `score` undercounts objective points taken holding a weapon the
+    # player never fired, which is not the fixed savedScore bug -- the site does
     # not render it, and correcting it is a separate decision.
     scoreboard = fetch_scoreboard_totals(db, mid)
     flags = fetch_objective_points(db, mid)

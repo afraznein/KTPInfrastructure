@@ -15,8 +15,10 @@
 *.py         text eol=lf
 *.py.example text eol=lf
 *.service    text eol=lf
+*.timer      text eol=lf
 *.ini        text eol=lf
 *.ini.example text eol=lf
+*.json.example text eol=lf
 *.j2         text eol=lf
 *.cron       text eol=lf
 *.logrotate       text eol=lf
@@ -30,6 +32,9 @@ ops/cron-inventory/**/cron.d/* text eol=lf
 # hook dies on Linux with `$'\r': command not found` -- and a pre-push hook that
 # cannot run is a secret gate that never fires.
 scripts/hooks/* text eol=lf
+# ktp-install is python3 with no extension, so *.py never reaches it — and it is
+# the installer that writes DEPLOYED.tsv on live hosts.
+scripts/ktp-install text eol=lf
 # Workflow `run:` blocks are bash on a Linux runner; CRLF leaks \r into them.
 .github/workflows/*.yml text eol=lf
 # auditd rule files are parsed by augenrules on the host; a CRLF line makes it
@@ -49,7 +54,7 @@ tests/fixtures/grub_default_kernel/** text eol=lf
 # on a file where one side's edit is meant to REPLACE the other's.
 CHANGELOG.md merge=union
 
-# Overview descriptors are copied to the fleet byte-for-byte and five of the
+# Overview descriptors are copied to the fleet byte-for-byte and three of the
 # seven here are CRLF as their mapper wrote them. core.autocrlf=input rewrites
 # CRLF on commit, so without this the repo would hold a file nobody authored and
 # the deploy would ship it.
