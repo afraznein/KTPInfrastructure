@@ -211,6 +211,11 @@ ktp_profile_frame 1
 ktp_profile_interval 10
 ktp_profile_spike_threshold 3
 ktp_profile_steam_detail 0
+// Persisted because this is the rollback lever for the .931 per-phase detail gate, and a
+// changelevel re-execs this file -- an rcon override dies at the next map, so the lever
+// only exists here. Unclamped on purpose: 0 always emits (pre-.931), 0<v<1 is the range,
+// and above 1 silences nothing -- use ktp_profile_spike_threshold 0 to stop spike logging.
+ktp_profile_spike_phase_share 0.25
 
 // Reject dlfile fallback when FastDL is configured.
 // Prevents 2+sec server-wide freeze when a client without the map
