@@ -47,7 +47,9 @@ WEAPON_RETENTION_DAYS="${WEAPON_RETENTION_DAYS:-365}"
 # a staged bundle outlives the key that verifies it. The API side pins its own three, and
 # its grace now carries the offset between a login and the packaging it keys -- a client
 # retries from when the bundle was written, not from when the session began.
-TOKEN_RETENTION_DAYS="${TOKEN_RETENTION_DAYS:-22}"
+# Deliberately a week wider than that grace rather than equal to it: equal left no headroom, so
+# widening the client's retry window reddened the API repo's test before a PR here could merge.
+TOKEN_RETENTION_DAYS="${TOKEN_RETENTION_DAYS:-105}"
 # Ruled 2026-10-08: ktp_net_sessions metrics are kept forever, identity for 90 days. 0 means
 # keep identity forever -- and like UPLOAD_RETENTION_DAYS that guard has to sit at the sweep
 # too, because INTERVAL 0 DAY resolves to NOW() and would blank the whole table.
