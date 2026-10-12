@@ -154,6 +154,11 @@ Exit `0` only when every required context reported success **on that sha**;
 `1` if any is missing, failing or pending; `3` if branch protection could not
 be read, which is undecidable rather than clean.
 
+⛔ **Run it bare, and never through a pipe.** The exit code *is* the verdict, and
+`$?` after `… | tail -30` is `tail`'s status, not the checker's — so a `FAILING`
+line scrolls past beside a reported `exit=0`. Capture the status from the command
+itself: `out=$(python scripts/check-pr-required-contexts.py …); rc=$?`.
+
 ⚠️ **This happened, and nothing was broken:** on 2026-10-05 a push to
 `afraznein/KTPAntiCheat`#522 delivered no `synchronize` event. Eight of ten
 workflows never saw the new sha; the two that ran were triggered by a **PR-body

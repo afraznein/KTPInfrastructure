@@ -116,6 +116,27 @@ current md5 to its last row.
 It fails closed: a manifest that cannot be read proves nothing, so it is never
 reported as clean.
 
+🔴 **The exit code is HOST-WIDE, so it cannot be one install's verify step.** One
+unreconciled row anywhere on the box makes every run exit 1, including runs about
+a file that is perfectly current — and over 120 recorded paths that is the ordinary
+state, not an incident. A deploy whose pass criterion reads *"`ktp-install
+--report` exits 0"* therefore has a criterion no install can reach, and two
+entries in the deploy ledger had to be verified by other means because of it.
+➡️ **Assert the ROW you installed** — `OK` for that path, or `CURRENT` under
+`--against-ref` — from the per-row output, and leave the exit code to the
+whole-host question it answers. ⛔ **And do not count a word in that output:**
+nine `scripts/*drift*` paths are recorded files whose own NAMES carry it, so
+`grep -c drift` counts them alongside any real `DRIFT` row. Read the rows.
+
+⚠️ **A row that is behind reads as `DRIFT` even when the installed bytes are the
+merged ones**, because `DRIFT` compares the file to its last row and says nothing
+about the repo. The remedy is `--record-only`, and its `--repo` must be a checkout
+of **that row's own `source_repo`**: the blob is resolved there, and `source_repo`
+is taken from that checkout's `origin` remote (its directory basename only when
+there is no remote), so the deploy checkout cannot record a row whose source is a
+different repo. Pass `--source-repo` only to spell the existing row's name, never
+to relabel the repo the blob came from.
+
 ⚠️ **A clean report covers only what has been recorded.** A script installed by
 hand, without `ktp-install`, is in no manifest and is invisible to `--report`.
 `docs/LIVE_SCRIPT_INVENTORY.md` lists what is live and not yet recorded.
