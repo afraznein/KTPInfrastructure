@@ -23,6 +23,10 @@ the proxy-side fix, and the thing to point at when a demo-derived FINAL value
     # gate: fail if any half is short by more than 5 s
     python3 -m scripts.demo_coverage ... --max-loss 5
 
+`--types` defaults to the official demos and a PROXY COMPARISON must not: the one
+instance carrying a patched proxy is a practice box, so `ktp` alone gave it 2 halves
+against 16 across all four types, and the question read as unanswerable.
+
 Playback length comes from the `.dem` directory entry at the tail of the file,
 so a remote demo costs one range read for the 544-byte header and one for the
 directory -- not a transfer.
