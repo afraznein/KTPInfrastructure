@@ -173,6 +173,7 @@ def daemon_repo(tmp_path):
         (41, "shot_hitgroup_rewind"),
         (42, "aim_vis"),
         (43, "position_samples_time_index"),
+        (44, "capture_health_rejection_reasons"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -253,6 +254,7 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_041_shot_hitgroup_rewind.sql",
         "sql/migrate_042_aim_vis.sql",
         "sql/migrate_043_position_samples_time_index.sql",
+        "sql/migrate_044_capture_health_rejection_reasons.sql",
     )
     assert DEFAULT_SCHEMA_FILES[-len(expected):] == expected
 

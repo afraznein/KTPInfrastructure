@@ -175,6 +175,10 @@ DEFAULT_SCHEMA_FILES = (
     # Index only; nothing the daemon writes depends on it. Applied so the lane
     # runs analytics against the plan production will have.
     "sql/migrate_043_position_samples_time_index.sql",
+    # The reject-reason daemon names rejection_reasons in every
+    # ktp_capture_health INSERT, so a lane without the column fails every health
+    # row -- and a health row is what every capture assertion reads.
+    "sql/migrate_044_capture_health_rejection_reasons.sql",
 )
 
 DEFAULT_SEED_FILES = (
