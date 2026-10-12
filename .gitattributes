@@ -19,6 +19,11 @@
 *.ini        text eol=lf
 *.ini.example text eol=lf
 *.json.example text eol=lf
+*.env.example text eol=lf
+# dodserver.cfg.example is exec'd by the GoldSrc engine after the distributor
+# copies it; a CRLF line gives a cvar a value with a trailing \r. Its
+# config/online twin is LF, so the two halves of one pair disagreed.
+*.cfg.example text eol=lf
 *.j2         text eol=lf
 *.cron       text eol=lf
 *.logrotate       text eol=lf
@@ -37,6 +42,19 @@ scripts/hooks/* text eol=lf
 scripts/ktp-install text eol=lf
 # Workflow `run:` blocks are bash on a Linux runner; CRLF leaks \r into them.
 .github/workflows/*.yml text eol=lf
+# Every other yml here is read on a Linux runner or by docker compose, and the
+# workflow rule above reached none of them.
+*.yml text eol=lf
+# A CRLF `RUN` line reaches the build shell with a trailing \r and fails as a
+# missing command, which reads as a broken image rather than a line ending.
+Dockerfile text eol=lf
+# pip reads this line by line; a trailing \r lands inside the pinned version.
+requirements.txt text eol=lf
+# A CRLF ignore pattern does not match the path it names, and git says nothing.
+.gitignore text eol=lf
+# Docs are read on Linux hosts and diffed in review; one of the 339 here was
+# MIXED (779 CRLF against 780 LF), which no diff view shows.
+*.md text eol=lf
 # auditd rule files are parsed by augenrules on the host; a CRLF line makes it
 # skip the rule and still exit 0, so the audit reads as "nothing ever wrote there".
 *.rules text eol=lf
