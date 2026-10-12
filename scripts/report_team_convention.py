@@ -163,6 +163,98 @@ def translate_team_series(
     return out, sorted(dropped)
 
 
+def translate_objective_timeline(
+    objectives: Sequence[dict[str, Any]], team1_engine_side: dict[int, int],
+) -> list[dict[str, Any]]:
+    """Flag-capture rows -> report-team convention, keeping the engine side.
+
+    `sql/analytics/objective_timeline_fact.sql` maps the capture's team NAME
+    onto 1 = Allies / 2 = Axis, so it is engine side. `match_timelines`
+    compares it against a multikill killer's team to decide whether the kills
+    were converted into an objective, and that killer's team is report-team
+    convention -- so in every half the sides were swapped the comparison
+    matched the OPPONENT's captures, crediting a conversion to the wrong side
+    of the kill and denying it to the right one.
+
+    `engine_side` keeps the original, so `team_name` (which names a side, not a
+    team) stays readable beside it. A half with no resolvable side is dropped,
+    the same rule as the other translators here.
+    """
+    out: list[dict[str, Any]] = []
+    for row in objectives or []:
+        half, team = _int_or_none(row.get("half")), _int_or_none(row.get("team"))
+        engine_side = team1_engine_side.get(half) if half is not None else None
+        if engine_side is None or team not in (1, 2):
+            continue
+        translated = dict(row)
+        translated["engine_side"] = team
+        translated["team"] = 1 if team == engine_side else 2
+        out.append(translated)
+    return out
+
+
+def translate_recap_speed(
+    recap_speed: dict[str, Any], team1_engine_side: dict[int, int],
+) -> None:
+    """Mutate `recap_speed` in place from engine side to report-team convention.
+
+    `objective_control.build_recap_speed` keys every recap on
+    `ktp_flag_state_events.owner_team`, the engine side that owned the flag. The
+    site renders both `events[].team` and `teams[].team` as a report team, so in
+    a swapped half each recap is labeled with the opponent -- and `teams[]`,
+    which sums across halves BY SIDE, is a mixture of the two rosters rather
+    than either one's figure.
+
+    `teams` is therefore re-aggregated from the translated events rather than
+    relabeled: summing engine-Allies across two halves that belong to different
+    report teams was never a meaningful number. A half with no resolvable side
+    is dropped with a caveat, same rule as the curve and series translators.
+    """
+    translated: list[dict[str, Any]] = []
+    dropped: set[int] = set()
+    for event in recap_speed.get("recaps") or []:
+        half = _int_or_none(event.get("half"))
+        team = _int_or_none(event.get("team"))
+        engine_side = team1_engine_side.get(half) if half is not None else None
+        if engine_side is None or team not in (1, 2):
+            if half is not None:
+                dropped.add(half)
+            continue
+        row = dict(event)
+        row["engine_side"] = team
+        row["team"] = 1 if team == engine_side else 2
+        translated.append(row)
+    recap_speed["recaps"] = translated
+    recap_speed["team_convention"] = "report_team"
+
+    by_team: dict[int, list[float]] = {}
+    for event in translated:
+        seconds = event.get("seconds")
+        if seconds is not None:
+            by_team.setdefault(int(event["team"]), []).append(float(seconds))
+    teams: list[dict[str, Any]] = []
+    for team in sorted(by_team):
+        seconds = sorted(by_team[team])
+        mid = len(seconds) // 2
+        median = (seconds[mid] if len(seconds) % 2
+                  else (seconds[mid - 1] + seconds[mid]) / 2.0)
+        teams.append({
+            "team": team,
+            "recaps": len(seconds),
+            "median_seconds": round(median, 3),
+            "mean_seconds": round(sum(seconds) / len(seconds), 3),
+        })
+    recap_speed["teams"] = teams
+    if dropped:
+        caveats = list(recap_speed.get("caveats") or [])
+        caveats.append(
+            "Half(s) " + ", ".join(str(h) for h in sorted(dropped))
+            + " could not be resolved to a report team (no single engine side "
+              "for every report-team-1 player that half) and their recaps are "
+              "omitted rather than mislabeled.")
+        recap_speed["caveats"] = caveats
+
+
 def translate_capouts(
     capouts: Sequence[dict[str, Any]], team1_engine_side: dict[int, int],
 ) -> list[dict[str, Any]]:

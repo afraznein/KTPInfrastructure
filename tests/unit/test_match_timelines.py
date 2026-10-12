@@ -241,3 +241,92 @@ def test_invalid_window_is_rejected(kwargs):
         kwargs = {"objective_conversion_seconds": kwargs["conversion"]}
     with pytest.raises(ValueError):
         build_shadow_timelines([], [], TimelineConfig(**kwargs))
+
+
+# --- the half-time leaver, end to end ------------------------------------
+# The feed hands this module killer_team/victim_team straight off
+# ktp_match_players, so a player who leaves at the break carries the opponent's
+# label and BOTH sides of his frags read as the same team. Nothing here is
+# mislabeled -- the rows are discarded as explicit team kills, which
+# _frag_classification's own comment calls a source-contract violation because
+# hlstats_Events_Frags already excludes teamkills.
+#
+# Report team 1 = {1, 2} and plays engine side 2 in half 1; player 4 is report
+# team 1 and leaves at the break, so the roster files him on team 2.
+
+LEAVER_FEED_AS_THE_ROSTER_GIVES_IT = [
+    frag(1, 100, 4, 7, 2, 2),   # the leaver's own kill, both sides read team 2
+    frag(2, 103, 7, 4, 2, 2),   # and the answer to it
+    frag(3, 106, 1, 8, 1, 2),
+]
+
+LEAVER_LIFE_FEED = (
+    [{"half": 1, "player_id": p, "team": 2} for p in (1, 2, 4)]
+    + [{"half": 1, "player_id": p, "team": 1} for p in (7, 8)]
+    + [{"half": 2, "player_id": p, "team": 1} for p in (1, 2)]
+    + [{"half": 2, "player_id": p, "team": 2} for p in (7, 8)]
+)
+
+LEAVER_ROSTER = [{"player_id": p, "team": 2} for p in (1, 2, 4)] \
+    + [{"player_id": p, "team": 1} for p in (7, 8)]
+
+
+def test_the_leavers_frags_are_dropped_from_the_competitive_set_untouched():
+    report = build_shadow_timelines(
+        LEAVER_FEED_AS_THE_ROSTER_GIVES_IT, [], TimelineConfig())
+    assert report["trades"] == [], "the trade is invisible while both sides read team 2"
+    assert report["fast_multikills"] == []
+    coverage = report["trade_analysis"]["source_coverage"]["canonical_frag_source"]
+    assert coverage["explicit_same_team_rows"] == 2
+    assert coverage["opponent_frag_rows"] == 1, "only the unaffected frag survives"
+
+
+def test_restamping_from_the_corrected_roster_recovers_them():
+    from scripts.report_team_convention import report_team1_engine_side
+    from scripts.roster_teams import apply_canonical_teams, restamp_frag_teams
+
+    players = apply_canonical_teams(LEAVER_ROSTER, LEAVER_LIFE_FEED)
+    assert {p["player_id"]: p["team"] for p in players}[4] == 1, "fixture precondition"
+    # And the swap this case needs is really in the fixture: report team 1
+    # played engine side 2 in half 1 and side 1 in half 2.
+    assert report_team1_engine_side(LEAVER_LIFE_FEED, players) == {1: 2, 2: 1}
+
+    report = build_shadow_timelines(
+        restamp_frag_teams(LEAVER_FEED_AS_THE_ROSTER_GIVES_IT, players),
+        [], TimelineConfig())
+    assert [row["trader"]["player_id"] for row in report["trades"]] == [7]
+    assert report["trades"][0]["original_killer"] == {
+        "player_id": 4, "steam_id": "S4", "name": "P4", "team": 1,
+    }, "the leaver is filed on his own team, not his opponents'"
+    coverage = report["trade_analysis"]["source_coverage"]["canonical_frag_source"]
+    assert coverage["explicit_same_team_rows"] == 0
+    assert coverage["opponent_frag_rows"] == 3
+
+
+def test_an_objective_conversion_is_credited_to_the_killer_not_his_opponent():
+    from scripts.report_team_convention import (
+        report_team1_engine_side,
+        translate_objective_timeline,
+    )
+    from scripts.roster_teams import apply_canonical_teams, restamp_frag_teams
+
+    players = apply_canonical_teams(LEAVER_ROSTER, LEAVER_LIFE_FEED)
+    team1_engine_side = report_team1_engine_side(LEAVER_LIFE_FEED, players)
+    # Two kills by report team 1, then a capture BY report team 1 -- which in
+    # half 1 is engine Axis (2), the side the capture feed names.
+    frags = [frag(1, 100, 1, 7, 2, 1), frag(2, 103, 1, 8, 2, 1)]
+    captures = [{"event_unix": 110, "event_time": "t110", "half": 1,
+                 "team": 2, "team_name": "Axis", "flag_name": "middle"}]
+
+    raw = build_shadow_timelines(
+        restamp_frag_teams(frags, players), captures, TimelineConfig())
+    assert raw["fast_multikills"][0]["objective_conversion"]["converted"] is False, \
+        "engine side 2 against report team 1 never matches"
+
+    fixed = build_shadow_timelines(
+        restamp_frag_teams(frags, players),
+        translate_objective_timeline(captures, team1_engine_side),
+        TimelineConfig())
+    conversion = fixed["fast_multikills"][0]["objective_conversion"]
+    assert conversion["converted"] is True
+    assert conversion["seconds_after"] == 7.0

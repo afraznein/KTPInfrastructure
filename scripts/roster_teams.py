@@ -92,3 +92,39 @@ def apply_canonical_teams(players: Sequence[dict[str, Any]],
             row["team"] = want
         out.append(row)
     return out
+
+
+def restamp_frag_teams(frags: Sequence[dict[str, Any]],
+                       players: Sequence[dict[str, Any]],
+                       ) -> list[dict[str, Any]]:
+    """Frag rows whose `killer_team`/`victim_team` come from the CORRECTED
+    roster rather than straight off `ktp_match_players.team`.
+
+    `sql/analytics/frag_timeline_fact.sql` joins both team columns to the roster
+    table, so a half-time leaver carries the opponent's label here exactly as he
+    did in `players[]` before `apply_canonical_teams`. The visible cost is worse
+    than a mislabeled row: both sides of his frags then read the SAME team, so
+    `match_timelines._frag_classification` calls every one of them an explicit
+    team kill and drops it from the competitive set the trade and multikill
+    analyzers run on -- which that function's own comment names a source-contract
+    violation, because `hlstats_Events_Frags` already excludes teamkills.
+
+    Takes the corrected `players` rather than the life feed on purpose: one place
+    decides a player's team, and this reads its answer.
+    """
+    team_by_pid: dict[int, int] = {}
+    for player in players or []:
+        pid, team = _int(player.get("player_id")), _int(player.get("team"))
+        if pid is not None and team in (1, 2):
+            team_by_pid[pid] = team
+    out: list[dict[str, Any]] = []
+    for frag in frags or []:
+        row = dict(frag)
+        for prefix in ("killer", "victim"):
+            pid = _int(row.get(f"{prefix}_id"))
+            want = team_by_pid.get(pid) if pid is not None else None
+            if want in (1, 2) and _int(row.get(f"{prefix}_team")) != want:
+                row[f"{prefix}_roster_team"] = _int(row.get(f"{prefix}_team"))
+                row[f"{prefix}_team"] = want
+        out.append(row)
+    return out
