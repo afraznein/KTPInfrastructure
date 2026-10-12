@@ -89,6 +89,28 @@ class GeneratorOwnsGeometryOnly(unittest.TestCase):
                              f"{name}: descriptor keys or their order moved, which "
                              "makes the site diff larger than the numbers")
 
+    def test_a_nested_block_keeps_the_base_key_order(self):
+        """`dimensions` ships height-first and the derivation builds it
+        width-first. Taking the derivation's order reshuffles twelve lines of
+        the site's file for nothing, which buries the values that did change."""
+        for name in REPORT["generated"]:
+            self.assertEqual(list(GENERATED[name]["dimensions"]),
+                             list(VENDORED[name]["dimensions"]),
+                             f"{name}.dimensions key order moved")
+
+    def test_a_nested_block_with_a_different_key_set_is_refused(self):
+        base = OrderedDict(
+            (name, OrderedDict(
+                (key, OrderedDict(list(value.items()) + [("depth", 1)])
+                 if key == "dimensions" and name == "dod_anzio" else value)
+                for key, value in descriptor.items()))
+            for name, descriptor in VENDORED.items())
+        overviews = emitter.configured_maps(
+            json.loads(emitter.REGISTRY.read_text(encoding="utf-8-sig")))
+        with self.assertRaises(emitter.UnbackedDescriptor) as caught:
+            emitter.build_table(base, overviews)
+        self.assertIn("dimensions", str(caught.exception))
+
     def test_no_map_is_added_or_dropped(self):
         self.assertEqual(list(GENERATED), list(VENDORED))
 

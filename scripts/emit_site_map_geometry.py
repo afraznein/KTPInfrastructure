@@ -113,9 +113,19 @@ def build_table(base: OrderedDict, overviews: OrderedDict) -> tuple[OrderedDict,
                 raise UnbackedDescriptor(
                     f"{name}: the base descriptor has no {field}, so this is "
                     "not the table this generator was written against")
-            if updated[field] != derived[field]:
+            value = derived[field]
+            if isinstance(value, dict) and isinstance(updated[field], dict):
+                # Keep the base's key order inside a nested block, so a
+                # regeneration diffs as values rather than as a reshuffle.
+                if set(value) != set(updated[field]):
+                    raise UnbackedDescriptor(
+                        f"{name}.{field}: the base and the derivation disagree "
+                        "about which keys this block holds")
+                value = OrderedDict(
+                    (key, value[key]) for key in updated[field])
+            if updated[field] != value:
                 moved.append(field)
-            updated[field] = derived[field]
+            updated[field] = value
         table[name] = updated
         if moved:
             changed[name] = moved
