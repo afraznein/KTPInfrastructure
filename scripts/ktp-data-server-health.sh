@@ -777,14 +777,18 @@ fi
 # is discarded by the floor instead of paging. `emitted` is the producer's own
 # count in the same row, so a half that arrived as nothing still scores 100%.
 #
-# THE THRESHOLD IS PROVISIONAL AND MUST BE SET FROM THE OBSERVED PER-HALF RANGE.
-# AN ALERT THRESHOLD ABOVE EVERYTHING EVER OBSERVED IS AN ALERT THAT CANNOT
-# FIRE, and one has already shipped on this box. A per-half rate has a different
-# distribution from a 24h average, so the sibling's 5% is evidence for nothing
-# here. 50 is bracketed, not measured: KTPHLStatsX migration 035 measured ~0.1%
-# transit loss per stream and the 10-07 half measured 100%, so 50 is provably
-# above known-normal and below the known fault -- but nobody has looked at the
-# band between them. Tighten it from the top of the real distribution:
+# THE THRESHOLD MUST BE SET FROM THE OBSERVED PER-HALF RANGE. AN ALERT
+# THRESHOLD ABOVE EVERYTHING EVER OBSERVED IS AN ALERT THAT CANNOT FIRE, and one
+# has already shipped on this box. A per-half rate has a different distribution
+# from a 24h average, so the sibling's 5% is evidence for nothing here.
+#
+# That distribution HAS now been measured, and the query below is spent rather
+# than owed: it is bimodal, nothing has ever been observed between the clear
+# threshold and total loss, so the shipped warn is reachable and every value
+# inside that empty band behaves identically -- moving it is a preference, not a
+# measurement. docs/runbooks/ALERT_COVERAGE.md, § Capture loss -- the 2026-10-12
+# determination, carries the distribution and the mechanism it ruled out.
+# Re-derive from the rows before changing anything here:
 #
 #   SELECT ROUND(100*GREATEST(SUM(emitted)-SUM(daemon_accepted),0)/SUM(emitted)) AS pct,
 #          server_id, match_id, half, event_type, SUM(emitted) AS emitted
