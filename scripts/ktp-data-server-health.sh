@@ -78,6 +78,11 @@ CRITICAL_TIMERS=(
     ktp-corpus-push-denver.timer
     # The Monday outlier report stops; a quiet Monday reads as a clean week.
     ktp-weekly-outliers.timer
+    # Compares every installed file against the commit its manifest row names. If
+    # this timer stops, nothing reports that the box has drifted from the repo --
+    # and the drift it exists to find is itself silent, so a stopped timer and a
+    # clean estate produce the same output: nothing.
+    ktp-install-freshness.timer
     # Not listed: ktp-monday-reminder.timer. A reminder that fails to arrive is
     # noticed by the people expecting it, which is the alert.
 )
@@ -94,6 +99,14 @@ CRITICAL_TIMERS=(
 # mtime is the cheapest true "work happened" signal available.
 RENAMER_STATE_FILE=/var/lib/hltv-demo-renamer/state.json
 RENAMER_STALE_SEC=900
+
+# The AC retention sweep is a cron.d job (04:40 daily), not a timer, so it can never
+# appear in CRITICAL_TIMERS above -- that list is checked against `systemctl
+# list-timers` and a cron job is structurally invisible to it. Its only durable
+# artifact is this log, so the mtime is the work-done signal, same reasoning as the
+# renamer's state.json. Two days allows one missed run before it pages.
+AC_RETENTION_LOG=/var/log/ktp-ac-retention.log
+AC_RETENTION_STALE_SEC="${AC_RETENTION_STALE_SEC:-172800}"
 # Liveness is not reading. The poll loop can iterate while every SSH session
 # fails -- which rewrites state.json on schedule, so the mtime leg above, a
 # systemd watchdog and the cleanup interlock all read healthy while no match
@@ -500,6 +513,24 @@ PY
         fi
     fi
 fi
+
+# >>> ktp-ac-retention-sweep — extracted verbatim by tests/unit/test_health_ac_retention_sweep.py
+# The AC token/weapon retention sweep. A cron job cannot be in CRITICAL_TIMERS, and
+# this sweep is the one that enforces the ruled 105-day token window -- if it stops,
+# nothing deletes and nothing says so, because the absence of a delete looks exactly
+# like a quiet night.
+if [ ! -f "$AC_RETENTION_LOG" ]; then
+    down+=("ktp-ac-retention-log=absent")
+else
+    ac_retention_epoch=$(stat -c %Y "$AC_RETENTION_LOG" 2>/dev/null || echo 0)
+    if [ "$ac_retention_epoch" -eq 0 ] ||
+       [ $(( $(date +%s) - ac_retention_epoch )) -gt "$AC_RETENTION_STALE_SEC" ]; then
+        # Fixed token, never the age: the report is a set-diff, so a ticking value
+        # would read as a fresh failure on every hourly run.
+        down+=("ktp-ac-retention=stale")
+    fi
+fi
+# <<< ktp-ac-retention-sweep
 
 # >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
 # An HLTV page that was detected and could not be delivered. Keyed on the latched
