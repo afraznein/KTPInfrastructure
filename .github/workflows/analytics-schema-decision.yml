@@ -1,0 +1,91 @@
+name: Analytics schema decision
+
+# Does THIS pull request record a decision about SCHEMA_VERSION? Asked before it merges,
+# which is the only time either route is open.
+#
+# WHY IT EXISTS. On 2026-10-12 two pull requests -- #693 and #696 -- corrected the
+# report-team convention across seven analytics consumers and did not touch
+# SCHEMA_VERSION. That constant is the generator's only test for "already current", so a
+# report whose schema_version equals it is skipped whichever code built it. Measured on
+# the live reports table that evening: 237 published reports sat at the current schema
+# carrying pre-fix values, with nothing that would ever revisit them.
+#
+# AND BOTH OF THOSE PASSED FULL CI GREEN. That is the bar this file had to clear, so it
+# is not taken on trust: tests/fixtures/analytics_schema_gate/ holds both PRs' real
+# payloads -- every changed file with its status and patch as GitHub served them, and
+# each body as written -- and the selftest below fails if the gate would pass either.
+# #697, the repair, is the fixture in the other direction and must pass. A gate that
+# fails all three is as useless as one that passes all three.
+#
+# WHAT A GREEN HERE MEANS, AND IT IS LESS THAN IT LOOKS. It means a decision was
+# recorded in public, by a bump or by a stated "values unchanged", and a later reader can
+# find where. It is NOT evidence the numbers are right: a bump costs one character, the
+# author need not have regenerated anything, and the regeneration is an operator act on
+# another host. The script prints that caveat on every pass rather than leaving it to
+# whoever reads the tick.
+#
+# NOT PATH-FILTERED, deliberately, and for two reasons. The obligation is created by the
+# PR's own diff, and the script decides scope itself -- it derives the analytics output
+# path from the checkout and exits 0, printing that path, for anything outside it. So the
+# filter would be a second, hand-maintained copy of the decision, in the permissive
+# direction. And an unfiltered check always reports, which is what config-tests.yml's own
+# header warns about: a `paths:`-filtered required check is silently SKIPPED on a PR that
+# does not match, leaving it un-mergeable. This is not a required context today; keeping
+# it unfiltered is what leaves that open to the operator without a trap.
+#
+# It is cheap -- stdlib plus pytest, no Docker, no database, seconds.
+
+on:
+  # `edited` is load-bearing. Route 2 is a sentence in the body, so a declaration added
+  # after the last run would otherwise never be re-read. The script reads the body from
+  # the API rather than from github.event, so a manual `gh run rerun` is sound here too
+  # -- but `edited` is what gets the fix re-checked without one.
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+# No workflow_dispatch: without a pull request there is no subject, and the script
+# correctly exits 2 rather than passing. A manual trigger that is always red is a red
+# somebody learns to ignore.
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  decision:
+    name: Analytics schema decision recorded
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install test dependencies
+        run: python -m pip install pytest
+
+      # Selftest FIRST, the same order and for the same reason as the live-script
+      # inventory step in config-tests.yml: a checker whose own fixtures have stopped
+      # being able to fail is not evidence about this pull request. The two fixtures that
+      # matter are #693 and #696 -- if this step is green, a gate that would have passed
+      # the pair that caused all this is not what ran below.
+      - name: Test the gate against the two PRs that caused it
+        run: python -m pytest tests/unit/test_check_analytics_schema_decision.py -q
+
+      # if: always() so a failure above cannot skip the measurement.
+      # Exit 1 is "this PR changes the analytics output path and records no decision";
+      # exit 2 is a could-not-run -- no token, an API error, a suppressed patch, a path
+      # that would not derive, or its own in-run controls failing. Both fail the step,
+      # because a green meaning "I could not look" is the shape every gate in this
+      # repository refuses.
+      - name: Judge this pull request
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/check-analytics-schema-decision.py
