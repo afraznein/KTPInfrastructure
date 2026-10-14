@@ -1,14 +1,17 @@
-"""scripts/ktp-corpus-integrity-guard.sh -- the wrapper around two pinned SQL definitions.
+"""scripts/ktp-corpus-integrity-guard.sh -- the daily accrual check.
 
-The wrapper issues no SELECT of its own, so there is little logic to test except the one
-bespoke part: `metric_of`, which pulls a named column out of mysql's --table output. That
-parser is the whole trust boundary. If it silently returns the wrong cell the guard writes
-a wrong watermark, and a wrong watermark makes every later run scope from the wrong place.
+The first version of this guard PARSED `mysql --table` output to pull a named metric out
+of the two pinned reports. That cannot work: the position file is row-oriented key/value
+(the metric name is a VALUE in a name column) while the producer-clock file is
+column-oriented per stream. A trial run proved it -- it read `orphan_max_id=9` (the row
+NUMBER, while every real cell was NULL), `epoch_zero_rows=58442` against a true 326,429,
+and produced the SAME watermark for two different tables.
 
-The rest of this file tests AGREEMENT ACROSS FILES -- guard, cron, logrotate and the health
-check must name the same log path, and the stream table must name SQL files that exist. A
-mismatch there is the silent-break shape this estate keeps hitting: each file is correct on
-its own and the chain does nothing.
+So the parser is gone and the question is asked directly. What is left to test is the
+things that can still be silently wrong: the predicates, the sentinel that stops a
+corpus-wide false finding, read-only-ness, and agreement across the four files that have
+to name the same log. A mismatch in that last group is the shape where every file is
+correct alone and the chain does nothing.
 """
 import os
 import pathlib
@@ -26,98 +29,103 @@ HEALTH = ROOT / "scripts" / "ktp-data-server-health.sh"
 BASH = os.environ.get("KTP_TEST_BASH", "bash")
 
 pytestmark = pytest.mark.skipif(shutil.which(BASH) is None, reason="needs bash")
-
 LOG_PATH = "/var/log/ktp-corpus-integrity-guard.log"
-
-# A realistic slice of `mysql --table` output: a header row, a separator, a value row.
-TABLE = """\
-+------------+--------------+-----------------+
-| rows_total | rows_max_id  | epoch_zero_rows |
-+------------+--------------+-----------------+
-|    6556003 |      6556415 |          326429 |
-+------------+--------------+-----------------+
-"""
-
-REORDERED = """\
-+-----------------+-------------+------------+
-| epoch_zero_rows | rows_max_id | rows_total |
-+-----------------+-------------+------------+
-|               0 |     6700001 |    6700001 |
-+-----------------+-------------+------------+
-"""
+TEXT = GUARD.read_text(encoding="utf-8")
 
 
 def block(name):
-    text = GUARD.read_text(encoding="utf-8")
     begin, end = "# >>> %s" % name, "# <<< %s" % name
-    assert begin in text and end in text, "%s markers are gone from the shipped script" % name
-    return text.split(begin, 1)[1].split("\n", 1)[1].split(end, 1)[0]
+    assert begin in TEXT and end in TEXT, "%s markers are gone" % name
+    return TEXT.split(begin, 1)[1].split("\n", 1)[1].split(end, 1)[0]
 
 
-def metric_of(table_text, name):
-    """Run the shipped parser, not a reimplementation of it."""
-    script = block("ktp-corpus-guard-metric") + '\nmetric_of "$1" "$2"\n'
-    p = subprocess.run([BASH, "-c", script, "_", table_text, name],
-                       capture_output=True, text=True)
+def test_it_is_syntactically_valid():
+    p = subprocess.run([BASH, "-n", str(GUARD)], capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
-    assert p.stderr == "", "the parser wrote to stderr: %s" % p.stderr
-    return p.stdout.strip()
 
 
-def test_it_reads_the_named_column():
-    assert metric_of(TABLE, "rows_max_id") == "6556415"
+def test_the_parser_is_gone_and_must_not_come_back():
+    """The regression that matters. It did not fail loudly -- it returned the wrong
+    number for the right-looking metric, which is worse than an error."""
+    assert "metric_of" not in TEXT
+    assert "awk" not in TEXT, "parsing --table output is what produced orphan_max_id=9"
 
 
-def test_it_does_not_confuse_neighbouring_columns():
-    """The failure that matters: returning the cell next door writes a wrong watermark."""
-    assert metric_of(TABLE, "rows_total") == "6556003"
-    assert metric_of(TABLE, "epoch_zero_rows") == "326429"
+def test_epoch_zero_uses_the_function_not_a_literal():
+    """FROM_UNIXTIME(0) renders 1969-12-31 19:00:00 on an ET server. Hardcoding either
+    that or a UTC literal is how this breaks on a box with a different clock -- and the
+    ledger already warns not to carry a UTC literal into a follow-up query."""
+    # Assert on CODE, not prose: the comment deliberately names the literal in order to
+    # forbid it, and an earlier version of this test failed on its own explanation.
+    pred = block("ktp-corpus-guard-predicates")
+    code = "\n".join(ln for ln in pred.split("\n") if not ln.lstrip().startswith("#"))
+    assert "FROM_UNIXTIME(0)" in code
+    assert "1969-12-31" not in code
+    assert "1970-01-01" not in code
+    # and the forbidding comment must survive, or the next reader loses the reason
+    assert "never hardcode that literal" in pred
 
 
-def test_column_order_does_not_matter():
-    """The .sql files may reorder sections; the parser keys on the NAME, not a position."""
-    assert metric_of(REORDERED, "rows_max_id") == "6700001"
-    assert metric_of(REORDERED, "epoch_zero_rows") == "0"
+def test_the_orphan_predicate_excludes_null_and_empty_match_ids():
+    """`rows_match_id_null` is 72,062 on the position corpus and the .sql files flag it
+    NOT a defect. Without these guards every one of them would score as an orphan."""
+    pred = block("ktp-corpus-guard-predicates")
+    assert "match_id IS NOT NULL" in pred
+    assert 'match_id <> ""' in pred or "match_id <> ''" in pred
 
 
-def test_a_zero_is_returned_rather_than_treated_as_missing():
-    """0 is the GOOD answer for a defect metric, so it must not read as absent."""
-    assert metric_of(REORDERED, "epoch_zero_rows") == "0"
+def test_there_is_a_sentinel_for_an_unreadable_ktp_matches():
+    """An ungranted or empty ktp_matches turns EVERY row into an orphan. The .sql files
+    halt on that rather than report it, and so must this -- a corpus-wide false finding
+    is worse than no finding."""
+    assert "ktp_matches" in TEXT
+    assert "every row would score as an orphan" in TEXT
+    # and it must DIE rather than carry on
+    sentinel = TEXT.split("matches_rows=", 1)[1].split("log ", 1)[0]
+    assert sentinel.count("die ") >= 2, "the sentinel must refuse on both unreadable and 0 rows"
 
 
-def test_an_absent_metric_returns_EMPTY_so_the_guard_can_refuse():
-    """Empty is what the guard turns into exit 2. If this returned 0 instead, a renamed
-    column would read as 'no defects' -- the single worst outcome available here."""
-    assert metric_of(TABLE, "a_column_that_does_not_exist") == ""
-
-
-def test_the_stream_table_names_sql_files_that_exist():
-    """A typo here is silent: the guard dies 2, but only once it is scheduled on a box."""
-    streams = block("ktp-corpus-guard-streams")
-    files = re.findall(r"^\s*\"[a-z_]+:([a-z_]+\.sql):", streams, re.M)
-    assert files, "no stream entries parsed -- the table shape changed"
-    for f in files:
-        assert (ROOT / "sql" / "integrity" / f).is_file(), "stream names a missing SQL file: %s" % f
-
-
-def test_every_stream_entry_has_all_four_fields():
+def test_every_stream_entry_names_a_report_file_that_exists():
     streams = block("ktp-corpus-guard-streams")
     entries = re.findall(r'^\s*"([^"]+)"', streams, re.M)
     assert entries, "no stream entries parsed"
     for e in entries:
-        assert len(e.split(":")) == 4, "entry is not <label>:<file>:<watermark>:<defects>: %r" % e
+        parts = e.split(":")
+        assert len(parts) == 4, "entry is not <label>:<table>:<idcol>:<report>: %r" % e
+        assert (ROOT / "sql" / "integrity" / parts[3]).is_file(), \
+            "stream names a missing report: %s" % parts[3]
 
 
-def test_the_guard_opens_the_session_read_only():
-    """Both .sql files are pure SELECT, and this is the belt to that braces: the server
-    refuses a write even if one is added to a definition later."""
-    assert "SET SESSION TRANSACTION READ ONLY" in GUARD.read_text(encoding="utf-8")
+def test_the_streams_are_the_two_that_have_carried_a_defect():
+    streams = block("ktp-corpus-guard-streams")
+    assert "ktp_position_samples" in streams
+    assert "ktp_flag_state_events" in streams
+
+
+def test_the_session_is_read_only_on_every_query():
+    """Belt to the .sql files' braces: the server refuses a write even if a definition
+    gains one later."""
+    assert TEXT.count("SET SESSION TRANSACTION READ ONLY") >= 2, \
+        "both the scalar helper and the report path must set it"
 
 
 def test_the_guard_issues_no_writes_of_its_own():
-    text = GUARD.read_text(encoding="utf-8").upper()
-    for kw in ("INSERT INTO", "UPDATE ", "DELETE FROM", "DROP ", "TRUNCATE ", "ALTER "):
-        assert kw not in text, "the wrapper contains a write keyword: %s" % kw
+    up = TEXT.upper()
+    for kw in ("INSERT INTO", "UPDATE ", "DELETE FROM", "DROP ", "TRUNCATE ", "ALTER TABLE"):
+        assert kw not in up, "the guard contains a write keyword: %s" % kw
+
+
+def test_the_pinned_report_runs_only_on_accrual():
+    """A clean day must cost two COUNTs, not a 3-minute unscoped corpus scan. The report
+    call has to sit inside the accrual branch."""
+    branch = TEXT.split('if [ "$ez" -gt 0 ]', 1)[1].split("printf '%s\\n' \"$new_wm\"", 1)[0]
+    assert "$SQL_DIR/$report" in branch, "the pinned report is not inside the accrual branch"
+
+
+def test_exit_codes_are_distinct_and_documented():
+    assert "0 = read, no accrual" in TEXT
+    assert "1 = read, accrual found" in TEXT
+    assert "2 = could not look" in TEXT
 
 
 def test_cron_logrotate_and_health_all_name_the_same_log():
@@ -128,8 +136,7 @@ def test_cron_logrotate_and_health_all_name_the_same_log():
 
 
 def test_cron_runs_the_extensionless_installed_name():
-    """Installed as /usr/local/bin/ktp-corpus-integrity-guard, as the review guard is --
-    a cron entry pointing at the .sh name would be 203/EXEC, which is precisely how
+    """A cron entry pointing at the .sh name is 203/EXEC, which is exactly how
     ktp-weekly-outliers sat dead for a week."""
     cron = CRON.read_text(encoding="utf-8")
     assert "/usr/local/bin/ktp-corpus-integrity-guard " in cron \
@@ -138,8 +145,6 @@ def test_cron_runs_the_extensionless_installed_name():
 
 
 def test_cron_is_daily_and_clear_of_the_freshness_window():
-    """06:20 + up to 5 min jitter belongs to install-freshness; two readers scanning the
-    position corpus at once is the thing the schedule comment is avoiding."""
     cron = CRON.read_text(encoding="utf-8")
     m = re.search(r"^(\d+)\s+(\d+)\s+\*\s+\*\s+\*\s+root\s", cron, re.M)
     assert m, "no daily root entry found"
