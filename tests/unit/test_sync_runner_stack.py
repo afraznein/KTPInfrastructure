@@ -100,7 +100,15 @@ def test_the_synced_configs_are_the_alerted_configs():
         md5_fn=lambda path: runner[os.path.basename(path)], exists_fn=lambda path: True)
     write, _ = sync.plan_config_sync(fleet, runner, CFG, drift.CONFIGS_RUNNER_LOCAL)
     assert sorted(a[0] for a in alerted) == sorted(write)
-    assert f"{CFG}/ktp.ini" not in write
+    assert f"{CFG}/ktp.ini" in write
+
+
+def test_ktp_ini_is_not_exempt():
+    """Its match_password is handed to every captain on request, so exempting the
+    whole file protected nothing and left its other setting uncompared. Asserted
+    here so re-adding the entry fails rather than quietly reopening the gap."""
+    assert "ktp.ini" not in drift.CONFIGS_RUNNER_LOCAL
+    assert "hud_observer.cfg" in drift.CONFIGS_RUNNER_LOCAL   # control: dict was read
 
 
 def test_a_config_the_runner_lacks_is_skipped_without_the_flag():
