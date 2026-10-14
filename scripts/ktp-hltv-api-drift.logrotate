@@ -1,0 +1,35 @@
+# /etc/logrotate.d/ktp-hltv-api-drift
+#
+# Deployed alongside scripts/ktp-hltv-api-drift-guard.sh, which appends one run per day.
+#
+# The log is the only durable record of each reading. The Discord embed fires only on a
+# non-zero exit, and a clean run posts nothing at all by design — so on every ordinary day
+# this file is the ONLY evidence the check looked. Rotating it on journald's two-day
+# horizon would rebuild exactly the hole it fills.
+#
+# It is also where the detail deliberately kept OUT of the alert lands. On drift the embed
+# carries the verdict and points here, because the checker's output is a diff of a file
+# holding AUTH_KEY and a Discord channel is the wrong place for it. ⚠️ Which means this
+# file can contain a redacted diff of hltv-api.py: it is created 0640 root root, and it
+# must not be moved anywhere web- or FTP-reachable.
+#
+# It also carries the provenance line from every run — "reference: <path> @ <sha> ...
+# N commit(s) BEHIND" — so the history of how stale the reference has been is answerable
+# from here without a git command.
+#
+# The file is opened per append, so it needs no copytruncate.
+
+/var/log/ktp-hltv-api-drift.log
+{
+        monthly
+        rotate 12
+        # Bounds a check that starts drifting and printing a diff every run.
+        maxsize 32M
+        missingok
+        notifempty
+        compress
+        # Keeps .1 plain text, so grepping across a rotation boundary needs no zcat the
+        # day after one.
+        delaycompress
+        create 0640 root root
+}

@@ -114,6 +114,12 @@ AC_RETENTION_STALE_SEC="${AC_RETENTION_STALE_SEC:-172800}"
 # the single signal that it stopped looking. Two days allows one missed run.
 CORPUS_GUARD_LOG="${CORPUS_GUARD_LOG:-/var/log/ktp-corpus-integrity-guard.log}"
 CORPUS_GUARD_STALE_SEC="${CORPUS_GUARD_STALE_SEC:-172800}"
+# The hltv-api drift check is the same shape again: a cron.d job (06:50 daily), invisible
+# to CRITICAL_TIMERS, and SILENT on a clean morning because a drift report that repeats
+# daily trains everyone to mute it. So "quiet" and "stopped running" are the same
+# observation from outside, and this log's mtime is the only thing that separates them.
+HLTV_DRIFT_LOG="${HLTV_DRIFT_LOG:-/var/log/ktp-hltv-api-drift.log}"
+HLTV_DRIFT_STALE_SEC="${HLTV_DRIFT_STALE_SEC:-172800}"
 # Liveness is not reading. The poll loop can iterate while every SSH session
 # fails -- which rewrites state.json on schedule, so the mtime leg above, a
 # systemd watchdog and the cleanup interlock all read healthy while no match
@@ -556,6 +562,33 @@ else
     fi
 fi
 # <<< ktp-corpus-integrity-guard
+
+# >>> ktp-hltv-api-drift — extracted verbatim by tests/unit/test_health_hltv_api_drift.py
+# The hltv-api drift check. Same shape as the corpus guard above and for the same reason:
+# a cron.d job cannot be in CRITICAL_TIMERS, which is checked against `systemctl
+# list-timers` and cannot see cron.
+#
+# What makes this one worth a check is that a CLEAN run posts NOTHING on purpose -- a
+# drift report re-posted every morning trains everyone to mute the channel -- so with no
+# alert on a good day, "quiet" and "stopped running" are the same observation from
+# outside. The log's mtime is the only thing that tells them apart.
+#
+# ⛔ Keyed on the LOG, not on the state file and not on the last exit code. A non-zero
+# exit already alerts for itself; what nothing else can report is the run that never
+# happened. And the wrapper writes its state file BEFORE the verdict branch, so a state
+# file is not evidence the check completed.
+if [ ! -f "$HLTV_DRIFT_LOG" ]; then
+    down+=("ktp-hltv-api-drift-log=absent")
+else
+    hltv_drift_epoch=$(stat -c %Y "$HLTV_DRIFT_LOG" 2>/dev/null || echo 0)
+    if [ "$hltv_drift_epoch" -eq 0 ] ||
+       [ $(( $(date +%s) - hltv_drift_epoch )) -gt "$HLTV_DRIFT_STALE_SEC" ]; then
+        # Fixed token, never the age: the report is a set-diff, so a ticking value
+        # would read as a fresh failure on every hourly run.
+        down+=("ktp-hltv-api-drift=stale")
+    fi
+fi
+# <<< ktp-hltv-api-drift
 
 # >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
 # An HLTV page that was detected and could not be delivered. Keyed on the latched
