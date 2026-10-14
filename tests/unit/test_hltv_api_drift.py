@@ -95,3 +95,72 @@ def test_the_shipped_example_has_no_quoted_secret_literal():
 def test_redaction_is_by_shape_not_by_a_name_list(name):
     out = drift.redact('%s = "%s"' % (name, SECRET))
     assert out == ["%s = %s" % (name, drift.PLACEHOLDER)]
+
+
+# ---------------------------------------------------------------------------
+# Reference resolution and provenance.
+#
+# The installed copy lives at /usr/local/bin and the reference does not sit beside
+# it, so the only default the script had could never work there: a bare run exited
+# 2 on `cannot read: [Errno 2] ... /usr/local/bin/hltv-api.py.example` with no hint
+# about what to pass. Measured on the data server 2026-10-06 -- the same binary
+# reports `no drift` when handed --example explicitly.
+
+
+def test_an_explicit_missing_reference_is_2_and_names_the_candidates(tmp_path, capsys):
+    live = tmp_path / "hltv-api.py"
+    live.write_text(BODY, encoding="utf-8")
+    code = drift.main(["--live", str(live), "--example", str(tmp_path / "nope.example")])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "nope.example" in err
+    # The fix is actionable from the message alone: it names where to put one.
+    for cand in drift.EXAMPLE_CANDIDATES:
+        assert cand in err
+
+
+def test_the_search_finds_the_reference_beside_the_script():
+    """Control: the in-checkout default still resolves, which is why it existed."""
+    assert drift.resolve_example(None) == str(EXAMPLE) or \
+        pathlib.Path(drift.resolve_example(None)) == EXAMPLE
+
+
+def test_the_search_falls_through_a_candidate_that_does_not_exist(tmp_path, monkeypatch):
+    present = tmp_path / "hltv-api.py.example"
+    present.write_text(BODY, encoding="utf-8")
+    monkeypatch.setattr(drift, "EXAMPLE_CANDIDATES",
+                        (str(tmp_path / "absent.example"), str(present)))
+    assert drift.resolve_example(None) == str(present)
+
+
+def test_no_candidate_at_all_resolves_to_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(drift, "EXAMPLE_CANDIDATES", (str(tmp_path / "a"), str(tmp_path / "b")))
+    assert drift.resolve_example(None) is None
+
+
+def test_no_drift_is_printed_with_the_reference_provenance(tmp_path, capsys):
+    """"no drift" against a silently stale reference is the one false clean here.
+
+    The reference is a checkout on a box that is deliberately never auto-pulled, so
+    agreement with it is not agreement with main -- and a provenance line that
+    quietly disappears leaves the report looking like it was measured against main.
+    """
+    code, cap = _run(tmp_path, BODY, BODY, capsys)
+    assert code == 0
+    assert "no drift" in cap.out
+    assert "reference:" in cap.out
+    assert str(tmp_path / "hltv-api.py.example") in cap.out
+
+
+def test_provenance_says_unknown_out_loud_outside_a_checkout(tmp_path):
+    line = drift.reference_provenance(str(tmp_path / "hltv-api.py.example"))
+    assert line.startswith("reference:")
+    # Not a silent omission: a missing line would read as "measured against main".
+    assert "UNKNOWN" in line or "origin/main not resolvable" in line
+
+
+def test_provenance_never_raises_when_git_is_missing(tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("git: not found")
+    monkeypatch.setattr(drift.subprocess, "run", boom)
+    assert "UNKNOWN" in drift.reference_provenance(str(tmp_path / "x.example"))
