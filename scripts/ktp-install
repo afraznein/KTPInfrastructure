@@ -72,6 +72,35 @@ HEADER = ["installed_path", "md5", "source_repo", "source_commit", "source_path"
           "deployed_at_iso", "previous_md5", "deployed_by"]
 HEX = re.compile(r"[0-9a-f]+\Z")
 
+# The never-pulled deploy checkout. Reading it is legitimate -- `--report --against-ref`
+# wants a tree to compare against -- but it is never a source of bytes. Measured 2026-10-13
+# it was 304 commits behind origin/main while reporting 22 to anyone asking on the box,
+# because the only thing that fetches it is a wrapper we are told never to run. An install
+# from here lands stale bytes and looks exactly like a deploy; it had already produced one
+# stale live file before this guard existed.
+NEVER_INSTALL_FROM = "/opt/ktp-infra"
+CURRENT_CHECKOUT = "/opt/ktp-reports/KTPInfrastructure"
+
+
+def refuse_stale_source(ap, repo):
+    """Refuse an install whose bytes would come from the never-pulled checkout.
+
+    No override, on purpose: the current checkout is right there, so an escape hatch would
+    only ever be reached by someone who had not read why this exists.
+    """
+    if not repo:
+        return
+    target = os.path.realpath(NEVER_INSTALL_FROM)
+    resolved = os.path.realpath(repo)
+    if resolved != target and not resolved.startswith(target + os.sep):
+        return
+    ap.error(
+        "refusing to install from %s: it is the never-pulled deploy checkout, so its bytes are "
+        "stale by construction -- measured 304 commits behind origin/main while reporting 22 on "
+        "the box. Install from %s, which tracks origin/main. (--report --against-ref may still "
+        "read it; only copying bytes out of it is refused.)"
+        % (NEVER_INSTALL_FROM, CURRENT_CHECKOUT))
+
 
 class ManifestError(Exception):
     pass
@@ -478,6 +507,9 @@ def main(argv=None):
     missing = [n for n in ("commit", "src", "dest", "expect_md5") if getattr(a, n) is None]
     if missing:
         ap.error("install needs --" + ", --".join(m.replace("_", "-") for m in missing))
+    # Only the install path copies bytes, so only it is refused: --report reads that tree on
+    # purpose, and --record-only verifies bytes already on disk rather than sourcing new ones.
+    refuse_stale_source(ap, a.repo)
     install(a)
     return 0
 

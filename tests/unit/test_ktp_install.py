@@ -563,3 +563,50 @@ def test_record_only_does_not_weaken_the_install_no_op_refusal(env):
     p = install(env, env["c1"], md5(V1))
     assert p.returncode != 0 and "nothing to install" in p.stderr
     assert len(rows(env)) == 1
+
+
+# --- the never-pulled deploy checkout ---------------------------------------
+# /opt/ktp-infra is read on purpose and sourced from never. Both directions matter here
+# more than usual: a guard that refuses every path breaks every install, and a guard that
+# matches on a bare prefix would refuse an unrelated /opt/ktp-infra-something.
+
+REFUSAL = "never-pulled deploy checkout"
+
+
+def test_install_from_the_never_pulled_checkout_is_refused(env):
+    p = run(env, "--repo", "/opt/ktp-infra", "--commit", env["c1"], "--src", "scripts/tool.sh",
+            "--dest", str(env["dest"] / "tool.sh"), "--expect-md5", "-")
+    assert p.returncode != 0
+    assert REFUSAL in p.stderr
+    # it must name where to install from instead, or the refusal is a dead end
+    assert "/opt/ktp-reports/KTPInfrastructure" in p.stderr
+
+
+def test_install_from_a_subdirectory_of_it_is_also_refused(env):
+    p = run(env, "--repo", "/opt/ktp-infra/scripts", "--commit", env["c1"],
+            "--src", "scripts/tool.sh", "--dest", str(env["dest"] / "tool.sh"),
+            "--expect-md5", "-")
+    assert p.returncode != 0
+    assert REFUSAL in p.stderr
+
+
+def test_a_path_merely_sharing_the_prefix_is_not_refused(env):
+    """/opt/ktp-infra-other is a different directory -- a bare prefix match would eat it."""
+    p = run(env, "--repo", "/opt/ktp-infra-other", "--commit", env["c1"],
+            "--src", "scripts/tool.sh", "--dest", str(env["dest"] / "tool.sh"),
+            "--expect-md5", "-")
+    assert REFUSAL not in p.stderr          # it fails, but for being no git repo, not for this
+
+
+def test_report_against_that_checkout_is_not_refused(env):
+    """--report --against-ref wants to READ it; only copying bytes out is the hazard."""
+    p = run(env, "--report", "--repo", "/opt/ktp-infra")
+    assert REFUSAL not in p.stderr
+
+
+def test_a_normal_install_still_works_with_the_guard_in_place(env):
+    """The positive control: the guard must refuse one path, not installs in general."""
+    p = install(env, env["c1"], "-")      # '-' = nothing at the destination yet
+    assert p.returncode == 0, p.stderr
+    assert REFUSAL not in p.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == V1
