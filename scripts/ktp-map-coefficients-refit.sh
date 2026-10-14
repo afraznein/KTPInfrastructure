@@ -26,7 +26,11 @@ set -euo pipefail
 
 REPO="${REPO:-/opt/ktp-reports/KTPInfrastructure}"
 BRANCH="map-coefficients/$(date -u +%Y-%m-%d)"
-LOG="${LOG:-/var/log/ktp-map-coefficients.log}"
+# Inside LogsDirectory=ktp-map-coefficients, which systemd creates owned by
+# User= on every start. ⛔ NOT a bare file in /var/log: that directory is
+# 775 root:syslog and ktpreports cannot create one there, so the old default
+# made the job fail on its first line.
+LOG="${LOG:-/var/log/ktp-map-coefficients/refit.log}"
 PROPOSAL="${PROPOSAL:-/var/lib/ktp-map-coefficients}"
 # Fixed rather than mktemp: a crashed run leaves a registration behind, and a
 # fixed path is one the next run can find and clear. ⛔ Never a glob -- this repo

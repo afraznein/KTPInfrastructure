@@ -13,13 +13,34 @@ WorkingDirectory=/opt/ktp-reports/KTPInfrastructure
 ExecStart=/usr/local/bin/ktp-map-coefficients-refit.sh
 # Type=oneshot disables the start timeout by default; the refit's git fetch, git
 # push and `gh pr create` are unbounded network calls, and one wedged weekly run
-# blocks every later one with nothing failed for anything to report.
-TimeoutStartSec=30min
+# blocks every later one with nothing failed for anything to report. So the bound
+# stays -- but it has to clear the FIT, not just the network calls.
+# ⛔ It was 30min, which is SHORTER THAN THE JOB. Measured 2026-10-14: a --check
+# over 680 labelled halves takes ~61 minutes, so every Monday run would have been
+# killed mid-fit. 3h leaves room for a season's worth of growth (~5.4s/half) and
+# still catches a wedge well inside the weekly window.
+TimeoutStartSec=3h
 Nice=10
 IOSchedulingClass=idle
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/opt/ktp-reports/KTPInfrastructure /var/log
+# The repo, because the refit registers its worktree in $REPO/.git/worktrees.
+ReadWritePaths=/opt/ktp-reports/KTPInfrastructure
+# ⛔ These two are not conveniences -- without them the job cannot run at all, and
+# both failures are invisible in the unit on its own.
+#
+# StateDirectory: #707 moved the fit OUT of the serving checkout and into
+# /var/lib/ktp-map-coefficients (the proposal, and .refit-worktree beneath it).
+# ProtectSystem=strict makes that read-only and the directory did not exist, so
+# `git worktree add` -- the entire point of #707 -- would have been denied.
+# StateDirectory creates it and chowns it to User= on every start.
+#
+# LogsDirectory: /var/log is 775 root:syslog, so User=ktpreports CANNOT create a
+# file there. The refit's first action is `exec >>"$LOG"`, so it would have died
+# before doing anything. LogsDirectory creates /var/log/ktp-map-coefficients/
+# owned by the user instead; the script logs to refit.log inside it.
+StateDirectory=ktp-map-coefficients
+LogsDirectory=ktp-map-coefficients
 NoNewPrivileges=true
 
 [Install]
