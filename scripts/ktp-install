@@ -73,20 +73,17 @@ HEADER = ["installed_path", "md5", "source_repo", "source_commit", "source_path"
 HEX = re.compile(r"[0-9a-f]+\Z")
 
 # The never-pulled deploy checkout. Reading it is legitimate -- `--report --against-ref`
-# wants a tree to compare against -- but it is never a source of bytes. Measured 2026-10-13
-# it was 304 commits behind origin/main while reporting 22 to anyone asking on the box,
-# because the only thing that fetches it is a wrapper we are told never to run. An install
-# from here lands stale bytes and looks exactly like a deploy; it had already produced one
-# stale live file before this guard existed.
+# wants a tree to compare against -- but it is never a source of bytes: nothing on this box
+# pulls it, so an install from here lands stale bytes and looks exactly like a deploy. It had
+# already produced one stale live file before this guard existed.
 NEVER_INSTALL_FROM = "/opt/ktp-infra"
-CURRENT_CHECKOUT = "/opt/ktp-reports/KTPInfrastructure"
 
 
 def refuse_stale_source(ap, repo):
     """Refuse an install whose bytes would come from the never-pulled checkout.
 
-    No override, on purpose: the current checkout is right there, so an escape hatch would
-    only ever be reached by someone who had not read why this exists.
+    No override, on purpose: --file needs no checkout, so an escape hatch would only ever
+    be reached by someone who had not read why this exists.
     """
     if not repo:
         return
@@ -96,10 +93,11 @@ def refuse_stale_source(ap, repo):
         return
     ap.error(
         "refusing to install from %s: it is the never-pulled deploy checkout, so its bytes are "
-        "stale by construction -- measured 304 commits behind origin/main while reporting 22 on "
-        "the box. Install from %s, which tracks origin/main. (--report --against-ref may still "
-        "read it; only copying bytes out of it is refused.)"
-        % (NEVER_INSTALL_FROM, CURRENT_CHECKOUT))
+        "stale by construction. Install with --file plus --source-repo, --commit and --blob-md5: "
+        "that takes the bytes from a file you staged and needs no checkout on this box at all. "
+        "A checkout may be the source only when it is AT origin/main, which no tree here is kept "
+        "at. (--report --against-ref may still read this one; only copying bytes out is refused.)"
+        % NEVER_INSTALL_FROM)
 
 
 class ManifestError(Exception):

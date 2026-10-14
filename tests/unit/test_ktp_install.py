@@ -578,8 +578,17 @@ def test_install_from_the_never_pulled_checkout_is_refused(env):
             "--dest", str(env["dest"] / "tool.sh"), "--expect-md5", "-")
     assert p.returncode != 0
     assert REFUSAL in p.stderr
-    # it must name where to install from instead, or the refusal is a dead end
-    assert "/opt/ktp-reports/KTPInfrastructure" in p.stderr
+    # It must name a way forward, or the refusal is a dead end -- but a PATH is the wrong
+    # kind of answer: nothing on the box pulls any checkout, so every one goes stale and
+    # the advice rots. Name the route instead.
+    # ⚠️ Assert on message-only wording, never on an option name: ap.error() prints argparse's
+    # usage line, which lists every flag -- so `"--blob-md5" in stderr` passes even with the
+    # guidance deleted. A mutation test caught that; reading it did not.
+    assert "Install with --file" in p.stderr
+    assert "needs no checkout" in p.stderr
+    # Regression: it used to send people to the reports checkout, which was itself behind
+    # and whose own ktp-install carried no guard.
+    assert "/opt/ktp-reports" not in p.stderr
 
 
 def test_install_from_a_subdirectory_of_it_is_also_refused(env):
