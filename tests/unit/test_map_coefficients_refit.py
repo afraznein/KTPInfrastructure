@@ -24,6 +24,10 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ktp-map-coefficients-refit.sh"
 UNIT = ROOT / "scripts" / "ktp-map-coefficients.service"
+# ⚠️ On Windows a bare `bash` resolves to WSL's, which cannot read a C:\... path
+# and exits 127 -- every behavioural test below then fails for a reason that has
+# nothing to do with the script. Point KTP_TEST_BASH at git-bash there:
+#   KTP_TEST_BASH="C:\Program Files\Git\usr\bin\bash.exe"
 BASH = os.environ.get("KTP_TEST_BASH", "bash")
 
 pytestmark = pytest.mark.skipif(
