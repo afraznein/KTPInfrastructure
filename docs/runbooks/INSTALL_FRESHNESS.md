@@ -119,13 +119,20 @@ a second checker quietly reporting *fresh* forever.
 ### Install steps (not performed)
 
 ```bash
-# 1. the tool itself must be current first -- see "Is this live?" below
-ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install \
-            --dest /usr/local/bin/ktp-install --expect-md5 <md5 there now>
+# ⛔ --repo /opt/ktp-infra is REFUSED by ktp-install: that checkout is never a source of
+# bytes. Stage the blob and pass --file, which needs no checkout on the box. Take the sha and
+# the blob md5 off-box: git rev-parse origin/main, and git show <sha>:<path> | md5sum.
 
-# 2. the check (it reads /opt/ktp-infra; nothing to clone)
-ktp-install --repo /opt/ktp-infra --commit <sha> --src scripts/ktp-install-freshness.sh \
-            --dest /usr/local/bin/ktp-install-freshness.sh --expect-md5 -
+# 1. the tool itself must be current first -- see "Is this live?" below
+ktp-install --file /root/ktp-install.src --source-repo KTPInfrastructure --commit <40-hex sha> \
+            --src scripts/ktp-install --dest /usr/local/bin/ktp-install \
+            --expect-md5 <md5 there now> --blob-md5 <md5 of the blob>
+
+# 2. the check
+ktp-install --file /root/freshness.src --source-repo KTPInfrastructure --commit <40-hex sha> \
+            --src scripts/ktp-install-freshness.sh \
+            --dest /usr/local/bin/ktp-install-freshness.sh \
+            --expect-md5 - --blob-md5 <md5 of the blob> --mode 755
 # The unit now declares StateDirectory= + StateDirectoryMode=0750, so systemd
 # creates /var/lib/ktp-install-freshness; this line only matters if you run the
 # script by hand before the unit has ever started.
@@ -159,8 +166,10 @@ tree and every local branch stay where a person put them — even if the checkou
 configured refspec were changed to write `refs/heads/*`. The script records HEAD
 before the fetch and exits 1 if it moved. What changes is that `origin/main` in
 that checkout is now current, which is what the comparison needs, and it also
-means a newly merged commit is present there to install from with
-`ktp-install --commit` without anyone moving the tree. `AGAINST_REF` must be a
+means a newly merged commit is present there to compare against without anyone
+moving the tree. ⛔ **It does NOT make that tree an install source** — `ktp-install`
+refuses it, because the fetch moves only `origin/main` while HEAD, and therefore
+every byte in the working tree, stays where it was. `AGAINST_REF` must be a
 `<remote>/<branch>` ref; a local ref is refused, because a fetch never refreshes
 it and it would read as fresh forever.
 
