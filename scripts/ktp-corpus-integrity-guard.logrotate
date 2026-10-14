@@ -1,0 +1,31 @@
+# /etc/logrotate.d/ktp-corpus-integrity-guard
+#
+# Deployed alongside scripts/ktp-corpus-integrity-guard.sh, which appends one run per day.
+#
+# The log is the only durable record of each reading. The Discord embed fires only on
+# accrual, and a clean run posts nothing at all by design — so on every ordinary day this
+# file is the ONLY evidence the guard looked. Rotating it on journald's two-day horizon
+# would rebuild exactly the hole it fills, which is the same reasoning the review-integrity
+# guard's rule carries.
+#
+# It is also where the watermark history lives in human-readable form: each run logs
+# "<stream>: watermark <prev> -> <new>", so a question about when a corpus last grew is
+# answerable from here without touching the database.
+#
+# The file is opened per append, so it needs no copytruncate.
+
+/var/log/ktp-corpus-integrity-guard.log
+{
+        monthly
+        rotate 12
+        # Bounds a guard that starts failing every run: an exit-2 path prints the whole
+        # failed mysql output, which can be long.
+        maxsize 32M
+        missingok
+        notifempty
+        compress
+        # Keeps .1 plain text, so grepping across a rotation boundary needs no zcat the
+        # day after one.
+        delaycompress
+        create 0640 root root
+}

@@ -1,0 +1,61 @@
+# KTP position-corpus integrity guard — did a NEW epoch-zero or orphan row appear?
+#
+# Script: /usr/local/bin/ktp-corpus-integrity-guard (canonical: KTPInfrastructure/scripts/,
+#         ktp-corpus-integrity-guard.sh — installed without the extension, as
+#         ktp-review-integrity-guard is).
+# Definitions: /usr/local/share/ktp-infra/sql/integrity/{position,producer_clock}_corpus_integrity.sql
+#         (canonical: KTPInfrastructure/sql/integrity/, #646 and #649).
+#
+# THE SQL IS THE DEFINITION. The wrapper issues no SELECT of its own; it adds a schedule,
+# a log and a watermark. A change to what "defect" means belongs in the .sql files, where
+# the controls live and where a reviewer will look for them.
+#
+# READ-ONLY. Both files are pure SELECT — proven before first use, 13 and 16
+# statement-initial SELECTs against 0 writes of any kind — and the session is opened
+# `SET SESSION TRANSACTION READ ONLY` so the server would refuse a write even if one were
+# added later.
+#
+# WHY SCOPED. Both files honour @since_id and default it to 0. Unscoped they scan the
+# whole corpus, which is the right shape for a BASELINE and the wrong shape for a daily.
+# Scoped above the previous reading's rows_max_id they answer the only question a daily
+# can: did a NEW defective row appear? The files say it themselves — "orphan_max_id
+# against the previous reading's rows_max_id answers accrual".
+#
+# WHAT IT IS WATCHING FOR, AND WHY THAT MATTERS FOR THE ALERTING. The defect population
+# is currently CLOSED: 326,429 position rows plus 2,771 flag_state rows, every one
+# inserted 2026-08-27..08-31 and nothing since — the ungated writer dpl-6baa fixed has
+# not produced a defective row in six weeks. So this guard exists to notice a REGRESSION,
+# and the only signal that can do that is the watermark moving.
+# ⛔ Alert on the WATERMARK, never on the unit running: a wedged read reports success,
+# which is the exact failure shape the position corpus already demonstrated once.
+#
+# ALERTING, copied from ktp-review-integrity-guard because those rules are what keep a
+# daily readable:
+#   - a clean run posts NOTHING. A standing finding re-posted every morning trains
+#     everyone to mute the channel.
+#   - accrual posts once, naming the stream, the metric and the scope.
+#   - exit 2 ALWAYS posts. "could not look" reading as "nothing there" is the defect this
+#     whole effort exists to kill.
+#
+# 06:35 ET daily — after the 06:15 review-integrity guard and clear of the install-freshness
+# window (06:20 + up to 5 min jitter), so two MySQL readers are not scanning the position
+# corpus at once. Clear of the 03:00 fleet restart, 04:30 perf rollup, 04:40 AC retention
+# sweep and the 05:00 digests, and early enough that a finding is read with the morning's
+# Discord.
+#
+# The log is rotated by /etc/logrotate.d/ktp-corpus-integrity-guard (monthly, 12 kept).
+# Watermarks: /var/lib/ktp-corpus-integrity-guard/<stream>.watermark — a bare integer each.
+# ⚠️ Deleting a watermark file does not break the guard, it re-baselines it: the next run
+# scopes from 0, scans the whole corpus, and reports the CLOSED historical population as
+# accrual. That is one loud false alarm, not a silent wrong answer — but do not delete one
+# to "reset" anything.
+#
+# Covered by ktp-data-server-health.sh as a WORK-DONE check on the log's mtime, because a
+# cron.d job is structurally invisible to CRITICAL_TIMERS (that list is checked against
+# `systemctl list-timers`).
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+35 6 * * *   root  /usr/local/bin/ktp-corpus-integrity-guard >> /var/log/ktp-corpus-integrity-guard.log 2>&1
