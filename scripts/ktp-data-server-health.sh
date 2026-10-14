@@ -107,6 +107,13 @@ RENAMER_STALE_SEC=900
 # renamer's state.json. Two days allows one missed run before it pages.
 AC_RETENTION_LOG=/var/log/ktp-ac-retention.log
 AC_RETENTION_STALE_SEC="${AC_RETENTION_STALE_SEC:-172800}"
+
+# The position-corpus integrity guard is also a cron.d job (06:35 daily), so it is
+# structurally invisible to CRITICAL_TIMERS for the same reason. Its only durable
+# artifact is this log -- a clean run posts NOTHING by design, so an unwritten log is
+# the single signal that it stopped looking. Two days allows one missed run.
+CORPUS_GUARD_LOG="${CORPUS_GUARD_LOG:-/var/log/ktp-corpus-integrity-guard.log}"
+CORPUS_GUARD_STALE_SEC="${CORPUS_GUARD_STALE_SEC:-172800}"
 # Liveness is not reading. The poll loop can iterate while every SSH session
 # fails -- which rewrites state.json on schedule, so the mtime leg above, a
 # systemd watchdog and the cleanup interlock all read healthy while no match
@@ -531,6 +538,24 @@ else
     fi
 fi
 # <<< ktp-ac-retention-sweep
+
+# >>> ktp-corpus-integrity-guard — extracted verbatim by tests/unit/test_health_corpus_integrity_guard.py
+# The position-corpus integrity guard. Same shape as the retention sweep above and
+# for the same reason: a cron.d job cannot be in CRITICAL_TIMERS. What makes this one
+# worth a check is that a CLEAN run is silent on purpose -- it posts only on accrual --
+# so "no alert" is indistinguishable from "stopped running" without the log.
+if [ ! -f "$CORPUS_GUARD_LOG" ]; then
+    down+=("ktp-corpus-integrity-log=absent")
+else
+    corpus_guard_epoch=$(stat -c %Y "$CORPUS_GUARD_LOG" 2>/dev/null || echo 0)
+    if [ "$corpus_guard_epoch" -eq 0 ] ||
+       [ $(( $(date +%s) - corpus_guard_epoch )) -gt "$CORPUS_GUARD_STALE_SEC" ]; then
+        # Fixed token, never the age: the report is a set-diff, so a ticking value
+        # would read as a fresh failure on every hourly run.
+        down+=("ktp-corpus-integrity=stale")
+    fi
+fi
+# <<< ktp-corpus-integrity-guard
 
 # >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
 # An HLTV page that was detected and could not be delivered. Keyed on the latched
