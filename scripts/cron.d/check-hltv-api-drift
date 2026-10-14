@@ -1,0 +1,53 @@
+# KTP hltv-api drift check — has the live hltv-api.py diverged from its reference?
+#
+# Script:  /usr/local/bin/ktp-hltv-api-drift-guard (canonical:
+#          KTPInfrastructure/scripts/, ktp-hltv-api-drift-guard.sh -- installed WITHOUT the
+#          extension, as ktp-corpus-integrity-guard and ktp-review-integrity-guard are.
+#          ⛔ A cron entry naming the .sh is 203/EXEC, which is how ktp-weekly-outliers sat
+#          dead for a week). It is a WRAPPER. The comparison itself is
+#          /usr/local/bin/check-hltv-api-drift.py, whose bytes are pinned to a review and
+#          are not touched by the schedule.
+#
+# THE CHECKER IS THE DEFINITION. The wrapper adds a schedule, a log, a state file and the
+# alerting the checker deliberately does not do. A change to what "drift" means belongs in
+# check-hltv-api-drift.py, where the redaction-by-shape rules and the provenance line live
+# and where a reviewer will look for them.
+#
+# ⛔ DEPLOY ORDER: #708 FIRST, THEN THIS. Before #708 the checker's only reference default
+# was "beside this script" — true in a checkout, never true at /usr/local/bin — so a BARE
+# run exits 2 on `cannot read`. Fielded first, this schedule pages every morning about a
+# fielding mistake. dpl-53ba states it as a rule: a job that exits 2 every tick installs
+# noise, not coverage. Field this only once a bare run of the installed checker exits 0.
+#
+# ⛔ AND FIELD IT WITH THE HEALTH-SCRIPT LEG IN THE SAME CHANGE. A cron.d job is
+# structurally invisible to CRITICAL_TIMERS, which is checked against `systemctl
+# list-timers` and cannot see cron. Without the ktp-data-server-health.sh block that
+# watches this log's mtime, a wrapper that stops running is indistinguishable from a clean
+# morning — because a clean morning is silent by design. That is dpl-af3a's rule, learned
+# on the freshness timer, and the corpus-integrity guard was fielded the same way.
+#
+# ALERTING: exit 0 posts nothing; 1 posts drift once; 2 ALWAYS posts, because "could not
+# look" reading as "nothing there" is the defect this row exists to kill; 3 pages, because
+# a redaction failure is a secrets-safety event and not a drift report.
+# ⛔ No alert ever carries the checker's output. On drift that output is a diff of the live
+# hltv-api.py, which holds AUTH_KEY.
+#
+# 06:50 ET daily — after the 06:35 corpus-integrity guard, the 06:15 review-integrity
+# guard and the install-freshness window (06:20 + up to 5 min jitter), so no two of them
+# are running at once; clear of the 03:00 fleet restart, 04:30 perf rollup, 04:40 AC
+# retention sweep and the 05:00 digests; and early enough that a finding is read with the
+# morning's Discord rather than discovered at noon.
+#
+# Deliberately AFTER the install-freshness fetch rather than before it: that fetch is what
+# moves /opt/ktp-infra's own origin/main ref, and the checker's provenance line reports the
+# reference's distance from that ref. Running later means the number printed is the
+# freshest one available on the box.
+#
+# The log is rotated by /etc/logrotate.d/ktp-hltv-api-drift (monthly, 12 kept).
+# State: /var/lib/ktp-hltv-api-drift/last — "<epoch> <exit code>", one line, overwritten.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+50 6 * * *   root  /usr/local/bin/ktp-hltv-api-drift-guard >> /var/log/ktp-hltv-api-drift.log 2>&1
