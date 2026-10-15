@@ -154,23 +154,20 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_034_grenade_throw_events.sql",
     "sql/migrate_035_capture_health_repaired.sql",
     "sql/migrate_036_hitreg_quality.sql",
-    # Applied here even though it is still PROPOSED for production: the daemon
-    # INSERTs into ktp_move_census, so a lane without the table exercises the
-    # new handler as a no-op and reports clean either way.
+    # The daemon INSERTs into ktp_move_census, so a lane without the table
+    # exercises the handler as a no-op and reports clean either way.
     "sql/migrate_038_move_census.sql",
-    # Applied here even though it is still PROPOSED for production: the daemon's
-    # score INSERT names ktp_score_events.round_time_left, so a lane without it
-    # fails every score row.
+    # The daemon's score INSERT names ktp_score_events.round_time_left, so a
+    # lane without it fails every score row.
     "sql/migrate_039_score_round_time_left.sql",
-    # Proposed for production. The daemon's flag-capture INSERT does not name
-    # either new column, so applying it here proves that INSERT still lands.
+    # The daemon's flag-capture INSERT does not name either new column, so
+    # applying it here proves that INSERT still lands.
     "sql/migrate_040_flag_captures_provenance.sql",
     # The schema-26 daemon names hitgroup/rw_* in every shot INSERT and
     # sv_maxunlag in every manifest INSERT, so a lane without it fails both.
     "sql/migrate_041_shot_hitgroup_rewind.sql",
-    # Proposed for production, and applied here for the same reason 038 is: the
-    # daemon INSERTs into ktp_aim_vis, so a lane without the table exercises the
-    # new handler as a no-op and reports clean either way.
+    # The daemon INSERTs into ktp_aim_vis, so a lane without the table
+    # exercises the handler as a no-op and reports clean either way.
     "sql/migrate_042_aim_vis.sql",
     # Index only; nothing the daemon writes depends on it. Applied so the lane
     # runs analytics against the plan production will have.
