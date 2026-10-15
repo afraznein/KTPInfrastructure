@@ -83,6 +83,13 @@ CRITICAL_TIMERS=(
     # and the drift it exists to find is itself silent, so a stopped timer and a
     # clean estate produce the same output: nothing.
     ktp-install-freshness.timer
+    # Weekly per-map flag_swing refit (Mon 14:00 UTC). A stopped timer is silent in
+    # the worst way available: the refit PROPOSES, it never writes to main, so the
+    # committed coefficient table simply stays where it is and keeps serving. That
+    # reads exactly like "the maps have not changed". The 2026-10-14 dry run is the
+    # measure of how wrong that can get while looking fine -- after weeks unfitted
+    # it proposed 13 changes, including one map whose alive coefficient had halved.
+    ktp-map-coefficients.timer
     # Not listed: ktp-monday-reminder.timer. A reminder that fails to arrive is
     # noticed by the people expecting it, which is the alert.
 )
