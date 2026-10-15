@@ -327,6 +327,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         return 0
 
+    # `fitted_at` moves every run and says nothing about the numbers, so writing
+    # unconditionally made `git diff` on this file useless as "is there anything
+    # to propose" -- and the caller paid a second whole fit to answer it instead.
+    if not changes:
+        print(f"{args.out} already matches the data; left as it is")
+        return 0
+
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n",
                         encoding="utf-8")

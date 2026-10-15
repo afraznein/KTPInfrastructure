@@ -15,10 +15,10 @@ ExecStart=/usr/local/bin/ktp-map-coefficients-refit.sh
 # push and `gh pr create` are unbounded network calls, and one wedged weekly run
 # blocks every later one with nothing failed for anything to report. So the bound
 # stays -- but it has to clear the FIT, not just the network calls.
-# ⛔ It was 30min, which is SHORTER THAN THE JOB. Measured 2026-10-14: a --check
-# over 680 labelled halves takes ~61 minutes, so every Monday run would have been
-# killed mid-fit. 3h leaves room for a season's worth of growth (~5.4s/half) and
-# still catches a wedge well inside the weekly window.
+# ⛔ It was 30min, which is SHORTER THAN THE JOB. Measured on the first real run,
+# 2026-10-14: one pass over ~690 labelled halves takes ~64 minutes under the Nice
+# and IO class below. ⛔ 3h holds only while the refit makes ONE pass -- it made
+# three until that day, which put the real runtime over this very cap.
 TimeoutStartSec=3h
 Nice=10
 IOSchedulingClass=idle

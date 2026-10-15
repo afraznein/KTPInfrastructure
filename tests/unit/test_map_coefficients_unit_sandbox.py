@@ -113,14 +113,29 @@ def _seconds(v):
     return n * {"s": 1, "sec": 1, "m": 60, "min": 60, "h": 3600}[unit]
 
 
-MEASURED_FIT_SECONDS = 61 * 60  # 2026-10-14 dry run: 680 labelled halves, ~61 min
+# 2026-10-14, the first real run under the unit's own Nice=10/IOSchedulingClass=idle:
+# two passes over ~690 labelled halves in 2h08m00s, so ~64 min a pass. The job is
+# ONE pass -- it was three until that day, which is how a 3h cap came to be
+# shorter than the job it was raised to clear.
+MEASURED_FIT_SECONDS = 64 * 60
 
 
 def test_the_start_timeout_clears_the_measured_fit():
     v = directive("TimeoutStartSec")
     assert v, "the bound was removed; a wedged weekly run would block every later one"
     assert _seconds(v) > MEASURED_FIT_SECONDS * 2, \
-        "TimeoutStartSec=%s does not clear the measured ~61min fit with headroom" % v
+        "TimeoutStartSec=%s does not clear the measured %dmin fit with headroom" \
+        % (v, MEASURED_FIT_SECONDS // 60)
+
+
+def test_the_refit_makes_one_pass_over_the_corpus():
+    """The timeout above is a bound on the whole job, so it only means anything
+    while the job is one fit. Three passes put a 3h cap under the real runtime."""
+    code = "\n".join(ln for ln in SCRIPT_TEXT.split("\n")
+                      if ln.strip() and not ln.strip().startswith("#"))
+    n = code.count("scripts.fit_map_coefficients")
+    assert n == 1, "%d fit passes at ~%dmin each, under a %s cap" % (
+        n, MEASURED_FIT_SECONDS // 60, directive("TimeoutStartSec"))
 
 
 def test_the_bound_still_exists_and_its_reason_survives():
