@@ -64,14 +64,31 @@ git worktree add --quiet --detach "$WORKTREE" origin/main
 cd "$WORKTREE"
 echo "refitting in $WORKTREE at $(git rev-parse --short HEAD)"
 
-if python3 -m scripts.fit_map_coefficients --check; then
+# ONE fit per run; it was three until 2026-10-14 -- --check to decide, --write to
+# produce, --check again to render the diff -- and each one reloads the whole
+# corpus at ~64 min a pass, so three exceeded TimeoutStartSec=3h and the diff a
+# reviewer read need not have described the table being committed.
+mkdir -p "$PROPOSAL"
+python3 -m scripts.fit_map_coefficients --write | tee "$PROPOSAL/diff.txt"
+
+# --write leaves the file untouched when no coefficient moved, so this is the
+# whole "is there anything to propose" test -- and `fitted_at` moving on every
+# run is why it could not be asked of the file before.
+if git diff --quiet -- config/map_coefficients.json; then
   echo "table still matches the data; nothing to propose"
   exit 0
 fi
 
-python3 -m scripts.fit_map_coefficients --write
+# GET THE FIT OUT BEFORE ANY GIT STEP: the EXIT trap removes $WORKTREE whether
+# the run succeeded or not, and on 2026-10-14 a commit that failed for a
+# five-second reason took an hour of fitting with it.
+cp config/map_coefficients.json "$PROPOSAL/map_coefficients.proposed.json"
+
 git add config/map_coefficients.json
-git commit --quiet -m "map coefficients: weekly refit $(date -u +%Y-%m-%d)
+# -c rather than a gitconfig on the box: ktpreports is a nologin account with no
+# home directory, so `git commit` exited 128 "Author identity unknown" and every
+# run died here. Same pattern as .github/workflows/mmr-weekly.yml.
+git -c user.name="ktp-map-coefficients-bot" -c user.email="noreply@github.com" commit --quiet -m "map coefficients: weekly refit $(date -u +%Y-%m-%d)
 
 Proposed by ktp-map-coefficients.timer. The diff is the review: each line is
 a claim that a map now plays differently than the committed table says.
@@ -82,10 +99,7 @@ Merging accepts it; closing rejects it and the table stands."
 # credential decision nobody needed to take. If push and PR work, they happen;
 # otherwise the refit has still produced everything a human needs and says where
 # it is. The review requirement is A DIFF SOMEONE READS, not a pull request.
-mkdir -p "$PROPOSAL"
 git format-patch --quiet -1 -o "$PROPOSAL" HEAD
-cp config/map_coefficients.json "$PROPOSAL/map_coefficients.proposed.json"
-python3 -m scripts.fit_map_coefficients --check > "$PROPOSAL/diff.txt" 2>&1 || true
 
 # The body is the diff plus the trailer the coordination gate requires. Without
 # `Coordination-Workstream` the check fails, so an auto-opened PR would have

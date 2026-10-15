@@ -3,6 +3,13 @@ from __future__ import annotations
 
 import unittest
 
+import json
+import sys
+import tempfile
+import types
+from pathlib import Path
+
+import scripts.fit_map_coefficients as F
 from scripts.fit_map_coefficients import build, coefficients, diff, half_winners
 
 
@@ -160,3 +167,69 @@ class LedgerFallback(unittest.TestCase):
         out = build(lambda: (official, {}), "2026-09-13",
                     extra={"label_mix": {"engine": 20, "ledger": 16}})
         self.assertEqual(out["label_mix"], {"engine": 20, "ledger": 16})
+
+
+def _table(flag, alive, fitted_at="2026-01-01T00:00:00Z"):
+    return {"fitted_at": fitted_at, "corpus_selected": "officials_only",
+            "corpus_candidates": {}, "label_mix": {"engine": 1, "ledger": 0},
+            "maps": {"dod_anzio": {"flag_coefficient": flag,
+                                   "alive_coefficient": alive}}}
+
+
+class WriteOnlyWhenTheNumbersMoved(unittest.TestCase):
+    """`--write` used to rewrite the table on every run, because `fitted_at`
+    moves whether or not a coefficient did.
+
+    That made `git diff` on the file useless as "is there anything to propose",
+    so the caller answered the question with a SECOND whole fit -- ~64 min
+    measured 2026-10-14, against a 3h start timeout.
+    """
+
+    def _run(self, committed, fitted):
+        """main(--write) against a table on disk, with the fit itself stubbed."""
+        fake = types.ModuleType("scripts.report_service")
+
+        class _Ma:
+            def source_capabilities(self, db):
+                return {}
+
+        fake.LocalMysql = lambda: object()
+        fake.load_match_analytics = lambda repo: _Ma()
+
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d) / "map_coefficients.json"
+            out.write_text(json.dumps(committed, indent=2, sort_keys=True) + chr(10),
+                           encoding="utf-8")
+            before = out.read_bytes()
+
+            saved_mod = sys.modules.get("scripts.report_service")
+            saved_build = F.build
+            sys.modules["scripts.report_service"] = fake
+            F.build = lambda *a, **k: fitted
+            try:
+                rc = F.main(["--write", "--out", str(out)])
+            finally:
+                F.build = saved_build
+                if saved_mod is None:
+                    sys.modules.pop("scripts.report_service", None)
+                else:
+                    sys.modules["scripts.report_service"] = saved_mod
+            return rc, before, out.read_bytes()
+
+    def test_an_unchanged_table_is_left_byte_for_byte_alone(self):
+        """Not even `fitted_at` is refreshed -- the file is the change signal."""
+        committed = _table(1.25, 0.9)
+        rc, before, after = self._run(
+            committed, _table(1.25, 0.9, fitted_at="2026-09-09T09:09:09Z"))
+        self.assertEqual(rc, 0)
+        self.assertEqual(after, before, "the table was rewritten with no coefficient change")
+
+    def test_a_moved_coefficient_is_still_written(self):
+        """The control. Without this the test above passes for a --write that
+        has stopped writing at all."""
+        rc, before, after = self._run(_table(1.25, 0.9), _table(1.31, 0.9))
+        self.assertEqual(rc, 0)
+        self.assertNotEqual(after, before, "a real change was not written")
+        self.assertEqual(
+            json.loads(after.decode("utf-8"))["maps"]["dod_anzio"]["flag_coefficient"],
+            1.31)
