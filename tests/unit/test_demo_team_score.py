@@ -76,11 +76,33 @@ def test_parse_demo_name_rejects_unlabelled():
 
 def test_match_type_and_retention():
     assert dts.parse_demo_name("ktp_1789326428-NY1_h1-2609131459-dod_thunder2.dem").match_type == 0
-    assert dts.parse_demo_name("12man_1.3-6744-ATL1_h1-2609070000-dod_armory_b6.dem").match_type == 1
-    assert dts.parse_demo_name("scrim_1788746783-CHI1_h1-2609062203-dod_lennon5_b1.dem").match_type == 2
+    assert dts.parse_demo_name("scrim_1788746783-CHI1_h1-2609062203-dod_lennon5_b1.dem").match_type == 1
+    assert dts.parse_demo_name("12man_1.3-6744-ATL1_h1-2609070000-dod_armory_b6.dem").match_type == 2
     assert dts.retention_class(0, "1789326428-NY1") == "retained"
     assert dts.retention_class(1, "1.3-6744-ATL1") == "ephemeral-14d"
 
+
+def test_demo_label_map_agrees_with_the_report_scope_sets():
+    """The map is a transcription of KTPMatchHandler's enum, and a transcription needs a
+    check that is not another transcription. These two sets are derived from the same enum
+    independently, so a swapped pair disagrees with them -- as the previous map did, both ways.
+    """
+    from scripts.report_scope import (
+        MATCH_TYPE_BY_DEMO_LABEL, OFFICIAL_MATCH_TYPES, SHADOW_MATCH_TYPES)
+    m = MATCH_TYPE_BY_DEMO_LABEL
+    assert m["ktp"] in OFFICIAL_MATCH_TYPES
+    assert m["12man"] in SHADOW_MATCH_TYPES          # 12man is the shadow-report type (2)
+    assert m["scrim"] not in SHADOW_MATCH_TYPES      # scrims are deliberately out of scope
+    assert m["scrim"] not in OFFICIAL_MATCH_TYPES
+    assert m["draft"] not in OFFICIAL_MATCH_TYPES + SHADOW_MATCH_TYPES
+    assert len(set(m.values())) == len(m), "two labels share an id"
+    # Overtime labels are absent on purpose: an unknown label must raise, not guess.
+    assert "ktpot" not in m and "draftot" not in m
+
+
+def test_an_unlabelled_type_raises_rather_than_guessing():
+    with pytest.raises(dts.DemoLabelError):
+        dts.parse_demo_name("ktpot_1789326428-NY1_h1-2609131459-dod_thunder2.dem").match_type
 
 def test_started_at_from_stamp():
     assert dts.parse_demo_name("ktp_1789326428-NY1_h1-2609131459-dod_thunder2.dem").started_at == "2026-09-13 14:59:00.000"
