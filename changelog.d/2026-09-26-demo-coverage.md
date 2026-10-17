@@ -1,5 +1,10 @@
 ### `scripts`: measure how much of its half a demo actually contains (2026-09-26)
 
+> **The loss figures below are refuted — see the 2026-10-17 entry in this release.** The tails
+> are complete; `44.1-45.2 s` is this script's own hardcoded head anchor, not missing play. Kept
+> because the script, the reads and the outlier shapes are real and still in use, and because a
+> deleted measurement is one a later reader re-derives.
+
 An HLTV demo is not a complete record of its half. The proxy broadcasts 60 s behind live and
 the demo client writes the delayed stream (`DemoClient::SendDatagram` reads
 `GetFrameByTime(GetSpectatorTime())` whenever a delay is set), so the last minute of a level
