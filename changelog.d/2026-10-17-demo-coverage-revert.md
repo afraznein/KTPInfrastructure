@@ -18,19 +18,30 @@ specified: the live path writes `svc_time = proxyTime − (spectatorTime − fra
 Measured on 8 recent official halves, full frame walk, with the frame chain landing exactly on
 `nDirectoryOffset` on 8 of 8 plus `HLDEMO`/protocol-5 controls:
 
-| | `svc` at first frame | `svc − demo` first → last | tail lost vs engine half end |
+| half | proxy | `svc − demo` first → last | tail lost vs engine half end |
 |---|---|---|---|
-| 6 halves on unpatched proxies | 60.018–60.044 | 60.004 → 60.018, flat | **53.3–53.4 s** |
-| NY5 h1, patched proxy | 60.039 | 60.007 → 60.012 | **1.1 s** |
+| NY4 `1791140846` h1 / h2 | unpatched | flat | **53.28 / 53.33 s** |
+| NY4 `1791743912` h1 / h2 | unpatched | flat | **53.33 / 53.37 s** |
+| **NY5 `1791745599` h1** | **patched** | flat | **1.06 s** |
+| **NY5 `1791745599` h2** | **patched** | flat | **53.27 s** |
+
+The offset is flat at one delay (60.004–60.018) from the first frame to the last on every one of
+them, and `svc` at the first frame is 60.018–60.048 throughout. **Both NY5 rows are the same match
+on the same binary, 33 minutes apart** — so the first-half recovery and the second-half loss are
+separated by nothing but which half it was. A third NY5 pair (2026-09-27) predates the 09-30 canary
+swap and has no engine `half_end` to measure against, so it yields no loss figure and is not counted
+here.
 
 So the first byte is written at proxy time ≈ delay, the demo's content begins at world ≈ 0 — **the head
 is intact** — and the ~53 s is a genuine **tail** loss. `half_end − playback length` came out at a
 median of 52.3 s, which #715 relabelled as a head offset; it is the same quantity under the wrong name.
 The old `loss` column was approximately measuring the right thing all along.
 
-**And the single most useful row is the patched one:** 1.1 s against 53.3 s on the same map in the same
-week is the proxy fix working on a first half, which is the result `KTP-ReHLDS`#28 exists to produce.
-#715's framing would have retired the instrument that shows it.
+**And the most useful rows are the patched pair:** 1.06 s on the first half against 53.27 s on the
+second, same match, same binary, half an hour apart. That is `KTP-ReHLDS`#28 doing exactly what it
+exists to do on a first half and not firing at all on a second, which is the open question in that
+lane rather than a defect in this measurement. #715's framing would have retired the instrument that
+shows it.
 
 Three things from #715 were independently true and are **deliberately not** carried forward here, to keep
 this revert a single reversible act rather than a revert plus new work: the `nDirectoryOffset = 0`
