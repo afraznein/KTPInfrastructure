@@ -55,6 +55,8 @@ def _emitted(log_text: str) -> dict[str, int]:
         # marker every kill now emits.
         "headshot": log_text.count('(headshot "1")'),
         "damage": log_text.count('triggered "damage"'),
+        # 27 voice-menu commands, one generic action each (migration 045).
+        "voice": log_text.count('triggered "voice_'),
     }
 
 
@@ -177,6 +179,10 @@ def main() -> int:
             assertions.check_suicides_carried(db, emitted=emitted["suicide"]),
             assertions.check_headshots_carried(db, emitted=emitted["headshot"]),
             assertions.check_damage_ledger(db, emitted=emitted["damage"]),
+            assertions.check_carried(db, "voice_", emitted=emitted["voice"],
+                                     table="hlstats_Events_PlayerActions",
+                                     other_table="hlstats_Events_PlayerPlayerActions",
+                                     prefix=True),
         ]
         report["carried"] = carried
         report["coverage_gaps"] = [f"{c['code']}: {c['detail']}" for c in carried
