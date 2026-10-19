@@ -1,7 +1,7 @@
 {
  "kind": "rating_methodology",
  "method_version": "rating_methodology_v1",
- "generated_at": "2026-10-12T21:53:52+00:00",
+ "generated_at": "2026-10-19T19:31:59+00:00",
  "provisional": true,
  "notice": "All values are refit as matches land and may change week to week. Sample sizes and fit quality are shown so the reader can judge each number.",
  "ktpr_v2": {
@@ -73,7 +73,7 @@
     "Gold": 1.87,
     "Bronze": -1.64
    },
-   "labelled_players": 213,
+   "labelled_players": 214,
    "what": "Starting rating is offset by the player's division, because divisions do not play each other and so their rating pools cannot otherwise be compared. The offset is measured on 12-mans, which do mix divisions.",
    "status": "prior, not a measurement of this player -- it is an assumption about their division that a handful of results will override",
    "caveat": "Because the prior comes from division, these ratings cannot be used as independent evidence for promotion or relegation -- that would be circular. Re-run with --no-division-seed for that comparison."
@@ -375,8 +375,18 @@
    "upsets": 0,
    "upsets_pct": 0.0,
    "headline": "52 matches rated, 54% accuracy"
+  },
+  {
+   "week": 6,
+   "date": "2026-10-19",
+   "accuracy_pct": 55.6,
+   "log_loss": 0.674,
+   "completed_matches": 63,
+   "upsets": 0,
+   "upsets_pct": 0.0,
+   "headline": "63 matches rated, 56% accuracy, challenger beat champion"
   }
  ],
- "source_report_count": 52,
+ "source_report_count": 63,
  "report_schema_version": 9
 }
