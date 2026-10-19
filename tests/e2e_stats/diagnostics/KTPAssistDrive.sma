@@ -18,6 +18,7 @@ public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_ad_run", "cmd_run")
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
+	register_srvcmd("ktp_vc_run", "cmd_voice")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
 
@@ -113,5 +114,25 @@ public cmd_run() {
 	// assertion exact boundaries despite the normal five-second flush task.
 	ad_flush_stats_capture()
 	log_amx("[AD] END")
+	return PLUGIN_HANDLED
+}
+
+// Three live bots each pick one voice-menu command. amxclient_cmd runs the
+// command server-side exactly as a real pick arrives: the client_command
+// forward fires once (stats_logging's hook logs the line) and the game DLL
+// then handles it. Bots never do this on their own, so without this the
+// voice check is never exercised and reports not_exercised forever.
+public cmd_voice() {
+	new const cmds[][] = { "voice_negative", "voice_grenade", "voice_sniper" }
+	new players[32], num, issued = 0
+	get_players(players, num, "a")
+	for (new i = 0; i < num && issued < sizeof(cmds); i++) {
+		new team = get_user_team(players[i])
+		if (team != 1 && team != 2)
+			continue
+		amxclient_cmd(players[i], cmds[issued++])
+	}
+	ad_flush_stats_capture()
+	log_amx("[VC] END issued=%d", issued)
 	return PLUGIN_HANDLED
 }

@@ -176,6 +176,10 @@ DEFAULT_SCHEMA_FILES = (
     # ktp_capture_health INSERT, so a lane without the column fails every health
     # row -- and a health row is what every capture assertion reads.
     "sql/migrate_044_capture_health_rejection_reasons.sql",
+    # Seeds the 27 voice-menu commands as generic actions. Nothing the daemon
+    # writes depends on it; without the rows a `triggered "voice_*"` line is
+    # parsed and silently discarded, which is what the voice check reads.
+    "sql/migrate_045_voice_command_actions.sql",
 )
 
 DEFAULT_SEED_FILES = (

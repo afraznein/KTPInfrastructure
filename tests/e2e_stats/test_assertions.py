@@ -1438,3 +1438,24 @@ def test_the_capture_health_type_lists_are_the_analytics_lists():
     # Control: the two lists are genuinely different, so an accidental
     # required == known would not satisfy both assertions above.
     assert required < known
+
+
+# -- prefix families (the 27 voice commands) --------------------------------
+
+
+def test_prefix_carried_queries_the_family_not_one_code():
+    db = TaggedCountDb("voice_")
+    v = assertions.check_carried(db, "voice_", emitted=3, table=_PA,
+                                 other_table=_PPA, prefix=True)
+    # FakeDb answers PlayerActions queries with pa=0, so the verdict is
+    # pipeline -- what this test pins is the query shape.
+    assert v["status"] == "pipeline"
+    assert any("LIKE 'voice\\_%'" in q for q in db.queries)
+    assert not any("a.code = 'voice_'" in q for q in db.queries)
+
+
+def test_prefix_carried_ok_and_not_exercised():
+    assert assertions.check_carried(FakeDb(pa=3), "voice_", emitted=3, table=_PA,
+                                    other_table=_PPA, prefix=True)["status"] == "ok"
+    assert assertions.check_carried(FakeDb(), "voice_", emitted=0, table=_PA,
+                                    other_table=_PPA, prefix=True)["status"] == "not_exercised"

@@ -105,23 +105,31 @@ class ActionRows:
         return self.ppa + self.pa
 
 
-def count_action(db, code: str, *, game: str = "dod") -> ActionRows:
+def count_action(db, code: str, *, game: str = "dod",
+                 prefix: bool = False) -> ActionRows:
     """Rows recorded for `code`, joined through `hlstats_Actions`.
 
     Joins rather than filtering on a hardcoded id: the seed migrations
     deliberately let AUTO_INCREMENT assign, so the id differs per install.
+    `prefix=True` counts every code starting with `code` -- the 27 voice
+    commands (migration 045) are one family the log counts by prefix too.
     """
+    if prefix:
+        where = f"a.code LIKE '{code.replace('_', chr(92) + '_')}%'"
+    else:
+        where = f"a.code = '{code}'"
+
     def _n(table: str) -> int:
         return db.count(
             f"SELECT COUNT(*) FROM {table} e "
             f"JOIN hlstats_Actions a ON a.id = e.actionId "
-            f"WHERE a.code = '{code}' AND a.game = '{game}'"
+            f"WHERE {where} AND a.game = '{game}'"
         )
     return ActionRows(code=code, ppa=_n(_PPA), pa=_n(_PA))
 
 
 def check_carried(db, code: str, *, emitted: int, table: str,
-                  other_table: str) -> dict:
+                  other_table: str, prefix: bool = False) -> dict:
     """Did every emitted line become exactly one row?
 
     This is the assertion Lane B actually wants, and it needs the log-side
@@ -140,7 +148,7 @@ def check_carried(db, code: str, *, emitted: int, table: str,
     The flag invariant (`other_table` must be empty) is checked in every case
     where rows exist, because it is about configuration rather than volume.
     """
-    rows = count_action(db, code)
+    rows = count_action(db, code, prefix=prefix)
     here = rows.pa if table == _PA else rows.ppa
     there = rows.ppa if table == _PA else rows.pa
 

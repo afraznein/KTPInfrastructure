@@ -1374,6 +1374,11 @@ def main() -> int:
                             print("staging degraded-killer assist scenario", flush=True)
                             report["assist_scenario"] = assist_scenario.run(
                                 handle, args.log)
+                            # Bots never pick a voice command on their own, so
+                            # the drive issues three through amxclient_cmd --
+                            # the same server-side path a real pick takes.
+                            print("staging voice-command scenario", flush=True)
+                            handle.rcon("ktp_vc_run")
 
                     def _stage_break_diagnostics():
                         if drive_amxx is None or args.no_break_scenarios:
@@ -1731,6 +1736,8 @@ def main() -> int:
             "assist": log_text.count('triggered "assist"'),
             "cap_break": log_text.count('triggered "cap_break"'),
             "suicide": log_text.count('committed suicide with'),
+            # 27 voice-menu commands, one generic action each (migration 045).
+            "voice": log_text.count('triggered "voice_'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
             # "frag_context" marker each non-teamkill player frag emits.
@@ -1857,6 +1864,10 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions"),
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
+            assertions.check_carried(db, "voice_", emitted=report["emitted"]["voice"],
+                                     table="hlstats_Events_PlayerActions",
+                                     other_table="hlstats_Events_PlayerPlayerActions",
+                                     prefix=True),
             assertions.check_frag_context_diagnostics(
                 expected=expected_frag_diagnostics,
                 observed=observed_frag_diagnostics,
