@@ -11,6 +11,14 @@ from __future__ import annotations
 # per-site is how .ktpOT ended up cancellable while .ktp was protected.
 OFFICIAL_MATCH_TYPES = (0, 4)
 
+# The demo filename's leading label -> the same ids, because the HLTV recorder
+# names files by match type and nothing else binds the two. Mirrored from
+# KTPMatchHandler's MatchType enum: COMPETITIVE 0, SCRIM 1, 12MAN 2, DRAFT 3,
+# KTP_OT 4, DRAFT_OT 5. The overtime types are absent on purpose -- no demo
+# directory for them exists in the corpus, so their label is unknown and a
+# caller must raise rather than guess which id an unlabelled type carries.
+MATCH_TYPE_BY_DEMO_LABEL = {"ktp": 0, "scrim": 1, "12man": 2, "draft": 3}
+
 # Types a report is BUILT for but never published: a shadow report exists so
 # analytics can see the play, not so the site can show it. 2 is 12man (drew,
 # 2026-09-23). Scrims (1) deliberately stay out — the hidden-value review

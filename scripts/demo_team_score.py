@@ -37,6 +37,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from scripts.report_scope import MATCH_TYPE_BY_DEMO_LABEL  # noqa: E402 - sibling module
 from scripts.team_score_telemetry import (  # noqa: E402 - sibling module
     LEDGER_LOCK, TeamScoreObservation, _sql_binary, _sql_decimal, _sql_text,
     retention_class,
@@ -53,7 +54,6 @@ DEMO_NAME = re.compile(
     r"^(?P<type>[a-z0-9]+)_(?P<match>(?:\d+|1\.3-\d+)-[A-Z]{2,5}\d+)_h(?P<half>\d+)"
     r"-(?P<stamp>\d{10})-(?P<map>.+?)(?:_part(?P<part>\d+))?\.dem$"
 )
-MATCH_TYPE = {"ktp": 0, "12man": 1, "scrim": 2, "draft": 1}  # ktp_matches.match_type; ktp = official
 SIDES = ("allies", "axis")
 
 
@@ -73,7 +73,7 @@ class DemoName:
     @property
     def match_type(self) -> int:
         try:
-            return MATCH_TYPE[self.type]
+            return MATCH_TYPE_BY_DEMO_LABEL[self.type]
         except KeyError:
             raise DemoLabelError(f"unknown demo type {self.type!r}") from None
 
