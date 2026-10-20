@@ -58,6 +58,61 @@ class ForMap(unittest.TestCase):
         self.assertEqual(cfg.flag_coefficient, 1.25)
 
 
+class CarryForward(unittest.TestCase):
+    """A re-cut map inherits its predecessor's fit until it has its own halves."""
+
+    def test_a_carried_forward_map_gets_its_predecessors_coefficients(self):
+        with mock.patch.dict(flag_swing.MAP_COEFFICIENTS,
+                             {"dod_old": (1.47, 1.10)}, clear=True),              mock.patch.dict(flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
+                             {"dod_new": "dod_old"}, clear=True):
+            cfg = FlagSwingConfig().for_map("dod_new")
+        self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient), (1.47, 1.10))
+        self.assertEqual(cfg.calibration, "carried_forward_from:dod_old")
+
+    def test_its_own_fitted_row_wins_over_the_carry_forward(self):
+        # The entry has to become inert on its own, or it would pin a map to a
+        # stale predecessor for as long as nobody remembered to delete it.
+        with mock.patch.dict(flag_swing.MAP_COEFFICIENTS,
+                             {"dod_old": (1.47, 1.10), "dod_new": (3.0, 0.5)},
+                             clear=True),              mock.patch.dict(flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
+                             {"dod_new": "dod_old"}, clear=True):
+            cfg = FlagSwingConfig().for_map("dod_new")
+        self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient), (3.0, 0.5))
+        self.assertEqual(cfg.calibration, "fitted_per_map:dod_new")
+
+    def test_a_carry_forward_to_an_unfitted_source_falls_back_to_the_prior(self):
+        with mock.patch.dict(flag_swing.MAP_COEFFICIENTS, {}, clear=True),              mock.patch.dict(flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
+                             {"dod_new": "dod_absent"}, clear=True):
+            cfg = FlagSwingConfig().for_map("dod_new")
+        self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient), (2.0, 1.0))
+        self.assertEqual(cfg.calibration, "uncalibrated_baseline")
+
+    def test_an_explicit_config_overrides_the_carry_forward_too(self):
+        with mock.patch.dict(flag_swing.MAP_COEFFICIENTS,
+                             {"dod_old": (1.47, 1.10)}, clear=True),              mock.patch.dict(flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
+                             {"dod_new": "dod_old"}, clear=True):
+            cfg = FlagSwingConfig(flag_coefficient=1.25).for_map("dod_new")
+        self.assertEqual(cfg.flag_coefficient, 1.25)
+
+    def test_every_shipped_carry_forward_names_a_map_the_table_actually_has(self):
+        # A typo'd stem here is silent: the lookup misses and the map quietly
+        # takes the league prior, which is the thing the entry exists to avoid.
+        for new, old in flag_swing.MAP_COEFFICIENT_CARRY_FORWARD.items():
+            self.assertTrue(new.startswith("dod_"), new)
+            self.assertIn(old, flag_swing.MAP_COEFFICIENTS,
+                          f"{new} carries forward from {old}, which is not in the table")
+            self.assertNotIn(old, flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
+                             f"{old} is itself carried forward; chains are not resolved")
+
+    def test_the_shipped_table_gives_s10b_the_s10a_fit(self):
+        # The case this mechanism was added for, against the real artifact.
+        cfg = FlagSwingConfig().for_map("dod_railroad2_s10b")
+        self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient),
+                         flag_swing.MAP_COEFFICIENTS["dod_railroad2_s10a"])
+        self.assertEqual(cfg.calibration,
+                         "carried_forward_from:dod_railroad2_s10a")
+
+
 def half(flag_term, label, n=40):
     """One half's worth of samples at a fixed state."""
     return [(flag_term, 0.0, label)] * n

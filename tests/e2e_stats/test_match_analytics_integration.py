@@ -338,7 +338,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 32
+    assert report["schema_version"] == 33
     # The contract fixture carries no net telemetry tables, so the block must
     # say so rather than publish zeros.
     assert report["connection"]["status"] == "unavailable"

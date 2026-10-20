@@ -315,6 +315,42 @@
         }
       ]
     },
+    "dod_railroad2_s10b": {
+      "config": "railroad2",
+      "source": "carried from dod_railroad2_s10a 2026-10-20 -- identical control-point geometry, not yet observed in production",
+      "flags": [
+        {
+          "flag_index": 0,
+          "flag_name": "backalley",
+          "initial_owner": 0,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 1,
+          "flag_name": "railroad",
+          "initial_owner": 0,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 2,
+          "flag_name": "Town Square",
+          "initial_owner": 0,
+          "cap_points": 2
+        },
+        {
+          "flag_index": 3,
+          "flag_name": "ruined house",
+          "initial_owner": 0,
+          "cap_points": 1
+        },
+        {
+          "flag_index": 4,
+          "flag_name": "platform",
+          "initial_owner": 0,
+          "cap_points": 1
+        }
+      ]
+    },
     "dod_saints2_b2": {
       "config": "saints",
       "source": "observed 2026-09-22",
