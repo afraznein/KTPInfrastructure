@@ -180,6 +180,10 @@ DEFAULT_SCHEMA_FILES = (
     # writes depends on it; without the rows a `triggered "voice_*"` line is
     # parsed and silently discarded, which is what the voice check reads.
     "sql/migrate_045_voice_command_actions.sql",
+    # Proposed for production. The 1.29.0 producer appends two move-census
+    # histograms and the paired daemon (KTPHLStatsX#168) names both columns in
+    # its INSERT, so a lane without them fails every move-census row.
+    "sql/migrate_046_move_census_step_stance.sql",
 )
 
 DEFAULT_SEED_FILES = (
