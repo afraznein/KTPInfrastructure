@@ -64,6 +64,17 @@ def _load_map_coefficients() -> dict[str, tuple[float, float]]:
 
 MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
 
+# A re-cut of a map inherits its predecessor's fit until it has halves of its own.
+# Without this a new revision drops to the league prior on the week it ships, and
+# the prior is well above the fitted flag term on most maps -- so the one week the
+# map is new is the week its reports are furthest off. A real fitted row always
+# wins over this table, so an entry stops mattering once the fitter sees the stem.
+# Only for a revision that is geometrically the same map: same bounds, same
+# control points, same spawns.
+MAP_COEFFICIENT_CARRY_FORWARD: dict[str, str] = {
+    "dod_railroad2_s10b": "dod_railroad2_s10a",
+}
+
 
 @dataclass
 class FlagSwingConfig:
@@ -88,18 +99,28 @@ class FlagSwingConfig:
 
         A caller that set coefficients explicitly is overriding the model, so
         its values win over the table -- that is how the fit driver scores one
-        vector across every map, and how a test pins a value.
+        vector across every map, and how a test pins a value. A map with no row
+        of its own may still inherit one; see MAP_COEFFICIENT_CARRY_FORWARD.
         """
         default = (FlagSwingConfig.flag_coefficient,
                    FlagSwingConfig.alive_coefficient)
         if (self.flag_coefficient, self.alive_coefficient) != default:
             return self
-        fitted = MAP_COEFFICIENTS.get(str(map_name or ""))
+        name = str(map_name or "")
+        fitted = MAP_COEFFICIENTS.get(name)
+        calibration = f"fitted_per_map:{name}"
+        if fitted is None:
+            # Named in the report rather than folded into "fitted", because a
+            # carried-forward number is a judgement about two maps being the
+            # same map, and a later reader has to be able to see it was made.
+            inherited = MAP_COEFFICIENT_CARRY_FORWARD.get(name)
+            fitted = MAP_COEFFICIENTS.get(inherited) if inherited else None
+            calibration = f"carried_forward_from:{inherited}"
         if fitted is None:
             return self
         return replace(self, flag_coefficient=fitted[0],
                        alive_coefficient=fitted[1],
-                       calibration=f"fitted_per_map:{map_name}")
+                       calibration=calibration)
 
 
 def _sigmoid(x: float) -> float:

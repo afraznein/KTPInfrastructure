@@ -1166,6 +1166,60 @@
     {
       "capout_bonus_allies": 40,
       "capout_bonus_axis": 40,
+      "flag_facts_source": "carried from dod_railroad2_s10a 2026-10-20 -- identical control-point geometry, not yet observed in production",
+      "flags": [
+        {
+          "cap_points": 1,
+          "flag_index": 0,
+          "flag_name": "backalley",
+          "initial_owner": 0
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 1,
+          "flag_name": "railroad",
+          "initial_owner": 0
+        },
+        {
+          "cap_points": 2,
+          "flag_index": 2,
+          "flag_name": "Town Square",
+          "initial_owner": 0
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 3,
+          "flag_name": "ruined house",
+          "initial_owner": 0
+        },
+        {
+          "cap_points": 1,
+          "flag_index": 4,
+          "flag_name": "platform",
+          "initial_owner": 0
+        }
+      ],
+      "map_config": "railroad2",
+      "map_name": "dod_railroad2_s10b",
+      "scoring_delay_seconds": 30,
+      "tick_value_allies": [
+        1,
+        0,
+        0,
+        1,
+        2
+      ],
+      "tick_value_axis": [
+        0,
+        1,
+        1,
+        0,
+        2
+      ]
+    },
+    {
+      "capout_bonus_allies": 40,
+      "capout_bonus_axis": 40,
       "flag_facts_source": "observed 2026-09-22",
       "flags": [
         {
@@ -1482,5 +1536,5 @@
   ],
   "note": "tick values are HUD order; the configs store them reversed",
   "source": "KTPDoDServerConfig/serverfiles/dod/configs",
-  "source_revision": "699ce33f7e612dbd978c4a74034a6132742e75ae"
+  "source_revision": "575353ffd371f12f02764fb5a1861353c10d2d8b"
 }
