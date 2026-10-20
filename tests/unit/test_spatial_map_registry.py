@@ -19,7 +19,7 @@ POOL_MAPS_THE_SAY_LINE_HID = (
     "dod_lennon5_b1",
     "dod_armory_b7",
     "dod_saints2_b5e",
-    "dod_railroad2_s10a",
+    "dod_railroad2_s10b",
     "dod_solitude2",
 )
 
