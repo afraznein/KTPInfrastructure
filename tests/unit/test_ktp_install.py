@@ -872,3 +872,19 @@ def test_ls_remote_cannot_stop_and_ask_for_credentials(env, clone, tmp_path):
     assert recorded["GIT_ASKPASS"] == "", recorded.get("GIT_ASKPASS")
     assert recorded["SSH_ASKPASS"] == "", recorded.get("SSH_ASKPASS")
     assert "BatchMode=yes" in recorded["GIT_SSH_COMMAND"], recorded.get("GIT_SSH_COMMAND")
+def test_a_cache_whose_remote_is_gone_is_untrusted_not_a_pin(env, clone):
+    """refs/remotes/origin/main with no `origin` configured still CLAIMS to be a branch.
+
+    Calling that a pin would be the whole bug in miniature: a ref that asserts it is
+    somebody's main, with nobody left to contradict it.
+    """
+    install(env, env["c2"], "-")
+    was = git(clone, "rev-parse", "origin/main")
+    # `remote remove` takes its refs with it, so the ref is put back by hand -- which is
+    # the state a RENAMED remote leaves behind for real.
+    git(clone, "remote", "remove", "origin")
+    git(clone, "update-ref", "refs/remotes/origin/main", was)
+    p = run(env, "--report", "--repo", str(clone), "--against-ref", "refs/remotes/origin/main")
+    assert p.returncode == 2, p.stdout
+    assert states(p.stdout) == ["UNTRUSTED"], p.stdout
+    assert "nobody to ask" in p.stdout, p.stdout

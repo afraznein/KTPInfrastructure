@@ -143,7 +143,12 @@ _NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "",
 
 
 def remote_tracking(repo, ref):
-    """(remote, branch) when REF is this checkout's CACHE of a remote branch, else None."""
+    """(remote, branch) when REF is this checkout's CACHE of a remote branch, else None.
+
+    Untrusted when it is plainly a cache and no configured remote owns it: we know the
+    ref claims to be somebody's branch and we have nobody to ask, which is the one case
+    that must not be waved through as a pin.
+    """
     p = subprocess.run(["git", "-C", repo, "rev-parse", "--symbolic-full-name", ref],
                        capture_output=True, text=True)
     full = p.stdout.strip() if p.returncode == 0 else ""
@@ -156,7 +161,9 @@ def remote_tracking(repo, ref):
     for name in sorted(remotes, key=len, reverse=True):
         if rest.startswith(name + "/"):
             return name, rest[len(name) + 1:]
-    return None
+    raise Untrusted("%s resolves to %s, so it is a cache of a remote branch -- but no remote "
+                    "configured in %s owns it, so there is nobody to ask whether it is current. "
+                    "Pass the 40-hex sha you mean to compare against." % (ref, full, repo))
 
 
 def settle_baseline(repo, ref, ref_commit):

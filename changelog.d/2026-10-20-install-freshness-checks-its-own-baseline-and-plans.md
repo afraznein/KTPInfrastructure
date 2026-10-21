@@ -29,6 +29,9 @@ stale.
   is no `CURRENT` to misquote.
 - A 40-hex sha, a tag, `HEAD` or a local branch claims nothing, so it is run and **labelled**
   `pinned` rather than refused. That is also the offline route: name the commit you mean.
+- ⛔ **A `refs/remotes/` ref whose remote is no longer configured is `UNTRUSTED`, not a pin.**
+  It still CLAIMS to be somebody's branch, and there is nobody left to contradict it — which is
+  the whole bug in miniature. The state a renamed remote leaves behind.
 - ⚠️ **The `ls-remote` cannot stop and ask.** A git that cannot authenticate prompts, and this
   runs from a daily unit with no terminal to answer — and **a hung unit reads as `active`**, the
   one failure nothing in this estate alerts on. `GIT_TERMINAL_PROMPT=0`, empty `GIT_ASKPASS` and
