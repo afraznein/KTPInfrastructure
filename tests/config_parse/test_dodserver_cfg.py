@@ -156,6 +156,41 @@ def test_online_example_keeps_the_anti_lockout_settings():
         )
 
 
+def test_online_example_keeps_the_dead_player_camera_lock():
+    """Pins mp_forcechasecam, which only ever existed on the live servers.
+
+    The engine re-execs this file on every changelevel (mapchangecfgfile), so a
+    value set here is the only thing that re-asserts itself on the next map. The
+    two aim maps' per-map configs set mp_forcechasecam 0, and nothing else puts
+    it back until a .ready execs ktpbasic.cfg or the nightly restart -- so on a
+    map whose .ready config is missing, dead players free-roam and see live
+    positions. That is a competitive-integrity hole, not a cosmetic one.
+
+    1 is the dll default and the value every instance already carries at map
+    load, so this line is a no-op today and load-bearing the moment per-map
+    configs start executing again. Rebuilding a distributed config from this
+    file without it reopens the window silently.
+    """
+    example = CONFIG_ROOT / "online" / "dodserver.cfg.example"
+    if not example.exists():
+        pytest.skip("online/dodserver.cfg.example not present")
+
+    cvars = parse_dodserver_cfg(example)
+    assert cvars.get("mp_forcechasecam") == "1", (
+        f"online/dodserver.cfg.example: mp_forcechasecam should be '1', got "
+        f"{cvars.get('mp_forcechasecam')!r} -- it is what restores the "
+        f"dead-player camera lock on the next changelevel"
+    )
+
+    # Asserted on raw text too: the line is only re-applied per map because the
+    # engine re-execs this file, so losing mapchangecfgfile silently un-guards it.
+    assert 'mapchangecfgfile "dodserver.cfg"' in example.read_text(encoding="utf-8"), (
+        "online/dodserver.cfg.example: missing mapchangecfgfile -- without it "
+        "nothing re-execs this file on a map change and the camera-lock pin "
+        "above stops being a guard"
+    )
+
+
 
 AVG_LIMIT_PROFILES = [
     ("local", CONFIG_ROOT / "local" / "dodserver.cfg"),
