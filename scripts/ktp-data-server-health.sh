@@ -907,6 +907,19 @@ fi
 # detail line, but a new alert should not be the first thing to discover that a
 # migration was never applied.
 #
+# Third item, capture-half-reasonless: a half-stream that refused events and
+# recorded no reason for refusing them. That was the state of the whole estate
+# until migration 044 and its paired daemon shipped -- every rejection site
+# computed the reason as its dispatch status string, tested it to decide the
+# marker was refused, then threw it away -- so a lost half was pageable and not
+# diagnosable. This leg is the assertion that the fix is still in force.
+#
+# It is deliberately a SEPARATE query on the 044 column rather than a field
+# added to either of the two above: a missing column would fail that query
+# outright, and the reason for a loss must never be able to hide the loss. When
+# the column is absent this lookup degrades to one line saying the leg is
+# blind, which is honest and is not a page about a migration.
+#
 # >>> ktp-capture-half — extracted verbatim by tests/unit/test_health_capture_half.py
 CAPTURE_HALF_LOSS_WARN_PCT="${CAPTURE_HALF_LOSS_WARN_PCT:-50}"
 CAPTURE_HALF_LOSS_CLEAR_PCT="${CAPTURE_HALF_LOSS_CLEAR_PCT:-25}"
@@ -914,6 +927,7 @@ CAPTURE_HALF_MIN_EMITTED="${CAPTURE_HALF_MIN_EMITTED:-200}"
 CAPTURE_HALF_WINDOW_HOURS="${CAPTURE_HALF_WINDOW_HOURS:-24}"
 CAPTURE_HALF_GRACE_MINUTES="${CAPTURE_HALF_GRACE_MINUTES:-180}"
 CAPTURE_HALF_UNRECONCILED_WARN="${CAPTURE_HALF_UNRECONCILED_WARN:-1}"
+CAPTURE_HALF_REASONLESS_WARN="${CAPTURE_HALF_REASONLESS_WARN:-1}"
 # stdin:  half_key<TAB>event_type<TAB>emitted<TAB>received<TAB>accepted<TAB>
 #         rejected<TAB>gaps, one row per (half, event_type) (mysql -N -B).
 # stdout: ONE line, or nothing when no row cleared the floor:
@@ -940,6 +954,28 @@ capture_half_worst() {
 capture_half_unreconciled() {
     awk 'NF { n++; if (n <= 3) named = named (named ? ", " : "") $1 }
          END { printf "%d\t%s\n", n+0, named }'
+}
+# stdin:  half_key<TAB>event_type<TAB>rejected<TAB>reasons, one row per
+#         (half, event_type) that refused anything (mysql -N -B). mysql prints
+#         a NULL as the four characters NULL, so that spelling is as reasonless
+#         as an empty field and both have to count.
+# stdout: ONE line always, so a clean run reads as a measured zero rather than
+#         as no output: reasonless<TAB>rejecting<TAB>up to three named
+#         half-streams<TAB>the reason behind the most refused events. The last
+#         field is what puts a cause on the page instead of only in the row.
+capture_half_reasonless() {
+    awk -F'\t' '
+        NF >= 3 && $3+0 > 0 {
+            rejecting++
+            reason = (NF >= 4 ? $4 : "")
+            if (reason == "" || reason == "NULL") {
+                n++
+                if (n <= 3) named = named (named ? ", " : "") $1 "/" $2
+            } else if ($3+0 > bestrej) {
+                bestrej = $3+0; best = $1 "/" $2 " " reason
+            }
+        }
+        END { printf "%d\t%d\t%s\t%s\n", n+0, rejecting+0, named, best }'
 }
 # <<< ktp-capture-half
 
@@ -984,6 +1020,24 @@ if capture_half_pending=$(mysql hlstatsx -N -B -e "
     fi
 else
     down+=("capture-half-unreconciled=query-failed")
+fi
+
+if capture_half_reasons=$(mysql hlstatsx -N -B -e "
+        SELECT CONCAT(server_id, '/', match_id, '/', half), event_type,
+               SUM(daemon_rejected), MAX(COALESCE(rejection_reasons, ''))
+        FROM ktp_capture_health
+        WHERE event_time >= NOW() - INTERVAL ${CAPTURE_HALF_WINDOW_HOURS} HOUR
+          AND daemon_rejected > 0
+        GROUP BY server_id, match_id, half, event_type" 2>/dev/null); then
+    IFS=$'\t' read -r hnoreason hrejecting hnrnamed hnrworst \
+        <<< "$(printf '%s\n' "$capture_half_reasons" | capture_half_reasonless)"
+    echo "[$now_ts] capture rejection reasons: ${hnoreason} of ${hrejecting} rejecting half-stream(s) recorded no reason in ${CAPTURE_HALF_WINDOW_HOURS}h${hnrworst:+ -- worst: ${hnrworst}}"
+    key="capture-half-reasonless"
+    if latched "$key" "$hnoreason" "$CAPTURE_HALF_REASONLESS_WARN" "$CAPTURE_HALF_REASONLESS_WARN"; then
+        down+=("$key"); detail[$key]="${hnoreason} of ${hrejecting} rejecting half-stream(s) refused events and recorded no reason in ${CAPTURE_HALF_WINDOW_HOURS}h: ${hnrnamed} -- the loss is visible and undiagnosable, the state migration 044 and its paired daemon exist to end"
+    fi
+else
+    echo "[$now_ts] capture rejection reasons: lookup unavailable, so this leg is BLIND -- ktp_capture_health.rejection_reasons (migration 044) is the column it needs"
 fi
 
 # ---- Hit registration: do the server's own trace hits still turn into damage? ----
