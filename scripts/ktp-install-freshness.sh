@@ -3,8 +3,11 @@
 # holds -- `ktp-install --report --repo DIR --against-ref REF` -- and post only
 # when the answer CHANGES.
 #
-# ⛔ NOT INSTALLED OR ENABLED. This file and its unit pair are a proposal; see
-# docs/runbooks/INSTALL_FRESHNESS.md for what turning it on costs and requires.
+# ✅ LIVE on the data server: installed, timer enabled, running daily. Editing
+# this file is therefore a change to a running check, not to a proposal -- the
+# header here said "NOT INSTALLED OR ENABLED" for weeks after it was turned on,
+# which is the direction that gets a live unit broken by someone who believed it.
+# docs/runbooks/INSTALL_FRESHNESS.md carries what it costs and requires.
 #
 # Two failures in this estate decided the shape, and both invert the obvious
 # design:
@@ -94,8 +97,15 @@ head_sha="$(git -C "$FRESHNESS_REPO" rev-parse --verify "$AGAINST_REF^{commit}")
 # ── run the report ─────────────────────────────────────────────────────────
 # Its own status, not a pipeline's. `cmd | tee` reports tee's exit and every
 # drift would read as a clean 0.
+#
+# ⛔ The SHA, not "$AGAINST_REF". The report now checks a remote-tracking ref
+# against its remote itself, which is right for a hand run and wrong here: the
+# fetch above already settled this ref, and re-resolving it would let a merge
+# landing in the second between the two turn a healthy run red. Passing what we
+# fetched makes the comparison deterministic, and the agreement check below is
+# what proves the report used it.
 set +e
-"$KTP_INSTALL" --report --repo "$FRESHNESS_REPO" --against-ref "$AGAINST_REF" > "$REPORT_FILE.partial" 2>&1
+"$KTP_INSTALL" --report --repo "$FRESHNESS_REPO" --against-ref "$head_sha" > "$REPORT_FILE.partial" 2>&1
 report_rc=$?
 set -e
 if [ "$report_rc" -eq 2 ]; then
@@ -107,8 +117,30 @@ if [ "$report_rc" -eq 2 ]; then
 fi
 mv "$REPORT_FILE.partial" "$REPORT_FILE"
 
+# ── did the report compare against the sha THIS run fetched? ───────────────
+# The report states its baseline on line 1. Where it does, it must be the sha we
+# passed -- a disagreement means the rows describe neither commit, which is fatal.
+#
+# ⛔ An ABSENT header is not fatal, and the asymmetry is deliberate: an installed
+# ktp-install predating the baseline line cannot state one, and this script's own
+# fetch is what makes its comparison sound. Dying there would take out a check
+# that is working. It is recorded in the durable artifact instead, so a reader can
+# tell which kind of run produced the result rather than inferring it.
+baseline_stated=false
+_baseline_line="$(head -1 "$REPORT_FILE")"
+case "$_baseline_line" in
+    baseline[[:space:]]*)
+        _report_sha="$(printf '%s' "$_baseline_line" | awk '{print $3}')"
+        [ "$_report_sha" = "$head_sha" ] \
+            || die "report compared against $_report_sha, not the $head_sha this run fetched for $AGAINST_REF"
+        baseline_stated=true ;;
+esac
+
 # ── the non-fresh set, one "STATE<TAB>path" line each, sorted ──────────────
-awk '$1 != "OK" && $1 != "TEMPLATED" && $1 != "CURRENT" && $1 != "OTHER-REPO" \
+# The baseline header is not a row: left in, it enters the non-fresh set on the
+# first run and posts a transition about a line that is working as intended.
+awk 'NR == 1 && $1 == "baseline" { next }
+     $1 != "OK" && $1 != "TEMPLATED" && $1 != "CURRENT" && $1 != "OTHER-REPO" \
      { print $1 "\t" $2 }' "$REPORT_FILE" | sort > "$STATE_DIR/non-fresh.new"
 
 previous_exists=0
@@ -138,7 +170,8 @@ fi
 tally="$(awk '{print $1}' "$REPORT_FILE" | sort | uniq -c | awk '{printf "%s\"%s\":%s", (NR>1?",":""), $2, $1}')"
 cat > "$RESULT_FILE.partial" <<EOF
 {"iso":"$(date -Is)","epoch":$(date +%s),"ref":"$AGAINST_REF","ref_commit":"$head_sha",
- "report_exit":$report_rc,"non_fresh":$n_now,"entered":$(printf '%s' "$entered" | grep -c . || true),
+ "report_exit":$report_rc,"baseline_stated":$baseline_stated,"non_fresh":$n_now,
+ "entered":$(printf '%s' "$entered" | grep -c . || true),
  "left":$(printf '%s' "$left" | grep -c . || true),"tally":{$tally}}
 EOF
 mv "$RESULT_FILE.partial" "$RESULT_FILE"

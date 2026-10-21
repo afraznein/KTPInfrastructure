@@ -6,6 +6,7 @@
     ktp-install --file F --template --source-repo NAME --commit SHA --src PATH.example --dest PATH --expect-md5 MD5|-
     ktp-install --record-only --repo DIR --commit SHA --src PATH --dest PATH
     ktp-install --report [--repo DIR] [--against-ref REF]
+    ktp-install --plan --repo DIR --against-ref REF [--stage-dir DIR]
 
 The installed bytes are the git blob, so a file's md5 alone identifies the commit
 it came from; the manifest records which one. No version string is written into
@@ -53,6 +54,29 @@ rather than passing: a freshness check that could not run must not read as
 fresh, and neither may a source_path the ref no longer holds (SOURCE-GONE).
 A recorded commit the checkout does not carry is noted, not indicted: shallow
 clones are the normal CI checkout, so that must not read as a mismatch.
+
+🔴 AND THE BASELINE ITSELF IS CHECKED, because this is where the check was blind.
+A ref under refs/remotes/ is this checkout's CACHE of someone else's branch and
+nothing here keeps it current -- measured on the data server, the deploy
+checkout's `origin/main` was 214 commits behind GitHub's, so every row compared
+against it printed CURRENT and the report exited 0. A freshness check that must
+not read as fresh when it could not run must equally not read as fresh when it
+ran against last week. So the report asks the remote whether that ref is the
+branch's tip (`ls-remote`, no fetch, nothing written) and exits 2 saying both
+shas when it is not. A ref that tracks no remote -- a sha, a tag, HEAD, a local
+branch -- claims nothing, so it is accepted and LABELLED as the pin it is. The
+first line of every --against-ref run is that baseline and how it was settled;
+it is not a row, so a parser keying on the state token must skip it.
+
+--plan is the step this estate has never had. With a settled baseline it prints
+the ktp-install commands that would bring every STALE row up to REF and writes
+nothing at all. Each is pinned twice to bytes measured in that run -- --expect-md5
+to what is on the box, --blob-md5 to what REF holds -- so a plan that has gone
+out of date refuses rather than clobbers, and one staged from the wrong tree
+refuses too. It can only be reached through an authenticated baseline, so it
+cannot emit a plan that installs stale bytes as though they were current: the
+gate is what makes the deploy step safe to generate, which is why it came first.
+It covers the RECORDED estate only, and it is not a dependency order.
 """
 
 import argparse
@@ -61,6 +85,7 @@ import getpass
 import hashlib
 import os
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -102,6 +127,84 @@ def refuse_stale_source(ap, repo):
 
 class ManifestError(Exception):
     pass
+
+
+class Untrusted(Exception):
+    """A baseline we cannot stand behind. It is never allowed to become a freshness verdict."""
+
+
+_LS_REMOTE_TIMEOUT = 20
+# This runs from a daily unit as well as by hand, and a git that cannot authenticate
+# asks -- a credential prompt with no terminal to answer it. A hung unit reads as
+# `active` here, which is the one failure nothing in this estate alerts on, so every
+# way of asking is closed and the timeout is only the backstop.
+_NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "",
+              "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes"}
+
+
+def remote_tracking(repo, ref):
+    """(remote, branch) when REF is this checkout's CACHE of a remote branch, else None.
+
+    Untrusted when it is plainly a cache and no configured remote owns it: we know the
+    ref claims to be somebody's branch and we have nobody to ask, which is the one case
+    that must not be waved through as a pin.
+    """
+    p = subprocess.run(["git", "-C", repo, "rev-parse", "--symbolic-full-name", ref],
+                       capture_output=True, text=True)
+    full = p.stdout.strip() if p.returncode == 0 else ""
+    if not full.startswith("refs/remotes/"):
+        return None
+    rest = full[len("refs/remotes/"):]
+    remotes = subprocess.run(["git", "-C", repo, "remote"],
+                             capture_output=True, text=True).stdout.split()
+    # A branch name may contain a slash, so the remote is the longest configured prefix.
+    for name in sorted(remotes, key=len, reverse=True):
+        if rest.startswith(name + "/"):
+            return name, rest[len(name) + 1:]
+    raise Untrusted("%s resolves to %s, so it is a cache of a remote branch -- but no remote "
+                    "configured in %s owns it, so there is nobody to ask whether it is current. "
+                    "Pass the 40-hex sha you mean to compare against." % (ref, full, repo))
+
+
+def settle_baseline(repo, ref, ref_commit):
+    """Return how this baseline was established, or raise Untrusted saying why it cannot be.
+
+    A ref under refs/remotes/ is a local CACHE of someone else's branch and nothing
+    here keeps it current. Measured on the data server: `origin/main` in the deploy
+    checkout was 214 commits behind GitHub's, so every row compared against it read
+    CURRENT -- the check failing in the reassuring direction, which is worse than no
+    check. So the claim is checked against the remote instead of trusted. A ref that
+    tracks nothing claims nothing, and is reported as the pin it is.
+    """
+    tracking = remote_tracking(repo, ref)
+    if tracking is None:
+        return "pinned; tracks no remote, so CURRENT below means current with this commit only"
+    remote, branch = tracking
+    hint = ("Fetch it -- git -C %s fetch --no-tags --refmap= %s "
+            "+refs/heads/%s:refs/remotes/%s/%s -- and run again, or pass the 40-hex sha you mean "
+            "to compare against, which claims nothing about tracking."
+            % (repo, remote, branch, remote, branch))
+    try:
+        p = subprocess.run(["git", "-C", repo, "ls-remote", "--heads", remote, "refs/heads/" + branch],
+                           capture_output=True, text=True, timeout=_LS_REMOTE_TIMEOUT,
+                           env=dict(os.environ, **_NO_PROMPT))
+    except subprocess.TimeoutExpired:
+        raise Untrusted("cannot reach %s to confirm %s is its tip: ls-remote timed out after %ds. %s"
+                        % (remote, ref, _LS_REMOTE_TIMEOUT, hint))
+    if p.returncode != 0:
+        why = " ".join((p.stderr or "").split())[:200] or "git ls-remote exited %d" % p.returncode
+        raise Untrusted("cannot reach %s to confirm %s is its tip: %s. %s" % (remote, ref, why, hint))
+    tip = p.stdout.split("\t")[0].strip() if p.stdout.strip() else ""
+    if not tip:
+        raise Untrusted("%s has no refs/heads/%s, so %s caches a branch that no longer exists "
+                        "and cannot be anyone's idea of current. %s" % (remote, branch, ref, hint))
+    if tip != ref_commit:
+        # No distance: the tip is not in this object store, so any count would be a
+        # guess, and a number in a message rots anyway. Both shas are the evidence.
+        raise Untrusted("%s in %s is %s but %s's refs/heads/%s is %s: the baseline is not that "
+                        "branch, so every CURRENT below would mean current-with-a-stale-%s. %s"
+                        % (ref, repo, ref_commit, remote, branch, tip, branch, hint))
+    return "verified against %s refs/heads/%s @ %s" % (remote, branch, tip)
 
 
 def manifest_for_writes():
@@ -390,84 +493,208 @@ def blob_at(repo, ref, path):
     return md5_bytes(p.stdout), True
 
 
-def report(a):
-    ref_commit = this_repo = None
-    if a.against_ref:
-        if not a.repo:
-            print("UNTRUSTED  --against-ref needs --repo: the ref is resolved there")
-            return 2
-        p = subprocess.run(["git", "-C", a.repo, "rev-parse", "--verify", a.against_ref + "^{commit}"],
-                           capture_output=True)
-        if p.returncode != 0:
-            print("UNTRUSTED  %s does not resolve in %s" % (a.against_ref, a.repo))
-            return 2
-        ref_commit = p.stdout.decode().strip()
-        this_repo = repo_name(a.repo)
+def baseline(a):
+    """(ref_commit, this_repo, how) for --against-ref. Untrusted when it cannot be established."""
+    if not a.repo:
+        raise Untrusted("--against-ref needs --repo: the ref is resolved there")
+    p = subprocess.run(["git", "-C", a.repo, "rev-parse", "--verify", a.against_ref + "^{commit}"],
+                       capture_output=True)
+    if p.returncode != 0:
+        raise Untrusted("%s does not resolve in %s" % (a.against_ref, a.repo))
+    ref_commit = p.stdout.decode().strip()
+    return ref_commit, repo_name(a.repo), settle_baseline(a.repo, a.against_ref, ref_commit)
 
+
+def classify(a, r, path, ref_commit, this_repo):
+    """(state, extra, ref_md5, installed_md5) for one row.
+
+    The file is hashed once and that hash is returned, so the state and the md5 a
+    caller prints beside it can never come from two different reads.
+    """
+    now = md5_file(path)
+    if now == "-":
+        state = "MISSING"
+    elif now != r["md5"]:
+        state = "DRIFT"
+    else:
+        state = "TEMPLATED" if is_template(r["source_path"]) else "OK"
+    extra = ""
+    ref_md5 = None
+    if a.repo and state in ("OK", "TEMPLATED"):
+        # A commit this checkout does not carry cannot indict the row. Shallow
+        # clones and rows from other repos both land here, and calling either
+        # SOURCE-MISMATCH turns "I cannot check" into "it is wrong".
+        have = subprocess.run(["git", "-C", a.repo, "cat-file", "-e", r["source_commit"] + "^{commit}"],
+                              capture_output=True)
+        if have.returncode != 0:
+            extra = "  (recorded commit not in this checkout; provenance not compared)"
+        else:
+            p = subprocess.run(["git", "-C", a.repo, "show", "%s:%s" % (r["source_commit"], r["source_path"])],
+                               capture_output=True)
+            if p.returncode != 0:
+                state, extra = "SOURCE-MISMATCH", "  (recorded commit has no such path)"
+            elif state == "OK" and md5_bytes(p.stdout) != r["md5"]:
+                state, extra = "SOURCE-MISMATCH", "  (recorded commit does not hold these bytes)"
+    if ref_commit and state in ("OK", "TEMPLATED"):
+        # Row names its repo as a bare name or owner/name; compare the tail.
+        if r["source_repo"].rsplit("/", 1)[-1] != this_repo:
+            state, extra = "OTHER-REPO", "  (not %s; freshness not compared)" % this_repo
+        elif state == "TEMPLATED":
+            extra = "  (filled template; its bytes cannot equal any blob)"
+        else:
+            want, present = blob_at(a.repo, ref_commit, r["source_path"])
+            if not present:
+                state = "SOURCE-GONE"
+                extra = "  (%s no longer holds %s)" % (a.against_ref, r["source_path"])
+            elif want != r["md5"]:
+                state = "STALE"
+                ref_md5 = want
+                extra = "  (%s holds %s, installed %s)" % (a.against_ref, want[:12],
+                                                           r["source_commit"][:12])
+            else:
+                state = "CURRENT"
+                ref_md5 = want
+    return state, extra, ref_md5, now
+
+
+def last_rows():
+    """Every manifest that applies here, collapsed to each path's last row. Untrusted on any doubt."""
     paths = [p for p in manifests_for_report() if os.path.exists(p)]
     if not paths:
-        print("UNTRUSTED  no manifest at %s" % " or ".join(manifests_for_report()))
-        return 2
+        raise Untrusted("no manifest at %s" % " or ".join(manifests_for_report()))
     last = {}
     for mp in paths:
         try:
             rows = read_manifest(mp)
         except ManifestError as e:
-            print("UNTRUSTED  %s" % e)
-            return 2
+            raise Untrusted(str(e))
         if not rows:
-            print("UNTRUSTED  %s has a header and no rows" % mp)
-            return 2
+            raise Untrusted("%s has a header and no rows" % mp)
         for r in rows:
             last[r["installed_path"]] = r
+    return last
+
+
+def report(a):
+    ref_commit = this_repo = None
+    if a.against_ref:
+        try:
+            ref_commit, this_repo, how = baseline(a)
+        except Untrusted as e:
+            print("UNTRUSTED  %s" % e)
+            return 2
+        # First line, and it is the point of the whole report: a CURRENT below is only
+        # as good as what it was compared to, so the output says what that was and how
+        # we know. ⚠️ It is not a row -- a parser keying on the state token must skip it.
+        print("baseline        %s  %s  (%s)" % (a.against_ref, ref_commit, how))
+
+    try:
+        last = last_rows()
+    except Untrusted as e:
+        print("UNTRUSTED  %s" % e)
+        return 2
     bad = 0
     for path in sorted(last):
         r = last[path]
-        now = md5_file(path)
-        if now == "-":
-            state = "MISSING"
-        elif now != r["md5"]:
-            state = "DRIFT"
-        else:
-            state = "TEMPLATED" if is_template(r["source_path"]) else "OK"
-        extra = ""
-        if a.repo and state in ("OK", "TEMPLATED"):
-            # A commit this checkout does not carry cannot indict the row. Shallow
-            # clones and rows from other repos both land here, and calling either
-            # SOURCE-MISMATCH turns "I cannot check" into "it is wrong".
-            have = subprocess.run(["git", "-C", a.repo, "cat-file", "-e", r["source_commit"] + "^{commit}"],
-                                  capture_output=True)
-            if have.returncode != 0:
-                extra = "  (recorded commit not in this checkout; provenance not compared)"
-            else:
-                p = subprocess.run(["git", "-C", a.repo, "show", "%s:%s" % (r["source_commit"], r["source_path"])],
-                                   capture_output=True)
-                if p.returncode != 0:
-                    state, extra = "SOURCE-MISMATCH", "  (recorded commit has no such path)"
-                elif state == "OK" and md5_bytes(p.stdout) != r["md5"]:
-                    state, extra = "SOURCE-MISMATCH", "  (recorded commit does not hold these bytes)"
-        if ref_commit and state in ("OK", "TEMPLATED"):
-            # Row names its repo as a bare name or owner/name; compare the tail.
-            if r["source_repo"].rsplit("/", 1)[-1] != this_repo:
-                state, extra = "OTHER-REPO", "  (not %s; freshness not compared)" % this_repo
-            elif state == "TEMPLATED":
-                extra = "  (filled template; its bytes cannot equal any blob)"
-            else:
-                want, present = blob_at(a.repo, ref_commit, r["source_path"])
-                if not present:
-                    state = "SOURCE-GONE"
-                    extra = "  (%s no longer holds %s)" % (a.against_ref, r["source_path"])
-                elif want != r["md5"]:
-                    state = "STALE"
-                    extra = "  (%s holds %s, installed %s)" % (a.against_ref, want[:12],
-                                                               r["source_commit"][:12])
-                else:
-                    state = "CURRENT"
+        state, extra, _, now = classify(a, r, path, ref_commit, this_repo)
         if state not in FRESH_OK:
             bad += 1
-        print("%-15s %s  %s  %s@%s:%s%s" % (state, path, now, r["source_repo"], r["source_commit"][:12],
-                                            r["source_path"], extra))
+        print("%-15s %s  %s  %s@%s:%s%s" % (state, path, now, r["source_repo"],
+                                            r["source_commit"][:12], r["source_path"], extra))
     return 1 if bad else 0
+
+
+def _stage_name(stage_dir, dest):
+    """A stage path per destination, so two files sharing a basename cannot collide."""
+    return os.path.join(stage_dir, dest.lstrip("/").replace("/", "_"))
+
+
+def plan(a):
+    """Emit the install commands that would bring every STALE row up to REF.
+
+    This is the deploy step the estate has never had -- not because a puller is hard
+    but because nothing could say WHAT is owed. /usr/local/bin is installed by a
+    person remembering to copy a file, and the commands were written out by hand
+    each time, which is where the mistakes were: one deploy packet named a PR's
+    merge sha as --commit rather than the ref the freshness guard would compare
+    against, which refuses on every later run.
+
+    It writes nothing. Every command it emits is pinned twice to bytes measured in
+    this run -- --expect-md5 to what is on the box, --blob-md5 to what REF holds --
+    so a plan that has gone out of date refuses instead of clobbering, and one
+    staged out of the wrong tree refuses too. It can go stale; it cannot install the
+    wrong thing.
+
+    It is reachable only through a baseline that was checked against its remote, so
+    it cannot emit a plan that installs stale bytes as though they were current.
+    That ordering is the whole point: the gate is what makes the step safe to
+    generate.
+
+    Exit 0 nothing owed, 1 a plan was emitted, 2 untrusted. 1 is the productive
+    outcome here, which inverts the usual reading -- and never pipe it, because a
+    pipeline reports the last command's status.
+    """
+    try:
+        ref_commit, this_repo, how = baseline(a)
+        last = last_rows()
+    except Untrusted as e:
+        print("UNTRUSTED  %s" % e)
+        return 2
+
+    stage = a.stage_dir or os.path.join(os.path.expanduser("~"), ".ktp", "stage")
+    repo = os.path.abspath(a.repo)
+    todo, refused = [], []
+    for path in sorted(last):
+        r = last[path]
+        state, extra, ref_md5, now = classify(a, r, path, ref_commit, this_repo)
+        if state == "STALE":
+            todo.append((path, r, ref_md5, now))
+        elif state not in FRESH_OK:
+            refused.append((path, state, extra.strip() or "-"))
+
+    q = shlex.quote
+    print("# ktp-install plan  %s  %s" % (socket.gethostname(), time.strftime("%Y-%m-%dT%H:%M:%S%z")))
+    print("# baseline %s  %s  (%s)" % (a.against_ref, ref_commit, how))
+    print("#")
+    print("# Generated rather than written out by hand, and it writes nothing itself. Every")
+    print("# command below is pinned twice to bytes measured just now:")
+    print("#   --expect-md5  what is on this box, so a plan gone stale REFUSES instead of clobbering")
+    print("#   --blob-md5    what %s holds, so a file staged from the wrong tree REFUSES too" % a.against_ref)
+    print("# A plan can go out of date. It cannot install the wrong thing.")
+    print("#")
+    print("# The git show reads %s at a SHA, not at a branch, so how stale that tree's refs are" % repo)
+    print("# does not matter: those bytes either hash to --blob-md5 or the install refuses.")
+    print("#")
+    print("# NOT A DEPENDENCY ORDER. This is the manifest's order. An import-level dependency")
+    print("#   between two of these files is not derivable here, and one is known --")
+    print("#   ktp-verify-deploy imports ktp_script_freshness at module level, so the guard")
+    print("#   installs first. docs/runbooks/INSTALL_FRESHNESS.md carries the ones we know.")
+    print("# RECORDED ESTATE ONLY. A file nobody installed with ktp-install is in no manifest and")
+    print("#   cannot be stale here; docs/LIVE_SCRIPT_INVENTORY.md is that half.")
+    print("")
+    if not todo:
+        print("# nothing owed: no recorded path is behind %s" % a.against_ref)
+        print("")
+    else:
+        print("mkdir -p %s" % q(stage))
+        print("")
+    for path, r, ref_md5, now in todo:
+        src = r["source_path"]
+        stage_file = _stage_name(stage, path)
+        print("# %s  STALE  (installed %s from %s; %s holds %s)"
+              % (path, now[:12], r["source_commit"][:12], a.against_ref, ref_md5[:12]))
+        print("git -C %s show %s:%s > %s" % (q(repo), ref_commit, q(src), q(stage_file)))
+        print("ktp-install --file %s --source-repo %s --commit %s \\"
+              % (q(stage_file), q(r["source_repo"]), ref_commit))
+        print("            --src %s --dest %s \\" % (q(src), q(path)))
+        print("            --expect-md5 %s --blob-md5 %s" % (now, ref_md5))
+        print("")
+    if refused:
+        print("# NOT PLANNED -- each needs a decision a generator must not make for you:")
+        for path, state, why in refused:
+            print("#   %-15s %s  %s" % (state, path, why))
+        print("")
+    return 1 if todo else 0
 
 
 def main(argv=None):
@@ -489,13 +716,30 @@ def main(argv=None):
     ap.add_argument("--record-only", action="store_true",
                     help="record that the file already at --dest is the blob at --commit, copying "
                          "nothing; refuses unless the bytes on disk are that blob")
+    ap.add_argument("--plan", action="store_true",
+                    help="with --repo --against-ref: print the install commands that would bring "
+                         "every STALE row up to that ref, and write nothing")
+    ap.add_argument("--stage-dir",
+                    help="with --plan: where the plan stages blobs (default ~/.ktp/stage)")
     a = ap.parse_args(argv)
+    if a.plan:
+        for other in ("report", "record_only"):
+            if getattr(a, other):
+                ap.error("--plan and --%s are different jobs; run them separately"
+                         % other.replace("_", "-"))
+        if not a.against_ref:
+            ap.error("--plan needs --against-ref: a plan is what the gap to a ref IS, and without "
+                     "one there is nothing to be behind")
+        return plan(a)
+    if a.stage_dir:
+        ap.error("--stage-dir is a --plan flag")
     if a.report:
         if a.record_only:
             ap.error("--report and --record-only are different jobs; run them separately")
         return report(a)
     if a.against_ref:
-        ap.error("--against-ref is a --report flag; an install or a record already names its commit")
+        ap.error("--against-ref is a --report flag (and a --plan flag); an install or a record "
+                 "already names its commit")
     if a.record_only:
         missing = [n for n in ("commit", "src", "dest") if getattr(a, n) is None]
         if missing:

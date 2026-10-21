@@ -1,4 +1,4 @@
-# ⛔ NOT INSTALLED OR ENABLED — proposal. docs/runbooks/INSTALL_FRESHNESS.md.
+# ✅ LIVE: installed and enabled on the data server. docs/runbooks/INSTALL_FRESHNESS.md.
 [Unit]
 Description=Compare what is installed on this host to what the repo holds
 Documentation=https://github.com/afraznein/KTPInfrastructure

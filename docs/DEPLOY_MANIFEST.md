@@ -177,6 +177,84 @@ edited, not as stale. A ref that does not resolve, or `--against-ref` without
 `--repo`, is `UNTRUSTED` (2): a freshness check that could not run must not read
 as fresh.
 
+### The baseline is checked, because this is where the check was blind
+
+🔴 **A ref under `refs/remotes/` is this checkout's CACHE of someone else's
+branch, and nothing on a box keeps it current.** Measured on the data server:
+the deploy checkout's `origin/main` was **214 commits behind** GitHub's, so every
+row compared against it printed `CURRENT` and the report exited 0. The gate was
+reporting a healthy estate *because* its own reference had gone stale — the
+failure ran in the reassuring direction, and nothing contradicted it.
+
+🔑 **The rule the rest of this file already states, applied one level up: a check
+that must not read as fresh when it could not run must equally not read as fresh
+when it ran against last week.** So `--against-ref` asks the remote whether that
+ref is the branch's tip (`git ls-remote`; **no fetch, nothing written**) and
+exits `2` naming **both** shas when it is not.
+
+| the ref you passed | what happens |
+|---|---|
+| `origin/main`, or any `refs/remotes/<remote>/<branch>` | checked against the remote; `UNTRUSTED` (2) if it is not the tip, unreachable, or caches a branch that is gone |
+| a 40-hex sha, a tag, `HEAD`, a local branch | run and **labelled** `pinned` — it claims nothing, so refusing it would be noise, but a `CURRENT` against it must not be quotable as *current with main* |
+
+**The first line of every `--against-ref` run is that baseline**, naming the ref,
+its resolved sha and how it was settled. ⚠️ **It is a header, not a row** — a
+parser keying on the state token must skip it (`scripts/ktp-install-freshness.sh`
+does, and refuses outright if it is missing, since an installed copy predating
+this check reports `CURRENT` against anything).
+
+⛔ **This does not make a fetch pointless.** The check tells you the reference is
+stale; only a fetch makes it current. The two together are what turn *"it says
+CURRENT"* into something worth quoting.
+
+## Planning the installs: `ktp-install --plan --repo DIR --against-ref REF`
+
+**The deploy step this estate has never had.** Not because a puller is hard —
+because nothing could say *what* is owed. `/usr/local/bin` is installed by a
+person remembering to copy a file, and the commands were written out by hand each
+time, which is where the mistakes were: one deploy packet named a PR's merge sha
+as `--commit` rather than the ref the freshness guard would compare against,
+which refuses on every later run.
+
+```bash
+ktp-install --plan --repo /opt/ktp-infra --against-ref origin/main
+```
+
+It **writes nothing**. It prints the `ktp-install` commands that would bring every
+`STALE` row up to `REF`, each pinned twice to bytes measured in that run:
+
+- `--expect-md5` to what is on the box, so **a plan that has gone out of date
+  refuses instead of clobbering** — including a hotfix someone applied after you
+  generated it;
+- `--blob-md5` to what `REF` holds, so **a file staged out of the wrong tree
+  refuses too**.
+
+A plan can go out of date. It cannot install the wrong thing.
+
+It is reachable **only** through a baseline that was checked against its remote,
+so it cannot emit commands that install a stale commit's bytes as though they
+were current. 🔑 **That ordering is the point and it is the operator's own
+sequencing ruling: the gate is what makes the deploy step safe to generate.**
+
+The emitted `git show` reads the checkout **at a sha, not at a branch**, so how
+stale that tree's refs are does not matter — those bytes either hash to
+`--blob-md5` or the install refuses. That is why the plan may be generated from
+`/opt/ktp-infra` even though installing *from* it is refused.
+
+Exit `0` nothing owed, `1` a plan was emitted, `2` untrusted. ⚠️ **`1` is the
+productive outcome here**, which inverts the usual reading — and ⛔ **never pipe
+it**: a pipeline reports the last command's status.
+
+⛔ **Two things it deliberately does not do.** It is **not a dependency order** —
+an import-level dependency between two planned files is not derivable from a
+manifest, and the ones we know are named in
+`docs/runbooks/INSTALL_FRESHNESS.md`. And it covers the **recorded estate only**:
+a file nobody installed with `ktp-install` is in no manifest and cannot be stale
+here, which is `docs/LIVE_SCRIPT_INVENTORY.md`'s half. `DRIFT`, `MISSING`,
+`SOURCE-GONE` and `SOURCE-MISMATCH` rows are listed under `NOT PLANNED` with
+their reason rather than turned into commands — each needs a decision a generator
+must not make.
+
 ⚠️ **A shallow clone cannot answer the provenance leg.** `--repo` also re-checks
 each row against its *recorded* commit, and a commit the checkout does not carry
 is noted rather than counted -- `actions/checkout` is shallow by default, so
