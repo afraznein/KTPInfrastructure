@@ -105,8 +105,10 @@ def test_fetch_refreshes_the_reference_and_moves_nothing_else(estate):
 
     result = json.loads((estate["tmp"] / "state" / "last-run.json").read_text())
     assert result["ref_commit"] == estate["b"]
+    # The SHA it fetched, not "origin/main": the report re-resolving a symbolic ref
+    # would let a merge landing in the second between the two turn this run red.
     argv = (estate["tmp"] / "argv.log").read_text().split()
-    assert argv == ["--report", "--repo", str(co), "--against-ref", "origin/main"]
+    assert argv == ["--report", "--repo", str(co), "--against-ref", estate["b"]]
 
 
 def test_a_local_branch_is_not_moved_even_by_a_heads_refspec(estate):
@@ -152,3 +154,60 @@ def test_a_failed_fetch_writes_no_result(estate):
     assert "fetch failed" in r.stderr
     assert not (estate["tmp"] / "state" / "last-run.json").exists()
     assert git(co, "rev-parse", "origin/main") == estate["a"]
+# --- the baseline the report states, and what this script does about it -----
+#
+# The report now names the commit it compared against. This script fetched one,
+# so the two must agree -- and an installed ktp-install too old to state one at
+# all is the case that decides whether this is a refusal or a record. It is a
+# record: that tool's comparison is sound here BECAUSE of the fetch above, so
+# dying would take out a working check over missing paperwork.
+
+
+def _fake(estate, body):
+    """Replace the stub ktp-install with one that prints `body` before its rows."""
+    f = estate["fake"]
+    f.write_text("#!/bin/bash\n"
+                 "# accepts --against-ref\n"      # the script's preflight greps for this
+                 'printf \'%s\\n\' "$@" > "$ARGV_LOG"\n'
+                 + body +
+                 "printf 'CURRENT         /usr/local/bin/a  0  "
+                 "KTPInfrastructure@0:scripts/a\\n'\nexit 0\n")
+    f.chmod(0o755)
+
+
+def test_a_stated_baseline_that_matches_is_recorded_as_stated(estate):
+    _fake(estate, 'printf \'baseline        %s  %s  (verified)\\n\' "$5" "$5"\n')
+    r = run(estate)
+    assert r.returncode == 0, r.stderr
+    result = json.loads((estate["tmp"] / "state" / "last-run.json").read_text())
+    assert result["baseline_stated"] is True, result
+
+
+def test_a_report_with_no_baseline_line_still_runs_and_says_so(estate):
+    """An older installed ktp-install cannot state one. That is recorded, not fatal."""
+    r = run(estate)
+    assert r.returncode == 0, r.stderr
+    result = json.loads((estate["tmp"] / "state" / "last-run.json").read_text())
+    assert result["baseline_stated"] is False, result
+
+
+def test_a_baseline_naming_a_different_commit_is_fatal(estate):
+    """Then the rows describe neither commit, which no amount of recording fixes."""
+    _fake(estate, "printf 'baseline        %s  %s  (verified)\\n' deadbeef "
+                  "0000000000000000000000000000000000000000\n")
+    r = run(estate)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "not the %s this run fetched" % estate["b"] in r.stderr, r.stderr
+    assert not (estate["tmp"] / "state" / "last-run.json").exists()
+
+
+def test_the_baseline_header_does_not_enter_the_non_fresh_set(estate):
+    """Left in, it enters on the first run and posts a transition about a line that
+    is working as intended -- and then never leaves."""
+    _fake(estate, 'printf \'baseline        %s  %s  (verified)\\n\' "$5" "$5"\n')
+    r = run(estate)
+    assert r.returncode == 0, r.stderr
+    non_fresh = (estate["tmp"] / "state" / "non-fresh.txt").read_text()
+    assert "baseline" not in non_fresh, non_fresh
+    result = json.loads((estate["tmp"] / "state" / "last-run.json").read_text())
+    assert result["non_fresh"] == 0, result

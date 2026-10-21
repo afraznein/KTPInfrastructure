@@ -70,6 +70,18 @@ def install(env, commit, expect, *extra, dest_name="tool.sh", src="scripts/tool.
                "--dest", str(env["dest"] / dest_name), "--expect-md5", expect, *extra)
 
 
+def after_baseline(p):
+    """Stdout with the --against-ref baseline line removed.
+
+    The baseline is a header, not a row: it says what a CURRENT below is current
+    WITH, which is the whole point of having it. Tests assert on the rows.
+    """
+    lines = p.stdout.splitlines(keepends=True)
+    if lines and lines[0].startswith("baseline "):
+        lines = lines[1:]
+    return "".join(lines)
+
+
 def rows(env, path=None):
     lines = (path or env["manifest"]).read_text().splitlines()
     assert lines[0] == HEADER
@@ -228,10 +240,10 @@ def test_template_flag_and_example_source_must_agree(env):
 def test_report_ok_then_drift_then_missing(env):
     install(env, env["c1"], "-")
     p = run(env, "--report")
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
     (env["dest"] / "tool.sh").write_bytes(b"#!/bin/bash\necho hotfix\n")
     p = run(env, "--report")
-    assert p.returncode == 1 and p.stdout.startswith("DRIFT"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("DRIFT"), p.stdout
     os.unlink(env["dest"] / "tool.sh")
     p = run(env, "--report")
     assert p.returncode == 1 and p.stdout.startswith("MISSING"), p.stdout
@@ -245,7 +257,7 @@ def test_report_labels_templated_not_drift_and_still_catches_a_changed_fill(env)
     assert p.returncode == 0 and p.stdout.startswith("TEMPLATED"), p.stdout
     (env["dest"] / "conf.sh").write_bytes(b"SECRET=\"edited\"\n")
     p = run(env, "--report")
-    assert p.returncode == 1 and p.stdout.startswith("DRIFT"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("DRIFT"), p.stdout
 
 
 def test_report_uses_the_last_row_per_path(env):
@@ -300,7 +312,7 @@ def test_non_root_default_is_the_home_manifest_and_report_reads_it(env):
     assert rows(env, home_manifest)[0][1] == md5(V1)
     assert not env["manifest"].exists()
     p = run(env, "--report", extra_env=e)
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
 
 
 # --- --against-ref: "untouched since install" is not "current" --------------
@@ -313,22 +325,22 @@ def test_non_root_default_is_the_home_manifest_and_report_reads_it(env):
 def test_report_alone_says_ok_while_against_ref_says_stale(env):
     install(env, env["c1"], "-")
     p = run(env, "--report")
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", env["c2"])
-    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("STALE"), p.stdout
     assert md5(V2)[:12] in p.stdout and env["c1"][:12] in p.stdout
 
 
 def test_against_ref_says_current_when_the_installed_bytes_are_the_refs(env):
     install(env, env["c2"], "-")
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", env["c2"])
-    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("CURRENT"), p.stdout
 
 
 def test_against_ref_accepts_a_symbolic_ref(env):
     install(env, env["c1"], "-")
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("STALE"), p.stdout
 
 
 def test_an_unresolvable_ref_is_untrusted_not_fresh(env):
@@ -348,28 +360,28 @@ def test_a_source_path_the_ref_no_longer_holds_is_not_fresh(env):
     git(env["repo"], "rm", "-q", "scripts/tool.sh")
     git(env["repo"], "commit", "-q", "-m", "drop it")
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 1 and p.stdout.startswith("SOURCE-GONE"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("SOURCE-GONE"), p.stdout
 
 
 def test_a_row_from_another_repo_is_not_compared_and_does_not_fail(env):
     install(env, env["c2"], "-")
     env["manifest"].write_text(env["manifest"].read_text().replace("\trepo\t", "\tKTPElsewhere\t"))
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 0 and p.stdout.startswith("OTHER-REPO"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OTHER-REPO"), p.stdout
 
 
 def test_owner_qualified_source_repo_still_compares(env):
     install(env, env["c1"], "-")
     env["manifest"].write_text(env["manifest"].read_text().replace("\trepo\t", "\tafraznein/repo\t"))
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("STALE"), p.stdout
 
 
 def test_freshness_never_masks_drift(env):
     install(env, env["c2"], "-")
     (env["dest"] / "tool.sh").write_bytes(b"#!/bin/bash\necho hotfix\n")
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 1 and p.stdout.startswith("DRIFT"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("DRIFT"), p.stdout
 
 
 def test_against_ref_is_refused_on_an_install(env):
@@ -383,11 +395,11 @@ def test_a_recorded_commit_this_checkout_lacks_is_not_an_indictment(env, tmp_pat
     install(env, env["c2"], "-")
     env["manifest"].write_text(env["manifest"].read_text().replace(env["c2"], "b" * 40))
     p = run(env, "--report", "--repo", str(env["repo"]))
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
     assert "not in this checkout" in p.stdout, p.stdout
     # and it still reaches a freshness verdict rather than stopping there
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("CURRENT"), p.stdout
 
 
 # --- --record-only: a file that is correct but unrecorded ------------------
@@ -444,9 +456,9 @@ def test_record_only_then_report_says_ok_and_against_ref_says_current(env):
     place(env, V2)
     assert record(env, env["c2"]).returncode == 0
     p = run(env, "--report")
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 0 and p.stdout.startswith("CURRENT"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("CURRENT"), p.stdout
 
 
 def test_recording_an_old_commit_is_reported_stale_not_current(env):
@@ -455,7 +467,7 @@ def test_recording_an_old_commit_is_reported_stale_not_current(env):
     place(env, V1)
     assert record(env, env["c1"]).returncode == 0
     p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
-    assert p.returncode == 1 and p.stdout.startswith("STALE"), p.stdout
+    assert p.returncode == 1 and after_baseline(p).startswith("STALE"), p.stdout
 
 
 def test_record_only_refuses_a_missing_file(env):
@@ -539,7 +551,7 @@ def test_record_only_clears_a_drift_row_only_when_the_bytes_are_the_blob(env):
     assert run(env, "--report").returncode == 1
     assert record(env, env["c2"]).returncode == 0
     p = run(env, "--report")
-    assert p.returncode == 0 and p.stdout.startswith("OK"), p.stdout
+    assert p.returncode == 0 and after_baseline(p).startswith("OK"), p.stdout
 
 
 def test_record_only_refuses_an_unreadable_manifest(env):
@@ -619,3 +631,215 @@ def test_a_normal_install_still_works_with_the_guard_in_place(env):
     assert p.returncode == 0, p.stderr
     assert REFUSAL not in p.stderr
     assert (env["dest"] / "tool.sh").read_bytes() == V1
+# --- the baseline itself: what a CURRENT is current WITH -------------------
+#
+# The defect these hold open was measured, not imagined. On the data server the
+# deploy checkout's `origin/main` was 214 commits behind GitHub's, so every row
+# compared against it printed CURRENT and the report exited 0 -- a freshness
+# check failing in the reassuring direction, which is worse than no check. A ref
+# under refs/remotes/ is a CACHE of someone else's branch and nothing on a box
+# keeps it current, so the claim is checked rather than trusted. Both directions
+# here: a guard that cannot pass is decoration, and one that cannot fire is too.
+
+
+def _clone_of(src, dst):
+    subprocess.run(["git", "clone", "-q", str(src), str(dst)], check=True, capture_output=True)
+
+
+def states(out):
+    """The state token of each ROW, skipping the baseline header and comments."""
+    return [l.split()[0] for l in out.splitlines()
+            if l.strip() and not l.startswith(("baseline ", "#"))]
+
+
+@pytest.fixture
+def clone(env, tmp_path):
+    """A checkout whose origin/main is a cache -- the shape every live box has."""
+    git(env["repo"], "branch", "-M", "main")
+    c = tmp_path / "clone"
+    _clone_of(env["repo"], c)
+    return c
+
+
+def test_a_cached_baseline_that_is_behind_is_untrusted_and_reaches_no_row(env, clone):
+    """The measured failure, in miniature: the clone's origin/main is a week old.
+
+    Nothing about the rows changed -- the installed file really is c2's bytes --
+    so the old code printed CURRENT and exited 0 while the branch had moved on.
+    """
+    install(env, env["c2"], "-")
+    (env["repo"] / "scripts" / "tool.sh").write_bytes(b"#!/bin/bash\necho v3\n")
+    git(env["repo"], "commit", "-q", "-am", "v3")
+    p = run(env, "--report", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 2, p.stdout
+    assert states(p.stdout) == ["UNTRUSTED"], p.stdout
+    # Both shas, because a reader cannot settle this from one of them.
+    assert git(clone, "rev-parse", "origin/main") in p.stdout, p.stdout
+    assert git(env["repo"], "rev-parse", "main") in p.stdout, p.stdout
+    assert "fetch" in p.stdout, p.stdout
+
+
+def test_the_same_report_runs_when_the_cache_is_the_remotes_tip(env, clone):
+    """The control. A guard that cannot pass would just be the check turned off."""
+    install(env, env["c2"], "-")
+    p = run(env, "--report", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 0, p.stdout
+    head = p.stdout.splitlines()[0]
+    assert head.startswith("baseline") and "origin/main" in head, head
+    assert "verified against origin refs/heads/main" in head, head
+    assert states(p.stdout) == ["CURRENT"], p.stdout
+
+
+def test_a_ref_that_tracks_no_remote_still_runs_and_says_so(env):
+    """A sha, a tag or HEAD claims nothing, so refusing it would be noise. But a
+    CURRENT against it must not be quotable as current with main, so it is
+    labelled rather than refused."""
+    install(env, env["c2"], "-")
+    p = run(env, "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 0, p.stdout
+    assert "pinned" in p.stdout.splitlines()[0], p.stdout
+    assert states(p.stdout) == ["CURRENT"], p.stdout
+
+
+def test_a_remote_we_cannot_reach_is_untrusted_not_fresh(env, clone, tmp_path):
+    """Offline is the case that decides whether this guard is worth having: the
+    reassuring answer is always available, so it has to be the one we refuse."""
+    install(env, env["c2"], "-")
+    git(clone, "remote", "set-url", "origin", str(tmp_path / "no-such-repo"))
+    p = run(env, "--report", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 2, p.stdout
+    assert states(p.stdout) == ["UNTRUSTED"], p.stdout
+    assert "cannot reach origin" in p.stdout, p.stdout
+
+
+def test_a_cached_branch_the_remote_no_longer_holds_is_untrusted(env, clone):
+    install(env, env["c2"], "-")
+    git(env["repo"], "checkout", "-q", "-b", "elsewhere")
+    git(env["repo"], "branch", "-q", "-D", "main")
+    p = run(env, "--report", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 2, p.stdout
+    assert states(p.stdout) == ["UNTRUSTED"], p.stdout
+    assert "no refs/heads/main" in p.stdout, p.stdout
+
+
+def test_the_baseline_header_is_only_printed_for_a_freshness_run(env):
+    """--report alone answers a different question and has no baseline to state."""
+    install(env, env["c2"], "-")
+    p = run(env, "--report")
+    assert p.returncode == 0 and not p.stdout.startswith("baseline"), p.stdout
+
+
+# --- --plan: the install step, as text that refuses rather than clobbers ----
+#
+# The estate had no deploy step at all; /usr/local/bin was a person remembering
+# to copy a file, and the commands were hand-written each time. These hold the
+# plan to the two properties that make it safe to paste: it is executable, and
+# it cannot install anything but the bytes it measured.
+
+
+def shim(env, tmp_path):
+    """A PATH where the bare name `ktp-install` resolves, as it does on a box."""
+    d = tmp_path / "shim"
+    d.mkdir(exist_ok=True)
+    sh = d / "ktp-install"
+    sh.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, TOOL))
+    os.chmod(sh, 0o755)
+    return str(d)
+
+
+def run_plan(env, text, tmp_path):
+    e = dict(env["env"], PATH=shim(env, tmp_path) + os.pathsep + env["env"]["PATH"])
+    return subprocess.run(["bash", "-e"], input=text, env=e, capture_output=True, text=True)
+
+
+def test_a_plan_is_emitted_for_a_stale_row_and_running_it_makes_it_current(env, clone, tmp_path):
+    """The whole point, end to end. Asserting the plan's SHAPE would prove nothing
+    about whether it installs anything -- so the plan is run, and the verdict is
+    the report afterwards."""
+    install(env, env["c1"], "-")
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main",
+            "--stage-dir", str(tmp_path / "stage"))
+    assert p.returncode == 1, p.stdout + p.stderr
+    assert "--expect-md5 %s" % md5(V1) in p.stdout, p.stdout
+    assert "--blob-md5 %s" % md5(V2) in p.stdout, p.stdout
+
+    r = run_plan(env, p.stdout, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == V2
+    after = run(env, "--report", "--repo", str(clone), "--against-ref", "origin/main")
+    assert after.returncode == 0 and states(after.stdout) == ["CURRENT"], after.stdout
+
+
+def test_a_plan_that_has_gone_out_of_date_refuses_instead_of_clobbering(env, clone, tmp_path):
+    """A plan is a text file someone pastes later. Its --expect-md5 is what makes
+    "later" safe: the box moving under it is a refusal, not a silent overwrite."""
+    install(env, env["c1"], "-")
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main",
+            "--stage-dir", str(tmp_path / "stage"))
+    assert p.returncode == 1, p.stdout
+    hotfix = b"#!/bin/bash\necho hotfix\n"
+    (env["dest"] / "tool.sh").write_bytes(hotfix)
+    r = run_plan(env, p.stdout, tmp_path)
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == hotfix
+
+
+def test_a_plan_staged_from_the_wrong_tree_refuses(env, clone, tmp_path):
+    """--blob-md5 is the second pin. Both exist because either one alone leaves a
+    way for a plan to land bytes nobody measured."""
+    install(env, env["c1"], "-")
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main",
+            "--stage-dir", str(tmp_path / "stage"))
+    lines = [l for l in p.stdout.splitlines() if not l.startswith(("#", "git -C"))]
+    body = "mkdir -p %s\n" % (tmp_path / "stage")
+    body += "printf 'not the blob\\n' > %s\n" % (tmp_path / "stage" / "_".join(
+        str(env["dest"] / "tool.sh").lstrip("/").split("/")))
+    body += "\n".join(lines)
+    r = run_plan(env, body, tmp_path)
+    assert r.returncode != 0, r.stdout + r.stderr
+    # For the pin's reason, not some other refusal that happens to land first.
+    assert "not the blob's %s" % md5(V2) in r.stderr, r.stderr
+    assert (env["dest"] / "tool.sh").read_bytes() == V1
+
+
+def test_a_drifted_row_is_never_planned(env, clone, tmp_path):
+    """An install would discard a hand edit, and a generator must not decide that."""
+    install(env, env["c1"], "-")
+    (env["dest"] / "tool.sh").write_bytes(b"#!/bin/bash\necho hotfix\n")
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 0, p.stdout
+    assert "ktp-install --file" not in p.stdout, p.stdout
+    assert "NOT PLANNED" in p.stdout and "DRIFT" in p.stdout, p.stdout
+
+
+def test_nothing_owed_is_an_empty_plan_not_an_error(env, clone):
+    install(env, env["c2"], "-")
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 0, p.stdout
+    assert "nothing owed" in p.stdout and "ktp-install --file" not in p.stdout, p.stdout
+
+
+def test_a_plan_cannot_be_built_on_an_unauthenticated_baseline(env, clone, tmp_path):
+    """The ordering that makes the step safe to have at all: without the gate this
+    would generate commands installing a stale commit's bytes as though current."""
+    install(env, env["c1"], "-")
+    git(clone, "remote", "set-url", "origin", str(tmp_path / "no-such-repo"))
+    p = run(env, "--plan", "--repo", str(clone), "--against-ref", "origin/main")
+    assert p.returncode == 2, p.stdout
+    assert states(p.stdout) == ["UNTRUSTED"], p.stdout
+    assert "ktp-install --file" not in p.stdout, p.stdout
+
+
+def test_plan_without_a_ref_is_refused(env):
+    p = run(env, "--plan", "--repo", str(env["repo"]))
+    assert p.returncode == 2 and "--against-ref" in p.stderr, p.stderr
+
+
+def test_plan_and_report_are_not_run_together(env):
+    p = run(env, "--plan", "--report", "--repo", str(env["repo"]), "--against-ref", "HEAD")
+    assert p.returncode == 2 and "different jobs" in p.stderr, p.stderr
+
+
+def test_stage_dir_outside_a_plan_is_refused(env):
+    p = run(env, "--report", "--stage-dir", "/tmp/x")
+    assert p.returncode == 2 and "--plan flag" in p.stderr, p.stderr

@@ -8,9 +8,15 @@ Two things, in this order, because the second is useless before the first:
 2. `ktp-install-freshness.sh` + its timer — the daily check, which posts only
    when the answer changes.
 
-⛔ **Nothing here is installed or enabled.** The script, the unit and the timer
-are files in this repo. The install steps are written down below; running them
-is a separate, deliberate act.
+✅ **Both are now LIVE on the data server** — `ktp-install` carries `--record-only`,
+and `ktp-install-freshness.sh` is installed with its timer enabled and running daily.
+🔻 **This page said *"Nothing here is installed or enabled"* for weeks after that
+stopped being true**, which is the direction that gets a running check broken by
+someone who believed the doc: an edit to either file is now a change to something
+live. ⚠️ **So do not read the state out of this page.** Derive it —
+`systemctl is-enabled ktp-install-freshness.timer`, and the md5 of
+`/usr/local/bin/ktp-install-freshness.sh` against the blob — and note that the
+install steps below remain a separate, deliberate act for anything not yet live.
 
 ## Why the order is not negotiable
 
@@ -115,6 +121,45 @@ not refresh its reference must not report freshness"`).
 tree.** Same mechanism, second instance, and the two must not be answered
 separately: one of them refreshing its reference while the other does not leaves
 a second checker quietly reporting *fresh* forever.
+
+✅ **And the tool no longer depends on this script remembering.** `ktp-install
+--report --against-ref` now settles the baseline itself: a `refs/remotes/` ref is
+confirmed to be its remote's tip with `git ls-remote` (no fetch, nothing written)
+and the run exits `2` naming **both** shas when it is not. A ref that tracks
+nothing is run and labelled `pinned`. 🔑 **That matters because the compensation
+lived entirely in the caller, and the common caller is a person typing the
+command** — every figure quoted from a hand-run `--report --against-ref
+origin/main` was measured against whatever that checkout happened to hold, which
+on 2026-10-12 was 214 commits behind. The first line of the output is now the
+baseline and how it was settled.
+
+⛔ **This script deliberately passes the SHA it fetched, not `origin/main`.** The
+remote check is right for a hand run and wrong here: the fetch above has already
+settled the ref, and re-resolving it would let a merge landing in the second
+between the two turn a healthy run red. The run then asserts that the baseline
+the report states **is** the sha it was given, and records `baseline_stated` in
+`$RESULT_FILE` so a reader can tell which kind of run produced the numbers.
+⚠️ **An absent baseline line is recorded, not fatal** — an installed `ktp-install`
+predating the check cannot state one, and this script's own fetch is what makes
+its comparison sound, so dying there would take out a check that is working.
+
+### Generating the installs: `ktp-install --plan`
+
+```bash
+ktp-install --plan --repo /opt/ktp-infra --against-ref origin/main
+```
+
+Prints the `ktp-install` commands for every `STALE` row and writes nothing. Each
+is pinned to the md5 on the box (`--expect-md5`) and to the ref's bytes
+(`--blob-md5`), so a plan that has gone out of date refuses rather than clobbers,
+and one staged from the wrong tree refuses too. Exit `1` means a plan was
+emitted, which is the productive outcome; ⛔ never pipe it. Full semantics, and
+the two things it deliberately does not do: `docs/DEPLOY_MANIFEST.md`.
+
+⚠️ **The one dependency order it cannot derive and must not guess:**
+`ktp-verify-deploy` imports `ktp_script_freshness` at module level, so **the guard
+installs first**. The other way round, the verifier fails at import — a verifier
+that would have given a wrong answer becomes one that gives none.
 
 ### Install steps (not performed)
 
