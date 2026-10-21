@@ -8,12 +8,17 @@ is the second leg: score every (half, event_type) in the window, report the
 worst, and separately count halves whose manifest arrived and whose health rows
 never did.
 
-Two things this file exists to keep true, both of which have already cost this
+Three things this file exists to keep true, all of which have already cost this
 estate an incident:
 
-  * a single lost half must survive being averaged against a healthy day, and
+  * a single lost half must survive being averaged against a healthy day,
   * the shipped threshold must be reachable. An alert threshold above
-    everything ever observed is an alert that cannot fire.
+    everything ever observed is an alert that cannot fire, and
+  * a refusal must say why it refused. Until migration 044 none did: every
+    rejection site computed the reason as its dispatch status string, tested it
+    to decide the marker was refused, then threw it away, so a lost half was
+    pageable and not diagnosable. The third reducer is the assertion that the
+    fix is still in force.
 
 The reducers and the latch are extracted from the shipped script by marker, so
 renaming or deleting either fails this file rather than testing a copy that no
@@ -82,6 +87,21 @@ def pending(tmp_path, rows, **env):
     out = run(tmp_path, "capture_half_unreconciled", rows, **env).rstrip("\n")
     count, named = out.split("\t")
     return int(count), named
+
+
+def reasonless(tmp_path, rows, **env):
+    """Feed rejecting (half, event_type) rows through capture_half_reasonless;
+    return (reasonless, rejecting, named, worst_reason)."""
+    out = run(tmp_path, "capture_half_reasonless", rows, **env).rstrip("\n")
+    f = out.split("\t")
+    assert len(f) == 4, f
+    return int(f[0]), int(f[1]), f[2], f[3]
+
+
+# A rejection row is half_key, event_type, rejected, reasons -- the last field
+# as mysql -N -B prints it, which is the four characters NULL for a NULL.
+def rej(key, etype, rejected, reasons="NULL"):
+    return "\t".join(str(x) for x in (key, etype, rejected, reasons))
 
 
 # A half key is server/match/half, and a row is
@@ -160,6 +180,96 @@ def test_pending_names_at_most_three_but_counts_them_all(tmp_path):
     assert count == 9 and named == "4/m0/1, 4/m1/1, 4/m2/1"
 
 
+# ------------------------------------- the refusal that would not say why
+
+# Shapes taken from the live column 2026-10-20, with nothing per-player in them
+# -- the daemon strips player ids, quoted payload literals and SteamID-shaped
+# tokens before it tallies.
+LIFE_REASON = "Life boundary dropped: found 0 event-time match intervals=12"
+FRAG_REASON = "frag_context: no matching frag row in the window=1"
+
+
+def test_a_refusal_that_records_no_reason_is_the_defect_and_fires(tmp_path):
+    """The state of the whole estate before migration 044: the half-stream
+    refused everything it received and the row says nothing about why. This is
+    the assertion that would have caught it, and it has to fire."""
+    got = reasonless(tmp_path, rej("4/m999/2", "frag", 600))
+    assert got[:3] == (1, 1, "4/m999/2/frag")
+    assert got[0] >= shipped("CAPTURE_HALF_REASONLESS_WARN")
+
+
+def test_the_same_refusal_carrying_a_reason_is_quiet_and_names_the_cause(tmp_path):
+    """Post-044, and the half the fix is for: still a refusal, still a loss,
+    but a reader can now act on it. The reason reaches the page too -- it is
+    worth nothing sitting in a row nobody reads."""
+    reasonl, rejecting, named, worst = reasonless(
+        tmp_path, rej("4/m999/2", "frag", 600, FRAG_REASON))
+    assert (reasonl, rejecting, named) == (0, 1, "")
+    assert worst == "4/m999/2/frag " + FRAG_REASON
+
+
+def test_mysql_null_and_an_empty_field_are_both_reasonless(tmp_path):
+    """mysql -N -B prints a NULL as the four characters NULL, so a reducer that
+    only tests for emptiness scores a NULL column as a recorded reason -- the
+    whole defect, reported clean. Both spellings have to count."""
+    rows = "\n".join([rej("4/m1/1", "frag", 10, "NULL"),
+                      rej("4/m1/2", "frag", 10, ""),
+                      rej("4/m2/1", "life", 10, LIFE_REASON)])
+    assert reasonless(tmp_path, rows)[:2] == (2, 3)
+
+
+def test_no_refusals_at_all_reads_as_a_measured_zero(tmp_path):
+    """Always one line out. A reducer that prints nothing on a clean run is
+    indistinguishable from a reducer that never ran."""
+    assert reasonless(tmp_path, "") == (0, 0, "", "")
+
+
+def test_a_stream_that_refused_nothing_is_not_a_rejecting_stream(tmp_path):
+    """A reason is only owed where something was refused. A clean stream with
+    an empty column must not page -- that is every healthy row in the table."""
+    rows = "\n".join([rej("4/m1/1", "frag", 0), rej("4/m1/1", "position", 0)])
+    assert reasonless(tmp_path, rows) == (0, 0, "", "")
+
+
+def test_reasonless_names_at_most_three_but_counts_them_all(tmp_path):
+    rows = "\n".join(rej("4/m%d/1" % i, "frag", 10) for i in range(9))
+    count, rejecting, named, _ = reasonless(tmp_path, rows)
+    assert (count, rejecting) == (9, 9)
+    assert named == "4/m0/1/frag, 4/m1/1/frag, 4/m2/1/frag"
+
+
+def test_the_named_cause_is_the_one_behind_the_most_refused_events(tmp_path):
+    """One line of detail, so it has to describe the most damage rather than
+    whichever row mysql happened to return first."""
+    rows = "\n".join([rej("4/small/1", "frag", 3, FRAG_REASON),
+                      rej("4/big/1", "life", 48, LIFE_REASON),
+                      rej("4/mid/1", "frag", 9, FRAG_REASON)])
+    assert reasonless(tmp_path, rows)[3] == "4/big/1/life " + LIFE_REASON
+
+
+def test_a_reasonless_stream_still_names_a_cause_from_its_siblings(tmp_path):
+    """A window can hold both states at once. Counting the one that says
+    nothing must not suppress the cause the others do record."""
+    rows = "\n".join([rej("4/m1/1", "frag", 600),
+                      rej("4/m1/1", "life", 48, LIFE_REASON)])
+    count, rejecting, named, worst = reasonless(tmp_path, rows)
+    assert (count, rejecting, named) == (1, 2, "4/m1/1/frag")
+    assert worst == "4/m1/1/life " + LIFE_REASON
+
+
+def test_malformed_input_is_dropped_rather_than_counted(tmp_path):
+    assert reasonless(tmp_path, "\nnot a row\n4/m5/1\tfrag") == (0, 0, "", "")
+
+
+def test_the_shipped_reasonless_threshold_can_actually_fire(tmp_path):
+    """Measured read-only 2026-10-20: of 623 rejecting half-streams written
+    before the 10-13 daemon swap, 623 record no reason; of 49 written after,
+    none. So warn 1 is not merely reachable, it is where the data sits."""
+    warn = shipped("CAPTURE_HALF_REASONLESS_WARN")
+    assert warn == 1
+    assert reasonless(tmp_path, rej("4/m999/2", "frag", 600))[0] >= warn
+
+
 # ------------------------------------------------------------- staying quiet
 
 def test_a_healthy_day_fires_nothing(tmp_path):
@@ -236,4 +346,12 @@ def test_a_lost_half_pages_once_and_releases_when_the_window_rolls_past_it(tmp_p
 def test_a_single_unreconciled_half_pages_and_zero_clears(tmp_path):
     assert replay(tmp_path, "capture-half-unreconciled", [0, 1, 2, 0],
                   "CAPTURE_HALF_UNRECONCILED_WARN", "CAPTURE_HALF_UNRECONCILED_WARN") == \
+        [False, True, True, False]
+
+
+def test_one_reasonless_refusal_pages_and_zero_clears(tmp_path):
+    """Pre-044 rows stay in the table, so the trailing window is what makes
+    this release rather than a backfill. Zero has to clear it."""
+    assert replay(tmp_path, "capture-half-reasonless", [0, 1, 3, 0],
+                  "CAPTURE_HALF_REASONLESS_WARN", "CAPTURE_HALF_REASONLESS_WARN") == \
         [False, True, True, False]
