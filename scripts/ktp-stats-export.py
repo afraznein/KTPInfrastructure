@@ -165,6 +165,7 @@ def fetch_matches(db: Db, hours: int, match_id: str | None) -> list[dict]:
 
     ktp_matches is per HALF -- a two-half match is two rows sharing a match_id.
     """
+    types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
     if match_id:
         where = f"match_id = {sql_str(match_id)}"
     else:
@@ -175,20 +176,28 @@ def fetch_matches(db: Db, hours: int, match_id: str | None) -> list[dict]:
         # League play only -- see OFFICIAL_MATCH_TYPES. Without this the window
         # carries every pracc, scrim and 12-man match that happened to end in
         # it, and they reach the site as if they were results.
-        types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
         where = (f"end_time is not null and match_type in ({types}) "
                  f"and end_time >= now() - interval {int(hours)} hour")
     # UNIX_TIMESTAMP resolves each DATETIME in the session zone, so it is right
     # per row across a DST boundary -- which a single run-wide offset would not
     # be on the nightly 14-day sweep.
+    #
+    # `mtype` is per MATCH out of a per-HALF table, so halves that disagree need
+    # a rule: a non-official half wins, because the site's gate fails to an
+    # admin queue and a false bind is the one outcome it must not reach. All
+    # halves untyped stays NULL, which the site reads as "allowed".
     return db.json_rows(
         "select json_arrayagg(json_object("
         "  'gameMatchId', match_id, 'serverId', sid, 'mapName', map_,"
-        "  'startedAt', started, 'endedAt', ended, 'halfCount', halves)) "
+        "  'startedAt', started, 'endedAt', ended, 'halfCount', halves,"
+        "  'matchType', mtype)) "
         "from (select match_id, max(server_id) sid, max(map_name) map_,"
         "             unix_timestamp(min(start_time)) started,"
         "             unix_timestamp(max(end_time)) ended,"
-        "             count(*) halves "
+        "             count(*) halves,"
+        f"             coalesce(min(case when match_type not in ({types})"
+        "                               then match_type end),"
+        "                      min(match_type)) mtype "
         f"      from ktp_matches where {where} group by match_id) t"
     )
 
@@ -509,6 +518,10 @@ def build_match(db: Db, m: dict, quiet: bool) -> dict | None:
         "startedAt": iso(m["startedAt"]),
         "endedAt": iso(m["endedAt"]),
         "halfCount": m["halfCount"],
+        # The signal the correlator spent weeks deciding without. Indexed, not
+        # `.get`: a future edit that drops it from the SQL must fail the export
+        # rather than silently restore a gate that binds scrims to fixtures.
+        "matchType": m["matchType"],
         # KTP_MATCH_END is the only writer of ktp_match_stats, so a crashed or
         # .forcereset match leaves a roster and no box score. Saying so lets the
         # site stage it and refuse to derive -- twelve 0/0/0 rows would render
