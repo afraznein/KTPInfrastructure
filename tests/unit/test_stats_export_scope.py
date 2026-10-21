@@ -51,11 +51,50 @@ def test_window_is_league_play_only(mod):
 
 
 def test_explicit_match_id_ignores_the_type_filter(mod):
-    """An operator asking for one match by id means that match, whatever it is."""
+    """An operator asking for one match by id means that match, whatever it is.
+
+    Narrowed from "match_type is absent": the type is now SELECTED on this
+    path, which is the point -- the site refuses a scrim recovered by hand.
+    What must stay absent is the type PREDICATE.
+    """
     db = _Db()
     mod.fetch_matches(db, 48, "1.3-6776-NY1")
-    assert "match_type" not in db.sql[0]
+    types = ", ".join(str(t) for t in mod.OFFICIAL_MATCH_TYPES)
+    assert f"match_type in ({types})" not in db.sql[0]
     assert "1.3-6776-NY1" in db.sql[0]
+    # Positive control: the window path is where that predicate belongs, so an
+    # assertion that cannot fail is not what the line above is doing.
+    window = _Db()
+    mod.fetch_matches(window, 48, None)
+    assert f"match_type in ({types})" in window.sql[0]
+
+
+def test_both_paths_select_the_match_type(mod):
+    """The window path filters on type; the --match-id path does not, so the
+    site's gate is the only thing standing between a scrim recovered by hand
+    and a league fixture. It cannot gate on a field nobody sends."""
+    for match_id in (None, "1.3-6776-NY1"):
+        db = _Db()
+        mod.fetch_matches(db, 48, match_id)
+        assert "'matchType', mtype" in db.sql[0]
+
+
+def test_a_half_disagreement_resolves_to_the_non_official_type(mod):
+    """ktp_matches is per half, so a match can carry two types -- a half typed
+    by mistake and corrected. The site fails to an admin queue, so the safe
+    pick is the non-official one; measured against nine half sets in MySQL,
+    including (1,0) -> 1 and (2,4) -> 2.
+    """
+    db = _Db()
+    mod.fetch_matches(db, 48, None)
+    sql = db.sql[0]
+    # Built from the constant, not from a remembered "0, 4": the fail-safe arm
+    # and the window predicate have to name the same set or the gate drifts.
+    types = ", ".join(str(t) for t in mod.OFFICIAL_MATCH_TYPES)
+    assert f"case when match_type not in ({types})" in sql
+    # ...and that arm is the coalesce's FIRST, so an official half cannot
+    # outvote a non-official one. Swapping the arms inverts the gate.
+    assert sql.index("not in") < sql.index("min(match_type)) mtype")
 
 
 def test_digest_is_stable_and_content_sensitive(mod):
@@ -118,10 +157,11 @@ class _ScriptedDb:
         return []
 
 
-def _build(mod, **kw):
+def _build(mod, *, match_type=0, **kw):
     db = _ScriptedDb(**kw)
     match = {"gameMatchId": "m-1", "serverId": 1, "mapName": "dod_donner",
-             "startedAt": 0, "endedAt": 1, "halfCount": 2}
+             "startedAt": 0, "endedAt": 1, "halfCount": 2,
+             "matchType": match_type}
     return db, mod.build_match(db, match, True)
 
 
@@ -180,6 +220,28 @@ def test_a_player_with_no_captures_reads_zero_not_missing(mod):
         points=[],
     )
     assert match["players"][0]["flags"] == 0
+
+
+def test_the_built_payload_carries_the_match_type(mod):
+    """Threaded through build_match, not just selected. An untyped match sends
+    an explicit null rather than dropping the key -- the site reads absence and
+    null the same way ("allowed"), and a dropped key hides which it was."""
+    # Fresh dicts per case: fetch_scoreboard_totals pops `playerId` out of the
+    # rows it is handed, so a shared fixture survives exactly one call.
+    def fresh():
+        return dict(
+            roster=[{"steamId": "0:1", "playerName": "p", "team": 1,
+                     "playerId": 7}],
+            box=[{"playerId": 7, "kills": 1, "deaths": 1}],
+            events=[{"playerId": 7, "kills": 1, "deaths": 1}],
+            points=[])
+
+    for sent in (0, 1, 2, 4, None):
+        _, match = _build(mod, match_type=sent, **fresh())
+        # 0 is the OFFICIAL type and the one a truthiness test silently drops,
+        # so assert the key is present as well as its value.
+        assert "matchType" in match
+        assert match["matchType"] == sent
 
 
 def test_every_counted_event_is_scoped_to_the_restart(mod):

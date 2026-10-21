@@ -87,7 +87,7 @@ def _build(mod, roster, sides):
                      for r in roster])
     match = {"gameMatchId": "1789952635-NY1", "serverId": 1,
              "mapName": "dod_donner", "startedAt": 0, "endedAt": 1,
-             "halfCount": 2}
+             "halfCount": 2, "matchType": 0}
     return db, mod.build_match(db, match, True)
 
 
