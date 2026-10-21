@@ -843,3 +843,32 @@ def test_plan_and_report_are_not_run_together(env):
 def test_stage_dir_outside_a_plan_is_refused(env):
     p = run(env, "--report", "--stage-dir", "/tmp/x")
     assert p.returncode == 2 and "--plan flag" in p.stderr, p.stderr
+def test_ls_remote_cannot_stop_and_ask_for_credentials(env, clone, tmp_path):
+    """A git that cannot authenticate ASKS -- and this runs from a daily unit with no
+    terminal to answer. A hung unit reads as `active`, the one failure nothing in this
+    estate alerts on, so the invocation must close every way of asking. The timeout is
+    only the backstop; asserting on it would be asserting on the backstop.
+
+    Measured through a shim on PATH that records the environment the real call gets, so
+    this is the invocation rather than a reading of the source.
+    """
+    shim_dir = tmp_path / "gitshim"
+    shim_dir.mkdir()
+    seen = tmp_path / "ls-remote-env.txt"
+    real = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    (shim_dir / "git").write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do [ "$a" = "ls-remote" ] && env > "%s"; done\n'
+        'exec "%s" "$@"\n' % (seen, real))
+    os.chmod(shim_dir / "git", 0o755)
+
+    install(env, env["c2"], "-")
+    e = dict(env["env"], PATH=str(shim_dir) + os.pathsep + env["env"]["PATH"])
+    p = subprocess.run([sys.executable, TOOL, "--report", "--repo", str(clone),
+                        "--against-ref", "origin/main"], env=e, capture_output=True, text=True)
+    assert p.returncode == 0, p.stdout + p.stderr
+    recorded = dict(l.split("=", 1) for l in seen.read_text().splitlines() if "=" in l)
+    assert recorded["GIT_TERMINAL_PROMPT"] == "0", recorded.get("GIT_TERMINAL_PROMPT")
+    assert recorded["GIT_ASKPASS"] == "", recorded.get("GIT_ASKPASS")
+    assert recorded["SSH_ASKPASS"] == "", recorded.get("SSH_ASKPASS")
+    assert "BatchMode=yes" in recorded["GIT_SSH_COMMAND"], recorded.get("GIT_SSH_COMMAND")

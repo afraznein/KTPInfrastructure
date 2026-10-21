@@ -29,6 +29,12 @@ stale.
   is no `CURRENT` to misquote.
 - A 40-hex sha, a tag, `HEAD` or a local branch claims nothing, so it is run and **labelled**
   `pinned` rather than refused. That is also the offline route: name the commit you mean.
+- ⚠️ **The `ls-remote` cannot stop and ask.** A git that cannot authenticate prompts, and this
+  runs from a daily unit with no terminal to answer — and **a hung unit reads as `active`**, the
+  one failure nothing in this estate alerts on. `GIT_TERMINAL_PROMPT=0`, empty `GIT_ASKPASS` and
+  `SSH_ASKPASS`, and `ssh -oBatchMode=yes` close every way of asking; the 20 s timeout is only
+  the backstop. Proved through a `git` shim on `PATH` that records the environment the real call
+  receives, so the test reads the invocation rather than the source.
 - **The first line of every `--against-ref` run is the baseline** — the ref, its resolved sha,
   and how it was settled. A verdict now carries what it was a verdict *against*.
 - `ktp-install-freshness.sh` skips that header when building the non-fresh set, and **refuses

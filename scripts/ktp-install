@@ -134,6 +134,12 @@ class Untrusted(Exception):
 
 
 _LS_REMOTE_TIMEOUT = 20
+# This runs from a daily unit as well as by hand, and a git that cannot authenticate
+# asks -- a credential prompt with no terminal to answer it. A hung unit reads as
+# `active` here, which is the one failure nothing in this estate alerts on, so every
+# way of asking is closed and the timeout is only the backstop.
+_NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": "",
+              "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes"}
 
 
 def remote_tracking(repo, ref):
@@ -173,7 +179,8 @@ def settle_baseline(repo, ref, ref_commit):
             % (repo, remote, branch, remote, branch))
     try:
         p = subprocess.run(["git", "-C", repo, "ls-remote", "--heads", remote, "refs/heads/" + branch],
-                           capture_output=True, text=True, timeout=_LS_REMOTE_TIMEOUT)
+                           capture_output=True, text=True, timeout=_LS_REMOTE_TIMEOUT,
+                           env=dict(os.environ, **_NO_PROMPT))
     except subprocess.TimeoutExpired:
         raise Untrusted("cannot reach %s to confirm %s is its tip: ls-remote timed out after %ds. %s"
                         % (remote, ref, _LS_REMOTE_TIMEOUT, hint))
