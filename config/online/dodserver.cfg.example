@@ -28,6 +28,12 @@ mp_fraglimit 0
 mp_timelimit 20
 mp_limitteams 0
 mp_allowspectators 1
+
+// Dead-player camera lock. This file is re-executed on every changelevel
+// (mapchangecfgfile below), so this is what puts the lock back after an aim
+// map config has turned it off. 1 is the dll default and the value every
+// instance already carries at map load; ktpbasic.cfg raises it at .ready.
+mp_forcechasecam 1
 mp_deathmsg 1
 mp_falldamage 1
 mp_footsteps 1
