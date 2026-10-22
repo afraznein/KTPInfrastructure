@@ -1,42 +1,42 @@
 {
  "dod_anzio": {
-  "geometry_version": "goldsrc_spectator_v1-4640b7dfd7ce",
+  "geometry_version": "goldsrc_spectator_v1-73fa343c547a",
   "dimensions": {
    "height": 768,
    "width": 1024
   },
   "world_to_pixel": [
    [
-    0,
+    0.0,
     -0.13875,
-    563.7149
+    563.7149000000001
    ],
    [
     -0.13875,
-    0,
+    0.0,
     426.604575
    ],
    [
-    0,
-    0,
-    1
+    0.0,
+    0.0,
+    1.0
    ]
   ],
   "pixel_to_world": [
    [
-    0,
-    -7.20720720721,
-    3074.62756757
+    0.0,
+    -7.207207207207206,
+    3074.6275675675674
    ],
    [
-    -7.20720720721,
-    0,
-    4062.81009009
+    -7.207207207207206,
+    0.0,
+    4062.81009009009
    ],
    [
-    0,
-    0,
-    1
+    0.0,
+    0.0,
+    1.0
    ]
   ],
   "technical_validation": "passed"
@@ -84,43 +84,43 @@
   "technical_validation": "passed"
  },
  "dod_thunder2": {
-  "geometry_version": "goldsrc_spectator_v1-351fb0ba405a",
+  "geometry_version": "goldsrc_spectator_v1-0446a0963425",
   "dimensions": {
    "height": 768,
    "width": 1024
   },
   "world_to_pixel": [
    [
-    0,
+    0.0,
     -0.14375,
     532.697125
    ],
    [
     -0.14375,
-    0,
+    0.0,
     370.2
    ],
    [
-    0,
-    0,
-    1
+    0.0,
+    0.0,
+    1.0
    ]
   ],
   "pixel_to_world": [
    [
-    0,
-    -6.95652173913,
-    2575.30434783
+    0.0,
+    -6.9565217391304355,
+    2575.304347826087
    ],
    [
-    -6.95652173913,
-    0,
-    3705.71913043
+    -6.9565217391304355,
+    0.0,
+    3705.719130434783
    ],
    [
-    0,
-    0,
-    1
+    0.0,
+    0.0,
+    1.0
    ]
   ],
   "technical_validation": "passed"

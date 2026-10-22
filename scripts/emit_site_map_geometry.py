@@ -40,6 +40,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from datetime import datetime, timezone
 from collections import OrderedDict
 from pathlib import Path
 
@@ -170,6 +171,9 @@ def refresh_pin(upstream: Path) -> dict:
         ["log", "-1", "--format=%s", pin["upstream_commit"]], upstream)
     pin["upstream_blob"] = _git(["rev-parse", f"origin/main:{UPSTREAM_PATH}"], upstream)
     pin["bytes"] = len(normalized)
+    # Owned here too: a hand-kept capture date outlives the bytes it dates and
+    # then claims a capture predating upstream_commit.
+    pin["captured_utc"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     pin["sha256_lf"] = hashlib.sha256(normalized).hexdigest()
     generated, _ = emit()
     pin["equality_grade"] = "generated" if generated == normalized else "rounded"
