@@ -9,6 +9,7 @@ import json
 import os
 import struct
 import sys
+import tempfile
 import textwrap
 import unittest
 from pathlib import Path
@@ -17,7 +18,13 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from scripts.build_map_bundle import (  # noqa: E402
+    CUSTOM_HUD_ICON_MIN,
     bsp_wads,
+    custom_icon_entries,
+    entity_hud_icon_indices,
+    merge_entries,
+    rebuild_res,
+    stock_paths,
     check_res,
     classify,
     delta,
@@ -288,6 +295,42 @@ class EndToEnd(unittest.TestCase):
         self.assertNotIn("overviews/dod_x.bmp",
                          parse_res_entries((out / "maps/dod_x.res").read_text()))
 
+    def _custom_icon_bsp(self):
+        """A map whose middle CP uses custom HUD icon indices, as solitude2 does."""
+        p = self.src / "dod_c.bsp"
+        p.write_bytes(fake_bsp(
+            '{\n"wad" "armory.wad;"\n}\n'
+            '{\n"classname" "dod_control_point"\n'
+            '"point_hud_icon_neutral" "18"\n"point_hud_icon_allies" "19"\n'
+            '"point_hud_icon_axis" "20"\n}\n'))
+        return p
+
+    def test_custom_hud_icons_are_added_and_the_count_re_emitted(self):
+        bsp = self._custom_icon_bsp()
+        icons = self.tmp / "sprites" / "obj_icons" / "dod_c"
+        icons.mkdir(parents=True)
+        for n in ("icon_obj_custom1_allies.spr", "icon_obj_custom1_neutral.spr"):
+            (icons / n).write_bytes(b"IDSP")
+        out = self.tmp / "bc"
+        rc = main([str(bsp), "--out", str(out), "--resgen", str(self.stub),
+                   "--no-overviews"])
+        self.assertEqual(rc, 0)
+        body = (out / "maps/dod_c.res").read_text()
+        entries = parse_res_entries(body)
+        self.assertIn("sprites/obj_icons/dod_c/icon_obj_custom1_allies.spr", entries)
+        self.assertIn("sprites/obj_icons/dod_c/icon_obj_custom1_neutral.spr", entries)
+        # RESGen never writes these, so a stale count would be the giveaway.
+        self.assertIn("// .res entries (%d):" % len(entries), body)
+
+    def test_custom_icons_with_no_directory_beside_the_bsp_fails_loudly(self):
+        # The dod_solitude2 shape: the map needs icons RESGen cannot see and
+        # none are there to add. Silence here is what shipped blank flags.
+        bsp = self._custom_icon_bsp()
+        out = self.tmp / "bd"
+        rc = main([str(bsp), "--out", str(out), "--resgen", str(self.stub),
+                   "--no-overviews"])
+        self.assertEqual(rc, 1)
+
     def test_no_overviews_flag_makes_that_same_bundle_pass(self):
         out = self.tmp / "b3"
         rc = main([str(self.src / "dod_x.bsp"), "--out", str(out),
@@ -342,6 +385,113 @@ class ManifestShape(unittest.TestCase):
         m = manifest(tmp, "dod_x")
         self.assertEqual(list(m["files"]), ["maps/dod_x.res"])
 
+
+
+TWO_CPS = (
+    '{\n"classname" "worldspawn"\n"wad" "armory.wad;"\n}\n'
+    '{\n"classname" "dod_control_point"\n"targetname" "flagchurch"\n'
+    '"point_hud_icon_neutral" "18"\n"point_hud_icon_allies" "19"\n'
+    '"point_hud_icon_axis" "20"\n}\n'
+    '{\n"classname" "dod_control_point"\n"targetname" "flagallied"\n'
+    '"point_hud_icon_neutral" "0"\n"point_hud_icon_allies" "1"\n'
+    '"point_hud_icon_axis" "2"\n}\n'
+)
+
+
+class EntityHudIcons(unittest.TestCase):
+    def test_indices_come_from_the_whole_lump_not_just_worldspawn(self):
+        bsp = fake_bsp(TWO_CPS)
+        self.assertEqual(entity_hud_icon_indices(bsp), {0, 1, 2, 18, 19, 20})
+        # Why this cannot reuse read_worldspawn, asserted instead of described.
+        self.assertNotIn("point_hud_icon_neutral", read_worldspawn(bsp))
+
+    def test_a_map_with_only_stock_indices_wants_nothing(self):
+        bsp = fake_bsp('{\n"classname" "worldspawn"\n}\n'
+                       '{\n"point_hud_icon_axis" "5"\n}\n')
+        self.assertEqual(
+            [i for i in entity_hud_icon_indices(bsp) if i >= CUSTOM_HUD_ICON_MIN],
+            [],
+        )
+
+    def test_a_non_integer_value_is_skipped_rather_than_fatal(self):
+        bsp = fake_bsp('{\n"point_hud_icon_axis" "notanumber"\n'
+                       '"point_hud_icon_allies" "21"\n}\n')
+        self.assertEqual(entity_hud_icon_indices(bsp), {21})
+
+
+class CustomIconEntries(unittest.TestCase):
+    def test_an_absent_directory_is_empty_not_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(custom_icon_entries(Path(d), "dod_nope"), [])
+
+    def test_files_are_listed_game_relative_sorted_and_without_subdirs(self):
+        with tempfile.TemporaryDirectory() as d:
+            icons = Path(d) / "sprites" / "obj_icons" / "dod_x"
+            icons.mkdir(parents=True)
+            for n in ("b.spr", "a.spr"):
+                (icons / n).write_bytes(b"x")
+            (icons / "sub").mkdir()
+            self.assertEqual(
+                custom_icon_entries(Path(d), "dod_x"),
+                ["sprites/obj_icons/dod_x/a.spr", "sprites/obj_icons/dod_x/b.spr"],
+            )
+
+
+class StockPaths(unittest.TestCase):
+    def test_the_depot_list_covers_saints_and_not_solitude(self):
+        # Why dod_saints needs nothing and dod_solitude2 does, pinned against
+        # the depot manifest rather than remembered: saints is a stock map and
+        # every client already has its nine icons.
+        stock = stock_paths(REPO / "scripts")
+        self.assertEqual(sum(1 for p in stock if "obj_icons/dod_saints/" in p), 9)
+        self.assertEqual(sum(1 for p in stock if "solitude" in p), 0)
+
+
+class MergeEntries(unittest.TestCase):
+    def test_the_sort_matches_resgens_case_insensitive_order(self):
+        self.assertEqual(
+            merge_entries(["sound/m.wav", "sound/u.wav"], ["sound/Opera.wav"]),
+            ["sound/m.wav", "sound/Opera.wav", "sound/u.wav"],
+        )
+
+    def test_an_entry_already_present_in_another_case_is_not_duplicated(self):
+        self.assertEqual(merge_entries(["sprites/A.spr"], ["sprites/a.spr"]),
+                         ["sprites/A.spr"])
+
+
+class RebuildRes(unittest.TestCase):
+    HEAD = ("// dod_x.res - created with RESGen v2.0.2.\n"
+            "// For more info go to http://resgen.hltools.com\n"
+            "\n"
+            "// .res entries (1):\n"
+            "armory.wad\n")
+
+    def test_the_count_is_re_emitted_with_the_list(self):
+        out = rebuild_res(self.HEAD, ["armory.wad", "sprites/x.spr"])
+        self.assertIn("// .res entries (2):", out)
+        self.assertNotIn("(1):", out)
+        self.assertEqual(parse_res_entries(out), ["armory.wad", "sprites/x.spr"])
+
+    def test_the_resgen_header_survives(self):
+        self.assertEqual(res_version(rebuild_res(self.HEAD, ["armory.wad"])), "2.0.2")
+
+
+class CheckResOrdering(unittest.TestCase):
+    def test_a_mixed_case_list_in_resgen_order_passes(self):
+        # The fleet's own dod_saints.res failed this check on
+        # sound/ambience/Opera.wav while RESGen had written it in its own,
+        # case-insensitive, order.
+        entries = ["sound/ambience/mill.wav", "sound/ambience/Opera.wav",
+                   "sound/ambience/usareasecure.wav"]
+        self.assertEqual(
+            [p for p in check_res(entries, "x", require_overviews=False)
+             if "ascending" in p],
+            [],
+        )
+
+    def test_a_genuinely_unsorted_list_still_fails(self):
+        problems = check_res(["b.wav", "a.wav"], "x", require_overviews=False)
+        self.assertTrue(any("ascending" in p for p in problems))
 
 if __name__ == "__main__":
     unittest.main()

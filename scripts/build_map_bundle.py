@@ -43,6 +43,11 @@ BSP_VERSION_HL = 30
 # .mdl/.spr can Sys_Error out of Mod_LoadModel -- see scripts/validate-map-assets.sh.
 CRITICAL_EXT = (".mdl", ".spr")
 
+# Per-map HUD icon indices start here; 0-17 are the stock set every client has.
+CUSTOM_HUD_ICON_MIN = 18
+ENTRY_COUNT_RE = re.compile(r"(//\s*\.res entries \()(\d+)(\):)")
+STOCK_PATHS_REL = Path("data") / "dod-depot31-stock-paths.txt"
+
 
 # ----------------------------------------------------------------- pure helpers
 
@@ -106,7 +111,9 @@ def check_res(entries: list[str], mapname: str, *, require_overviews: bool = Tru
     if len(set(entries)) != len(entries):
         dupes = sorted({e for e in entries if entries.count(e) > 1})
         problems.append(f"duplicate entries: {', '.join(dupes)}")
-    if entries != sorted(entries):
+    if entries != sorted(entries, key=str.lower):
+        # RESGen sorts case-insensitively. Asserting a case-SENSITIVE order here
+        # failed the fleet's own dod_saints.res on sound/ambience/Opera.wav.
         problems.append("entries are not in ascending order")
     for e in entries:
         if "\\" in e:
@@ -128,6 +135,80 @@ def check_res(entries: list[str], mapname: str, *, require_overviews: bool = Tru
 def delta(new: list[str], old: list[str]) -> tuple[list[str], list[str]]:
     """(added, removed) between two entry lists, each sorted."""
     return sorted(set(new) - set(old)), sorted(set(old) - set(new))
+
+
+def entity_hud_icon_indices(bsp: bytes) -> set[int]:
+    """Every `point_hud_icon_*` value in the whole entity lump.
+
+    read_worldspawn stops at the first entity by design, and control points sit
+    further in, so this cannot reuse it.
+    """
+    if len(bsp) < 12:
+        raise ValueError("too short to be a BSP")
+    version = struct.unpack("<i", bsp[:4])[0]
+    if version != BSP_VERSION_HL:
+        raise ValueError(f"BSP version {version}, expected {BSP_VERSION_HL}")
+    off, length = struct.unpack("<ii", bsp[4:12])
+    if off < 0 or length < 0 or off + length > len(bsp):
+        raise ValueError("entity lump runs past end of file")
+    ents = bsp[off:off + length].decode("latin-1")
+    out = set()
+    for _, value in re.findall(r'"(point_hud_icon_[a-z]*)"\s+"([^"]*)"', ents):
+        try:
+            out.add(int(value))
+        except ValueError:
+            continue
+    return out
+
+
+def custom_icon_entries(game_root: Path, mapname: str) -> list[str]:
+    """The map's own `sprites/obj_icons/<map>/` directory, as .res entries.
+
+    Listed, never derived from the index. The arithmetic that turns an index
+    into `custom<N>_<team>` reproduces dod_solitude2 and dod_saints and then
+    fails on dod_falaise, with no slot for the `_brit` variants dod_zalec
+    ships; the real table lives in the client, not here.
+    """
+    d = game_root / "sprites" / "obj_icons" / mapname
+    if not d.is_dir():
+        return []
+    return sorted(f"sprites/obj_icons/{mapname}/{p.name}"
+                  for p in d.iterdir() if p.is_file())
+
+
+def stock_paths(scripts_dir: Path) -> set[str]:
+    """Game-relative paths the DoD client already ships, lowercased."""
+    f = scripts_dir / STOCK_PATHS_REL
+    if not f.exists():
+        return set()
+    return {ln.strip().replace("\\", "/").lower()
+            for ln in f.read_text(encoding="utf-8", errors="replace").splitlines()
+            if ln.strip()}
+
+
+def merge_entries(entries: list[str], extra: list[str]) -> list[str]:
+    """Merge and sort the way RESGen does, which is case-insensitively.
+
+    Sorting case-sensitively here would leave check_res disagreeing with the
+    file this just wrote.
+    """
+    have = {e.lower() for e in entries}
+    return sorted(entries + [e for e in extra if e.lower() not in have],
+                  key=str.lower)
+
+
+def rebuild_res(text: str, entries: list[str]) -> str:
+    """Re-emit a .res with a new entry list, keeping RESGen's header block.
+
+    The `// .res entries (N):` count goes with it: a stale count is a silent
+    lie about a file whose whole job is to be a complete list.
+    """
+    head = []
+    for line in text.replace("\r\n", "\n").split("\n"):
+        if line.strip() and not HEADER_RE.match(line.strip()):
+            break
+        head.append(ENTRY_COUNT_RE.sub(rf"\g<1>{len(entries)}\g<3>", line))
+    return "\n".join(head + entries) + "\n"
 
 
 def classify(entries: list[str]) -> dict[str, list[str]]:
@@ -232,10 +313,36 @@ def build_one(bsp: Path, out: Path, args, scripts_dir: Path) -> dict:
     text = run_resgen(args.resgen, maps_dir, mapname)
     entries = parse_res_entries(text)
 
+    # RESGen harvests entity VALUES that look like paths, which is why
+    # point_reset_model and point_*_capsound are already covered. A
+    # `point_hud_icon_*` value is an INTEGER, so there is no path in the BSP for
+    # it to find -- the files are reachable only through the index, and from the
+    # index only by listing the directory.
+    wants_custom_icons = any(i >= CUSTOM_HUD_ICON_MIN
+                             for i in entity_hud_icon_indices(bsp.read_bytes()))
+    hud_icons: list[str] = []
+    if wants_custom_icons:
+        stock = stock_paths(scripts_dir)
+        hud_icons = [e for e in custom_icon_entries(bsp.parent.parent, mapname)
+                     if e.lower() not in stock]
+        if hud_icons:
+            entries = merge_entries(entries, hud_icons)
+            text = rebuild_res(text, entries)
+
     body = to_crlf(text) if args.line_endings == "crlf" else to_lf(text)
     (maps_dir / f"{mapname}.res").write_bytes(body.encode("utf-8"))
 
     problems = check_res(entries, mapname, require_overviews=not args.no_overviews)
+
+    # A map that needs custom icons and has none beside it must not pass
+    # quietly: that is the dod_solitude2 case, where the icons were on every
+    # server and FastDL and absent only from the list that tells a client to
+    # fetch them, so the two middle flags rendered blank.
+    if wants_custom_icons and not hud_icons:
+        problems.append(
+            f"uses custom HUD icon indices but no non-stock file was found in "
+            f"{bsp.parent.parent / 'sprites' / 'obj_icons' / mapname} -- those "
+            f"flags render blank for any client that does not already have them")
 
     result = {
         "map": mapname,
@@ -243,6 +350,7 @@ def build_one(bsp: Path, out: Path, args, scripts_dir: Path) -> dict:
         "entries": len(entries),
         "wads_in_bsp": bsp_wads(worldspawn),
         "skyname": worldspawn.get("skyname", ""),
+        "hud_icons_added": hud_icons,
         "problems": problems,
         "manifest": manifest(out, mapname),
     }
