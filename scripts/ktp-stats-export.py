@@ -555,6 +555,39 @@ def post(url: str, secret: str, payload: dict, quiet: bool) -> bool:
     return False
 
 
+def skips_sent_state(args) -> bool:
+    """Whether this run ignores the sent-state dedup.
+
+    `--rederive` is in here for a reason that is easy to drop: it EXISTS for the
+    unchanged case. `unchanged` cannot distinguish "stored and derived" from
+    "stored and never derived", which is why the site grew the flag at all -- so
+    a re-derive filtered out as "nothing new to export" would report success and
+    do nothing, the same silent shape as the flag defaulting to false.
+
+    `--match-id` already forces this and `--rederive` requires `--match-id`, so
+    today the term is redundant. It is named anyway: a guarantee resting on a
+    coincidence between two other flags is one refactor from being lost.
+    """
+    return bool(args.resend or args.dry_run or args.match_id or args.rederive)
+
+
+def build_payload(chunk: list[dict], *, rederive: bool = False) -> dict:
+    """The POST body. `rederive` is omitted unless asked for, so an ordinary
+    export sends byte-identical bodies to the ones it sent before.
+
+    Pure, and separate from main(), so the one thing worth asserting about this
+    flag can be asserted: that it reaches the wire only when requested.
+    """
+    body = {
+        "source": "hlstatsx",
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "matches": chunk,
+    }
+    if rederive:
+        body["rederive"] = True
+    return body
+
+
 def payload_digest(built: dict) -> str:
     return hashlib.sha256(json.dumps(
         built, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
@@ -593,7 +626,29 @@ def main() -> int:
     ap.add_argument("--resend", action="store_true",
                     help="ignore what was already sent and POST the whole "
                          "window again (use if the site lost data)")
+    # ONE-SHOT, and a CLI flag on purpose: there is deliberately no config key
+    # and no environment variable for this. The export timer fires every ~10
+    # minutes, so anything persistent would re-derive forever -- and a re-derive
+    # that runs on every tick is indistinguishable from one that never runs.
+    ap.add_argument("--rederive", action="store_true",
+                    help="ask the site to re-derive this match's fixture even "
+                         "when the stored payload is unchanged. Requires "
+                         "--match-id. Use after correcting a match upstream")
     args = ap.parse_args()
+
+    # Scoped by construction. Re-deriving a whole window has no named
+    # beneficiary, and the case this exists for -- a match corrected upstream --
+    # is always one match at a time. Breadth can be added later, with a reason.
+    if args.rederive and not args.match_id:
+        print("--rederive requires --match-id (run it once per corrected "
+              "match); re-deriving a whole window is not the use case",
+              file=sys.stderr)
+        return 2
+    if args.rederive:
+        # Unconditional, not via log(): if this ever gets wired into a timer
+        # with --quiet, silence is exactly how it would hide.
+        print("rederive=true -- the site will re-derive this match's fixture "
+              "even if the stored payload is unchanged", file=sys.stderr)
 
     conf = load_config()
     if not args.dry_run:
@@ -627,7 +682,7 @@ def main() -> int:
     # A match sits in the window for `hours` after it ends, so without this the
     # same settled payload is POSTed on every tick -- the endpoint answers
     # "unchanged" and nothing is learned. Re-send only what actually changed.
-    skip_state = args.resend or args.dry_run or args.match_id
+    skip_state = skips_sent_state(args)
     sent = {} if skip_state else load_sent()
     digests = {b["gameMatchId"]: payload_digest(b) for b in built}
     fresh = [b for b in built
@@ -642,18 +697,16 @@ def main() -> int:
     built = fresh
 
     if args.dry_run:
-        print(json.dumps({"source": "hlstatsx", "matches": built}, indent=2))
+        # The real body, not an approximation of it -- otherwise
+        # `--dry-run --rederive` cannot show whether the flag is carried.
+        print(json.dumps(build_payload(built, rederive=args.rederive), indent=2))
         return 0
 
     ok = True
     for i in range(0, len(built), BATCH):
         chunk = built[i:i + BATCH]
         log(f"POST {len(chunk)} match(es)", quiet=args.quiet)
-        payload = {
-            "source": "hlstatsx",
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "matches": chunk,
-        }
+        payload = build_payload(chunk, rederive=args.rederive)
         if post(conf["STATS_INGEST_URL"], conf["STATS_INGEST_SECRET"],
                 payload, args.quiet):
             # Per chunk, not per run: a later chunk failing must not discard
