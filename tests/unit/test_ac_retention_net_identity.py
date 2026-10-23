@@ -178,7 +178,8 @@ class Run:
         return [r for r in self.sessions() if r[1] == ""]
 
 
-def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1, intervals=()):
+def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1, intervals=(),
+               extra_seed=None):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     (bin_dir / "fake_mysql.py").write_text(FAKE_MYSQL, encoding="utf-8")
@@ -197,6 +198,8 @@ def run_script(tmp_path, env=None, script_text=None, rows=SEED, runs=1, interval
     if db.exists():
         db.unlink()
     _seed(str(db), rows, intervals)
+    if extra_seed is not None:
+        extra_seed(str(db))   # tables the shared seed does not know about
     sql_log = tmp_path / "statements.sql"
     sql_log.write_text("", encoding="utf-8")
 
