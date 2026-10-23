@@ -117,13 +117,13 @@ public cmd_run() {
 	return PLUGIN_HANDLED
 }
 
-// Three live bots each pick one voice-menu command. amxclient_cmd runs the
+// Five live bots: three pick a voice-menu command, two give a hand signal. amxclient_cmd runs the
 // command server-side exactly as a real pick arrives: the client_command
 // forward fires once (stats_logging's hook logs the line) and the game DLL
 // then handles it. Bots never do this on their own, so without this the
 // voice check is never exercised and reports not_exercised forever.
 public cmd_voice() {
-	new const cmds[][] = { "voice_negative", "voice_grenade", "voice_sniper" }
+	new const cmds[][] = { "voice_negative", "voice_grenade", "voice_sniper", "signal_yes", "signal_grenade" }
 	new players[32], num, issued = 0
 	get_players(players, num, "a")
 	for (new i = 0; i < num && issued < sizeof(cmds); i++) {
