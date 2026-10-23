@@ -1,0 +1,14 @@
+{
+  "core": "/tmp/core.hlds_linux.503727.1790701735",
+  "exe": "hlds_linux",
+  "pid": 503727,
+  "core_ts": 1790701735,
+  "port": 27017,
+  "alias": "DAL3",
+  "signal": "SIGSEGV",
+  "signal_desc": "Segmentation fault",
+  "top_frame": "Sys_Error(char const*, ...) ()",
+  "reported_at": 1790702598,
+  "discord_posted": false,
+  "post_attempts": 5
+}

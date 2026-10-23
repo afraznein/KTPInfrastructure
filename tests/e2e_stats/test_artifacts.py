@@ -176,6 +176,7 @@ def daemon_repo(tmp_path):
         (44, "capture_health_rejection_reasons"),
         (45, "voice_command_actions"),
         (46, "move_census_step_stance"),
+        (47, "move_census_air_standing"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -259,6 +260,7 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_044_capture_health_rejection_reasons.sql",
         "sql/migrate_045_voice_command_actions.sql",
         "sql/migrate_046_move_census_step_stance.sql",
+        "sql/migrate_047_move_census_air_standing.sql",
     )
     assert DEFAULT_SCHEMA_FILES[-len(expected):] == expected
 

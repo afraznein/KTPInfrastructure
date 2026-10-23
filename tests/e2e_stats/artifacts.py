@@ -184,6 +184,9 @@ DEFAULT_SCHEMA_FILES = (
     # histograms and the paired daemon (KTPHLStatsX#168) names both columns in
     # its INSERT, so a lane without them fails every move-census row.
     "sql/migrate_046_move_census_step_stance.sql",
+    # The 1.31.0 producer appends air_ms_standing and the paired daemon
+    # (KTPHLStatsX, migration 047) names it in the move-census INSERT.
+    "sql/migrate_047_move_census_air_standing.sql",
 )
 
 DEFAULT_SEED_FILES = (
