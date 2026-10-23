@@ -30,7 +30,7 @@ from scripts.in_game_result import unavailable as in_game_unavailable
 from scripts.kill_streaks import DEFINITION as KILL_STREAK_DEFINITION
 from scripts.kill_streaks import DEFINITION_VERSION as KILL_STREAK_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.14.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.15.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -783,8 +783,9 @@ CONNECTION_PRIVACY = (
 def _connection_block(report: dict) -> dict:
     """Public form of the producer's `connection` block (schema 30): the BOX
     only -- windows, drops per window, worst jitter/latency, lag-compensation
-    state -- plus which instruments were recording. The per-player rows
-    (worst_share, shot_ping, session) are own-row-only by ruling (2026-10-11,
+    state -- plus which instruments were recording (from schema 34 that includes
+    client_slice and settings). The per-player rows (worst_share, shot_ping,
+    session, halves) are own-row-only by ruling (2026-10-11,
     revising the same day's "match page only"): they never enter the public
     report and are served to the player by the private tier. Not a general
     stat, not a rating input. A report built before schema 30 has none and

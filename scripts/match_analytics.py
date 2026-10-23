@@ -113,7 +113,7 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 33  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show; 30: `connection` -- per player, the share of 10 s windows in which they were the server's worst client for jitter/latency/drops (ktp_net_intervals), ping at each shot where shot-detail was on (ktp_shot_events.shot_ping), and the engine session that ended in this match (ktp_net_sessions); per match, drops/window and lag-compensation state. Per-player rows are own-row-only by ruling (drew 2026-10-11): the public DTO publishes the match-level figures only; the private player tier serves a player their own row. Never a general stat, never a rating input; 31: the report-team convention corrections from #693 and #696 -- trades/`fast_multikills` stop DISCARDING a leaver's frags (both sides read the same team, so `_frag_classification` dropped them as explicit team kills: 68 of 586 on the specimen), `objective_conversion` stops matching the opponent's captures, `recap_speed` stops summing per-team totals by SIDE across halves, `positional_shadow` stops reading cross-space (it lost no rows, so a row-count check could never have found it -- every value in half 1 was simply wrong), `flag_fights` resolves clutches and entries to the correct side, and `damage_conversion` stops excluding real frags as self/team. VALUES ONLY -- no DTO or contract shape changes. ⚠ The bump is the point of this version, not a side effect: #693 and #696 shipped these WITHOUT one, so two different analytics outputs both carried `30`, and since the generator's only test for "already current" IS this number, 237 published reports sat at 30 with the pre-fix values and would never have been regenerated. Schema 19 bumped for exactly this fix class ("silently backwards in half 1 of every two-half match") -- that is the precedent this follows; 32: map coefficients refitted 2026-10-15 on 698 labelled halves and accepted by the operator -- four fitted maps move (dod_anzio, dod_harrington, dod_lennon5_b1, dod_thunder2) and nine join the table (anjou_a5, armory_b6, armory_b7, halle, railroad2_s10a, saints2_b3e/b4e/b5e, solitude2), so those nine stop pricing on the league-wide prior exactly as 27 describes for dod_anzio. Every p_allies, attributed_swing, key_moment and terminal_value on any of the thirteen changes, which is why this is a bump and not a value-only edit -- the generator's only test for "already current" is this number, so without it every report already at 31 keeps the old coefficients forever. The fit also switched corpus from officials_only to officials_plus_all_practice on held-out loss (0.651250 against 0.651386); adding 12man play made it worse for the third consecutive run. ⚠ Read the shrinkage weights before trusting a per-map number: the largest moves sit on the thinnest evidence, because a new map leaves the hardcoded (2.0, 1.0) in flag_swing.FlagSwingConfig for a value shrunk toward the fit's pooled ~1.23 -- so halle (-1.06 on 33% own weight), armory_b6 (-1.05 on 23%, own estimates 0.0) and anjou_a5 (-0.88 on 9%, two practice halves) are arguing with that constant rather than describing their map; 33: dod_railroad2_s10b inherits dod_railroad2_s10a's fitted coefficients through flag_swing.MAP_COEFFICIENT_CARRY_FORWARD instead of pricing on the league-wide prior. The map was re-cut for week 7 and the fitter has no halves under the new stem, so every p_allies, attributed_swing, key_moment and terminal_value on it was pricing at the hardcoded (2.0, 1.0) in FlagSwingConfig against s10a's materially lower fitted flag term -- the same argument-with-a-constant that 32 warns about, except here the map is geometrically identical to its predecessor, so the predecessor's fit is the better estimate rather than a guess. ⚠ The bump is the point: three matches were played on s10b the night the pool flipped and one report was already stored at 32, and since the generator's only test for "already current" IS this number, that report would keep the prior-priced values forever. The carry-forward goes inert on its own -- a real fitted row always wins over it, so nothing has to remember to remove the entry once the refit sees the new stem
+SCHEMA_VERSION = 34  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show; 30: `connection` -- per player, the share of 10 s windows in which they were the server's worst client for jitter/latency/drops (ktp_net_intervals), ping at each shot where shot-detail was on (ktp_shot_events.shot_ping), and the engine session that ended in this match (ktp_net_sessions); per match, drops/window and lag-compensation state. Per-player rows are own-row-only by ruling (drew 2026-10-11): the public DTO publishes the match-level figures only; the private player tier serves a player their own row. Never a general stat, never a rating input; 31: the report-team convention corrections from #693 and #696 -- trades/`fast_multikills` stop DISCARDING a leaver's frags (both sides read the same team, so `_frag_classification` dropped them as explicit team kills: 68 of 586 on the specimen), `objective_conversion` stops matching the opponent's captures, `recap_speed` stops summing per-team totals by SIDE across halves, `positional_shadow` stops reading cross-space (it lost no rows, so a row-count check could never have found it -- every value in half 1 was simply wrong), `flag_fights` resolves clutches and entries to the correct side, and `damage_conversion` stops excluding real frags as self/team. VALUES ONLY -- no DTO or contract shape changes. ⚠ The bump is the point of this version, not a side effect: #693 and #696 shipped these WITHOUT one, so two different analytics outputs both carried `30`, and since the generator's only test for "already current" IS this number, 237 published reports sat at 30 with the pre-fix values and would never have been regenerated. Schema 19 bumped for exactly this fix class ("silently backwards in half 1 of every two-half match") -- that is the precedent this follows; 32: map coefficients refitted 2026-10-15 on 698 labelled halves and accepted by the operator -- four fitted maps move (dod_anzio, dod_harrington, dod_lennon5_b1, dod_thunder2) and nine join the table (anjou_a5, armory_b6, armory_b7, halle, railroad2_s10a, saints2_b3e/b4e/b5e, solitude2), so those nine stop pricing on the league-wide prior exactly as 27 describes for dod_anzio. Every p_allies, attributed_swing, key_moment and terminal_value on any of the thirteen changes, which is why this is a bump and not a value-only edit -- the generator's only test for "already current" is this number, so without it every report already at 31 keeps the old coefficients forever. The fit also switched corpus from officials_only to officials_plus_all_practice on held-out loss (0.651250 against 0.651386); adding 12man play made it worse for the third consecutive run. ⚠ Read the shrinkage weights before trusting a per-map number: the largest moves sit on the thinnest evidence, because a new map leaves the hardcoded (2.0, 1.0) in flag_swing.FlagSwingConfig for a value shrunk toward the fit's pooled ~1.23 -- so halle (-1.06 on 33% own weight), armory_b6 (-1.05 on 23%, own estimates 0.0) and anjou_a5 (-0.88 on 9%, two practice halves) are arguing with that constant rather than describing their map; 33: dod_railroad2_s10b inherits dod_railroad2_s10a's fitted coefficients through flag_swing.MAP_COEFFICIENT_CARRY_FORWARD instead of pricing on the league-wide prior. The map was re-cut for week 7 and the fitter has no halves under the new stem, so every p_allies, attributed_swing, key_moment and terminal_value on it was pricing at the hardcoded (2.0, 1.0) in FlagSwingConfig against s10a's materially lower fitted flag term -- the same argument-with-a-constant that 32 warns about, except here the map is geometrically identical to its predecessor, so the predecessor's fit is the better estimate rather than a guess. ⚠ The bump is the point: three matches were played on s10b the night the pool flipped and one report was already stored at 32, and since the generator's only test for "already current" IS this number, that report would keep the prior-priced values forever. The carry-forward goes inert on its own -- a real fitted row always wins over it, so nothing has to remember to remove the entry once the refit sees the new stem; 34: `connection.players[].halves` -- per player per half, the engine's per-client slice (KTP-ReHLDS #48 net_client: via ktp_net_clients: own frame time usercmd.msec p50/p95/max, move-packet gap p50/p95/max, pps, cmds per packet, drops, interp rewrites, stale-delta count) beside the settings the client declared for that half (KTPCvarChecker 7.43 NETOBS_SNAPSHOT via ktp_client_settings: cl_updaterate cl_cmdrate rate ex_interp fps_max lc lw). Own-row-only like the rest of players[] (ruling 2026-10-11); the public DTO gains only two instrument flags. Workstream netcode-player-settings
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
@@ -422,6 +422,12 @@ SELECT
   EXISTS(SELECT 1 FROM information_schema.tables
     WHERE table_schema = DATABASE() AND table_name = 'ktp_net_sessions')
     AS net_sessions,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_net_clients')
+    AS net_clients,
+  EXISTS(SELECT 1 FROM information_schema.tables
+    WHERE table_schema = DATABASE() AND table_name = 'ktp_client_settings')
+    AS client_settings,
   EXISTS(SELECT 1 FROM information_schema.columns
     WHERE table_schema = DATABASE() AND table_name = 'ktp_shot_events'
       AND column_name = 'shot_ping')
@@ -1859,7 +1865,10 @@ CONNECTION_DEFINITION = (
     "worst client for that gauge -- relative to the other eleven, never an absolute level. "
     "shot_ping is the player's own round trip sampled at each shot, this match only. "
     "session is the engine's counters for the connection that ended during this match "
-    "and spans everything since it connected (session_seconds)."
+    "and spans everything since it connected (session_seconds). "
+    "halves is the per-half slice the engine closes at each match boundary: the client's own "
+    "frame time (msec, 1000/fps), the gap between its move packets (arr, ms), and the settings "
+    "the client declared for that half."
 )
 CONNECTION_CAVEATS = (
     "worst_share compares players on the same server in the same window; a clean "
@@ -1868,6 +1877,9 @@ CONNECTION_CAVEATS = (
     "officials from 2026-10-10); null means not measured, not zero.",
     "session counters cover the whole connection, not this match alone; a player who "
     "stayed connected for the next match has no session row here.",
+    "halves exist only for matches played after KTP-ReHLDS #48 and KTPCvarChecker 7.43 were "
+    "fielded; null means not measured, not zero. settings are what the client ANSWERED, msec "
+    "is what it DID -- fps_est = pps x cmds_pkt is the observed frame rate, diluted by idle time.",
     "Not a general stat and not a rating input: a bad connection explains a half, it "
     "does not score it.",
 )
@@ -1886,6 +1898,47 @@ def _i(value: Any) -> int | None:
     return None if f is None else int(f)
 
 
+def _client_half(h: dict[str, Any], snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    """One ktp_net_clients row for the private tier, with the settings the client
+    declared for it. The snapshot is the one KTPCvarChecker logged at this half's
+    live (why=start, same half); failing that the latest one at or before the
+    flush, which is what the client was running when the slice closed."""
+    half = str(h.get("half") or "")
+    ts = str(h.get("ts") or "")
+    chosen = None
+    for s in snapshots:
+        if str(s.get("half") or "") == half and s.get("why") == "start":
+            chosen = s
+    if chosen is None:
+        for s in snapshots:
+            if str(s.get("ts") or "") <= ts:
+                chosen = s
+    pps, cmds_pkt = _f(h.get("pps")), _f(h.get("cmds_pkt"))
+    return {
+        "half": half,
+        "span_s": _i(h.get("span_s")),
+        "pps": pps,
+        "cmds_pkt": cmds_pkt,
+        "fps_est": None if pps is None or cmds_pkt is None else round(pps * cmds_pkt),
+        "msec": {"p50": _i(h.get("msec_p50")), "p95": _i(h.get("msec_p95")), "max": _i(h.get("msec_max"))},
+        "arr_ms": {"p50": _i(h.get("arr_p50")), "p95": _i(h.get("arr_p95")), "max": _i(h.get("arr_max"))},
+        "drops": _i(h.get("drops")),
+        "interp_floor": _i(h.get("interp_floor")),
+        "interp_cap": _i(h.get("interp_cap")),
+        "stale_delta": _i(h.get("stale_delta")),
+        "settings": None if chosen is None else {
+            "why": chosen.get("why"),
+            "cl_updaterate": _f(chosen.get("updaterate")),
+            "cl_cmdrate": _f(chosen.get("cmdrate")),
+            "rate": _f(chosen.get("rate")),
+            "ex_interp": _f(chosen.get("interp")),
+            "fps_max": _f(chosen.get("fps_max")),
+            "cl_lc": _i(chosen.get("lc")),
+            "cl_lw": _i(chosen.get("lw")),
+        },
+    }
+
+
 def build_connection(
     interval_rows: list[dict[str, Any]],
     worst_rows: list[dict[str, Any]],
@@ -1893,12 +1946,18 @@ def build_connection(
     shot_rows: list[dict[str, Any]],
     players: list[dict[str, Any]],
     sources: dict[str, bool],
+    client_rows: list[dict[str, Any]] | None = None,
+    settings_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Per-player and per-match connection quality (schema 30). Three instruments,
-    each published only when it was recording, none substituted for another:
-    worst-of shares from ktp_net_intervals (server-relative, every match),
-    per-shot ping from ktp_shot_events (exact, this match, only where shot-detail
-    was on) and the engine session from ktp_net_sessions (whole connection)."""
+    """Per-player and per-match connection quality (schema 30; halves from 34).
+    Four instruments, each published only when it was recording, none substituted
+    for another: worst-of shares from ktp_net_intervals (server-relative, every
+    match), per-shot ping from ktp_shot_events (exact, this match, only where
+    shot-detail was on), the engine session from ktp_net_sessions (whole
+    connection), and the per-half client slice from ktp_net_clients with the
+    declared settings from ktp_client_settings (matches after the 10-24 wave)."""
+    client_rows = client_rows or []
+    settings_rows = settings_rows or []
     if not sources.get("net_intervals", False):
         return {"status": "unavailable", "reason": "ktp_net_intervals not present",
                 "definition_version": 1, "definition": CONNECTION_DEFINITION,
@@ -1925,6 +1984,14 @@ def build_connection(
     session_by_id: dict[int | None, dict[str, Any]] = {}
     for r in session_rows:  # ordered longest-first per player by the query
         session_by_id.setdefault(_i(r.get("player_id")), r)
+    halves_by_id: dict[int | None, list[dict[str, Any]]] = {}
+    for r in client_rows:  # ordered by ts per player by the query
+        if str(r.get("half") or "") == "prelive":
+            continue  # the warmup slice closed at match start is not a half
+        halves_by_id.setdefault(_i(r.get("player_id")), []).append(r)
+    settings_by_id: dict[int | None, list[dict[str, Any]]] = {}
+    for r in settings_rows:  # ordered by ts per player by the query
+        settings_by_id.setdefault(_i(r.get("player_id")), []).append(r)
     out = []
     for p in players:
         pid = _i(p.get("player_id"))
@@ -1964,6 +2031,8 @@ def build_connection(
                 "loss_avg_pct": _f(se.get("session_loss_avg_pct")),
                 "loss_max_pct": _f(se.get("session_loss_max_pct")),
             },
+            "halves": [_client_half(h, settings_by_id.get(pid, []))
+                       for h in halves_by_id.get(pid, [])] or None,
         })
     return {
         "status": "available",
@@ -1976,6 +2045,8 @@ def build_connection(
             # stream was off for this match. The page wants to say which.
             "shot_ping": "available" if shot_rows else ("not-recorded" if sources.get("shot_ping") else "unavailable"),
             "session": "available" if session_rows else ("not-recorded" if sources.get("net_sessions") else "unavailable"),
+            "client_slice": "available" if client_rows else ("not-recorded" if sources.get("net_clients") else "unavailable"),
+            "settings": "available" if settings_rows else ("not-recorded" if sources.get("client_settings") else "unavailable"),
         },
         "match": match,
         "players": out,
@@ -2498,6 +2569,8 @@ def build_report(
             query_rows(db, "net_session_fact.sql", match_id) if sources.get("net_sessions") else [],
             query_rows(db, "shot_ping_fact.sql", match_id) if sources.get("shot_ping") else [],
             players, sources,
+            query_rows(db, "net_client_fact.sql", match_id) if sources.get("net_clients") else [],
+            query_rows(db, "client_settings_fact.sql", match_id) if sources.get("client_settings") else [],
         ),
         "duel_matrix": duel_matrix,
         # Wave 2 (migration 033): None until a 1.22.0 producer's half lands.
