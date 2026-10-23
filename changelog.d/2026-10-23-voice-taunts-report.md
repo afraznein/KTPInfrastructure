@@ -10,8 +10,9 @@ row with `match_id`; coordination `infra-voice-taunts-report` is the lane.
   second collapse to one (nine in one second was measured on the first night); leaderboards count
   taunts and show presses. Two boards (official 0/4, every type), most-taunted, one section per
   speaker with their victims, and a shape block (per type, per line, seconds-after-kill histogram).
-  Per match divides by matches the speaker appeared in (`ktp_match_players`), not matches with a
-  taunt. `--tsv` keeps every distinct command with its delta so the window can move without a new
+  Per match divides by matches the speaker appeared in (`ktp_match_players`) on a server whose
+  plugin could record a voice line (capture manifest `producer_version` >= 1.28.0), not every match of
+  the season and not only matches with a taunt. `--tsv` keeps every distinct command with its delta so the window can move without a new
   query. Read-only over the local socket, no credentials.
 - **`ktp-voice-taunts.{service,timer}`** run it daily at 06:10 local into
   `/var/lib/ktp-voice-taunts/latest.md` with a dated copy, under `ktp-run-record.sh`; on-failure

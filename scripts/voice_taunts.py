@@ -12,8 +12,11 @@ migration 045 + stats_logging 1.28.0 (shipped inside 1.30.0) land every voice-me
   distinct   presses by one speaker in one logged second collapse to one -- the key is
              spammed (9 presses in one second was measured on the first night) while DoD plays
              the sound once per cooldown. Leaderboards count distinct taunts; presses are shown.
-  per match  distinct taunts / matches the speaker appeared in (`ktp_match_players`), so a
-             player who never taunts still has a denominator
+  per match  distinct taunts / matches the speaker appeared in (`ktp_match_players`) WHERE the
+             server was running a plugin that captures voice commands (capture manifest
+             `producer_version` >= 1.28.0; drew's correction 2026-10-23 -- the first cut divided
+             by every match of the season and read as 0.11 per match for a player whose ten
+             taunts all came in the two matches that could have recorded one)
 
 Names are the league's where the league knows the player: the website's `ktp.player.alias`,
 joined through `ktp.player_steam.steam_id64` to the hlstatsx steam id -- the same index
@@ -52,6 +55,10 @@ OFFICIAL = (0, 4)
 # any sensible window on purpose, so the TSV keeps the delta and the cut can move later
 # without a new query.
 LOOKBACK = 10
+# stats_logging 1.28.0 is the first producer that emits voice-command lines; a match whose
+# capture manifest names an older producer could not have recorded one and is not a
+# denominator for "per match".
+MIN_PRODUCER = (1, 28, 0)
 # Canonical copy: scripts/player_alias.py (steam64_to_hlstats). Duplicated because this file
 # deploys standalone to /usr/local/bin with no package to import from. Keep the two in step.
 STEAM64_BASE = 76561197960265728
@@ -92,12 +99,44 @@ ORDER BY pa.eventTime, pa.id"""
 
 def played_sql(since: str) -> str:
     return f"""
-SELECT mp.player_id, m.match_type, COUNT(DISTINCT mp.match_id)
+SELECT DISTINCT mp.player_id, m.match_type, mp.match_id
 FROM ktp_match_players mp
 JOIN (SELECT match_id, MIN(match_type) AS match_type, MIN(start_time) AS start_time
       FROM ktp_matches GROUP BY match_id) m ON m.match_id = mp.match_id
-WHERE m.start_time >= '{since}' AND m.match_type IS NOT NULL
-GROUP BY mp.player_id, m.match_type"""
+WHERE m.start_time >= '{since}' AND m.match_type IS NOT NULL"""
+
+
+def manifests_sql(since: str) -> str:
+    return f"""
+SELECT DISTINCT cm.match_id, cm.producer_version
+FROM ktp_capture_manifests cm
+JOIN (SELECT match_id, MIN(start_time) AS start_time FROM ktp_matches GROUP BY match_id) m
+  ON m.match_id = cm.match_id
+WHERE m.start_time >= '{since}'"""
+
+
+def version_tuple(v: str) -> tuple[int, ...]:
+    out = []
+    for part in v.strip().split("."):
+        digits = "".join(ch for ch in part if ch.isdigit())
+        if not digits:
+            break
+        out.append(int(digits))
+    return tuple(out)
+
+
+def voice_capable_matches(manifest_rows: list[list[str]]) -> set[str]:
+    """Matches where at least one half ran a producer that emits voice lines."""
+    return {mid for mid, ver in manifest_rows if version_tuple(ver) >= MIN_PRODUCER}
+
+
+def matches_played(played_rows: list[list[str]], capable: set[str]) -> dict[tuple[int, int], int]:
+    """(player_id, match_type) -> matches appeared in that could have recorded a voice command."""
+    seen: dict[tuple[int, int], set[str]] = defaultdict(set)
+    for pid, mtype, mid in played_rows:
+        if mid in capable:
+            seen[(int(pid), int(mtype))].add(mid)
+    return {k: len(v) for k, v in seen.items()}
 
 
 STEAM_SQL = "SELECT playerId, uniqueId FROM hlstats_PlayerUniqueIds WHERE game = 'dod'"
@@ -263,7 +302,9 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
          f"Generated {generated}. No voice commands in tracked matches since {since}.", "",
          f"A taunt = a voice command <= {window} s after the speaker's own kill; the victim of that "
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
-         "DoD plays the sound once per cooldown). Per match = taunts / matches the speaker appeared in. "
+         "DoD plays the sound once per cooldown). Per match = taunts / matches the speaker appeared in "
+         "on a server whose plugin captures voice commands (stats_logging >= 1.28.0, live fleet-wide since "
+         "2026-10-22); earlier matches could not have recorded one and are not counted. "
          + (names_note or "Names: league alias where the website knows the player, else the in-game alias."),
          ""]
     for title, types in (("Official matches", OFFICIAL), ("All match types", all_types)):
@@ -273,7 +314,7 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
-        L += ["| # | speaker | taunts | presses | matches | per match | matches with a taunt | favourite target | favourite line |",
+        L += ["| # | speaker | taunts | presses | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite line |",
               "|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
             L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['matches']} "
@@ -347,7 +388,8 @@ def main() -> int:
         raise SystemExit(f"--window {a.window} exceeds the {LOOKBACK} s lookback the query carries")
 
     events = distinct(nearest(q(presses_sql(a.since), a.db)))
-    played = {(int(p), int(t)): int(n) for p, t, n in q(played_sql(a.since), a.db)}
+    capable = voice_capable_matches(q(manifests_sql(a.since), a.db))
+    played = matches_played(q(played_sql(a.since), a.db), capable)
     names_note = ""
     if a.no_aliases:
         names_note = "Names: in-game aliases (--no-aliases)."

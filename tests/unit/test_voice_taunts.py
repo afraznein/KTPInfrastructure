@@ -114,3 +114,15 @@ def test_missing_credentials_is_a_note_not_a_failure(monkeypatch):
     monkeypatch.delenv("KTP_SUPABASE_SECRET_KEY", raising=False)
     index, problem = vt.fetch_alias_index()
     assert index == {} and "not set" in problem
+
+
+# -- the per-match denominator only counts matches that could have recorded a voice line -----
+
+
+def test_matches_before_the_voice_plugin_are_not_a_denominator():
+    manifests = [["M_old", "1.27.2"], ["M_new", "1.30.0"], ["M_new", "1.27.2"], ["M_odd", "1.28.0-witness"]]
+    capable = vt.voice_capable_matches(manifests)
+    assert capable == {"M_new", "M_odd"}          # one capable half is enough; 1.28.0 itself qualifies
+    played = [["1", "2", "M_old"], ["1", "2", "M_new"], ["1", "2", "M_new"], ["1", "1", "M_odd"], ["2", "2", "M_old"]]
+    assert vt.matches_played(played, capable) == {(1, 2): 1, (1, 1): 1}
+    assert vt.version_tuple("1.30.0") > vt.MIN_PRODUCER > vt.version_tuple("1.27.2")
