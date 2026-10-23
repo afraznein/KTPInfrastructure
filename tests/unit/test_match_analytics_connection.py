@@ -54,7 +54,8 @@ def test_shares_are_per_window_and_missing_instruments_read_null():
     assert by["nicholson"]["session"]["seconds"] == 3249
     assert by["nicholson"]["session"]["drop_rate_pct"] == 0.001
     assert by["quiet"]["session"] is None and by["quiet"]["shot_ping"] is None
-    assert c["instruments"] == {"worst_share": "available", "shot_ping": "available", "session": "available"}
+    assert c["instruments"] == {"worst_share": "available", "shot_ping": "available", "session": "available",
+                                "client_slice": "unavailable", "settings": "unavailable"}
     # A worst-of name that is not on the roster is not invented into a player.
     assert "someone who left" not in by
 
@@ -84,3 +85,81 @@ def test_public_block_is_the_box_only_and_passes_the_forbidden_scan():
     assert [p["player_name_at_match"] for p in c["players"]] == ["kroD-", "nicholson", "quiet"]
     old = _connection_block({"schema_version": 29})
     assert old["status"] == "unavailable" and old["reason"] == "not-in-report"
+
+
+# -- schema 34: the per-half client slice, with the settings the client declared --
+
+CLIENTS = [
+    {"player_id": "123", "half": "prelive", "ts": "2026-10-24 21:00:00", "span_s": "300", "pkts": "24000",
+     "cmds": "72000", "drops": "0", "pps": "80.0", "cmds_pkt": "3.00", "msec_p50": "4", "msec_p95": "5",
+     "msec_max": "9", "arr_p50": "12", "arr_p95": "13", "arr_max": "40", "interp_cap": "0",
+     "interp_floor": "0", "stale_delta": "0"},
+    {"player_id": "123", "half": "1", "ts": "2026-10-24 21:21:00", "span_s": "1206", "pkts": "100331",
+     "cmds": "300993", "drops": "21", "pps": "83.2", "cmds_pkt": "3.00", "msec_p50": "4", "msec_p95": "5",
+     "msec_max": "41", "arr_p50": "12", "arr_p95": "14", "arr_max": "388", "interp_cap": "0",
+     "interp_floor": "3", "stale_delta": "2"},
+    {"player_id": "123", "half": "2", "ts": "2026-10-24 21:45:00", "span_s": "1190", "pkts": "148000",
+     "cmds": "296000", "drops": "4", "pps": "124.4", "cmds_pkt": "2.00", "msec_p50": "4", "msec_p95": "4",
+     "msec_max": "12", "arr_p50": "8", "arr_p95": "9", "arr_max": "30", "interp_cap": "0",
+     "interp_floor": "0", "stale_delta": "0"},
+]
+SETTINGS = [
+    {"player_id": "123", "half": "1", "why": "start", "ts": "2026-10-24 21:00:03", "updaterate": "102",
+     "cmdrate": "101", "rate": "100000", "interp": "0.01", "fps_max": "250", "lc": "1", "lw": "1"},
+    # Changed cmdrate between halves: half 2 has no why=start row (the plugin logs start once per
+    # match live), so the latest snapshot at or before the half-2 flush is the one that applies.
+    {"player_id": "123", "half": "2", "why": "change", "ts": "2026-10-24 21:30:00", "updaterate": "102",
+     "cmdrate": "125", "rate": "100000", "interp": "0.01", "fps_max": "250", "lc": "1", "lw": "1"},
+    # A non-numeric answer landed NULL in the aggregator; it must stay null here.
+    {"player_id": "109", "half": "1", "why": "start", "ts": "2026-10-24 21:00:04", "updaterate": "102",
+     "cmdrate": "101", "rate": "NULL", "interp": "0.01", "fps_max": "99.5", "lc": "-1", "lw": "-1"},
+]
+SOURCES_34 = dict(SOURCES, net_clients=True, client_settings=True)
+
+
+def test_halves_pair_each_slice_with_the_settings_declared_for_it():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, CLIENTS, SETTINGS)
+    by = {p["player_name_at_match"]: p for p in c["players"]}
+    halves = by["kroD-"]["halves"]
+    # The warmup slice is not a half.
+    assert [h["half"] for h in halves] == ["1", "2"]
+    h1, h2 = halves
+    assert (h1["pps"], h1["cmds_pkt"], h1["fps_est"]) == (83.2, 3.0, 250)
+    assert h1["msec"] == {"p50": 4, "p95": 5, "max": 41} and h1["arr_ms"]["max"] == 388
+    assert (h1["drops"], h1["interp_floor"], h1["stale_delta"]) == (21, 3, 2)
+    assert h1["settings"]["why"] == "start" and h1["settings"]["cl_cmdrate"] == 101.0
+    # Half 2 takes the mid-match change, and the observed cadence agrees with it.
+    assert h2["settings"]["why"] == "change" and h2["settings"]["cl_cmdrate"] == 125.0
+    assert h2["fps_est"] == 249 and h2["pps"] == 124.4
+    # Nothing declared for this player: slices still publish, settings read null.
+    assert by["nicholson"]["halves"] is None
+    assert by["quiet"]["halves"] is None
+    assert c["instruments"]["client_slice"] == "available" and c["instruments"]["settings"] == "available"
+
+
+def test_a_non_numeric_answer_and_an_unsampled_lagcomp_read_null():
+    row = dict(CLIENTS[1], player_id="109")
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, [row], SETTINGS)
+    by = {p["player_name_at_match"]: p for p in c["players"]}
+    s = by["nicholson"]["halves"][0]["settings"]
+    assert s["rate"] is None and s["fps_max"] == 99.5 and s["cl_lc"] == -1
+
+
+def test_halves_say_why_they_are_missing_and_old_reports_are_untouched():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34)
+    assert c["instruments"]["client_slice"] == "not-recorded"   # tables exist, match predates the wave
+    assert all(p["halves"] is None for p in c["players"])
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES)
+    assert c["instruments"]["client_slice"] == "unavailable"    # tables absent
+    assert c["instruments"]["settings"] == "unavailable"
+
+
+def test_public_block_still_carries_no_half_and_no_setting():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, CLIENTS, SETTINGS)
+    dto = _connection_block({"connection": c})
+    assert_sanitized(dto)
+    assert "players" not in dto
+    assert dto["instruments"]["client_slice"] == "available"
+    body = str(dto)
+    for leaked in ("'halves'", "'cl_cmdrate'", "'fps_est'", "388", "125.0"):   # keys and values, not the prose that names them
+        assert leaked not in body, leaked

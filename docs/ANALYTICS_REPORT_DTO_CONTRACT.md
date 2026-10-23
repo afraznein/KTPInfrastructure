@@ -25,6 +25,7 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.12.0` | 25 | Adds top-level `glossary`: a reader-facing `what` and a declared `unit` for every published box-score, `flag_swing` and `accumulation` field, plus the metric contract it was transcribed from. The ratings block already carried its own `definition` and `display_scale`; everything else was published with no definition a reader could reach, which produced two misreadings of a 100-centred index (a KAST of 125 read as a percentage; and earlier, keep-the-prac #679/#691, a second z-transform applied to an already-scaled value). The multikill window in the `fast_*k` definitions is read off `shadow_timelines.config` per report rather than restated, so it cannot drift from the config the numbers were built with |
 | `analytics-report-dto-v1.13.0` | 30 | Adds top-level `connection` (see below): per player, the share of 10 s windows in which they were the server's worst client for jitter / latency / drops, their own ping sampled at each shot where the shot-detail stream was on, and the engine session that ended in this match; per match, drops per window and lag-compensation state. Match page only by ruling (2026-10-11): not a general stat, not a rating input. No other key changes |
 | `analytics-report-dto-v1.14.0` | 30 | `connection.players[]` removed before any renderer consumed it: per-player connection numbers are own-row-only by ruling (2026-10-11, revising the same day's "match page only") and are served by the private player tier, never the public report. `connection` keeps the server-level `match` figures and `instruments`, and gains a `privacy` sentence. No other key changes |
+| `analytics-report-dto-v1.15.0` | 34 | `connection.instruments` gains `client_slice` and `settings`. The producer's private `connection.players[]` gains `halves[]` (see below): per half, the engine's per-client slice -- own frame time `msec.{p50,p95,max}`, move-packet gap `arr_ms.{p50,p95,max}`, `pps`, `cmds_pkt`, `fps_est`, `drops`, `interp_floor`, `interp_cap`, `stale_delta` -- and the `settings` the client declared for it (`cl_updaterate`, `cl_cmdrate`, `rate`, `ex_interp`, `fps_max`, `cl_lc`, `cl_lw`). Public block unchanged apart from the two flags; own-row-only stands |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a
@@ -38,7 +39,7 @@ The report `schema_version` changes whenever `build_report` output changes, and
 `report_service generate` regenerates every in-season match that has no report
 at the current schema. `report_sync` then inserts those as new rows.
 
-## `connection` (v1.13.0, players removed in v1.14.0)
+## `connection` (v1.13.0, players removed in v1.14.0, `halves` for the private tier in v1.15.0)
 
 Server-level connection quality for this match. **Per-player rows are not here**: ruled 2026-10-11 that a player's own connection numbers (worst-of shares, per-shot ping, engine session) are visible only to that player on their own stats page. The producer's report still carries them under `connection.players[]`; the private player tier reads them there, keyed to the signed-in player. The public block:
 
@@ -59,6 +60,15 @@ Server-level connection quality for this match. **Per-player rows are not here**
 - The per-player rows in the producer's report, for the private tier: `worst_share.{jitter,latency,drops}` as a fraction of the match's 10 s windows in which the player was the **server's worst** client for that gauge (server-relative — a clean server still has a worst client every window); `drops_when_worst`, `latency_spikes_ge300`, `jitter_when_worst_ms`, `latency_when_worst_max_ms`; `shot_ping {shots, avg_ms, sd_ms, max_ms, dropped}` (the player's own round trip at each shot, this match only); `session {seconds, packets, drops, drop_rate_pct, latency_avg_ms, latency_max_ms, jitter_avg_ms, loss_avg_pct, loss_max_pct}` for the connection that **ended during this match**, spanning everything since it connected (`seconds`).
 - Not a general stat and not a rating input, on either tier.
 - A report built before schema 30 reads `{"status": "unavailable", "reason": "not-in-report", ...}`.
+- **`players[].halves[]` (schema 34, private tier only).** One entry per half the engine closed for that player via `ktp_net_flush` (KTP-ReHLDS #48; issued by KTPCvarChecker 7.43 at match start, half end and match end; the warmup `prelive` slice is dropped). Each carries the client's OWN frame time as the server saw it on every command (`msec.p50` = 1000/fps, `msec.max` a hitch), the gap between its move packets (`arr_ms`; steady `msec` with a bursty gap is the upload path, a bursty `msec` is the client), `pps` and `cmds_pkt` (effective cmdrate, and `fps_est = pps x cmds_pkt`), `drops`, `interp_floor`/`interp_cap` rewrites and `stale_delta` (what the client prints as `FlushEntityPacket`), beside `settings` -- the five net cvars the client answered `query_client_cvar` with at that half's live (`why: start`), or the latest answer before the flush. `settings` is what the client DECLARED; `msec` is what it DID. `instruments.client_slice` / `instruments.settings` say whether either stream was recording; `null` means not measured.
+
+```json
+"halves": [{"half": "1", "span_s": 1206, "pps": 83.2, "cmds_pkt": 3.0, "fps_est": 250,
+            "msec": {"p50": 4, "p95": 5, "max": 41}, "arr_ms": {"p50": 12, "p95": 14, "max": 388},
+            "drops": 21, "interp_floor": 0, "interp_cap": 0, "stale_delta": 2,
+            "settings": {"why": "start", "cl_updaterate": 102, "cl_cmdrate": 101, "rate": 100000,
+                         "ex_interp": 0.01, "fps_max": 250, "cl_lc": 1, "cl_lw": 1}}]
+```
 
 ## `in_game_result`
 
