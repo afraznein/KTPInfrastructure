@@ -145,6 +145,7 @@ that never "failed", and alerts on state transitions only.
 | `ktp-identity-reconcile.service` | yes | no | yes |
 | `ktp-hlstatsx-ingest-monitor.service` | yes | no | yes |
 | `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery (the embed carries the top rows from stdout); the report is at `/var/lib/ktp-weekly-outliers/latest.md`. The unit then sits `failed` until next Monday, which is the finding, not a fault — it is in the health sweep's `FAILED_UNIT_IGNORE` for that reason (added 2026-10-10 after six days of re-reports) |
+| `ktp-voice-taunts.service` | yes | no | a failing run alerts; there is no alert exit, the file is the product |
 | `ktp-reports.service` | yes, once the unit from `systemd/` is reinstalled; the live unit has none | no | a failing run alerts; `ktp-reports.timer` is not in `CRITICAL_TIMERS`, so a timer that stops firing does not. The journal only says `exit-code`; the cause is in `/var/log/ktp-report-service.log` |
 | `ktp-admin-bot.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
 | `ktp-frag-diag-tail.service` | **no** | **no** | not critical — operator ruling 2026-09-18; a `failed` exit is still caught by `failed-unit:` |
@@ -179,6 +180,7 @@ document, which is how four of them sat here unlisted until 2026-10-12.
 | `ktp-hltv-liveness.timer` | yes (2026-09-16) | **the HLTV liveness check stops and nothing notices** |
 | `ktp-hlstatsx-ingest-monitor.timer` | yes (2026-09-16) | ingest monitoring stops silently |
 | `ktp-weekly-outliers.timer` | yes (2026-10-05) | the weekly outlier report stops and nobody notices until someone asks why Monday was quiet |
+| `ktp-voice-taunts.timer` | yes (2026-10-23) | the nightly voice-taunt report stops; `latest.md` keeps yesterday's numbers and reads as current |
 | `ktp-stats-export.timer` | yes (2026-09-16) | exports stop; last file stays in place and reads healthy |
 | `ktp-corpus-push.timer` / `-denver` | yes (2026-09-16) | corpus pushes stop silently |
 | `ktp-roster-history-audit.timer` | yes (2026-09-16) | audit stops silently |

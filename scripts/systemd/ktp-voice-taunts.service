@@ -1,0 +1,23 @@
+[Unit]
+Description=KTP nightly voice-taunt report: voice-menu commands within seconds of the speaker's own kill, with the victim named
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=mysql.service
+
+[Service]
+Type=oneshot
+StateDirectory=ktp-voice-taunts
+# League aliases come from the website's PostgREST with the reports credentials; the
+# dash makes the file optional -- without it the report runs on in-game names and says so.
+EnvironmentFile=-/etc/ktp/reports.env
+# voice_taunts.py writes --out before it exits and has no alert exit: the file is the product,
+# read over SSH. The dated copy is the record (docs/runbooks/UNIT_RUN_RECORDS.md); the TSV
+# keeps every distinct voice command with its nearest-kill delta so the window can move later
+# without a new query.
+# Then publish the three files into the PRIVATE coordination repo (research/infra-voice-taunts-report/)
+# so they can be read on GitHub by the people with access. Without the deploy key the publisher
+# prints NOT PUBLISHED and exits 0: the local files are the product either way.
+ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-voice-taunts && /usr/local/bin/voice_taunts.py --out latest.md --tsv latest.tsv && cp latest.md "voice-taunts-$(date +%%F).md" && /usr/local/bin/ktp-coord-publish.sh research/infra-voice-taunts-report latest.md latest.tsv "voice-taunts-$(date +%%F).md"'
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target
