@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the KTP voice-taunt report nightly, after the 03:00 ET fleet swap and the evening's matches
+Documentation=https://github.com/afraznein/KTPInfrastructure
+
+[Timer]
+# 06:10 local: after the 03:00 ET swap, after the report pipeline's own regeneration, before
+# anyone reads. Persistent so a box that was down overnight runs it on boot.
+OnCalendar=*-*-* 06:10:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

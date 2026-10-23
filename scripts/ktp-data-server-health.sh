@@ -78,6 +78,8 @@ CRITICAL_TIMERS=(
     ktp-corpus-push-denver.timer
     # The Monday outlier report stops; a quiet Monday reads as a clean week.
     ktp-weekly-outliers.timer
+    # The nightly voice-taunt report stops; yesterday's file stays in place and reads as current.
+    ktp-voice-taunts.timer
     # Compares every installed file against the commit its manifest row names. If
     # this timer stops, nothing reports that the box has drifted from the repo --
     # and the drift it exists to find is itself silent, so a stopped timer and a
