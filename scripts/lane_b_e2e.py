@@ -1374,9 +1374,10 @@ def main() -> int:
                             print("staging degraded-killer assist scenario", flush=True)
                             report["assist_scenario"] = assist_scenario.run(
                                 handle, args.log)
-                            # Bots never pick a voice command on their own, so
-                            # the drive issues three through amxclient_cmd --
-                            # the same server-side path a real pick takes.
+                            # Bots never pick a voice command or a hand signal on
+                            # their own, so the drive issues three voice commands and
+                            # two signals through amxclient_cmd -- the same
+                            # server-side path a real pick takes.
                             print("staging voice-command scenario", flush=True)
                             handle.rcon("ktp_vc_run")
 
@@ -1738,6 +1739,8 @@ def main() -> int:
             "suicide": log_text.count('committed suicide with'),
             # 27 voice-menu commands, one generic action each (migration 045).
             "voice": log_text.count('triggered "voice_'),
+            # 16 hand signals, same shape (migration 048).
+            "signal": log_text.count('triggered "signal_'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
             # "frag_context" marker each non-teamkill player frag emits.
@@ -1865,6 +1868,10 @@ def main() -> int:
             assertions.check_suicides_carried(db, emitted=report["emitted"]["suicide"]),
             assertions.check_headshots_carried(db, emitted=report["emitted"]["headshot"]),
             assertions.check_carried(db, "voice_", emitted=report["emitted"]["voice"],
+                                     table="hlstats_Events_PlayerActions",
+                                     other_table="hlstats_Events_PlayerPlayerActions",
+                                     prefix=True),
+            assertions.check_carried(db, "signal_", emitted=report["emitted"]["signal"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),

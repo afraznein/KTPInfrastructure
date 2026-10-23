@@ -187,6 +187,8 @@ DEFAULT_SCHEMA_FILES = (
     # The 1.31.0 producer appends air_ms_standing and the paired daemon
     # (KTPHLStatsX, migration 047) names it in the move-census INSERT.
     "sql/migrate_047_move_census_air_standing.sql",
+    # Seeds the 16 hand signals as generic actions, the voice-command family's twin (045).
+    "sql/migrate_048_hand_signal_actions.sql",
 )
 
 DEFAULT_SEED_FILES = (
