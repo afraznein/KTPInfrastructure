@@ -26,6 +26,11 @@
 #   5. ktp_net_intervals identity: the per-interval worst-player name columns
 #      set to NULL on rows older than the same NET_IDENTITY_RETENTION_DAYS. The
 #      interval metrics and the *_slot columns stay; only the names age out.
+#   6. ktp_net_clients and ktp_client_settings identity: name + steam_id blanked
+#      past the same horizon, sweep 4's shape exactly (KTPProfileAggregator
+#      sql/2026-10-19-001). Each is guarded on the table existing -- the DDL is
+#      operator-applied and this cron runs before it lands -- so an absent table
+#      is logged and skipped, never a failed run.
 #
 # Uses the root MySQL socket (same auth as migrations: `mysql hlstatsx`).
 # Cron: /etc/cron.d/ktp-ac-retention (04:40 ET daily, after ktp-backup).
@@ -115,6 +120,14 @@ for c in $NET_INTERVAL_NAME_COLUMNS; do
 done
 net_interval_where="ts < NOW() - INTERVAL ${NET_IDENTITY_RETENTION_DAYS} DAY AND (${net_interval_named})"
 
+# The per-client slice and the declared-settings tables carry the same two identity
+# columns as ktp_net_sessions and take the same predicate. They are created by an
+# operator-applied migration in another repo, so their presence is a runtime fact:
+# a one-row probe, not information_schema, because the test harness's fake mysql
+# knows SELECT and nothing else.
+NET_CLIENT_TABLES="ktp_net_clients ktp_client_settings"
+table_present() { mysql hlstatsx -N -e "SELECT 1 FROM $1 LIMIT 1" >/dev/null 2>&1; }
+
 # ── 1. Upload day-dirs ────────────────────────────────────────────────
 # 0 or unset means RETAIN EVERYTHING. The guard has to be HERE, not only in the
 # default: "-0 days" resolves to TODAY, so a bare default of 0 would sweep the
@@ -181,6 +194,13 @@ if [ "$DRY_RUN" = "1" ]; then
     if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
         mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: net_sessions identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_net_sessions WHERE ${net_identity_where};"
         mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: net_intervals identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ktp_net_intervals WHERE ${net_interval_where};"
+        for t in $NET_CLIENT_TABLES; do
+            if table_present "$t"; then
+                mysql hlstatsx -N -e "SELECT CONCAT('DRY_RUN: ${t#ktp_} identities past ${NET_IDENTITY_RETENTION_DAYS}d: ', COUNT(*)) FROM ${t} WHERE ${net_identity_where};"
+            else
+                echo "DRY_RUN: ${t#ktp_} identity blanking skipped (table absent)"
+            fi
+        done
     else
         echo "DRY_RUN: net_sessions and net_intervals identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
     fi
@@ -200,6 +220,14 @@ if [ "${NET_IDENTITY_RETENTION_DAYS}" -gt 0 ]; then
         "UPDATE ktp_net_sessions SET name = '', steam_id = '' WHERE ${net_identity_where}" blanked
     batched_write "net_intervals identity" \
         "UPDATE ktp_net_intervals SET ${net_interval_set} WHERE ${net_interval_where}" blanked
+    for t in $NET_CLIENT_TABLES; do
+        if table_present "$t"; then
+            batched_write "${t#ktp_} identity" \
+                "UPDATE ${t} SET name = '', steam_id = '' WHERE ${net_identity_where}" blanked
+        else
+            echo "[$(ts)] ac-retention: ${t#ktp_} identity blanking skipped (table absent)"
+        fi
+    done
 else
     echo "[$(ts)] ac-retention: net_sessions and net_intervals identity blanking is off (NET_IDENTITY_RETENTION_DAYS=0)"
 fi
