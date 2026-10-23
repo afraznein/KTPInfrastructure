@@ -76,7 +76,7 @@ def test_report_renders_every_section_and_escapes_pipes():
     for h in ("## Official matches", "## All match types", "## Most taunted", "## Per speaker", "## Shape"):
         assert h in text
     assert "me\\|u" in text and "j\\|3" in text
-    assert "| 1 | me\\|u | 1 | 1 | 2 | 0.50 | 1 | j\\|3 | negative |" in text
+    assert "| 1 | me\\|u | 1 | 1 | 2 | 0.50 | 1 | j\\|3 | voice_negative |" in text
 
 
 def test_empty_report_does_not_divide_by_zero():
@@ -126,3 +126,11 @@ def test_matches_before_the_voice_plugin_are_not_a_denominator():
     played = [["1", "2", "M_old"], ["1", "2", "M_new"], ["1", "2", "M_new"], ["1", "1", "M_odd"], ["2", "2", "M_old"]]
     assert vt.matches_played(played, capable) == {(1, 2): 1, (1, 1): 1}
     assert vt.version_tuple("1.30.0") > vt.MIN_PRODUCER > vt.version_tuple("1.27.2")
+
+
+def test_hand_signals_are_taunts_too():
+    rows = [row(1, "2026-10-22 18:00:00", code="signal_yes", vic=7, vic_name="j3", secs=1)]
+    events = vt.distinct(vt.nearest(rows))
+    (r,) = vt.leaderboard(events, {(1, 0): 1}, vt.OFFICIAL, window=5)
+    assert r["top_code"] == "signal_yes" and r["taunts"] == 1
+    assert "signal" in vt.presses_sql("2026-09-13")

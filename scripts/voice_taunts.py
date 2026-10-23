@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Nightly markdown: who taunts whom. A voice-menu command sent within --window seconds
-after the speaker's own kill, with the victim named.
+"""Nightly markdown: who taunts whom. A voice-menu command or hand signal sent within --window
+seconds after the speaker's own kill, with the victim named.
 
 Players asked for voice-command counts; drew asked which of them are taunts. KTPHLStatsX
 migration 045 + stats_logging 1.28.0 (shipped inside 1.30.0) land every voice-menu press as a
 `hlstats_Events_PlayerActions` row with `match_id`, so this is a read over two tables:
 
-  press      one PlayerActions row, code `voice_*`, inside a tracked match
+  press      one PlayerActions row, code `voice_*` or `signal_*` (hand signals, migration 048,
+             stats_logging 1.32.0), inside a tracked match
   taunt      a press whose nearest own kill (`hlstats_Events_Frags.killerId` = speaker) is
              <= --window seconds before it; the victim of that kill is the target
   distinct   presses by one speaker in one logged second collapse to one -- the key is
@@ -85,7 +86,7 @@ SELECT pa.id, pa.eventTime, pa.match_id, m.match_type, a.code,
        IFNULL(f.victimId, ''), IFNULL(vp.lastName, ''), IFNULL(f.weapon, ''),
        IFNULL(TIMESTAMPDIFF(SECOND, f.eventTime, pa.eventTime), '')
 FROM hlstats_Events_PlayerActions pa
-JOIN hlstats_Actions a ON a.id = pa.actionId AND a.code LIKE 'voice\\\\_%'
+JOIN hlstats_Actions a ON a.id = pa.actionId AND (a.code LIKE 'voice\\\\_%' OR a.code LIKE 'signal\\\\_%')
 JOIN (SELECT match_id, MIN(match_type) AS match_type, MIN(start_time) AS start_time
       FROM ktp_matches GROUP BY match_id) m ON m.match_id = pa.match_id
 JOIN hlstats_Players sp ON sp.playerId = pa.playerId
@@ -260,7 +261,7 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
         s["taunts"] += 1
         s["presses"] += e["presses"]
         s["victims"][e["victim"]] += 1
-        s["codes"][e["code"].removeprefix("voice_")] += 1
+        s["codes"][e["code"]] += 1
         s["matches_with"].add(e["match_id"])
         s["speaker"] = e["speaker"]  # latest name wins
     rows = []
@@ -296,11 +297,11 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
     taunts = [e for e in events if is_taunt(e, window)]
     L = ["# Voice taunts", "",
          f"Generated {generated}. Tracked matches since {since}, every type. "
-         f"{presses} voice presses = {len(events)} distinct voice commands; "
+         f"{presses} voice/signal presses = {len(events)} distinct commands; "
          f"{len(taunts)} of those came within {window} s of the speaker's own kill "
          f"({100 * len(taunts) / len(events):.0f}%)." if events else
          f"Generated {generated}. No voice commands in tracked matches since {since}.", "",
-         f"A taunt = a voice command <= {window} s after the speaker's own kill; the victim of that "
+         f"A taunt = a voice command or hand signal <= {window} s after the speaker's own kill; the victim of that "
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
          "DoD plays the sound once per cooldown). Per match = taunts / matches the speaker appeared in "
          "on a server whose plugin captures voice commands (stats_logging >= 1.28.0, live fleet-wide since "
@@ -314,7 +315,7 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
-        L += ["| # | speaker | taunts | presses | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite line |",
+        L += ["| # | speaker | taunts | presses | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite command |",
               "|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
             L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['matches']} "
@@ -340,12 +341,12 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         by_spk[e["speaker"]].append(e)
     for spk, es in sorted(by_spk.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         L += [f"### {esc(spk)} — {len(es)} taunts, {sum(e['presses'] for e in es)} presses", "",
-              "| victim | taunts | lines | weapons | last |", "|---|---|---|---|---|"]
+              "| victim | taunts | commands | weapons | last |", "|---|---|---|---|---|"]
         per: dict[str, dict] = {}
         for e in es:
             v = per.setdefault(e["victim"], {"n": 0, "codes": defaultdict(int), "weapons": defaultdict(int), "last": ""})
             v["n"] += 1
-            v["codes"][e["code"].removeprefix("voice_")] += 1
+            v["codes"][e["code"]] += 1
             v["weapons"][e["weapon"]] += 1
             v["last"] = max(v["last"], e["time"])
         for name, v in sorted(per.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
@@ -358,7 +359,7 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         es = [e for e in events if e["match_type"] == t]
         L.append(f"| {TYPE_NAME[t]} ({t}) | {sum(e['presses'] for e in es)} | {len(es)} "
                  f"| {sum(1 for e in es if is_taunt(e, window))} |")
-    L += ["", "| line | distinct | taunts |", "|---|---|---|"]
+    L += ["", "| command | distinct | taunts |", "|---|---|---|"]
     codes: dict[str, list[int]] = defaultdict(lambda: [0, 0])
     for e in events:
         codes[e["code"]][0] += 1
