@@ -2,7 +2,7 @@
 -- ktp_net_clients by KTPProfileAggregator) for the roster of this match. One row
 -- per client per ktp_net_flush the match plugin issued with this match id: at
 -- half end and at match end. The 'prelive' slice closed at match start holds
--- the warmup and is left out here; the report would drop it anyway.
+-- the warmup and is left out here; the report leaves it out as well.
 -- Columns are the engine's reductions over the slice: usercmd.msec percentiles
 -- are the client's own frame time in ms (1000/fps), arr_* the gap between its
 -- move packets as the server saw them, pps and cmds_pkt the effective cmdrate

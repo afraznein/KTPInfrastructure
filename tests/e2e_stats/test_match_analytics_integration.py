@@ -298,6 +298,8 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "ac_weapon_fires": False,
         "net_intervals": False,
         "net_sessions": False,
+        "net_clients": False,
+        "client_settings": False,
         "shot_ping": False,
     }
     assert all(player[key] is None for player in report["players"]
