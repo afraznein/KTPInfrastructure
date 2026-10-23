@@ -32,6 +32,20 @@ For every processed core, two sidecars land next to it:
 
 The core itself is **not** deleted — `gdb` it interactively whenever you want.
 
+**A re-processed core regenerates its `.bt` in place, against whatever
+`engine_i486.so` is on disk now.** Once the engine has been replaced, the same
+address resolves to a different symbol and the new backtrace is wrong in the
+direction that looks right: a plausible function name, no warning in the file.
+Measured 2026-10-22 on a 2026-09-29 core after a 10-20 engine swap — 29 frames
+and zero `??` became 5 frames, two `??`, and a top frame naming an unrelated
+function at the same address. The build-id warning goes to the journal, not the
+sidecar, so the file gives no sign it is untrustworthy.
+
+So copy the `.bt` before re-arming or re-processing anything, judge a backtrace
+with `grep -cE '^#[0-9]+'` and `grep -c '??'` rather than by eye, and treat the
+`.bt` as the artifact worth keeping — a core is only as good as the engine that
+matches it. Retained example: `evidence/2026-09-29-dallas-nic-flap/`.
+
 ## Install
 
 On a single game host (as root):
@@ -95,7 +109,8 @@ If port resolution fails (PID gone before daemon could check `/proc`, no live PI
 - **inotify can miss events under load.** A safety-net rescan of `/tmp/` runs every 5 minutes regardless.
 - **gdb is capped at 60s** per invocation — pathologically large cores won't block the daemon.
 - **No outbound MySQL.** v1 only POSTs to the Discord Relay (already firewalled-allowed from every host). MySQL trend ingestion is v1.5 via the existing aggregator pulling sidecars over SSH.
-- **Cleanup is manual.** Cores accumulate in `/tmp/`. When you've finished investigating, delete the `core.*`, `*.bt`, and `*.reported` triplet together.
+- **Cleanup is manual, but `/tmp` is not permanent.** Delete the `core.*`, `*.bt`, and `*.reported` triplet together when you've finished investigating — and note that `systemd-tmpfiles-clean.timer` removes anything in `/tmp` older than 30 days (`/usr/lib/tmpfiles.d/tmp.conf`: `D /tmp 1777 root root 30d`). Nothing excludes `core.*`; the only exclusions on these hosts are `systemd-private-*` and `snap-private-tmp`. Move anything worth keeping out of `/tmp` before day 30.
+- **`post_attempts >= 5` means gave up, not delivered.** The `.reported` sidecar is written on give-up as well as on success, so counting sidecars counts *processed* cores rather than delivered ones — `discord_posted` carries the truth. A core that gave up is never retried on its own; lowering `post_attempts` re-arms it, at the regeneration cost described under Sidecar files.
 
 ## v1.5 path
 
