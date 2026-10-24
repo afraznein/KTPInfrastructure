@@ -19,6 +19,11 @@ Aggregation aligned with ktp-soak-verify's Status enum:
   - YELLOW: extras on target, or per-instance reachability issues
   - RED: hash drift, missing-on-target, or .new files lingering
 
+This is a POST-activation gate. A deliberately staged `.new` is RED too, on
+every instance including the reference, because a fresh stage and a failed
+swap are the same shape on disk — read the wave ledger before believing a RED
+whose only cause is new_files.
+
 Output: JSON report to --out (or stdout if --out=-). When invoked from
 ktp-soak-verify's `post-restart` suite, the JSON is parsed and rolled
 into the suite's per-check rows.
@@ -30,6 +35,12 @@ Usage:
                     [--check-runtime]    (also rcon `amx_ktp_versions` on each instance —
                                           catches "right .amxx on disk, prior version
                                           still loaded because instance hasn't restarted")
+
+--check-runtime compares each instance's loaded version and sha against the
+REFERENCE instance, so it answers "did every instance load the same build",
+never "did the intended build go live". A reference that also failed to swap
+reads GREEN fleet-wide on the old one; the plugin's own version cvar read over
+rcon is the only absolute answer.
 
 Defaults:
   --reference     74.91.121.9:27015 (ATL1)
@@ -566,7 +577,8 @@ def main() -> int:
     ap.add_argument("--check-runtime", action="store_true",
                     help="Also query `amx_ktp_versions` rcon on each instance and "
                          "diff loaded plugin versions against the reference. "
-                         "Catches the disk-OK-but-not-yet-restarted-since-deploy gap.")
+                         "Catches the disk-OK-but-not-yet-restarted-since-deploy gap. "
+                         "Relative to the reference, not to the intended build.")
     ap.add_argument("--out", default="-",
                     help="Output JSON path (default: - = stdout)")
     args = ap.parse_args()
