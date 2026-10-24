@@ -23,6 +23,11 @@ A map the site ships with no config here is left exactly as it is and reported
 as deferred. `dod_lennon5_b1` is that map (operator ruling 2026-10-08): the
 generator cannot invent an overview without captured flag positions.
 
+Why the target is the site's deployable table and never the report payload:
+report rows are immutable, so geometry delivered inside a report freezes at the
+moment that report was written and can never be corrected afterwards -- and
+shipped descriptors have already needed correcting once.
+
 `--refresh-pin` is the other half of the job. Regenerating the site's table is
 an upstream hand-edit as far as `PIN.json` is concerned, which its own
 `drift_directions` records as NOT CAUGHT -- so the vendored copy goes stale and
