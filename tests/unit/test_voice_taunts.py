@@ -76,7 +76,7 @@ def test_report_renders_every_section_and_escapes_pipes():
     for h in ("## Official matches", "## All match types", "## Most taunted", "## Per speaker", "## Shape"):
         assert h in text
     assert "me\\|u" in text and "j\\|3" in text
-    assert "| 1 | me\\|u | 1 | 1 | 2 | 0.50 | 1 | j\\|3 | voice_negative |" in text
+    assert "| 1 | me\\|u | 1 | 1 | 1 | 2 | 0.50 | 1 | j\\|3 | voice_negative |" in text
 
 
 def test_empty_report_does_not_divide_by_zero():
@@ -134,3 +134,15 @@ def test_hand_signals_are_taunts_too():
     (r,) = vt.leaderboard(events, {(1, 0): 1}, vt.OFFICIAL, window=5)
     assert r["top_code"] == "signal_yes" and r["taunts"] == 1
     assert "signal" in vt.presses_sql("2026-09-13")
+
+
+def test_spam_column_is_peak_presses_in_any_second_not_only_taunts():
+    # Jonski, 2026-10-24: 13 presses with no kill behind them, 18 in the taunt second, 5 outside the window.
+    rows = ([row(100 + i, "2026-10-24 15:44:34", code="voice_grenade") for i in range(13)]
+            + [row(200 + i, "2026-10-24 15:44:39", code="voice_grenade", vic=103, vic_name="Ana", secs=2) for i in range(18)]
+            + [row(300 + i, "2026-10-24 15:44:49", code="voice_grenade", vic=16, vic_name="bromley", secs=7) for i in range(5)])
+    (r,) = vt.leaderboard(vt.distinct(vt.nearest(rows)), {(1, 0): 1}, vt.OFFICIAL, window=5)
+    assert (r["taunts"], r["presses"], r["peak"]) == (1, 18, 18)
+    rows += [row(400 + i, "2026-10-24 15:45:00", code="voice_negative") for i in range(25)]
+    (r,) = vt.leaderboard(vt.distinct(vt.nearest(rows)), {(1, 0): 1}, vt.OFFICIAL, window=5)
+    assert (r["taunts"], r["presses"], r["peak"]) == (1, 18, 25)   # a non-taunt burst still sets the peak

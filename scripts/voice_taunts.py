@@ -12,7 +12,10 @@ migration 045 + stats_logging 1.28.0 (shipped inside 1.30.0) land every voice-me
              <= --window seconds before it; the victim of that kill is the target
   distinct   presses by one speaker in one logged second collapse to one -- the key is
              spammed (9 presses in one second was measured on the first night) while DoD plays
-             the sound once per cooldown. Leaderboards count distinct taunts; presses are shown.
+             the sound once per cooldown. Leaderboards count distinct taunts and show two press
+             columns: key presses DURING taunts, and the speaker's peak presses in any one
+             second across all their commands (spam), so a held or mashed key stands out --
+             drew asked, 2026-10-24, after Jonski read as "1 taunt, 18 presses"
   per match  distinct taunts / matches the speaker appeared in (`ktp_match_players`) WHERE the
              server was running a plugin that captures voice commands (capture manifest
              `producer_version` >= 1.28.0; drew's correction 2026-10-23 -- the first cut divided
@@ -264,11 +267,18 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
         s["codes"][e["code"]] += 1
         s["matches_with"].add(e["match_id"])
         s["speaker"] = e["speaker"]  # latest name wins
+    # Peak presses in one logged second, over EVERY command the speaker sent in scope, not only
+    # taunts: the 37-press burst that produced Jonski's single taunt was mostly outside it.
+    peak: dict[int, int] = defaultdict(int)
+    for e in events:
+        if e["match_type"] in types:
+            peak[e["speaker_id"]] = max(peak[e["speaker_id"]], e["presses"])
     rows = []
     for s in by_spk.values():
         n = sum(played.get((s["speaker_id"], t), 0) for t in types)
         rows.append({
             "speaker": s["speaker"], "taunts": s["taunts"], "presses": s["presses"],
+            "peak": peak[s["speaker_id"]],
             "matches": n, "matches_with": len(s["matches_with"]),
             "per_match": (s["taunts"] / n) if n else None,
             "top_victim": max(s["victims"].items(), key=lambda kv: (kv[1], kv[0]))[0],
@@ -303,7 +313,9 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
          f"Generated {generated}. No voice commands in tracked matches since {since}.", "",
          f"A taunt = a voice command or hand signal <= {window} s after the speaker's own kill; the victim of that "
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
-         "DoD plays the sound once per cooldown). Per match = taunts / matches the speaker appeared in "
+         "DoD plays the sound once per cooldown). Key presses (during taunts) = raw presses inside those taunt "
+         "seconds; spam = the most presses the speaker sent in any one second, taunt or not. "
+         "Per match = taunts / matches the speaker appeared in "
          "on a server whose plugin captures voice commands (stats_logging >= 1.28.0, live fleet-wide since "
          "2026-10-22); earlier matches could not have recorded one and are not counted. "
          + (names_note or "Names: league alias where the website knows the player, else the in-game alias."),
@@ -315,10 +327,10 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
-        L += ["| # | speaker | taunts | presses | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite command |",
-              "|---|---|---|---|---|---|---|---|---|"]
+        L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite command |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
-            L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['matches']} "
+            L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['peak']} | {r['matches']} "
                      f"| {fmt(r['per_match'])} | {r['matches_with']} | {esc(r['top_victim'])} | {r['top_code']} |")
         L.append("")
     victims: dict[str, dict] = {}
@@ -340,7 +352,7 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
     for e in taunts:
         by_spk[e["speaker"]].append(e)
     for spk, es in sorted(by_spk.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        L += [f"### {esc(spk)} — {len(es)} taunts, {sum(e['presses'] for e in es)} presses", "",
+        L += [f"### {esc(spk)} — {len(es)} taunts, {sum(e['presses'] for e in es)} key presses during taunts", "",
               "| victim | taunts | commands | weapons | last |", "|---|---|---|---|---|"]
         per: dict[str, dict] = {}
         for e in es:
