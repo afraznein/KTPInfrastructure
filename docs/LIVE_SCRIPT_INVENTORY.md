@@ -15,6 +15,12 @@ copy written by `provision-gameserver.sh`. None of these files is in a deploy ma
 historical blob of every same-named file in every KTP repo, and, where names differ, by git blob id. Controls on every
 host: a known file hashed, and a nonexistent path reported missing.
 
+⚠️ **That by-name lookup is the step to be careful with: resolve a live script to its source by PATH,
+never by basename.** Three directories here carry the same stems with different roles — `scripts/`
+the executable, `scripts/cron.d/` the cron file, `scripts/systemd/` the unit — so a basename match
+has reported DRIFT for a host that was correct. Read `source_path` off the deploy manifest row, or
+derive the candidates and require exactly one; see `docs/runbooks/LIVE_HOST_PROBE_TRAPS.md`.
+
 **Strip CR before calling a file behind.** An md5 of a CRLF copy never equals the LF blob, so a file
 deployed from a Windows checkout reads as DRIFT with the same text. `/opt/lan-web` once showed 31 files
 "drifted" from `main` and every one was a CRLF-only difference from an old Windows-side deploy. Compare with
