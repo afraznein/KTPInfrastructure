@@ -163,3 +163,39 @@ def test_public_block_still_carries_no_half_and_no_setting():
     body = str(dto)
     for leaked in ("'halves'", "'cl_cmdrate'", "'fps_est'", "388", "125.0"):   # keys and values, not the prose that names them
         assert leaked not in body, leaked
+
+
+# -- schema 35: minute slices roll up into the half --
+
+def _minute(ts, span, pkts, cmds, drops, pps, p95, mmax, a95, amax, floor, sd):
+    return dict(CLIENTS[1], half="1", ts=ts, span_s=span, pkts=pkts, cmds=cmds, drops=drops, pps=pps,
+                cmds_pkt="3.00", msec_p50="4", msec_p95=p95, msec_max=mmax, arr_p50="12", arr_p95=a95,
+                arr_max=amax, interp_floor=floor, interp_cap="0", stale_delta=sd)
+
+
+MINUTES = [
+    _minute("2026-10-24 21:01:00", "60", "5000", "15000", "1", "83.3", "5", "9", "13", "20", "0", "0"),
+    _minute("2026-10-24 21:02:00", "60", "4800", "14400", "9", "80.0", "32", "72", "35", "77", "2", "1"),
+    _minute("2026-10-24 21:02:40", "40", "3400", "10200", "0", "85.0", "5", "8", "13", "19", "0", "0"),
+]
+
+
+def test_minutes_sum_into_the_half_and_are_published_in_order():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, MINUTES, SETTINGS)
+    h = {p["player_name_at_match"]: p for p in c["players"]}["kroD-"]["halves"][0]
+    assert h["half"] == "1" and h["span_s"] == 160
+    assert (h["drops"], h["interp_floor"], h["stale_delta"]) == (10, 2, 1)
+    assert h["pps"] == round(13200 / 160, 3) and h["cmds_pkt"] == 3.0
+    # The bad minute shows in max, not in the median ...
+    assert h["msec"] == {"p50": 4, "p95": 5, "max": 72}
+    assert h["arr_ms"]["max"] == 77
+    # ... and the minute that carries it is findable.
+    assert [m["ts"] for m in h["minutes"]] == ["2026-10-24 21:01:00", "2026-10-24 21:02:00", "2026-10-24 21:02:40"]
+    assert h["minutes"][1]["msec"] == {"p50": 4, "p95": 32, "max": 72}
+    assert h["settings"]["cl_cmdrate"] == 101.0
+
+
+def test_a_single_row_half_reads_exactly_as_before():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, CLIENTS, SETTINGS)
+    h1 = {p["player_name_at_match"]: p for p in c["players"]}["kroD-"]["halves"][0]
+    assert (h1["pps"], h1["cmds_pkt"], h1["fps_est"], h1["minutes"], h1["span_s"]) == (83.2, 3.0, 250, None, 1206)

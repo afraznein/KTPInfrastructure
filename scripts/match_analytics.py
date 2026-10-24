@@ -113,7 +113,7 @@ from scripts.side_splits import (  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[1]
 SQL_DIR = REPO / "sql" / "analytics"
-SCHEMA_VERSION = 34  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show; 30: `connection` -- per player, the share of 10 s windows in which they were the server's worst client for jitter/latency/drops (ktp_net_intervals), ping at each shot where shot-detail was on (ktp_shot_events.shot_ping), and the engine session that ended in this match (ktp_net_sessions); per match, drops/window and lag-compensation state. Per-player rows are own-row-only by ruling (drew 2026-10-11): the public DTO publishes the match-level figures only; the private player tier serves a player their own row. Never a general stat, never a rating input; 31: the report-team convention corrections from #693 and #696 -- trades/`fast_multikills` stop DISCARDING a leaver's frags (both sides read the same team, so `_frag_classification` dropped them as explicit team kills: 68 of 586 on the specimen), `objective_conversion` stops matching the opponent's captures, `recap_speed` stops summing per-team totals by SIDE across halves, `positional_shadow` stops reading cross-space (it lost no rows, so a row-count check could never have found it -- every value in half 1 was simply wrong), `flag_fights` resolves clutches and entries to the correct side, and `damage_conversion` stops excluding real frags as self/team. VALUES ONLY -- no DTO or contract shape changes. ⚠ The bump is the point of this version, not a side effect: #693 and #696 shipped these WITHOUT one, so two different analytics outputs both carried `30`, and since the generator's only test for "already current" IS this number, 237 published reports sat at 30 with the pre-fix values and would never have been regenerated. Schema 19 bumped for exactly this fix class ("silently backwards in half 1 of every two-half match") -- that is the precedent this follows; 32: map coefficients refitted 2026-10-15 on 698 labelled halves and accepted by the operator -- four fitted maps move (dod_anzio, dod_harrington, dod_lennon5_b1, dod_thunder2) and nine join the table (anjou_a5, armory_b6, armory_b7, halle, railroad2_s10a, saints2_b3e/b4e/b5e, solitude2), so those nine stop pricing on the league-wide prior exactly as 27 describes for dod_anzio. Every p_allies, attributed_swing, key_moment and terminal_value on any of the thirteen changes, which is why this is a bump and not a value-only edit -- the generator's only test for "already current" is this number, so without it every report already at 31 keeps the old coefficients forever. The fit also switched corpus from officials_only to officials_plus_all_practice on held-out loss (0.651250 against 0.651386); adding 12man play made it worse for the third consecutive run. ⚠ Read the shrinkage weights before trusting a per-map number: the largest moves sit on the thinnest evidence, because a new map leaves the hardcoded (2.0, 1.0) in flag_swing.FlagSwingConfig for a value shrunk toward the fit's pooled ~1.23 -- so halle (-1.06 on 33% own weight), armory_b6 (-1.05 on 23%, own estimates 0.0) and anjou_a5 (-0.88 on 9%, two practice halves) are arguing with that constant rather than describing their map; 33: dod_railroad2_s10b inherits dod_railroad2_s10a's fitted coefficients through flag_swing.MAP_COEFFICIENT_CARRY_FORWARD instead of pricing on the league-wide prior. The map was re-cut for week 7 and the fitter has no halves under the new stem, so every p_allies, attributed_swing, key_moment and terminal_value on it was pricing at the hardcoded (2.0, 1.0) in FlagSwingConfig against s10a's materially lower fitted flag term -- the same argument-with-a-constant that 32 warns about, except here the map is geometrically identical to its predecessor, so the predecessor's fit is the better estimate rather than a guess. ⚠ The bump is the point: three matches were played on s10b the night the pool flipped and one report was already stored at 32, and since the generator's only test for "already current" IS this number, that report would keep the prior-priced values forever. The carry-forward goes inert on its own -- a real fitted row always wins over it, so nothing has to remember to remove the entry once the refit sees the new stem; 34: `connection.players[].halves` -- per player per half, the engine's per-client slice (KTP-ReHLDS #48 net_client: via ktp_net_clients: own frame time usercmd.msec p50/p95/max, move-packet gap p50/p95/max, pps, cmds per packet, drops, interp rewrites, stale-delta count) beside the settings the client declared for that half (KTPCvarChecker 7.43 NETOBS_SNAPSHOT via ktp_client_settings: cl_updaterate cl_cmdrate rate ex_interp fps_max lc lw). Own-row-only like the rest of players[] (ruling 2026-10-11); the public DTO gains only two instrument flags. Workstream netcode-player-settings
+SCHEMA_VERSION = 35  # 9: spatial_layers; 10: in_game_result + player_halves; 11: kill_streaks + side/class splits; 12: objective score + grenade damage/kills, per-team and per-minute rates; 13: wave 1/2 player facts (damage_applied, life shots, score attribution) + duel_stats; 14: grenade throws + flight time; 15: aim shadow (computed placement + AC on-hit precision); 16: shadow_explorations.highlight_windows (key moments ranked on flag_swing); 17: shadow_explorations.progression (cumulative per-player series per half); 18: shadow_explorations.excursions + plays (per-player top plays, match top three, dunce); 19: map_control + progression.flag_differential translated engine-side -> report-team convention (were silently backwards in half 1 of every two-half match); shadow_explorations.capouts; 20: progression gains cap_breaks (producer clock already on hlstats_Events_PlayerActions since migrate_021, just never probed for) and cap_participation (reuses credit_timeline, already computed for flag_swing/excursions -- no new query); 21: excursions use the per-map isolation distance (p80 of each map's own past-the-rear-line teammate distance) instead of a flat 1200 that was measuring the map rather than the player -- changes which runs exist, so plays change with them; 22: flag_swing reads PER-MAP coefficients from config/map_coefficients.json instead of one league-wide prior -- every p_allies, attributed_swing, key_moment and terminal_value on a fitted map changes; 23: shadow_explorations.interruptions -- captures begun and stopped, with the defender who stopped them and the measured suppression band; 25: per-hit damage is decided per match -- a match that ended before ktp_damage_events began gets Statsme damage_dealt and null for every per-hit-only damage column; 26: interruption bands carry every corpus's measurement and price on the 12-man one -- the officials-only lifts the block shipped with did not replicate; 27: map coefficients refitted after week 40 -- dod_anzio joins the table, so it stops pricing on the league-wide prior; 28: shadow_explorations.brinks -- every moment a side was one flag from a cap-out, with who put it there and whether it converted; 29: a cap that reached the brink is TAGGED `brink` in the public plays block -- measured 2x cap-out conversion, which the swing curve cannot show; 30: `connection` -- per player, the share of 10 s windows in which they were the server's worst client for jitter/latency/drops (ktp_net_intervals), ping at each shot where shot-detail was on (ktp_shot_events.shot_ping), and the engine session that ended in this match (ktp_net_sessions); per match, drops/window and lag-compensation state. Per-player rows are own-row-only by ruling (drew 2026-10-11): the public DTO publishes the match-level figures only; the private player tier serves a player their own row. Never a general stat, never a rating input; 31: the report-team convention corrections from #693 and #696 -- trades/`fast_multikills` stop DISCARDING a leaver's frags (both sides read the same team, so `_frag_classification` dropped them as explicit team kills: 68 of 586 on the specimen), `objective_conversion` stops matching the opponent's captures, `recap_speed` stops summing per-team totals by SIDE across halves, `positional_shadow` stops reading cross-space (it lost no rows, so a row-count check could never have found it -- every value in half 1 was simply wrong), `flag_fights` resolves clutches and entries to the correct side, and `damage_conversion` stops excluding real frags as self/team. VALUES ONLY -- no DTO or contract shape changes. ⚠ The bump is the point of this version, not a side effect: #693 and #696 shipped these WITHOUT one, so two different analytics outputs both carried `30`, and since the generator's only test for "already current" IS this number, 237 published reports sat at 30 with the pre-fix values and would never have been regenerated. Schema 19 bumped for exactly this fix class ("silently backwards in half 1 of every two-half match") -- that is the precedent this follows; 32: map coefficients refitted 2026-10-15 on 698 labelled halves and accepted by the operator -- four fitted maps move (dod_anzio, dod_harrington, dod_lennon5_b1, dod_thunder2) and nine join the table (anjou_a5, armory_b6, armory_b7, halle, railroad2_s10a, saints2_b3e/b4e/b5e, solitude2), so those nine stop pricing on the league-wide prior exactly as 27 describes for dod_anzio. Every p_allies, attributed_swing, key_moment and terminal_value on any of the thirteen changes, which is why this is a bump and not a value-only edit -- the generator's only test for "already current" is this number, so without it every report already at 31 keeps the old coefficients forever. The fit also switched corpus from officials_only to officials_plus_all_practice on held-out loss (0.651250 against 0.651386); adding 12man play made it worse for the third consecutive run. ⚠ Read the shrinkage weights before trusting a per-map number: the largest moves sit on the thinnest evidence, because a new map leaves the hardcoded (2.0, 1.0) in flag_swing.FlagSwingConfig for a value shrunk toward the fit's pooled ~1.23 -- so halle (-1.06 on 33% own weight), armory_b6 (-1.05 on 23%, own estimates 0.0) and anjou_a5 (-0.88 on 9%, two practice halves) are arguing with that constant rather than describing their map; 33: dod_railroad2_s10b inherits dod_railroad2_s10a's fitted coefficients through flag_swing.MAP_COEFFICIENT_CARRY_FORWARD instead of pricing on the league-wide prior. The map was re-cut for week 7 and the fitter has no halves under the new stem, so every p_allies, attributed_swing, key_moment and terminal_value on it was pricing at the hardcoded (2.0, 1.0) in FlagSwingConfig against s10a's materially lower fitted flag term -- the same argument-with-a-constant that 32 warns about, except here the map is geometrically identical to its predecessor, so the predecessor's fit is the better estimate rather than a guess. ⚠ The bump is the point: three matches were played on s10b the night the pool flipped and one report was already stored at 32, and since the generator's only test for "already current" IS this number, that report would keep the prior-priced values forever. The carry-forward goes inert on its own -- a real fitted row always wins over it, so nothing has to remember to remove the entry once the refit sees the new stem; 34: `connection.players[].halves` -- per player per half, the engine's per-client slice (KTP-ReHLDS #48 net_client: via ktp_net_clients: own frame time usercmd.msec p50/p95/max, move-packet gap p50/p95/max, pps, cmds per packet, drops, interp rewrites, stale-delta count) beside the settings the client declared for that half (KTPCvarChecker 7.43 NETOBS_SNAPSHOT via ktp_client_settings: cl_updaterate cl_cmdrate rate ex_interp fps_max lc lw). Own-row-only like the rest of players[] (ruling 2026-10-11); the public DTO gains only two instrument flags. Workstream netcode-player-settings; 35: `connection.players[].halves[].minutes` -- KTPCvarChecker 7.44 flushes the per-client slice every 60 s, so a half arrives as several ktp_net_clients rows; each half is now the SUM of its rows (counts exact; msec/arr p50/p95 are the weighted median of the minutes' percentiles, max is exact) and the rows themselves are published as minutes[] so a chat complaint can be read against that player's own minute. A half that arrived as one row reads exactly as before
 # Producer schemas whose manifests authorize capture. Each is additive over
 # 22 for what authorization reads (2.00s cadence, objective_attempt and
 # grenade_entity, plus position_state/map_revision from 23); a schema that drops
@@ -1898,11 +1898,38 @@ def _i(value: Any) -> int | None:
     return None if f is None else int(f)
 
 
-def _client_half(h: dict[str, Any], snapshots: list[dict[str, Any]]) -> dict[str, Any]:
-    """One ktp_net_clients row for the private tier, with the settings the client
-    declared for it. The snapshot is the one KTPCvarChecker logged at this half's
-    live (why=start, same half); failing that the latest one at or before the
-    flush, which is what the client was running when the slice closed."""
+def _wmedian(pairs: list[tuple[int | None, int]]) -> int | None:
+    """Weighted median of (value, weight); None-valued pairs are skipped."""
+    pairs = sorted((v, w) for v, w in pairs if v is not None)
+    total = sum(w for _, w in pairs)
+    if not pairs or total <= 0:
+        return pairs[0][0] if pairs else None
+    seen = 0
+    for v, w in pairs:
+        seen += w
+        if 2 * seen >= total:
+            return v
+    return pairs[-1][0]
+
+
+def _by_half(rows: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Group a player's rows by half label, in first-seen (time) order."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for r in rows:
+        groups.setdefault(str(r.get("half") or ""), []).append(r)
+    return list(groups.values())
+
+
+def _client_half(rows: list[dict[str, Any]], snapshots: list[dict[str, Any]]) -> dict[str, Any]:
+    """One half for the private tier: the sum of its ktp_net_clients rows (one per
+    60 s flush from KTPCvarChecker 7.44, or one for the whole half before it), with
+    the settings the client declared for it and the rows themselves as minutes[].
+    The snapshot is the one logged at this half's live (why=start, same half);
+    failing that the latest one at or before the last flush.
+    ponytail: p50/p95 across minutes are the weighted median of the minutes' own
+    percentiles, not a true half percentile -- exact needs the engine to emit
+    histogram buckets, which can be summed. max is exact either way."""
+    h = rows[-1]
     half = str(h.get("half") or "")
     ts = str(h.get("ts") or "")
     chosen = None
@@ -1913,19 +1940,48 @@ def _client_half(h: dict[str, Any], snapshots: list[dict[str, Any]]) -> dict[str
         for s in snapshots:
             if str(s.get("ts") or "") <= ts:
                 chosen = s
-    pps, cmds_pkt = _f(h.get("pps")), _f(h.get("cmds_pkt"))
+    def total(key: str) -> int:
+        return sum(_i(r.get(key)) or 0 for r in rows)
+
+    span, pkts, cmds = total("span_s"), total("pkts"), total("cmds")
+    if len(rows) == 1 or not pkts:
+        # One row: publish it as it came, so a pre-7.44 half reads exactly as before.
+        pps, cmds_pkt = _f(h.get("pps")), _f(h.get("cmds_pkt"))
+    else:
+        pps = round(pkts / span, 3) if span else None
+        cmds_pkt = round(cmds / pkts, 3)
+    cw = [(_i(r.get("cmds")) or 0) for r in rows]
+    pw = [(_i(r.get("pkts")) or 0) for r in rows]
+
+    def pick(key: str, weights: list[int]) -> int | None:
+        return _wmedian([(_i(r.get(key)), wt) for r, wt in zip(rows, weights)])
+
+    def peak(key: str) -> int | None:
+        vals = [_i(r.get(key)) for r in rows if _i(r.get(key)) is not None]
+        return max(vals) if vals else None
+
     return {
         "half": half,
-        "span_s": _i(h.get("span_s")),
+        "span_s": span if len(rows) > 1 else _i(h.get("span_s")),
         "pps": pps,
         "cmds_pkt": cmds_pkt,
         "fps_est": None if pps is None or cmds_pkt is None else round(pps * cmds_pkt),
-        "msec": {"p50": _i(h.get("msec_p50")), "p95": _i(h.get("msec_p95")), "max": _i(h.get("msec_max"))},
-        "arr_ms": {"p50": _i(h.get("arr_p50")), "p95": _i(h.get("arr_p95")), "max": _i(h.get("arr_max"))},
-        "drops": _i(h.get("drops")),
-        "interp_floor": _i(h.get("interp_floor")),
-        "interp_cap": _i(h.get("interp_cap")),
-        "stale_delta": _i(h.get("stale_delta")),
+        "msec": {"p50": pick("msec_p50", cw), "p95": pick("msec_p95", cw), "max": peak("msec_max")},
+        "arr_ms": {"p50": pick("arr_p50", pw), "p95": pick("arr_p95", pw), "max": peak("arr_max")},
+        "drops": total("drops") if len(rows) > 1 else _i(h.get("drops")),
+        "interp_floor": total("interp_floor") if len(rows) > 1 else _i(h.get("interp_floor")),
+        "interp_cap": total("interp_cap") if len(rows) > 1 else _i(h.get("interp_cap")),
+        "stale_delta": total("stale_delta") if len(rows) > 1 else _i(h.get("stale_delta")),
+        "minutes": [{
+            "ts": str(r.get("ts") or ""),
+            "span_s": _i(r.get("span_s")),
+            "pps": _f(r.get("pps")),
+            "cmds_pkt": _f(r.get("cmds_pkt")),
+            "msec": {"p50": _i(r.get("msec_p50")), "p95": _i(r.get("msec_p95")), "max": _i(r.get("msec_max"))},
+            "arr_ms": {"p95": _i(r.get("arr_p95")), "max": _i(r.get("arr_max"))},
+            "drops": _i(r.get("drops")),
+            "stale_delta": _i(r.get("stale_delta")),
+        } for r in rows] if len(rows) > 1 else None,
         "settings": None if chosen is None else {
             "why": chosen.get("why"),
             "cl_updaterate": _f(chosen.get("updaterate")),
@@ -2031,8 +2087,8 @@ def build_connection(
                 "loss_avg_pct": _f(se.get("session_loss_avg_pct")),
                 "loss_max_pct": _f(se.get("session_loss_max_pct")),
             },
-            "halves": [_client_half(h, settings_by_id.get(pid, []))
-                       for h in halves_by_id.get(pid, [])] or None,
+            "halves": [_client_half(rows, settings_by_id.get(pid, []))
+                       for rows in _by_half(halves_by_id.get(pid, []))] or None,
         })
     return {
         "status": "available",
