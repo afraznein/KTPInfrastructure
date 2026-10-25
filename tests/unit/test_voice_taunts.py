@@ -76,7 +76,7 @@ def test_report_renders_every_section_and_escapes_pipes():
     for h in ("## Official matches", "## All match types", "## Most taunted", "## Per speaker", "## Shape"):
         assert h in text
     assert "me\\|u" in text and "j\\|3" in text
-    assert "| 1 | me\\|u | 1 | 1 | 1 | 2 | 0.50 | 1 | j\\|3 | voice_negative |" in text
+    assert "| 1 | me\\|u | 1 | 1 | 1 | 2 | 1 | 50% | 0.50 | 1.00 | j\\|3 | voice_negative |" in text
 
 
 def test_empty_report_does_not_divide_by_zero():
@@ -146,3 +146,15 @@ def test_spam_column_is_peak_presses_in_any_second_not_only_taunts():
     rows += [row(400 + i, "2026-10-24 15:45:00", code="voice_negative") for i in range(25)]
     (r,) = vt.leaderboard(vt.distinct(vt.nearest(rows)), {(1, 0): 1}, vt.OFFICIAL, window=5)
     assert (r["taunts"], r["presses"], r["peak"]) == (1, 18, 25)   # a non-taunt burst still sets the peak
+
+
+def test_spread_and_intensity_tell_one_heavy_match_from_steady_taunting():
+    heavy = [row(i, f"2026-10-22 18:00:{i:02d}", vic=7, vic_name="j3", secs=2, mid="M1") for i in range(12)]
+    steady = [row(100 + i, f"2026-10-22 19:{i:02d}:00", spk=2, spk_name="steady", vic=7, vic_name="j3", secs=2, mid=f"S{i}")
+              for i in range(12)]
+    rows = {r["speaker"]: r for r in vt.leaderboard(vt.distinct(vt.nearest(heavy + steady)),
+                                                    {(1, 0): 12, (2, 0): 12}, vt.OFFICIAL, window=5)}
+    h, st = rows["meu"], rows["steady"]
+    assert h["per_match"] == st["per_match"] == 1.0                      # identical on the old column
+    assert (h["matches_with"], round(h["share"], 3), h["per_taunting"]) == (1, 0.083, 12.0)
+    assert (st["matches_with"], st["share"], st["per_taunting"]) == (12, 1.0, 1.0)
