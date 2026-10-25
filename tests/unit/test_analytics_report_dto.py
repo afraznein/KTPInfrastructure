@@ -477,7 +477,7 @@ class Sanitize(unittest.TestCase):
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
     def test_contract_is_v1_14_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.16.0")
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.17.0")
 
     def test_connection_block_publishes_the_box_and_never_a_player(self):
         rep = internal_report()

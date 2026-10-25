@@ -165,7 +165,7 @@ def test_public_block_still_carries_no_half_and_no_setting():
         assert leaked not in body, leaked
 
 
-# -- schema 35: minute slices roll up into the half --
+# -- schema 35/36: 10 s (was 60 s) slices roll up into the half --
 
 def _minute(ts, span, pkts, cmds, drops, pps, p95, mmax, a95, amax, floor, sd):
     return dict(CLIENTS[1], half="1", ts=ts, span_s=span, pkts=pkts, cmds=cmds, drops=drops, pps=pps,
@@ -190,12 +190,12 @@ def test_minutes_sum_into_the_half_and_are_published_in_order():
     assert h["msec"] == {"p50": 4, "p95": 5, "max": 72}
     assert h["arr_ms"]["max"] == 77
     # ... and the minute that carries it is findable.
-    assert [m["ts"] for m in h["minutes"]] == ["2026-10-24 21:01:00", "2026-10-24 21:02:00", "2026-10-24 21:02:40"]
-    assert h["minutes"][1]["msec"] == {"p50": 4, "p95": 32, "max": 72}
+    assert [m["ts"] for m in h["slices"]] == ["2026-10-24 21:01:00", "2026-10-24 21:02:00", "2026-10-24 21:02:40"]
+    assert h["slices"][1]["msec"] == {"p50": 4, "p95": 32, "max": 72}
     assert h["settings"]["cl_cmdrate"] == 101.0
 
 
 def test_a_single_row_half_reads_exactly_as_before():
     c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, CLIENTS, SETTINGS)
     h1 = {p["player_name_at_match"]: p for p in c["players"]}["kroD-"]["halves"][0]
-    assert (h1["pps"], h1["cmds_pkt"], h1["fps_est"], h1["minutes"], h1["span_s"]) == (83.2, 3.0, 250, None, 1206)
+    assert (h1["pps"], h1["cmds_pkt"], h1["fps_est"], h1["slices"], h1["span_s"]) == (83.2, 3.0, 250, None, 1206)
