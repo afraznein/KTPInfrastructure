@@ -1,0 +1,33 @@
+name: ktp-nettest
+
+# Ticket gate, live-match block, stall arithmetic, and an end-to-end run of the
+# connection test node with werift standing in for the browser's WebRTC.
+
+on:
+  push:
+    paths:
+      - 'services/ktp-nettest/**'
+      - '.github/workflows/ktp-nettest.yml'
+  pull_request:
+    paths:
+      - 'services/ktp-nettest/**'
+      - '.github/workflows/ktp-nettest.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: services/ktp-nettest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - run: npm ci
+
+      - name: node --test
+        run: node --test --test-timeout=60000

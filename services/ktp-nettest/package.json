@@ -1,0 +1,15 @@
+{
+  "name": "ktp-nettest",
+  "version": "1.0.0",
+  "private": true,
+  "description": "KTP per-region connection test node (ping, bandwidth, WebRTC stall test)",
+  "main": "server.js",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "werift": "0.25.0"
+  }
+}
