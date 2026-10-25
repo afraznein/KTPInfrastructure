@@ -89,7 +89,7 @@ SELECT pa.id, pa.eventTime, pa.match_id, m.match_type, a.code,
        IFNULL(f.victimId, ''), IFNULL(vp.lastName, ''), IFNULL(f.weapon, ''),
        IFNULL(TIMESTAMPDIFF(SECOND, f.eventTime, pa.eventTime), '')
 FROM hlstats_Events_PlayerActions pa
-JOIN hlstats_Actions a ON a.id = pa.actionId AND (a.code LIKE 'voice\\\\_%' OR a.code LIKE 'signal\\\\_%')
+JOIN hlstats_Actions a ON a.id = pa.actionId AND (a.code LIKE 'voice\\\\_%' OR a.code LIKE 'voicemenu\\\\_%' OR a.code LIKE 'signal\\\\_%')
 JOIN (SELECT match_id, MIN(match_type) AS match_type, MIN(start_time) AS start_time
       FROM ktp_matches GROUP BY match_id) m ON m.match_id = pa.match_id
 JOIN hlstats_Players sp ON sp.playerId = pa.playerId
@@ -249,6 +249,15 @@ def distinct(presses: list[dict]) -> list[dict]:
     return list(out.values())
 
 
+def command_of(code: str) -> tuple[str, str]:
+    """(command, via): `voicemenu_negative` and `voice_negative` are the same command, sent two ways.
+    via = "menu" for a voice-menu pick (stats_logging 1.33.0, migration 049), "bound" for a bound key,
+    "signal" for a hand signal (DoD's signal menu is client-side and always sends the command)."""
+    if code.startswith("voicemenu_"):
+        return "voice_" + code[len("voicemenu_"):], "menu"
+    return code, ("signal" if code.startswith("signal_") else "bound")
+
+
 def is_taunt(e: dict, window: int) -> bool:
     return e["secs"] is not None and e["secs"] <= window
 
@@ -260,11 +269,12 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
     for e in taunts:
         s = by_spk.setdefault(e["speaker_id"], {
             "speaker_id": e["speaker_id"], "speaker": e["speaker"], "taunts": 0, "presses": 0,
-            "victims": defaultdict(int), "codes": defaultdict(int), "matches_with": set()})
+            "victims": defaultdict(int), "codes": defaultdict(int), "matches_with": set(), "menu": 0})
         s["taunts"] += 1
         s["presses"] += e["presses"]
         s["victims"][e["victim"]] += 1
-        s["codes"][e["code"]] += 1
+        s["codes"][command_of(e["code"])[0]] += 1
+        s["menu"] += command_of(e["code"])[1] == "menu"
         s["matches_with"].add(e["match_id"])
         s["speaker"] = e["speaker"]  # latest name wins
     # Peak presses in one logged second, over EVERY command the speaker sent in scope, not only
@@ -278,7 +288,7 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
         n = sum(played.get((s["speaker_id"], t), 0) for t in types)
         rows.append({
             "speaker": s["speaker"], "taunts": s["taunts"], "presses": s["presses"],
-            "peak": peak[s["speaker_id"]],
+            "peak": peak[s["speaker_id"]], "menu": s["menu"],
             "matches": n, "matches_with": len(s["matches_with"]),
             "per_match": (s["taunts"] / n) if n else None,
             # Spread vs intensity (drew, 2026-10-24): 12 taunts in one match and one taunt in each
@@ -323,6 +333,8 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
          "DoD plays the sound once per cooldown). Key presses (during taunts) = raw presses inside those taunt "
          "seconds; spam = the most presses the speaker sent in any one second, taunt or not. "
+         "Via voice menu = how many of those taunts were picked from DoD's voice menu rather than a bound key "
+         "(recorded from stats_logging 1.33.0; earlier menu picks were never logged). "
          "% of matches taunted = matches with a taunt / voice-capable matches; taunts per taunting match = "
          "taunts / matches with a taunt, so one heavy match and steady taunting no longer look alike. "
          "Per match = taunts / matches the speaker appeared in "
@@ -337,12 +349,12 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
-        L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | matches with a taunt | % of matches taunted | per match | taunts per taunting match | favourite target | favourite command |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | matches with a taunt | % of matches taunted | per match | taunts per taunting match | favourite target | favourite command | via voice menu |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
             L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['peak']} | {r['matches']} "
                      f"| {r['matches_with']} | {pct(r['share'])} | {fmt(r['per_match'])} | {fmt(r['per_taunting'])} "
-                     f"| {esc(r['top_victim'])} | {r['top_code']} |")
+                     f"| {esc(r['top_victim'])} | {r['top_code']} | {r['menu']} of {r['taunts']} |")
         L.append("")
     victims: dict[str, dict] = {}
     for e in taunts:
@@ -367,13 +379,16 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
               "| victim | taunts | commands | weapons | last |", "|---|---|---|---|---|"]
         per: dict[str, dict] = {}
         for e in es:
-            v = per.setdefault(e["victim"], {"n": 0, "codes": defaultdict(int), "weapons": defaultdict(int), "last": ""})
+            v = per.setdefault(e["victim"], {"n": 0, "codes": defaultdict(int), "menu": defaultdict(int), "weapons": defaultdict(int), "last": ""})
             v["n"] += 1
-            v["codes"][e["code"]] += 1
+            cmd, via = command_of(e["code"])
+            v["codes"][cmd] += 1
+            v["menu"][cmd] += via == "menu"
             v["weapons"][e["weapon"]] += 1
             v["last"] = max(v["last"], e["time"])
         for name, v in sorted(per.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
-            codes = ", ".join(f"{c} {n}" for c, n in sorted(v["codes"].items(), key=lambda kv: -kv[1]))
+            codes = ", ".join(f"{c} {n}" + (f" (menu {v['menu'][c]})" if v["menu"][c] else "")
+                              for c, n in sorted(v["codes"].items(), key=lambda kv: -kv[1]))
             weapons = ", ".join(f"{w} {n}" for w, n in sorted(v["weapons"].items(), key=lambda kv: -kv[1])[:3])
             L.append(f"| {esc(name)} | {v['n']} | {codes} | {weapons} | {v['last']} |")
         L.append("")
@@ -382,13 +397,17 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         es = [e for e in events if e["match_type"] == t]
         L.append(f"| {TYPE_NAME[t]} ({t}) | {sum(e['presses'] for e in es)} | {len(es)} "
                  f"| {sum(1 for e in es if is_taunt(e, window))} |")
-    L += ["", "| command | distinct | taunts |", "|---|---|---|"]
-    codes: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    L += ["", "| command | distinct | bound key | voice menu | taunts |", "|---|---|---|---|---|"]
+    codes: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])
     for e in events:
-        codes[e["code"]][0] += 1
-        codes[e["code"]][1] += is_taunt(e, window)
-    for c, (n, t) in sorted(codes.items(), key=lambda kv: -kv[1][0]):
-        L.append(f"| {c} | {n} | {t} |")
+        cmd, via = command_of(e["code"])
+        c = codes[cmd]
+        c[0] += 1
+        c[1] += via != "menu"
+        c[2] += via == "menu"
+        c[3] += is_taunt(e, window)
+    for c, (n, b, m, t) in sorted(codes.items(), key=lambda kv: -kv[1][0]):
+        L.append(f"| {c} | {n} | {b} | {m} | {t} |")
     L += ["", "| seconds after own kill | distinct voice commands |", "|---|---|"]
     hist: dict[str, int] = defaultdict(int)
     for e in events:

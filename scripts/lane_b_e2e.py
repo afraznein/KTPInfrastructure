@@ -50,6 +50,7 @@ from scripts.match_analytics import (  # noqa: E402
     render_markdown as render_private_analytics_markdown,
 )
 from scripts import team_score_telemetry  # noqa: E402
+from tests.e2e_stats import voice_menu_scenario  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, engine_telemetry, log_invariants,
                              metamod)
@@ -1380,6 +1381,13 @@ def main() -> int:
                             # server-side path a real pick takes.
                             print("staging voice-command scenario", flush=True)
                             handle.rcon("ktp_vc_run")
+                            # Most players use the voice MENU, not a bound key: the drive
+                            # opens each menu and picks each of the 27 slots, and the
+                            # verdict checks every logged voicemenu_* against the subtitle
+                            # the game itself sends for that pick.
+                            print("staging voice-menu scenario (27 slots)", flush=True)
+                            report["voice_menu_scenario"] = voice_menu_scenario.run(
+                                handle, args.log)
 
                     def _stage_break_diagnostics():
                         if drive_amxx is None or args.no_break_scenarios:
@@ -1741,6 +1749,8 @@ def main() -> int:
             "voice": log_text.count('triggered "voice_'),
             # 16 hand signals, same shape (migration 048).
             "signal": log_text.count('triggered "signal_'),
+            # 27 voice-MENU picks, their own family (migration 049; stats_logging 1.33.0).
+            "voicemenu": log_text.count('triggered "voicemenu_'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
             # "frag_context" marker each non-teamkill player frag emits.
@@ -1875,6 +1885,10 @@ def main() -> int:
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),
+            assertions.check_carried(db, "voicemenu_", emitted=report["emitted"]["voicemenu"],
+                                     table="hlstats_Events_PlayerActions",
+                                     other_table="hlstats_Events_PlayerPlayerActions",
+                                     prefix=True),
             assertions.check_frag_context_diagnostics(
                 expected=expected_frag_diagnostics,
                 observed=observed_frag_diagnostics,
@@ -1977,6 +1991,8 @@ def main() -> int:
         ]
         if report.get("assist_scenario"):
             carried.append(report["assist_scenario"])
+        if report.get("voice_menu_scenario"):
+            carried.append(report["voice_menu_scenario"])
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")

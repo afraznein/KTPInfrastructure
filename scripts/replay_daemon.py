@@ -59,6 +59,8 @@ def _emitted(log_text: str) -> dict[str, int]:
         "voice": log_text.count('triggered "voice_'),
         # 16 hand signals, same shape (migration 048).
         "signal": log_text.count('triggered "signal_'),
+        # 27 voice-MENU picks, their own family (migration 049; stats_logging 1.33.0).
+        "voicemenu": log_text.count('triggered "voicemenu_'),
     }
 
 
@@ -186,6 +188,10 @@ def main() -> int:
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),
             assertions.check_carried(db, "signal_", emitted=emitted["signal"],
+                                     table="hlstats_Events_PlayerActions",
+                                     other_table="hlstats_Events_PlayerPlayerActions",
+                                     prefix=True),
+            assertions.check_carried(db, "voicemenu_", emitted=emitted["voicemenu"],
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),

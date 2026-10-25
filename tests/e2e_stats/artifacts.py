@@ -189,6 +189,8 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_047_move_census_air_standing.sql",
     # Seeds the 16 hand signals as generic actions, the voice-command family's twin (045).
     "sql/migrate_048_hand_signal_actions.sql",
+    # The 27 voice-MENU picks as their own family (voicemenu_*), so bound vs menu stays a dimension.
+    "sql/migrate_049_voice_menu_actions.sql",
 )
 
 DEFAULT_SEED_FILES = (
