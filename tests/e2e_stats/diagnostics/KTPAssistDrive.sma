@@ -20,7 +20,12 @@ public plugin_init() {
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
 	register_srvcmd("ktp_vc_run", "cmd_voice")
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
-	register_event("TextMsg", "on_textmsg", "b")
+	// Every user message, so the voice-menu drive can see whichever one carries the voice
+	// (the first run saw no #Voice_subtitle_ TextMsg at all). Logs only inside the drive window.
+	new mname[32]
+	for (new m = 1; m < 256; m++)
+		if (get_user_msgname(m, mname, charsmax(mname)))
+			register_message(m, "on_any_msg")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
 
@@ -144,7 +149,7 @@ public cmd_voice() {
 // cooldown never swallows a pick. Each pick is bracketed by a [VM] PICK line; every
 // #Voice_subtitle_* TextMsg the game sends to teammates is logged as [VM] SUB, which is the game's
 // own statement of which voice that slot played.
-new g_vmBots[32], g_vmNumBots, g_vmPick
+new g_vmBots[32], g_vmNumBots, g_vmPick, g_vmActive
 
 public cmd_voice_menu() {
 	new players[32], num
@@ -160,12 +165,14 @@ public cmd_voice_menu() {
 		return PLUGIN_HANDLED
 	}
 	g_vmPick = 0
+	g_vmActive = 1
 	set_task(1.5, "vm_next", 77301)
 	return PLUGIN_HANDLED
 }
 
 public vm_next() {
 	if (g_vmPick >= 27) {
+		g_vmActive = 0
 		ad_flush_stats_capture()
 		log_amx("[VM] END picks=%d", g_vmPick)
 		return
@@ -187,13 +194,21 @@ public vm_next() {
 	set_task(1.5, "vm_next", 77301)
 }
 
-public on_textmsg(id) {
-	new arg[64]
-	for (new i = 2; i <= read_datanum() && i <= 6; i++) {
-		read_data(i, arg, charsmax(arg))
-		if (equal(arg, "#Voice_subtitle_", 16)) {
-			log_amx("[VM] SUB to=%d text=%s", id, arg)
-			return
+public on_any_msg(msg_id, msg_dest, msg_ent) {
+	if (!g_vmActive)
+		return PLUGIN_CONTINUE
+	new mname[32], args[160], a[48], len = 0
+	get_user_msgname(msg_id, mname, charsmax(mname))
+	for (new i = 1; i <= get_msg_args() && i <= 6; i++) {
+		if (get_msg_argtype(i) == ARG_STRING) {
+			get_msg_arg_string(i, a, charsmax(a))
+			if (equal(a, "#Voice_subtitle_", 16))
+				log_amx("[VM] SUB to=%d text=%s", msg_ent, a)
+		} else {
+			num_to_str(get_msg_arg_int(i), a, charsmax(a))
 		}
+		len += formatex(args[len], charsmax(args) - len, " %s", a)
 	}
+	log_amx("[VM] MSG name=%s dest=%d to=%d args=%s", mname, msg_dest, msg_ent, args)
+	return PLUGIN_CONTINUE
 }
