@@ -281,6 +281,10 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
             "peak": peak[s["speaker_id"]],
             "matches": n, "matches_with": len(s["matches_with"]),
             "per_match": (s["taunts"] / n) if n else None,
+            # Spread vs intensity (drew, 2026-10-24): 12 taunts in one match and one taunt in each
+            # of twelve read the same per match; these two tell them apart.
+            "share": (len(s["matches_with"]) / n) if n else None,
+            "per_taunting": s["taunts"] / len(s["matches_with"]),
             "top_victim": max(s["victims"].items(), key=lambda kv: (kv[1], kv[0]))[0],
             "top_code": max(s["codes"].items(), key=lambda kv: (kv[1], kv[0]))[0],
         })
@@ -294,6 +298,10 @@ def fmt(v, nd=2):
     if isinstance(v, float):
         return f"{v:.{nd}f}"
     return str(v)
+
+
+def pct(v) -> str:
+    return "—" if v is None else f"{round(100 * v)}%"
 
 
 def esc(s: str) -> str:
@@ -315,6 +323,8 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
          "DoD plays the sound once per cooldown). Key presses (during taunts) = raw presses inside those taunt "
          "seconds; spam = the most presses the speaker sent in any one second, taunt or not. "
+         "% of matches taunted = matches with a taunt / voice-capable matches; taunts per taunting match = "
+         "taunts / matches with a taunt, so one heavy match and steady taunting no longer look alike. "
          "Per match = taunts / matches the speaker appeared in "
          "on a server whose plugin captures voice commands (stats_logging >= 1.28.0, live fleet-wide since "
          "2026-10-22); earlier matches could not have recorded one and are not counted. "
@@ -327,11 +337,12 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
-        L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | per match | matches with a taunt | favourite target | favourite command |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+        L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | matches with a taunt | % of matches taunted | per match | taunts per taunting match | favourite target | favourite command |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
             L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['peak']} | {r['matches']} "
-                     f"| {fmt(r['per_match'])} | {r['matches_with']} | {esc(r['top_victim'])} | {r['top_code']} |")
+                     f"| {r['matches_with']} | {pct(r['share'])} | {fmt(r['per_match'])} | {fmt(r['per_taunting'])} "
+                     f"| {esc(r['top_victim'])} | {r['top_code']} |")
         L.append("")
     victims: dict[str, dict] = {}
     for e in taunts:
