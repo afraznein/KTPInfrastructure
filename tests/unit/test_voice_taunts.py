@@ -76,7 +76,7 @@ def test_report_renders_every_section_and_escapes_pipes():
     for h in ("## Official matches", "## All match types", "## Most taunted", "## Per speaker", "## Shape"):
         assert h in text
     assert "me\\|u" in text and "j\\|3" in text
-    assert "| 1 | me\\|u | 1 | 1 | 1 | 2 | 1 | 50% | 0.50 | 1.00 | j\\|3 | voice_negative |" in text
+    assert "| 1 | me\\|u | 1 | 1 | 1 | 2 | 1 | 50% | 0.50 | 1.00 | j\\|3 | voice_negative | 0 of 1 |" in text
 
 
 def test_empty_report_does_not_divide_by_zero():
@@ -158,3 +158,17 @@ def test_spread_and_intensity_tell_one_heavy_match_from_steady_taunting():
     assert h["per_match"] == st["per_match"] == 1.0                      # identical on the old column
     assert (h["matches_with"], round(h["share"], 3), h["per_taunting"]) == (1, 0.083, 12.0)
     assert (st["matches_with"], st["share"], st["per_taunting"]) == (12, 1.0, 1.0)
+
+
+def test_menu_picks_fold_into_the_same_command_and_keep_their_source():
+    rows = [row(1, "2026-10-26 18:00:00", code="voicemenu_negative", vic=7, vic_name="j3", secs=2),
+            row(2, "2026-10-26 18:01:00", code="voice_negative", vic=7, vic_name="j3", secs=3),
+            row(3, "2026-10-26 18:02:00", code="voicemenu_negative")]
+    events = vt.distinct(vt.nearest(rows))
+    (r,) = vt.leaderboard(events, {(1, 0): 1}, vt.OFFICIAL, window=5)
+    assert (r["taunts"], r["menu"], r["top_code"]) == (2, 1, "voice_negative")
+    text = vt.report(events, {(1, 0): 1}, 5, 25, "2026-09-13", "now")
+    assert "| voice_negative | 3 | 1 | 2 | 2 |" in text            # distinct, bound, menu, taunts
+    assert "voice_negative 2 (menu 1)" in text
+    assert vt.command_of("signal_yes") == ("signal_yes", "signal")
+    assert "voicemenu" in vt.presses_sql("2026-09-13")

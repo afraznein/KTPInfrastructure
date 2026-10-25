@@ -19,6 +19,8 @@ public plugin_init() {
 	register_srvcmd("ktp_ad_run", "cmd_run")
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
 	register_srvcmd("ktp_vc_run", "cmd_voice")
+	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
+	register_event("TextMsg", "on_textmsg", "b")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
 
@@ -135,4 +137,63 @@ public cmd_voice() {
 	ad_flush_stats_capture()
 	log_amx("[VC] END issued=%d", issued)
 	return PLUGIN_HANDLED
+}
+
+// Voice MENU drive (stats_logging 1.33.0). Bots open voice menu N and pick slot K for all 27
+// slots, one pick every 1.5 s rotating through the live bots of both teams so the game's own voice
+// cooldown never swallows a pick. Each pick is bracketed by a [VM] PICK line; every
+// #Voice_subtitle_* TextMsg the game sends to teammates is logged as [VM] SUB, which is the game's
+// own statement of which voice that slot played.
+new g_vmBots[32], g_vmNumBots, g_vmPick
+
+public cmd_voice_menu() {
+	new players[32], num
+	get_players(players, num, "a")
+	g_vmNumBots = 0
+	for (new i = 0; i < num; i++) {
+		new t = get_user_team(players[i])
+		if (t == 1 || t == 2)
+			g_vmBots[g_vmNumBots++] = players[i]
+	}
+	if (g_vmNumBots < 2) {
+		log_amx("[VM] ABORT need two live bots on teams")
+		return PLUGIN_HANDLED
+	}
+	g_vmPick = 0
+	set_task(1.5, "vm_next", 77301)
+	return PLUGIN_HANDLED
+}
+
+public vm_next() {
+	if (g_vmPick >= 27) {
+		ad_flush_stats_capture()
+		log_amx("[VM] END picks=%d", g_vmPick)
+		return
+	}
+	new bot = g_vmBots[g_vmPick % g_vmNumBots]
+	if (!is_user_connected(bot)) {
+		log_amx("[VM] ABORT bot %d left", bot)
+		return
+	}
+	new menu = g_vmPick / 9 + 1, slot = g_vmPick % 9 + 1, name[32], cmd[16], arg[4]
+	get_user_name(bot, name, charsmax(name))
+	g_vmPick++
+	log_amx("[VM] PICK n=%d bot=%d bname=%s menu=%d slot=%d", g_vmPick, bot, name, menu, slot)
+	formatex(cmd, charsmax(cmd), "voice_menu%d", menu)
+	amxclient_cmd(bot, cmd)
+	num_to_str(slot, arg, charsmax(arg))
+	amxclient_cmd(bot, "menuselect", arg)
+	ad_flush_stats_capture()
+	set_task(1.5, "vm_next", 77301)
+}
+
+public on_textmsg(id) {
+	new arg[64]
+	for (new i = 2; i <= read_datanum() && i <= 6; i++) {
+		read_data(i, arg, charsmax(arg))
+		if (equal(arg, "#Voice_subtitle_", 16)) {
+			log_amx("[VM] SUB to=%d text=%s", id, arg)
+			return
+		}
+	}
 }
