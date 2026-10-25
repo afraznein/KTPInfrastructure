@@ -55,7 +55,8 @@ def test_shares_are_per_window_and_missing_instruments_read_null():
     assert by["nicholson"]["session"]["drop_rate_pct"] == 0.001
     assert by["quiet"]["session"] is None and by["quiet"]["shot_ping"] is None
     assert c["instruments"] == {"worst_share": "available", "shot_ping": "available", "session": "available",
-                                "client_slice": "unavailable", "settings": "unavailable"}
+                                "client_slice": "unavailable", "settings": "unavailable",
+                                "league": "unavailable"}
     # A worst-of name that is not on the roster is not invented into a player.
     assert "someone who left" not in by
 
@@ -199,3 +200,51 @@ def test_a_single_row_half_reads_exactly_as_before():
     c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, PLAYERS, SOURCES_34, CLIENTS, SETTINGS)
     h1 = {p["player_name_at_match"]: p for p in c["players"]}["kroD-"]["halves"][0]
     assert (h1["pps"], h1["cmds_pkt"], h1["fps_est"], h1["slices"], h1["span_s"]) == (83.2, 3.0, 250, None, 1206)
+
+
+# -- schema 37: league alias by SteamID --
+
+from scripts import league_registry  # noqa: E402
+
+LEAGUE_PLAYERS = [dict(PLAYERS[0], steam_id="1:443810"), dict(PLAYERS[1], steam_id="STEAM_0:0:5"),
+                  dict(PLAYERS[2], steam_id="BOT")]
+REGISTRY = ({league_registry.steam64("1:443810"): "drew"}, None)
+
+
+def test_steam64_handles_both_roster_forms_and_rejects_bots():
+    assert league_registry.steam64("1:443810") == "76561197961153349"
+    assert league_registry.steam64("STEAM_0:1:443810") == "76561197961153349"
+    for junk in (None, "", "BOT", "BOT:3", "STEAM_0:2:5", "1:x"):
+        assert league_registry.steam64(junk) is None
+
+
+def test_rows_carry_league_alias_registered_or_not():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, LEAGUE_PLAYERS, SOURCES, league=REGISTRY)
+    by = {p["player_name_at_match"]: p for p in c["players"]}
+    assert (by["kroD-"]["league_alias"], by["kroD-"]["league_registered"]) == ("drew", True)
+    assert (by["nicholson"]["league_alias"], by["nicholson"]["league_registered"]) == (None, False)
+    # No SteamID (a bot): unknown, not "not a league player".
+    assert (by["quiet"]["league_alias"], by["quiet"]["league_registered"]) == (None, None)
+    assert c["instruments"]["league"] == "available"
+
+
+def test_an_unreachable_registry_is_unknown_never_false():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, LEAGUE_PLAYERS, SOURCES,
+                         league=({}, "league registry unreachable: URLError"))
+    assert all(p["league_registered"] is None and p["league_alias"] is None for p in c["players"])
+    assert c["instruments"]["league"] == "unavailable"
+
+
+def test_load_without_env_returns_empty_with_a_reason(monkeypatch):
+    monkeypatch.delenv("KTP_SUPABASE_URL", raising=False)
+    monkeypatch.delenv("KTP_SUPABASE_SECRET_KEY", raising=False)
+    monkeypatch.setattr(league_registry, "_CACHE", None)
+    m, why = league_registry.load()
+    assert m == {} and "not set" in why
+
+
+def test_public_block_still_carries_no_alias():
+    c = build_connection(INTERVALS, WORST, SESSIONS, SHOTS, LEAGUE_PLAYERS, SOURCES, league=REGISTRY)
+    dto = _connection_block({"connection": c})
+    assert_sanitized(dto)
+    assert "'drew'" not in str(dto) and "league_alias" not in str(dto)
