@@ -208,6 +208,7 @@ def test_the_probe_resolves_processes_not_command_lines():
 def test_the_probe_sees_a_relative_launch_on_a_real_kernel(tmp_path):
     """End to end: a process named hlds_linux started as `./hlds_linux` from inside
     the tree -- the exact shape the old command-line match never saw."""
+    import os
     import shutil
     import subprocess
     import time
@@ -220,13 +221,19 @@ def test_the_probe_sees_a_relative_launch_on_a_real_kernel(tmp_path):
     # multicall binary that dispatches on argv[0], so a copy named hlds_linux
     # exits with "unknown program" before the probe ever runs.
     shutil.copy(shutil.which("bash"), tree / "hlds_linux")
-    proc = subprocess.Popen(["./hlds_linux", "-c", "sleep 30"], cwd=tree)
+    # Two commands, not one: bash execs a lone command in place, which would
+    # hand the pid to coreutils sleep and leave nothing named hlds_linux to find.
+    proc = subprocess.Popen(["./hlds_linux", "-c", "sleep 30; exit 0"], cwd=tree)
     try:
         time.sleep(0.3)
-        # The probe reports a pid it cannot resolve as "? ?", so an unreaped
-        # zombie satisfies the "sees it" assertion below from any scope. Prove
-        # the process is alive first, or both assertions are about a corpse.
+        # Both assertions below read the probe's output, and the probe reports a
+        # pid it cannot resolve as "? ?" -- so a corpse, or a process that exec'd
+        # into something else, satisfies or breaks them for reasons that have
+        # nothing to do with the probe. Establish the premise first.
         assert proc.poll() is None, "hlds_linux stand-in exited; the assertions below would read a zombie"
+        exe = os.readlink(f"/proc/{proc.pid}/exe")
+        assert exe.startswith(str(tree / "hlds_linux")), (
+            f"stand-in is no longer the binary under test: /proc/{proc.pid}/exe is {exe}")
         probe = lambda t: subprocess.run(["bash", "-c", sync._IDLE_PROBE.format(tree=t)],
                                          capture_output=True, text=True).stdout
         out = probe(tree)
