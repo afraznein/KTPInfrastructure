@@ -212,14 +212,21 @@ def test_the_probe_sees_a_relative_launch_on_a_real_kernel(tmp_path):
     import subprocess
     import time
 
-    if not sys.platform.startswith("linux") or not shutil.which("pgrep") or not shutil.which("sleep"):
-        pytest.skip("needs Linux /proc, pgrep and sleep")
+    if not sys.platform.startswith("linux") or not shutil.which("pgrep") or not shutil.which("bash"):
+        pytest.skip("needs Linux /proc, pgrep and bash")
     tree = tmp_path / "serverfiles"
     tree.mkdir()
-    shutil.copy(shutil.which("sleep"), tree / "hlds_linux")
-    proc = subprocess.Popen(["./hlds_linux", "30"], cwd=tree)
+    # A stand-in that is NOT a coreutils program. On ubuntu-26.04 /bin/sleep is a
+    # multicall binary that dispatches on argv[0], so a copy named hlds_linux
+    # exits with "unknown program" before the probe ever runs.
+    shutil.copy(shutil.which("bash"), tree / "hlds_linux")
+    proc = subprocess.Popen(["./hlds_linux", "-c", "sleep 30"], cwd=tree)
     try:
         time.sleep(0.3)
+        # The probe reports a pid it cannot resolve as "? ?", so an unreaped
+        # zombie satisfies the "sees it" assertion below from any scope. Prove
+        # the process is alive first, or both assertions are about a corpse.
+        assert proc.poll() is None, "hlds_linux stand-in exited; the assertions below would read a zombie"
         probe = lambda t: subprocess.run(["bash", "-c", sync._IDLE_PROBE.format(tree=t)],
                                          capture_output=True, text=True).stdout
         out = probe(tree)
