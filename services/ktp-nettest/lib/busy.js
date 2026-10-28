@@ -7,7 +7,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const MAX_LIVE_S = 2 * 3600;
-const TAIL_BYTES = 2 * 1024 * 1024;
+// A full half measures ~6.4 MB on this fleet, so 2 MB could not reach the half's own
+// KTP_MATCH_START and the block silently opened partway through every half. Logs under
+// this cap are read whole, which is what lets a missing START mean something.
+const TAIL_BYTES = 16 * 1024 * 1024;
 const TS = /^L (\d{2})\/(\d{2})\/(\d{4}) - (\d{2}):(\d{2}):(\d{2}):/;
 
 function lineTime(line) {
@@ -18,13 +21,19 @@ function lineTime(line) {
 }
 
 // Pure: given a log tail, is the last match still live at `now` (epoch s)?
-function liveInText(text, now) {
+// `truncated` says the text may have cut off a START, so finding none proves nothing and the
+// honest answer is busy -- absence is evidence only when the whole log was read. 92% of this
+// fleet's logs contain no START at all, so a marker-free COMPLETE read must stay not-busy or
+// the node would report busy on an idle host and never serve a test.
+function liveInText(text, now, truncated = false) {
   let start = null, end = null;
   for (const line of text.split('\n')) {
     if (line.includes('KTP_MATCH_START')) { start = lineTime(line); end = null; }
     else if (line.includes('KTP_MATCH_END') && start !== null) end = lineTime(line);
   }
-  return start !== null && end === null && now - start < MAX_LIVE_S;
+  const live = start !== null && end === null && now - start < MAX_LIVE_S;
+  // A truncated read cannot rule out a START it never saw, wherever in the window it fell.
+  return live || truncated;
 }
 
 // The two newest logs: halves are separate maps, so between halves (and during second-half
@@ -39,14 +48,14 @@ function newestLogs(dir) {
     .map((x) => x.file);
 }
 
-function tail(file) {
+function readTail(file) {
   const st = fs.statSync(file);
   const fd = fs.openSync(file, 'r');
   try {
     const len = Math.min(st.size, TAIL_BYTES);
     const buf = Buffer.alloc(len);
     fs.readSync(fd, buf, 0, len, st.size - len);
-    return buf.toString('utf8');
+    return { text: buf.toString('utf8'), truncated: len < st.size };
   } finally { fs.closeSync(fd); }
 }
 
@@ -59,7 +68,9 @@ function makeBusy(dirs, { ttlS = 15 } = {}) {
     let busy = false;
     try {
       for (const d of dirs) {
-        if (liveInText(newestLogs(d).map(tail).join('\n'), now)) { busy = true; break; }
+        const reads = newestLogs(d).map(readTail);
+        const text = reads.map((r) => r.text).join('\n');
+        if (liveInText(text, now, reads.some((r) => r.truncated))) { busy = true; break; }
       }
     } catch { busy = true; }
     cache = { at: now, busy: dirs.length ? busy : true };
