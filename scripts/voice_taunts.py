@@ -298,7 +298,7 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
             "top_victim": max(s["victims"].items(), key=lambda kv: (kv[1], kv[0]))[0],
             "top_code": max(s["codes"].items(), key=lambda kv: (kv[1], kv[0]))[0],
         })
-    rows.sort(key=lambda r: (-r["taunts"], -(r["per_match"] or 0), r["speaker"]))
+    rows.sort(key=lambda r: (-(r["per_match"] or 0), -r["taunts"], r["speaker"]))
     return rows
 
 
@@ -345,7 +345,7 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
     for title, types in (("Official matches", OFFICIAL), ("All match types", all_types)):
         rows = leaderboard(events, played, types, window)
         L += [f"## {title} — top {min(top, len(rows))} of {len(rows)} speakers "
-              f"(types {', '.join(sorted({TYPE_NAME[t] for t in types}))})", ""]
+              f"(sorted by per match; types {', '.join(sorted({TYPE_NAME[t] for t in types}))})", ""]
         if not rows:
             L += ["none", ""]
             continue
