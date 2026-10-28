@@ -26,7 +26,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import statistics
 import urllib.request
 import urllib.error
 from collections import Counter, defaultdict
@@ -405,14 +407,49 @@ def run(matches, model_factory, division_seed=None):
     return model, rows, (L.metrics(preds, ys) if preds else None)
 
 
-def challengers(matches, holdout_n):
-    """Champion vs challengers on the most recent holdout_n matches, none of
-    which any variant saw while fitting. Only reports; never auto-adopts."""
-    if len(matches) < holdout_n + 10:
-        return []
-    train, holdout = matches[:-holdout_n], matches[-holdout_n:]
+CHAMPION = "champion (openskill default)"
+WALK_FORWARD_BURN_IN = 10
+MIN_SIGMAS = 2.0
+
+
+def _per_match_ll(preds, ys):
+    """Log-loss per match, not averaged. Same eps as ladder.metrics."""
+    eps = 1e-6
+    return [-(y * math.log(max(p, eps)) + (1 - y) * math.log(max(1 - p, eps)))
+            for p, y in zip(preds, ys)]
+
+
+def challengers(matches, holdout_n, division_seed=None):
+    """Champion vs challengers on matches no variant saw while fitting.
+
+    holdout_n scores the last holdout_n matches. holdout_n = 0 walks forward
+    instead: burn in on WALK_FORWARD_BURN_IN matches and score every match after,
+    which is the season rather than its tail. The tail is what three digests in a
+    row could not resolve -- at ten matches the standard error of the log-loss gap
+    is wider than the gap.
+
+    Variants vary `damping` as well as beta. Beta is the predicted spread; it moves
+    log-loss by ~0.002 here, which is why every openskill arm used to land on top of
+    the others. The damping constant is what actually binds, and it was fitted when
+    the season was nine matches long.
+
+    `division_seed` is applied to any variant that can take it, because production
+    seeds by division -- an unseeded champion in this table is not the champion that
+    runs. Elo has no seed_from_divisions, so elo arms stay unseeded; `seeded` on each
+    row records which is which rather than leaving it to be assumed.
+    """
+    if holdout_n:
+        if len(matches) < holdout_n + 10:
+            return []
+        train_n = len(matches) - holdout_n
+    else:
+        if len(matches) < WALK_FORWARD_BURN_IN + 10:
+            return []
+        train_n = WALK_FORWARD_BURN_IN
     variants = {
-        "champion (openskill default)": L.OpenSkill,
+        CHAMPION: L.OpenSkill,
+        "openskill damping k=2": lambda: L.OpenSkill(damping=2.0),
+        "openskill damping k=12": lambda: L.OpenSkill(damping=12.0),
         "openskill beta x1.5": lambda: L.OpenSkill(beta=25 / 6 * 1.5),
         "openskill beta x2": lambda: L.OpenSkill(beta=25 / 6 * 2),
         "elo chess-anchored": L.Elo,
@@ -421,15 +458,52 @@ def challengers(matches, holdout_n):
     results = []
     for name, factory in variants.items():
         model = factory()
-        for m in train:
+        seeded = bool(division_seed) and hasattr(model, "seed_from_divisions")
+        if seeded:
+            model.seed_from_divisions(*division_seed)
+        for m in matches[:train_n]:
             model.update(m["t1"], m["t2"], m["y"])
         preds, ys = [], []
-        for m in holdout:
+        for m in matches[train_n:]:
             preds.append(model.predict(m["t1"], m["t2"]))
             ys.append(m["y"])
             model.update(m["t1"], m["t2"], m["y"])
-        results.append(dict(name=name, **L.metrics(preds, ys)))
+        # ladder.metrics already returns n.
+        results.append(dict(name=name, seeded=seeded,
+                            ll_series=_per_match_ll(preds, ys), **L.metrics(preds, ys)))
     return sorted(results, key=lambda r: r["log_loss"])
+
+
+def beats_champion(results, min_sigmas=MIN_SIGMAS):
+    """Challengers whose edge is bigger than the noise in the comparison.
+
+    PAIRED, which is both correct and free: every variant scores the same matches in
+    the same order, so the per-match difference has far less variance than either
+    series. The old test was a flat 0.01 log-loss margin -- roughly a tenth of a
+    standard error on a ten-match holdout, so it reported differences the sample could
+    not resolve and did so three weeks running.
+    """
+    champ = next((r for r in results if r["name"] == CHAMPION), None)
+    if champ is None:
+        return []
+    out = []
+    for r in results:
+        if r["name"] == CHAMPION:
+            continue
+        diffs = [c - x for c, x in zip(champ["ll_series"], r["ll_series"])]
+        if len(diffs) < 2:
+            continue
+        gap = statistics.mean(diffs)
+        se = statistics.stdev(diffs) / math.sqrt(len(diffs))
+        if gap <= 0:
+            continue
+        # A gap with no spread at all is certain, not unmeasurable -- skipping it
+        # here would suppress the one case that needs no judgement.
+        if se > 0 and gap / se < min_sigmas:
+            continue
+        out.append({**r, "gap": gap, "gap_se": se,
+                    "sigmas": gap / se if se > 0 else float("inf")})
+    return sorted(out, key=lambda r: -r["sigmas"])
 
 
 def main():
@@ -522,10 +596,8 @@ def main():
         print(f"  mmr payload unavailable: {exc}")
 
     upsets = [r for r in rows if abs(r["p_home"] - r["y"]) > CONFIDENT_MISS]
-    cand = challengers(matches, args.holdout)
-    beat_champion = [c for c in cand if cand and c["name"] != "champion (openskill default)"
-                     and c["log_loss"] < next(x["log_loss"] for x in cand
-                                              if x["name"] == "champion (openskill default)") - 0.01]
+    cand = challengers(matches, args.holdout, division_seed=seed)
+    beat_champion = beats_champion(cand)
 
     digest = [f"# MMR weekly digest -- {now}\n",
               f"**{len(matches)} completed league matches** rated so far; "
@@ -574,16 +646,28 @@ def main():
                           f"{max(r['p_home'], 1-r['p_home']):.0%} | {winner} | {r['margin']} |")
         digest += upset_dossiers(args.key, upsets[-8:], counts.get("bindings") or {}, matches)
     if cand:
+        scored = cand[0]["n"] if cand else 0
+        how = (f"trained on the first {WALK_FORWARD_BURN_IN} matches, then scored on every one of "
+               f"the {scored} after it (walk-forward)" if not args.holdout
+               else f"trained on all but the last {args.holdout} matches, then scored on those "
+                    f"{scored} held-out matches it never saw")
         digest += ["", "## Tuning check (champion vs challengers)\n",
-                   f"Each variant trained on all but the last {args.holdout} matches, then scored "
-                   "on those held-out matches it never saw. Nothing is adopted automatically.\n",
+                   f"Each variant {how}. Openskill arms carry production's division seeding; elo "
+                   "cannot be seeded, so elo arms do not. Nothing is adopted automatically.\n",
                    "| Variant | Log-loss | Brier | Accuracy |", "|---|---|---|---|"]
         for c in cand:
             digest.append(f"| {c['name']} | {c['log_loss']:.4f} | {c['brier']:.4f} | {c['acc']:.1%} |")
         if beat_champion:
-            digest += ["", f"**A challenger beat the champion**: {beat_champion[0]['name']} "
-                           f"({beat_champion[0]['log_loss']:.4f} vs champion). Worth a human look "
-                           "before adopting -- one week is a small sample."]
+            b = beat_champion[0]
+            digest += ["", f"**A challenger beat the champion**: {b['name']}, by "
+                           f"{b['gap']:.4f} log-loss +/- {b['gap_se']:.4f} "
+                           f"({b['sigmas']:.1f} SE, paired over {b['n']} matches). "
+                           "Worth a human look before adopting.",
+                       "", "Read the two metrics apart. Damping shrinks a prediction toward 50% "
+                           "and cannot change which side is favoured, so a log-loss gap may be a "
+                           "calibration-tuning gap -- compare the damping arms before concluding "
+                           "anything about the rating system. An ACCURACY gap is an ordering "
+                           "difference, and ordering is what seeding consumes."]
     (HERE / "weekly_digest.md").write_text("\n".join(digest) + "\n", encoding="utf-8")
     summary = dict(
         generated_at=now, completed_matches=len(matches), pending=counts["pending"],
