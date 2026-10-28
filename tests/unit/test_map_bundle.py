@@ -7,12 +7,14 @@ endings, manifest -- not RESGen's own parsing.
 
 import json
 import os
+import re
 import struct
 import sys
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
@@ -29,11 +31,13 @@ from scripts.build_map_bundle import (  # noqa: E402
     classify,
     delta,
     main,
+    make_overviews,
     manifest,
     md5_file,
     parse_res_entries,
     read_worldspawn,
     res_version,
+    run_resgen,
     to_crlf,
     to_lf,
 )
@@ -492,6 +496,115 @@ class CheckResOrdering(unittest.TestCase):
     def test_a_genuinely_unsorted_list_still_fails(self):
         problems = check_res(["b.wav", "a.wav"], "x", require_overviews=False)
         self.assertTrue(any("ascending" in p for p in problems))
+
+DECLARED_RE = re.compile(r'add_argument\(\s*"(--[A-Za-z0-9][A-Za-z0-9-]*)"')
+
+
+def declared_options(script_name):
+    """The option strings a script DECLARES, read out of its source.
+
+    Deliberately not "does the real parser accept it": argparse takes any
+    unambiguous prefix, so parsing cannot tell a declared flag from --out
+    standing in for --out-dir, which is the drift that has to be caught.
+    """
+    src = (REPO / "scripts" / script_name).read_text(encoding="utf-8")
+    return set(DECLARED_RE.findall(src))
+
+
+class OverviewCallArgv(unittest.TestCase):
+    """make_overviews must speak the interface the two scripts declare.
+
+    EndToEnd drives --overviews-from and its RESGen stand-in accepts any flag,
+    so neither notices the orchestrator handing --out to a parser that declares
+    --out-dir, nor a file path to a flag that wants a directory. Both shipped.
+    """
+
+    OVERVIEW_SCRIPTS = ("make_overview_descriptor.py", "render_overview_bmp.py")
+
+    def record(self):
+        """The argv make_overviews builds, with nothing executed.
+
+        The .bsp is empty on purpose: make_overviews only forwards the path,
+        so a parseable one would suggest this test covers more than it does.
+        """
+        import scripts.build_map_bundle as bmb
+        calls = []
+        tmp = Path(tempfile.mkdtemp())
+        ov = tmp / "overviews"
+        bsp = tmp / "dod_x.bsp"
+        bsp.touch()
+        with mock.patch.object(bmb.subprocess, "run",
+                               side_effect=lambda argv, **kw: calls.append(list(argv))):
+            make_overviews(REPO / "scripts", bsp, ov, "dod_x")
+        return calls, ov
+
+    def test_both_scripts_are_invoked(self):
+        calls, _ = self.record()
+        self.assertEqual(len(calls), 2, "expected one call per overview script")
+        for argv, script in zip(calls, self.OVERVIEW_SCRIPTS):
+            self.assertTrue(any(str(a).endswith(script) for a in argv),
+                            f"{script} is not the script in {argv}")
+
+    def test_every_flag_passed_is_an_exact_declared_option(self):
+        calls, _ = self.record()
+        for argv, script in zip(calls, self.OVERVIEW_SCRIPTS):
+            declared = declared_options(script)
+            self.assertTrue(declared, f"read no declarations out of {script}")
+            passed = {str(a) for a in argv if str(a).startswith("--")}
+            self.assertTrue(passed, f"no flags recorded for {script}")
+            self.assertEqual(
+                passed - declared, set(),
+                f"{script} does not declare {sorted(passed - declared)}")
+
+    def test_the_output_flag_is_given_the_directory_not_a_file_in_it(self):
+        calls, ov = self.record()
+        seen = 0
+        for argv in calls:
+            for flag in ("--out-dir", "--out"):
+                if flag in argv:
+                    seen += 1
+                    self.assertEqual(
+                        Path(argv[argv.index(flag) + 1]), ov,
+                        f"{flag} must get the overviews directory; both scripts "
+                        "name the output file themselves")
+        self.assertEqual(seen, 2, "expected an output flag on each call")
+
+    def test_the_check_separates_a_declaration_from_a_prefix(self):
+        """Without this, the flag test could pass on the defect it guards.
+
+        --out is an unambiguous prefix of --out-dir, so argparse accepts it.
+        A declaration check must not.
+        """
+        declared = declared_options("make_overview_descriptor.py")
+        self.assertIn("--out-dir", declared)
+        self.assertNotIn("--out", declared)
+
+
+class MissingResgen(unittest.TestCase):
+    """A missing RESGen binary must name itself, not raise FileNotFoundError."""
+
+    def test_a_missing_binary_is_explained(self):
+        tmp = Path(tempfile.mkdtemp())
+        maps = tmp / "maps"
+        maps.mkdir()
+        with self.assertRaises(SystemExit) as caught:
+            run_resgen(str(tmp / "no-such-resgen"), maps, "dod_x")
+        msg = str(caught.exception)
+        self.assertIn("RESGen not found", msg)
+        self.assertIn("--resgen", msg)
+
+    def test_it_is_not_the_bare_oserror(self):
+        """The point of the message: FileNotFoundError said nothing useful."""
+        tmp = Path(tempfile.mkdtemp())
+        maps = tmp / "maps"
+        maps.mkdir()
+        try:
+            run_resgen(str(tmp / "no-such-resgen"), maps, "dod_x")
+        except SystemExit:
+            pass
+        except FileNotFoundError:
+            self.fail("still raising the bare FileNotFoundError")
+
 
 if __name__ == "__main__":
     unittest.main()

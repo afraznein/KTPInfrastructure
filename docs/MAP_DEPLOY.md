@@ -88,9 +88,9 @@ worldspawn `wad` key, which the tool prints next to it. An added or removed
 `.mdl` should match a prop the mapper added or removed. A delta you cannot
 account for is a finding, not a formality.
 
-If the overview scripts are not yet on `main` (they arrive with
-`KTPInfrastructure` PRs #395 and #396), render the pair separately and pass
-`--overviews-from <dir>`.
+`--overviews-from <dir>` takes an already-rendered pair instead of rendering one.
+Reach for it when a mapper supplied the overview, or when re-bundling a map whose
+overview has not changed.
 
 ### Ordering is load-bearing
 
