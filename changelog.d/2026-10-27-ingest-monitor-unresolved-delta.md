@@ -9,3 +9,9 @@
   window, and says it cannot when it is not. It no longer prescribes "Seed the table":
   `voice_bazooka`, the live example, is absent from `dod.so` (`voice_bazookaspotted` is the
   real token), so seeding it would invent a row for a command the game has no notion of.
+
+### Changed
+- `docs/LIVE_SCRIPT_INVENTORY.md` marks the `hlstatsx-ingest-monitor.py` row SUPERSEDED. The
+  deployed copy was byte-identical to the pinned commit, so the row described the host
+  correctly until this change moved the repo source past it. Read the token as an install
+  being owed rather than as the row being wrong; re-pinning needs a read on the host.
