@@ -45,7 +45,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import statistics
 import subprocess
 import sys
 import urllib.error
@@ -298,7 +300,13 @@ def leaderboard(events: list[dict], played: dict[tuple[int, int], int], types: t
             "top_victim": max(s["victims"].items(), key=lambda kv: (kv[1], kv[0]))[0],
             "top_code": max(s["codes"].items(), key=lambda kv: (kv[1], kv[0]))[0],
         })
-    rows.sort(key=lambda r: (-(r["per_match"] or 0), -r["taunts"], r["speaker"]))
+    # Rank floor (drew, 2026-10-28): one match with 3 taunts must not outrank 69 over 15, so a speaker
+    # needs at least half the median match count of this board's speakers to be ranked; the rest follow, unranked.
+    median = statistics.median(r["matches"] for r in rows) if rows else 0
+    floor = max(1, math.ceil(median / 2))
+    for r in rows:
+        r["ranked"], r["floor"], r["median"] = r["matches"] >= floor, floor, median
+    rows.sort(key=lambda r: (not r["ranked"], -(r["per_match"] or 0), -r["taunts"], r["speaker"]))
     return rows
 
 
@@ -349,10 +357,12 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
         if not rows:
             L += ["none", ""]
             continue
+        L += [f"Ranked: speakers with at least {rows[0]['floor']} voice-capable matches (half the median of "
+              f"{rows[0]['median']:g}); fewer than that are listed after, unranked (#  -).", ""]
         L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | matches with a taunt | % of matches taunted | per match | taunts per taunting match | favourite target | favourite command | via voice menu |",
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
-            L.append(f"| {i} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['peak']} | {r['matches']} "
+            L.append(f"| {i if r['ranked'] else '-'} | {esc(r['speaker'])} | {r['taunts']} | {r['presses']} | {r['peak']} | {r['matches']} "
                      f"| {r['matches_with']} | {pct(r['share'])} | {fmt(r['per_match'])} | {fmt(r['per_taunting'])} "
                      f"| {esc(r['top_victim'])} | {r['top_code']} | {r['menu']} of {r['taunts']} |")
         L.append("")
