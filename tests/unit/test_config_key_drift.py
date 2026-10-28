@@ -227,3 +227,104 @@ def test_the_headline_reports_work_done_not_just_findings(check):
                   "keys compared: 34612", "nothing-to-compare: 4"):
         assert token in headline, headline
     assert headline in report
+
+
+# ------------------------------------------- why a path was NOT compared at all
+# Until 2026-10-28 the check printed one sentence -- "on no covered instance, or
+# unparsable on all 24" -- for three different causes, and the fourth and
+# commonest one was not among the two it named. `listip.cfg` parses fine, is in
+# the distributor's watch patterns, and is in `excludePatterns` on all 24
+# targets since the 2026-10-05 servers.json edit, so it is compared against
+# nothing; the weekly issue title said "could not be parsed" of it for three
+# weeks and sent the reader after a malformed file that does not exist.
+def test_the_accepted_by_no_target_reason_does_not_blame_the_parser(check):
+    why = check.reason_excluded_everywhere()
+    assert "accepted by no target" in why
+    assert "servers.json" in why
+    assert "could not be parsed" not in why
+    assert "unparsable" not in why
+
+
+def test_the_four_not_compared_reasons_are_distinguishable(check):
+    """A shared sentence is why the wrong cause was reported for three weeks."""
+    from ktp_config_kv import MIXED, SECTIONED  # noqa: PLC0415
+
+    reasons = [check.reason_excluded_everywhere(),
+               check.reason_unreadable_on_accepting(24),
+               check.reason_source_unparsable(MIXED),
+               check.reason_source_unparsable(SECTIONED)]
+    assert len(set(reasons)) == 4, reasons
+    # And the two source refusals must not prescribe the same remedy: a reader
+    # fixes a mixed file, and only an operator ruling fixes a sectioned one.
+    assert "operator decision" in check.reason_source_unparsable(SECTIONED)
+    assert "operator decision" not in check.reason_source_unparsable(MIXED)
+
+
+def test_an_excluded_and_unparsable_path_says_a_reader_would_not_help(check):
+    from ktp_config_kv import MIXED  # noqa: PLC0415
+
+    assert "accepted by no target either" in check.reason_source_unparsable(
+        MIXED, excluded_everywhere=True)
+
+
+def test_the_headline_counts_excluded_paths_without_subtracting_them(check):
+    """`excluded-everywhere` is a SUBSET of `inconclusive`. Moving those paths
+    out would return 0 on a run that compared nothing for them, and whether
+    scope should be narrowed that way is an open operator decision."""
+    report, stable, headline = check.build_report(
+        {}, {"source_root": "/home/dod/distribute", "instances_expected": 24,
+             "instances_compared": 24, "paths_in_scope": 100,
+             "paths_compared": 97, "keys_compared": 34612,
+             "paths_with_nothing_to_compare": 4,
+             "paths_excluded_everywhere": 1},
+        {"listip.cfg": check.reason_excluded_everywhere()}, [], {}, False)
+    assert "inconclusive: 3" not in headline, headline
+    assert "inconclusive: 1" in headline, headline
+    assert "excluded-everywhere: 1" in headline, headline
+    assert "Could not compare (1)" in report
+    assert any(line.startswith("KEYDRIFT-INCONCLUSIVE: listip.cfg")
+               for line in stable), stable
+
+
+def test_a_missing_excluded_count_defaults_rather_than_raising(check):
+    """`build_report` is called from one place, but a stats dict assembled by an
+    older caller must not crash the report that carries the findings."""
+    _, _, headline = check.build_report(
+        {}, {"source_root": "/x", "instances_expected": 24,
+             "instances_compared": 24, "paths_in_scope": 1,
+             "paths_compared": 1, "keys_compared": 1,
+             "paths_with_nothing_to_compare": 0},
+        {}, [], {}, False)
+    assert "excluded-everywhere: 0" in headline
+
+
+# ----------------------------------------- sectioned INIs are refused by name
+def test_an_entry_less_sectioned_ini_is_refused_not_read_as_three_fake_keys():
+    """`config/local/grenade_loadout.ini` is exactly this file: sections and no
+    entries. Before this it classified as `list` with keys literally named
+    `[allies]`, `[axis]`, `[british]`, and comparing it against a populated copy
+    would have compared invented keys against real ones -- the same class as the
+    `;`-read-as-a-key bug the module header records."""
+    from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
+
+    assert pt("[allies]\n[axis]\n[british]\n", "stub") == (SECTIONED, None)
+
+
+def test_a_populated_sectioned_ini_is_refused_by_section_not_by_mixed():
+    """So stripping its entries cannot un-refuse it. Both live sectioned files
+    were already refused, but only as a side effect of their headers being the
+    only lines without `=`."""
+    from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
+
+    flavour, keys = pt("[allies]\ngarand = 1\nk98 = 1\n", "g")
+    assert (flavour, keys) == (SECTIONED, None)
+
+
+def test_a_bracketed_cvar_value_is_not_a_section_header():
+    """The control. `hostname "[KTP] Dallas 1"` is a cvar line, and a section
+    test that matched it would refuse half the map configs."""
+    from ktp_config_kv import CVAR, parse_text as pt  # noqa: PLC0415
+
+    flavour, keys = pt('hostname "[KTP] Dallas 1"\nmp_timelimit 30\n', "c")
+    assert flavour == CVAR
+    assert keys == {"hostname": "[KTP] Dallas 1", "mp_timelimit": "30"}

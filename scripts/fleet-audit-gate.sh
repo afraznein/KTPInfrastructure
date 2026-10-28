@@ -55,9 +55,13 @@
 #  10. Config key drift reaching fewer instances than expected, or not
 #      finishing. A level. A partial sweep reported as clean is exactly how
 #      that incident stayed invisible for six weeks.
-#  11. A config path the key check could not PARSE, on every run -- a level.
-#      Nothing was compared for it, which is not the same as it agreeing, and
-#      the fix (a reader, or an excludePatterns entry) retires it for good.
+#  11. A config path the key check could not COMPARE, on every run -- a level.
+#      Nothing was compared for it, which is not the same as it agreeing. ⚠️ Not
+#      the same as "could not parse" either, which is what this leg said until
+#      2026-10-28: the commonest cause is a path in the distributor's watch
+#      patterns that NO target accepts, which parses fine and is not fixed by a
+#      reader. Those are counted out separately so the issue title stops naming
+#      a malformed file that does not exist.
 #
 # Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt
 #                distribute-drift.txt  config-key-drift.txt  health-state.json
@@ -141,14 +145,21 @@ fi
 #        fleet, and that is this incident's own failure mode -- the alert that
 #        missed it was a count of failures, and it read zero because the code
 #        path never ran. `instances compared:` is the completion marker.
-#      * a path that could not be PARSED. That is a question left open, not
-#        drift, and it stays open until someone gives the file a reader or takes
-#        it out of scope in servers.json. Finite and actionable, so it nags.
+#      * a path that could not be COMPARED. That is a question left open, not
+#        drift, and it stays open until someone gives the file a reader or the
+#        exclusion that silenced it is reconciled. ⛔ Taking it out of scope in
+#        servers.json does NOT retire it -- the key check never intersects scope
+#        with accepts, which is how `listip.cfg` became a permanent nag by
+#        following the runbook. Finite and actionable, so it nags.
 if ! grep -q 'instances compared:' config-key-drift.txt 2>/dev/null; then
     reasons="${reasons}Config-key-drift check did not complete. "
 else
     key_prev="$state_dir/ktp-config-key-drift-ci.txt"
-    key_cur="$(grep -E '^KEYDRIFT:|^KEYDRIFT-UNREACHABLE:' config-key-drift.txt | sort || true)"
+    # KEYDRIFT-INCONCLUSIVE is in the baseline too, deliberately. Without it,
+    # one path gaining a reader while another loses one is byte-identical here
+    # and the swap goes unflagged; the count leg below still fires, so the
+    # change was never silent, but WHICH path changed was not in the signal.
+    key_cur="$(grep -E '^KEYDRIFT:|^KEYDRIFT-INCONCLUSIVE:|^KEYDRIFT-UNREACHABLE:' config-key-drift.txt | sort || true)"
     if [ -f "$key_prev" ] && [ "$key_cur" != "$(cat "$key_prev")" ]; then
         reasons="${reasons}Config key drift changed since last run. "
     fi
@@ -164,10 +175,17 @@ else
             reasons="${reasons}Config key drift reached only ${got} of ${want} instances -- a partial sweep, not a clean fleet. "
         fi
     fi
-    key_unparsed="$(sed -n 's/.*inconclusive: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
-    key_unparsed="${key_unparsed:-0}"
-    if [ "$key_unparsed" -gt 0 ]; then
-        reasons="${reasons}${key_unparsed} config path(s) could not be parsed, so nothing was compared for them. "
+    key_uncompared="$(sed -n 's/.*inconclusive: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
+    key_uncompared="${key_uncompared:-0}"
+    # A SUBSET of the above, not a second group. Absent from an older artifact,
+    # which is why it defaults to 0 rather than failing the leg.
+    key_excluded="$(sed -n 's/.*excluded-everywhere: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
+    key_excluded="${key_excluded:-0}"
+    if [ "$key_uncompared" -gt 0 ]; then
+        reasons="${reasons}${key_uncompared} config path(s) could not be compared, so nothing was checked for them. "
+        if [ "$key_excluded" -gt 0 ]; then
+            reasons="${reasons}${key_excluded} of those parse fine and are accepted by no target. "
+        fi
     fi
 fi
 
