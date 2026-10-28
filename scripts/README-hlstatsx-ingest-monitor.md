@@ -32,6 +32,14 @@ Each check below is one of those, turned into something that fires on the day.
   came in at 44%, 59% and 63%; every healthy one sat at 83% or above.
 - **The daemon's own health line** (`KTP_HEALTH`), which reports unresolved
   actions and failed SQL writes. Requires KTPHLStatsX ≥ 0.3.5.
+  Both counters are process-lifetime and are read as deltas against saved state:
+  a value that stops moving stops reporting, because one player's bind to a
+  command the game does not implement would otherwise red this unit for the life
+  of the daemon. A count below the last one is a restart, and every code in the
+  new generation counts as new. The reported code is named when the daemon's
+  first-sighting line falls in the window, and the finding says so when it does
+  not -- a code `dod.so` does not implement is a player's own bind and must not
+  be seeded.
 - **Log versus database**, with `--logs` — only possible where the game servers
   share a host with the daemon, which is the LAN case. This is the check that
   would have caught all three defects on the day.
