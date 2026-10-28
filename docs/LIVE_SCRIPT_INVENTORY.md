@@ -170,7 +170,7 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/opt/support-web/app/tickets.py` `b2f3f427` = `KTPInfrastructure:sites/support-web/app/tickets.py` @ `871d2365ae`
 - `/opt/support-web/app/tiers.py` `99eff417` = `KTPInfrastructure:sites/support-web/app/tiers.py` @ `c7090f0e37` SUPERSEDED
 - `/opt/support-web/tools/run_poller.py` `611b6827` = `KTPInfrastructure:services/support-poller/tools/run_poller.py` @ `8f6b61e2da` SUPERSEDED
-- `/usr/local/bin/hlstatsx-ingest-monitor.py` `d6be6fca` = `KTPInfrastructure:scripts/hlstatsx-ingest-monitor.py` @ `78930bcf04` SUPERSEDED
+- `/usr/local/bin/hlstatsx-ingest-monitor.py` `0a104267` = `KTPInfrastructure:scripts/hlstatsx-ingest-monitor.py` @ `da0ee38549`
 - `/usr/local/bin/hltv-demo-renamer.py` `bc7e4a24` = `KTPInfrastructure:scripts/hltv-demo-renamer.py` @ `a26727c372`
 - `/usr/local/bin/hltv-restart-all.sh` `036ed8ab` = `KTPInfrastructure:scripts/hltv-restart-all.sh` @ `a26f37f9ca` SUPERSEDED
 - `/usr/local/bin/ktp-ac-retention.sh` `92e7926d` = `KTPInfrastructure:scripts/ktp-ac-retention.sh` @ `c4268ad113` SUPERSEDED
