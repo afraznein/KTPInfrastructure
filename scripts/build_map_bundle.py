@@ -251,10 +251,17 @@ def run_resgen(resgen: str, maps_dir: Path, mapname: str) -> str:
     out = maps_dir / f"{mapname}.res"
     if out.exists():
         out.unlink()
-    proc = subprocess.run(
-        [resgen, "-o", "-v", "-f", f"{mapname}.bsp"],
-        cwd=maps_dir, capture_output=True, text=True, timeout=600,
-    )
+    try:
+        proc = subprocess.run(
+            [resgen, "-o", "-v", "-f", f"{mapname}.bsp"],
+            cwd=maps_dir, capture_output=True, text=True, timeout=600,
+        )
+    except FileNotFoundError:
+        raise SystemExit(
+            f"ERROR: RESGen not found at {resgen!r}.\n"
+            "       Build it with scripts/build_resgen.sh, then pass --resgen or set\n"
+            "       KTP_RESGEN. A /tmp path does not survive between WSL invocations."
+        ) from None
     if not out.exists():
         raise RuntimeError(
             f"RESGen produced no .res for {mapname}\n"
@@ -271,15 +278,16 @@ def make_overviews(scripts_dir: Path, bsp: Path, overviews: Path, mapname: str) 
     if missing:
         raise SystemExit(
             f"ERROR: {', '.join(missing)} not found in {scripts_dir}.\n"
-            "       They arrive with KTPInfrastructure PRs #395 and #396. Until those\n"
-            "       merge, render the overviews separately and pass --overviews-from."
+            "       Render the overview pair separately and pass --overviews-from."
         )
     overviews.mkdir(parents=True, exist_ok=True)
+    # Both take a directory and name the file themselves. A file path here is
+    # silently accepted as a prefix of --out-dir and mkdir'd in its place.
     subprocess.run([sys.executable, str(descriptor), str(bsp),
-                    "--out", str(overviews / f"{mapname}.txt")], check=True)
+                    "--out-dir", str(overviews)], check=True)
     subprocess.run([sys.executable, str(renderer), str(bsp),
                     "--descriptor", str(overviews / f"{mapname}.txt"),
-                    "--out", str(overviews / f"{mapname}.bmp")], check=True)
+                    "--out", str(overviews)], check=True)
 
 
 def copy_overviews(src: Path, overviews: Path, mapname: str) -> None:
