@@ -33,6 +33,9 @@ import sys
 import time
 
 STATE = "/var/lib/ktp/hlstatsx-ingest-monitor.json"
+
+# hlstats.pl logs this once per code, the first time it is hit.
+UNRESOLVED_CODE = re.compile(r"Unresolved action '([^']+)'")
 SNMP = "/proc/net/snmp"
 # The schema is two families with different collations: the upstream
 # hlstats_Events_* tables are utf8mb4_unicode_ci, the KTP ktp_* tables are
@@ -243,11 +246,42 @@ def check_unresolved_actions(findings: list[str], info: list[str]) -> None:
         return
     info.append("daemon health: " + last.strip()[-120:])
     m = re.search(r"unresolved_actions=(\d+)", last)
-    if m and int(m.group(1)) > 0:
-        findings.append(
-            "daemon reports %s unresolved action(s) -- events are being parsed and "
-            "discarded because hlstats_Actions has no matching row. Seed the table."
-            % m.group(1))
+    if m:
+        total = int(m.group(1))
+        state = load_state()
+        prev = state.get("unresolved_actions")
+        save_state({**state, "unresolved_actions": total,
+                    "unresolved_actions_at": int(time.time())})
+        info.append("daemon unresolved_actions lifetime=%d" % total)
+
+        # A reload zeroes the set, so a count below the last one describes a different
+        # daemon generation and every code in it is new to us. Treating that as 0 is what
+        # keeps a restart onto a non-zero count from going silent.
+        restarted = prev is not None and total < prev
+        base = 0 if prev is None or restarted else prev
+        if prev is None:
+            info.append("unresolved_actions: first run, no delta yet")
+        elif restarted:
+            info.append("unresolved_actions: counter reset, daemon restarted")
+
+        if total > base:
+            # hlstats.pl logs a code's FIRST sighting only, so a name is in this window
+            # exactly when the code is new -- the case that reports. An older code cannot
+            # be named from here, and saying so beats implying the list is complete.
+            named = sorted(set(UNRESOLVED_CODE.findall(out.stdout)))
+            where = (" Named in this window: %s." % ", ".join(named) if named
+                     else " No first-sighting line is in this window, so the code cannot"
+                          " be named from it.")
+            findings.append(
+                "daemon hit %d new unresolved action(s) since the last check (lifetime "
+                "%d).%s The event is discarded. Name the code before acting -- a code "
+                "`dod.so` does not implement is a player's own bind and must NOT be "
+                "seeded." % (total - base, total, where))
+        elif total:
+            info.append(
+                "unresolved_actions: %d known, unchanged since the last check -- a "
+                "process-lifetime set, zeroed only by a daemon reload" % total)
+
     m = re.search(r"sql_failed=(\d+)", last)
     if m:
         total = int(m.group(1))
