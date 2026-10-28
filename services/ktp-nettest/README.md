@@ -53,8 +53,12 @@ The node reads the two newest logs of each local game instance (`KTP_NETTEST_LOG
 an instance as live from its last `KTP_MATCH_START` until a later `KTP_MATCH_END`, or 2 hours
 after the start if no end arrives. Two logs, not one: each half is its own map, so during the
 map change and the second-half warmup the first half's open START sits in the previous log.
-Unreadable logs, or no log dirs configured, count as busy. Cached 15 s. A run already past its
-stall test when the host turns busy skips the rest and says so (`busy_skipped: true`).
+Unreadable logs, or no log dirs configured, count as busy. So does a log too large for the
+16 MB read window: a tail that may have cut off a START proves nothing by not containing one.
+A log read whole with no START is a real measurement and stays not-busy, which matters because
+most logs on this fleet are pub and warmup logs that carry no match markers at all. Cached
+15 s. A run already past its stall test when the host turns busy skips the rest and says so
+(`busy_skipped: true`).
 
 ## Using the client
 
