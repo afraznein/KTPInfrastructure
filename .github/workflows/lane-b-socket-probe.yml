@@ -41,6 +41,7 @@ jobs:
           #define _GNU_SOURCE
           #include <stdio.h>
           #include <errno.h>
+          #include <string.h>
           #include <unistd.h>
           #include <sys/syscall.h>
           #include <sys/socket.h>
@@ -101,13 +102,14 @@ jobs:
           docker run --rm --network none --security-opt seccomp=unconfined \
             -v "${PWD}/probe:/probe:ro" ubuntu:24.04 /probe
 
-      - name: Candidate narrow profile (default plus the socket calls)
+      - name: Allow-all baseline (is it seccomp at all?)
         run: |
           set -euo pipefail
-          # Deliberately minimal: docker's default action for an unlisted syscall
-          # is ENOSYS, so this allows everything the container needs the usual way
-          # and names only the calls the probe implicates. If the narrow profile
-          # passes where the default fails, the fix is this and not `unconfined`.
+          # NOT the narrow profile -- that cannot be written until the probe
+          # above says WHICH call is refused. This is the third arm: an allow-all
+          # filter still goes through seccomp, so if it passes where the default
+          # fails, the cause is a profile rule rather than seccomp being present
+          # at all, and a narrow profile is therefore possible.
           cat > narrow.json <<'JEOF'
           {
             "defaultAction": "SCMP_ACT_ALLOW",
