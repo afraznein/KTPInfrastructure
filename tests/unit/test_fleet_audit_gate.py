@@ -60,7 +60,8 @@ CLEAN_CONFIG_KEY = (
     "No key drift: every compared key agrees with the source on every instance "
     "compared.\n\n"
     "instances compared: 24/24  paths compared: 100/100  keys compared: 34612  "
-    "findings: 0  inconclusive: 0  nothing-to-compare: 0\n"
+    "findings: 0  inconclusive: 0  nothing-to-compare: 0  "
+    "excluded-everywhere: 0\n"
 )
 
 # The shape the fleet actually had on 2026-10-01: plugins.ini loading a plugin
@@ -439,7 +440,7 @@ def test_a_partial_config_key_sweep_is_news_every_run(tmp_path):
         assert "reached only 19 of 24 instances" in out["reason"]
 
 
-def test_an_unparsed_config_path_is_news_every_run(tmp_path):
+def test_an_uncompared_config_path_is_news_every_run(tmp_path):
     """Nothing was compared for it, which is not the same as it agreeing."""
     work, state = tmp_path / "w", tmp_path / "s"
     _lay(work, config_key=CLEAN_CONFIG_KEY.replace("inconclusive: 0",
@@ -448,7 +449,57 @@ def test_an_unparsed_config_path_is_news_every_run(tmp_path):
     second = _run(work, state)
     for out in (first, second):
         assert out["needs_triage"] == "true"
-        assert "3 config path(s) could not be parsed" in out["reason"]
+        assert "3 config path(s) could not be compared" in out["reason"]
+
+
+def test_the_reason_does_not_blame_the_parser_for_an_excluded_path(tmp_path):
+    """`listip.cfg` parses fine. It is in the distributor's watch patterns and
+    in `excludePatterns` on all 24 targets, so it is compared against nothing --
+    and this leg called that "could not be parsed" for three weeks, pointing the
+    operator at a malformed file that does not exist."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=CLEAN_CONFIG_KEY
+         .replace("inconclusive: 0", "inconclusive: 3")
+         .replace("excluded-everywhere: 0", "excluded-everywhere: 1"))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "3 config path(s) could not be compared" in out["reason"]
+    assert "1 of those parse fine and are accepted by no target" in out["reason"]
+    assert "could not be parsed" not in out["reason"]
+
+
+def test_an_artifact_predating_the_excluded_field_still_reports_the_count(tmp_path):
+    """The field is new. An older artifact must not silence the leg, and must
+    not add a phantom "0 of those" clause either."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    old = (CLEAN_CONFIG_KEY.replace("  excluded-everywhere: 0", "")
+           .replace("inconclusive: 0", "inconclusive: 3"))
+    assert "excluded-everywhere" not in old
+    _lay(work, config_key=old)
+    out = _run(work, state)
+    assert "3 config path(s) could not be compared" in out["reason"]
+    assert "accepted by no target" not in out["reason"]
+
+
+def test_a_swap_of_which_paths_are_uncompared_is_news(tmp_path):
+    """One path gains a reader, another loses one, the COUNT does not move.
+    Before the inconclusive lines were in the transition baseline this rendered
+    byte-identically and the swap itself went unflagged."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    before = CLEAN_CONFIG_KEY.replace(
+        "No key drift",
+        "KEYDRIFT-INCONCLUSIVE: addons/ktpamx/configs/grenade_loadout.ini "
+        "sectioned INI\nNo key drift").replace("inconclusive: 0",
+                                               "inconclusive: 1")
+    after = before.replace("grenade_loadout.ini", "ktp_maps.ini")
+    _lay(work, config_key=before)
+    assert "changed since last run" not in _run(work, state)["reason"]
+    _lay(work, config_key=before)
+    assert "changed since last run" not in _run(work, state)["reason"]
+    _lay(work, config_key=after)
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Config key drift changed since last run" in out["reason"]
 
 
 def test_a_config_key_check_that_did_not_finish_is_always_news(tmp_path):

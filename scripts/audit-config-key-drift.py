@@ -53,6 +53,18 @@ matcher would be a second source of truth free to disagree with the one that
 decides what really ships, and narrowing scope to look quiet is how an unscanned
 path gets reported clean.
 
+⚠️ AND AN `excludePatterns` ENTRY DOES NOT TAKE A PATH OUT OF THIS CHECK'S
+SCOPE, whatever the runbook used to promise. `scope` is built from
+`matches_watch_patterns` alone and is never intersected with `accepts`, so a path
+excluded on all 24 targets stays in scope, is compared against nothing, and is
+reported as uncompared -- correctly, but until 2026-10-28 under a message that
+said "could not be parsed". `listip.cfg` has been in that state since the
+2026-10-05 servers.json edit and parses fine. Whether `scope` SHOULD intersect
+`accepts` is an open operator decision, not this script's to take: narrowing
+scope to look quiet is how an unscanned path gets reported clean. So the fix here
+is to name the cause, not to drop the path -- `excluded-everywhere` in the
+headline is a subset of `inconclusive`, never a replacement for it.
+
 The ONE list in this file, `REQUIRED_PARSABLE`, is not a scope allow-list and
 cannot make anything pass: a path named there which is absent, unparsable, or
 not fully covered forces exit 2. It only ever makes the check louder. The
@@ -85,9 +97,12 @@ EXIT CODES -- the estate's contract
     0  every expected instance compared, and every key agrees
     1  findings: at least one key differs, or is missing from either side
     2  THE CHECK DID NOT RUN. Fewer instances covered than expected, a host
-       unreachable, a required path unparsable, a zero-length key set, no
+       unreachable, a required path not compared, a zero-length key set, no
        credential source. A 2 is never clean; it means the question was not
-       answered.
+       answered. "Not compared" is four different things and the report's
+       `Could not compare` table names which, per path: absent from the source
+       tree, unparsable there, unreadable on every instance that accepts it, or
+       accepted by no target at all.
 
 Usage
     python3 audit-config-key-drift.py [--out report.md] [--state FILE]
@@ -179,7 +194,8 @@ except ImportError:  # pragma: no cover - environment guard
     redact_diagnostic = None
 
 try:
-    from ktp_config_kv import CVAR, EMPTY, KV, LIST, MIXED, parse_text
+    from ktp_config_kv import (CVAR, EMPTY, KV, LIST, MIXED, SECTIONED,
+                               parse_text)
 except ImportError:  # pragma: no cover - environment guard
     parse_text = None
 
@@ -372,6 +388,49 @@ KIND_MEANING = {
 }
 
 
+# ------------------------------------------------- why a path was not compared
+# Four causes, and until 2026-10-28 three of them printed one sentence that
+# named the wrong two. `listip.cfg` parses fine, is excluded on all 24 targets,
+# and was reported as "on no covered instance, or unparsable on all 24" -- so the
+# weekly issue title said "could not be parsed" of a file with nothing wrong with
+# it, and the operator was sent after a malformed file that does not exist. The
+# reasons are pure functions so a test can assert the wording without a fleet.
+def reason_excluded_everywhere():
+    """In the distributor's watch patterns, accepted by no target.
+
+    The one cause that is otherwise SILENT: the other three each also raise a
+    finding or an absent-source line, so they cannot be mistaken for this one.
+    """
+    return ("in the distributor's watch patterns but accepted by no target "
+            "(an `includePatterns`/`excludePatterns` entry in `servers.json`), "
+            "so no instance was compared -- the file itself parsed")
+
+
+def reason_unreadable_on_accepting(accepting):
+    return ("absent or unparsable on all %d instance(s) that accept it"
+            % accepting)
+
+
+def reason_source_unparsable(flavour, excluded_everywhere=False):
+    """Why the SOURCE copy yielded no key set, by refusal kind.
+
+    Separated because the remedies differ: a `mixed` file needs a reader, and a
+    `sectioned` one needs the operator's ruling on what a key is first.
+    """
+    if flavour == SECTIONED:
+        why = ("sectioned INI -- `[section]` headers are not keys in any "
+               "flavour, and what a key IS here (`allies.garand` or `garand`, "
+               "which collides across sections) is an open operator decision")
+    else:
+        why = ("source lines disagree about the flavour (`key = value` and "
+               "bare-token lines in one file), or carry a duplicate key; no "
+               "reader can be chosen without inventing keys")
+    if excluded_everywhere:
+        why += (", and it is accepted by no target either, so a reader alone "
+                "would not get it compared")
+    return why
+
+
 def build_report(findings, stats, inconclusive, unreachable, previous, verbose):
     """The markdown report, the gate's stable lines, and the headline."""
     lines = [
@@ -417,6 +476,10 @@ def build_report(findings, stats, inconclusive, unreachable, previous, verbose):
     if inconclusive:
         lines.append("### Could not compare (%d) -- these are NOT clean" % len(inconclusive))
         lines.append("")
+        lines.append("Read the `why` column before reaching for a parser: a path "
+                     "accepted by no target is not a malformed file, and giving "
+                     "it a reader changes nothing.")
+        lines.append("")
         lines.append("| path | why |")
         lines.append("|---|---|")
         for rel, why in sorted(inconclusive.items()):
@@ -432,13 +495,18 @@ def build_report(findings, stats, inconclusive, unreachable, previous, verbose):
 
     # The headline is WORK DONE, in the order a reader needs it. "findings: 0"
     # alone was the 2026-08-19 alert, and it was zero because nothing ran.
+    # `excluded-everywhere` is a SUBSET of `inconclusive`, not a fourth bucket
+    # beside it: moving those paths out would drop the exit code to 0 on a run
+    # that compared nothing for them, and whether scope should be narrowed that
+    # way is an open operator decision, not this script's to take.
     headline = ("instances compared: %d/%d  paths compared: %d/%d  "
                 "keys compared: %d  findings: %d  inconclusive: %d  "
-                "nothing-to-compare: %d"
+                "nothing-to-compare: %d  excluded-everywhere: %d"
                 % (stats["instances_compared"], stats["instances_expected"],
                    stats["paths_compared"], stats["paths_in_scope"],
                    stats["keys_compared"], len(findings), len(inconclusive),
-                   stats["paths_with_nothing_to_compare"]))
+                   stats["paths_with_nothing_to_compare"],
+                   stats.get("paths_excluded_everywhere", 0)))
     lines.append(headline)
     return "\n".join(lines) + "\n", stable, headline
 
@@ -614,6 +682,14 @@ def run(args):
               "vacuous pass this check exists to avoid.", file=sys.stderr)
         return EXIT_CANNOT_RUN
 
+    # Watched, keyed -- and accepted by not one of the 24. Computed over the
+    # whole scope and from `targets` rather than from the hosts that answered,
+    # so the count is a property of servers.json and not of tonight's
+    # reachability. These stay IN `inconclusive`: see the headline comment.
+    excluded_everywhere = set(
+        rel for rel in scope
+        if not any(DIST.accepts(target, rel) for target in targets))
+
     # --- source side.
     source_parsed, inconclusive = {}, {}
     for rel in scope:
@@ -623,10 +699,8 @@ def run(args):
             continue
         flavour, keys = parse_text(text, rel)
         if keys is None:
-            inconclusive[rel] = ("source lines disagree about the flavour "
-                                 "(`key = value` and bare-token lines in one "
-                                 "file); no reader can be chosen without "
-                                 "inventing keys")
+            inconclusive[rel] = reason_source_unparsable(
+                flavour, rel in excluded_everywhere)
             continue
         # An EMPTY source is kept, not skipped. Against a populated instance
         # every key there becomes `source-missing`, which is the 2026-08-19
@@ -678,12 +752,12 @@ def run(args):
     # --- compare, per path, across every covered instance.
     findings, keys_compared, paths_compared = {}, 0, 0
     empty_both = []
+    by_name = dict((t["name"], t) for t in targets)
     for rel, (flavour, source_keys) in sorted(source_parsed.items()):
         instance_keys, bad = {}, []
-        for name in covered:
-            target = next(t for t in targets if t["name"] == name)
-            if not DIST.accepts(target, rel):
-                continue
+        accepting = [n for n in covered if DIST.accepts(by_name[n], rel)]
+        for name in accepting:
+            target = by_name[name]
             text = (results[name] or {}).get(rel)
             if text is None:
                 bad.append(name)
@@ -695,12 +769,15 @@ def run(args):
             instance_keys[name] = keys
 
         if bad:
+            # Against the instances that ACCEPT the path, not against all 24: a
+            # path excluded on half the fleet and absent on the rest is `absent`,
+            # and calling it `partial` invents a half that was never asked.
             findings[(rel, "<whole file>", "file-missing-instance")] = {
                 "count": len(bad), "instances": sorted(bad),
-                "shape": "partial" if len(bad) < len(covered) else "absent"}
+                "shape": "partial" if len(bad) < len(accepting) else "absent"}
         if not instance_keys:
-            inconclusive[rel] = ("on no covered instance, or unparsable on all "
-                                 "%d" % len(covered))
+            inconclusive[rel] = (reason_excluded_everywhere() if not accepting
+                                 else reason_unreadable_on_accepting(len(accepting)))
             continue
         path_findings, comparisons = compare(source_keys, instance_keys,
                                              sorted(instance_keys),
@@ -726,6 +803,9 @@ def run(args):
         # as its own number so "paths compared" can never be read as "paths that
         # actually had something to say".
         "paths_with_nothing_to_compare": len(empty_both),
+        # A subset of `inconclusive`, surfaced so the gate can stop calling an
+        # excluded path a parse failure. Not subtracted from it.
+        "paths_excluded_everywhere": len(excluded_everywhere),
     }
 
     # --- state: the durable timeline. Its mtime is the proof the check ran, and
@@ -774,6 +854,10 @@ def run(args):
             # from "never compared" long after the run.
             "coverage": stats,
             "inconclusive": sorted(inconclusive),
+            # Recorded so a later reader can tell "nobody wrote a reader for it"
+            # from "servers.json took it off every target", which the path name
+            # alone cannot say.
+            "excluded_everywhere": sorted(excluded_everywhere),
             "unreachable": sorted(unreachable),
             "findings": current,
         }
@@ -814,9 +898,14 @@ def run(args):
     if findings:
         return EXIT_FINDINGS
     if inconclusive:
+        # "could not be parsed" was wrong for the commonest cause and sent the
+        # reader after a malformed file that does not exist. The reasons are in
+        # the report's `Could not compare` table, per path.
         print("CHECK INCOMPLETE: no drift among the %d path(s) compared, but %d "
-              "could not be parsed and were never compared. Not a clean result."
-              % (paths_compared, len(inconclusive)), file=sys.stderr)
+              "could not be compared at all%s. Not a clean result."
+              % (paths_compared, len(inconclusive),
+                 " (%d of them accepted by no target)" % len(excluded_everywhere)
+                 if excluded_everywhere else ""), file=sys.stderr)
         return EXIT_CANNOT_RUN
     return EXIT_OK
 
@@ -902,6 +991,25 @@ def selftest():
     check("comparing two empty sides makes zero comparisons, which the caller "
           "counts as nothing-to-compare rather than as agreement",
           compare({}, {"a": {}}, ["a"], total=1)[1] == 0)
+
+    # Sectioned INIs, and the four reasons a path is not compared.
+    check("an entry-less sectioned INI is REFUSED, not read as a list whose "
+          "keys are literally `[allies]`, `[axis]`, `[british]`",
+          parse_text("[allies]\n[axis]\n[british]\n", "stub") == (SECTIONED, None))
+    check("a populated sectioned INI is refused by SECTION, not as a side "
+          "effect of `mixed` -- so stripping its entries cannot unrefuse it",
+          parse_text("[allies]\ngarand = 1\n", "g")[0] == SECTIONED)
+    check("a bracketed cvar VALUE is not a section header",
+          parse_text('hostname "[KTP] Dallas 1"\n', "h")[1]
+          == {"hostname": "[KTP] Dallas 1"})
+    check("the accepted-by-no-target reason does not blame the parser",
+          "accepted by no target" in reason_excluded_everywhere()
+          and "could not be parsed" not in reason_excluded_everywhere())
+    check("all four not-compared reasons are distinguishable from each other",
+          len(set((reason_excluded_everywhere(),
+                   reason_unreadable_on_accepting(24),
+                   reason_source_unparsable(MIXED),
+                   reason_source_unparsable(SECTIONED)))) == 4)
 
     # Comment handling. The first live run reported `;` and `#` as drifting keys.
     check("a trailing `;` comment is not a value",

@@ -165,7 +165,8 @@ preserve timestamps — confirmed against a push made the same morning).
 | `configs/servernamedefault.cfg` | `per-instance` | 24 distinct copies. The source copy happens to equal one instance's, which is what has kept the hazard invisible |
 | `motd.txt`, `maps/dod_solitude2.res` and six `sprites/obj_icons/dod_solitude2/*.spr`, `maps/dod_railyard_s9c.*` | `partial` | **source-newer.** February pushes that did not reach every host |
 | 14 root-level legacy map configs and `cached.WAD` | `partial` | Absent on one host's five instances; unchanged since 2025-12-29, so no event has ever fired for them |
-| `listip.cfg`, three `maps/dod_*.txt` | `absent` | On no instance at all |
+| Three `maps/dod_*.txt` (`dod_caen2`, `dod_overlord`, `dod_zalec`) | `absent` | On no instance at all. They predate the distributor, so no event has ever fired for them |
+| ~~`listip.cfg`~~ | ~~`absent`~~ | **SUPERSEDED 2026-10-05** — added to `excludePatterns` on all 24 game entries that day (`servers.json` mtime `2026-10-05 11:30:11 -0400`, 24 occurrences, measured 2026-10-28), so `accepts()` skips it on every target and this check no longer reports it. ⚠️ It is **still in the key-level check's scope**, where it reads as `excluded-everywhere` — an exclusion does not narrow that one; see `CONFIG_KEY_DRIFT.md` |
 
 ### Decisions this needs from the operator
 

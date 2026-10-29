@@ -76,7 +76,7 @@ precisely the state that was about to be destroyed.
 
 ```
 instances compared: 24/24  paths compared: 97/100  keys compared: 34612
-  findings: 60  inconclusive: 3  nothing-to-compare: 4
+  findings: 60  inconclusive: 3  nothing-to-compare: 4  excluded-everywhere: 1
 ```
 
 Every number there is **work done**, deliberately, because `findings: 0` was the
@@ -85,9 +85,15 @@ August alert and it was zero for the wrong reason. Read it in this order:
 - **`instances compared: N/24`.** Anything but `24/24` is **not a clean fleet**,
   whatever the finding count says. A partial sweep reported as clean is this
   incident all over again.
-- **`inconclusive`.** Paths that could not be parsed, so **nothing was compared
-  for them**. That is not agreement. Each needs either a reader or an
-  `excludePatterns` entry; the list is finite and the gate nags until it is zero.
+- **`inconclusive`.** Paths for which **nothing was compared**. That is not
+  agreement. ⚠️ **It is four different causes and the report's `Could not
+  compare` table names which, per path** — read it before reaching for a parser.
+  Only two of the four are fixed by writing a reader.
+- **`excluded-everywhere`.** A **subset** of `inconclusive`, not a group beside
+  it: paths in the distributor's watch patterns that **no target accepts**, so
+  the check compared them against nothing. These parse fine. ⛔ **A reader does
+  not fix one and neither does an `excludePatterns` entry — an exclusion is what
+  puts a path here.** See the scope section below.
 - **`nothing-to-compare`.** Both sides hold zero keys. They agree, and they
   carry no evidence — kept separate so `paths compared` can never be read as
   "paths that actually had something to say".
@@ -96,9 +102,9 @@ August alert and it was zero for the wrong reason. Read it in this order:
 
 | Code | Means |
 |---|---|
-| `0` | Every expected instance compared, every path parsed, every key agrees |
+| `0` | Every expected instance compared, every path compared, every key agrees |
 | `1` | Findings: a key differs, or is missing on either side |
-| `2` | **The check did not run.** Short coverage, an unreachable target, a required path unparsable, no credential source — or no findings but unparsed paths, which answers nothing |
+| `2` | **The check did not run.** Short coverage, an unreachable target, a required path not compared, no credential source — or no findings but uncompared paths, which answers nothing |
 
 ⚠️ **A `2` is never clean.** It means the question was not answered.
 
@@ -179,9 +185,22 @@ matcher would be a second source of truth free to disagree with the one that
 decides what actually ships.
 
 So **the exception mechanism is `servers.json`, not the checker.** Declaring a
-path per-instance means adding it to `excludePatterns` on the game entries,
-which both stops the distributor pushing it and takes it out of this check's
-scope.
+path per-instance means adding it to `excludePatterns` on the game entries, which
+stops the distributor pushing it and takes it out of the **file-level** check in
+`DISTRIBUTE_DRIFT.md`.
+
+🔴 **IT DOES NOT TAKE IT OUT OF THIS CHECK'S SCOPE, AND THIS RUNBOOK PROMISED
+THAT IT DID UNTIL 2026-10-28.** `scope` is built from `matches_watch_patterns`
+alone and is **never intersected with `accepts`**, so an excluded path stays in
+scope, is compared against zero instances, and is reported as uncompared forever.
+`paths_in_scope` is **100**, which is exactly the number of `.ini`/`.cfg` files
+in `/home/dod/distribute` (measured 2026-10-28) — the `listip.cfg` exclusion
+added on **2026-10-05** took nothing out of it. ⚠️ **So following the old advice converted a true
+`file-missing-instance` finding into a permanent weekly nag**, and this
+runbook's own "the list is finite and the gate nags until it is zero" is
+unachievable by the route it recommended. The check now says *"accepted by no
+target"* rather than *"could not be parsed"*, which is the honest label; **the
+nag itself stands until the open decision below is ruled.**
 
 The one list in the script, `REQUIRED_PARSABLE`, **cannot make anything pass**:
 a path named there which is absent, unparsable, or short of full coverage forces
@@ -218,8 +237,8 @@ hiding two of the three items below.
 | `configs/ktpovertime.cfg` | `sv_send_logos` | `source-missing` | `uniform` 24/24 | Deletes it on all 24 |
 | `configs/ktp_railyard.cfg`, `_railyard_b6.cfg` | `exec` | `differs` | `uniform` 24/24 | Changes what the map config execs |
 | 13 root-level legacy map configs | whole file | `file-missing-instance` | 5 instances | Nothing — unchanged since 2025-12-29, so no event has ever fired. Matches the file-level check's standing finding |
-| `listip.cfg` | whole file | `file-missing-instance` | 24 | On no instance at all. Also a standing file-level finding |
-| `grenade_loadout.ini`, `ktp_maps.ini` | — | `inconclusive` | — | Mixed shapes: `key = value` and bare-token lines in one file. Needs a declared reader or an `excludePatterns` entry |
+| ~~`listip.cfg`~~ | whole file | ~~`file-missing-instance`~~ → `excluded-everywhere` | — | **SUPERSEDED 2026-10-05.** It was added to `excludePatterns` on all 24 game entries that day (`servers.json` mtime `2026-10-05 11:30:11 -0400`; 24 occurrences, measured 2026-10-28). It is no longer a finding in this check or in the file-level one — it is **compared against nothing**, under `excluded-everywhere`. ⛔ The file parses fine; do not look for a reader |
+| `grenade_loadout.ini`, `ktp_maps.ini` | — | `inconclusive` (`sectioned`) | — | **Sectioned INIs.** The lines without `=` are exactly and only the `[section]` headers, which are not keys in any of the three flavours. Needs the operator ruling in decision 4 below, **not** a reader and **not** an `excludePatterns` entry |
 
 ### Decisions this needs from the operator
 
@@ -261,7 +280,36 @@ The check reports; it does not fix. None of these is the checker's to decide.
    fleet. So the disable works and costs nothing, and it works for a different
    reason than the one a reader assumes. ➡️ **Use `//` for a new one**, so the
    disable does not depend on a silent-unknown-command path.
-3. **The two unparsable configs.** Give them a reader in
-   `scripts/ktp_config_kv.py`, or declare them out of scope in `servers.json`.
-   Until then the check reports that it has not compared them, which is honest
-   and will keep nagging.
+3. **The two sectioned configs — and the question is *what is a key*, not *who
+   writes the reader*.** `grenade_loadout.ini` and `ktp_maps.ini` are sectioned;
+   `ktp_config_kv` models three **flat** flavours, so `classify()` returns
+   `sectioned` and the files are honestly refused. Measured against the canonical
+   copies 2026-10-28: `grenade_loadout.ini` 26 content lines / 23 with `=` / 3
+   without (`[allies]`, `[axis]`, `[british]`); `ktp_maps.ini` 78 / 58 / 20.
+   Control: `dodserver.cfg.example` classifies `cvar` with 115 keys.
+
+   📌 **The ruling needed: `allies.garand` or `garand`?** ⛔ Not hygiene — the
+   bare form **collides across the three sections**, which set the same weapon
+   slots, so picking it would compare one section's value against another's and
+   can raise new findings on 24 instances. A reader cannot be written without
+   this answer.
+
+   ⛔ **And "declare them out of scope in `servers.json`" is NOT an option here**
+   — see decision 4. The old wording offered it; it does not work.
+4. 🆕 **Should `scope` intersect `accepts`?** Today it does not, so a path
+   excluded on every target stays in scope and is reported `excluded-everywhere`
+   every week, forever. `listip.cfg` is in exactly that state.
+
+   ⛔ **Not a free yes.** The script's own header warns that *narrowing scope to
+   look quiet is how an unscanned path gets reported clean*, so intersecting
+   trades a mislabelled nag for a real blind spot: a path silently dropped from
+   `servers.json`'s `includePatterns` would then vanish from the report instead
+   of appearing in it.
+
+   ➡️ **Three options, operator's call:** (a) intersect, and accept the blind
+   spot; (b) leave it, and reconcile `listip.cfg` the other way — mirror the
+   per-instance copies and drop the exclusion, which makes it comparable again;
+   (c) leave it, and give the gate a per-path mute list for exclusions that are
+   deliberate, which keeps the path in `paths_in_scope` and visible in the report
+   while taking it out of the weekly reason text. Nothing here is the checker's
+   to decide, and the label is now correct either way.

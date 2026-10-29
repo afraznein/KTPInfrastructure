@@ -25,6 +25,27 @@ applied to `discord_auth_secret = x` yields a key whose value starts with `=`,
 compares equal to nothing, and reports drift that is an artifact of the reader.
 This is the one place where refusing to answer is the only honest answer.
 
+A FOURTH OUTCOME: `sectioned`, WHICH IS REFUSED BY NAME RATHER THAN BY ACCIDENT
+
+None of the three flavours above has a notion of a section, so a `[section]`
+header is not a key in any of them. Two files in the distributor's scope are
+sectioned (`grenade_loadout.ini`, `ktp_maps.ini`) and both were already being
+refused -- but only as a SIDE EFFECT of `mixed`, because their headers happen to
+be the only lines without `=`. Strip the entries out of one of them and the
+remainder classifies as `list` with three keys literally named `[allies]`,
+`[axis]` and `[british]`: the repo's own dev stub `config/local/grenade_loadout.ini`
+is exactly that file. Comparing it against a populated copy would compare
+invented keys against real ones -- the same class as the `;`-read-as-a-key bug
+below, which produced three findings that could not be fixed and could not be
+true. So a bracketed header is detected first and the file is refused by name,
+which holds whether or not the entries are present.
+
+⚠️ This is NOT the ruling on what a key is in a sectioned file. `allies.garand`
+or `garand`? The bare form collides across sections that set the same weapon
+slots, so a reader cannot be written without that decision, and it is the
+operator's (`docs/runbooks/CONFIG_KEY_DRIFT.md`, open decisions). Until then the
+honest answer is the refusal, and this makes it say why.
+
 COMMENT STRIPPING IS QUOTE-AWARE, AND THAT IS NOT FUSSINESS
 
 The first run of this check against the live fleet reported `;` as a drifting
@@ -49,8 +70,13 @@ from __future__ import annotations
 import re
 
 KV, CVAR, LIST, MIXED, EMPTY = "kv", "cvar", "list", "mixed", "empty"
+SECTIONED = "sectioned"
 
 _CVAR_LINE_RE = re.compile(r"^\s*(\S+)(?:\s+(.*))?\s*$")
+
+#: A whole content line that is nothing but `[name]`. Anchored on both ends so a
+#: cvar value containing brackets -- `hostname "[KTP] Dallas 1"` -- is not one.
+_SECTION_LINE_RE = re.compile(r"^\[[^\[\]]+\]$")
 
 #: Every marker any KTP config flavour uses for a whole-line comment. Applied
 #: regardless of flavour, because classification happens before the flavour is
@@ -98,10 +124,15 @@ def content_lines(text, markers=TRAILING_COMMENT_MARKERS):
 
 
 def classify(text):
-    """Which flavour this text is, or MIXED / EMPTY."""
+    """Which flavour this text is, or SECTIONED / MIXED / EMPTY."""
     lines = content_lines(text)
     if not lines:
         return EMPTY
+    # Before anything else: no flavour here has sections, so a header is never a
+    # key. Checked first so an entry-less sectioned file is refused rather than
+    # read as a `list` whose keys are `[allies]`, `[axis]`, `[british]`.
+    if any(_SECTION_LINE_RE.match(line) for _, line in lines):
+        return SECTIONED
     with_eq = sum(1 for _, line in lines if "=" in line)
     if with_eq == len(lines):
         return KV
@@ -175,11 +206,14 @@ def parse_text(text, label="<text>"):
     comparison in precisely the direction that matters -- an emptied source file
     against a populated fleet is the 2026-08-19 revert taken to its limit.
 
-    MIXED is the only unparsed outcome, and the caller must treat a None as
-    "could not compare" rather than as a file with no drift.
+    MIXED and SECTIONED are the unparsed outcomes, and the caller must treat a
+    None as "could not compare" rather than as a file with no drift. The flavour
+    is still returned with it, so the caller can say WHICH refusal it was: a
+    reader would fix a MIXED file, and only an operator ruling fixes a SECTIONED
+    one.
     """
     flavour = classify(text)
-    if flavour == MIXED:
+    if flavour in (MIXED, SECTIONED):
         return flavour, None
     try:
         if flavour == KV:
