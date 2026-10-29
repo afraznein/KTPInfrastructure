@@ -1,0 +1,64 @@
+{
+  "comment": "Lane B boot profile. hlds is 32-bit and glibc routes socket() through the i386 socketcall multiplexer (syscall 102), which docker 29.4.2's default profile refuses with ENOSYS while allowing the direct socket syscall (359) -- measured, both arms, kernel 7.0.0-1017-azure. That is what kills the boot. This profile exists so the fix is not seccomp=unconfined. Read the tradeoff note below before changing it.",
+  "tradeoff": "This is TIGHTER than unconfined and LOOSER than docker's default, and the difference is not cosmetic. docker's default is an allowlist of ~350 syscalls with everything else ENOSYS; it is compiled into the daemon and docker exposes no way to take it and add one entry, so matching it here would mean vendoring ~1000 lines of JSON that silently rots against the next docker release. This inverts to a denylist instead: anything not named below is allowed. It is reviewable and it does not rot, at the cost of permitting syscalls the default would refuse. Acceptable for THIS container and not as a general default: it runs our own build, with --network none, in CI, holding no secret.",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"]
+    }
+  ],
+  "archMapComment": "The sub-architectures are load-bearing, not boilerplate. Without SCMP_ARCH_X86 the rules below would not apply to the 32-bit ABI at all, which is the same class of mistake as the bug this file works around: a rule that resolves for x86_64 and quietly covers nothing for i386.",
+  "syscalls": [
+    {
+      "comment": "Kernel module loading. Nothing in a game-server test needs it and it is a direct route out of the container.",
+      "names": ["init_module", "finit_module", "delete_module"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Namespace and mount manipulation: the usual container-escape surface.",
+      "names": ["mount", "umount", "umount2", "pivot_root", "setns", "unshare", "move_mount", "open_tree", "fsopen", "fsconfig", "fsmount", "chroot"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Kernel keyring. Reachable host credentials.",
+      "names": ["add_key", "keyctl", "request_key"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "eBPF and perf: kernel-wide observation and attachment.",
+      "names": ["bpf", "perf_event_open"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Rebooting or re-kexecing the host from inside a test container.",
+      "names": ["kexec_load", "kexec_file_load", "reboot"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Host clock. The stats pipeline under test reads timestamps, so a container that can move the clock could fake its own evidence.",
+      "names": ["settimeofday", "stime", "clock_settime", "clock_adjtime", "adjtimex"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Raw port and memory access.",
+      "names": ["iopl", "ioperm", "swapon", "swapoff"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Reading or writing another process's memory, and filesystem-wide notification.",
+      "names": ["process_vm_readv", "process_vm_writev", "fanotify_init", "open_by_handle_at", "name_to_handle_at"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "Host accounting, quotas and the kernel log.",
+      "names": ["acct", "quotactl", "syslog"],
+      "action": "SCMP_ACT_ERRNO"
+    },
+    {
+      "comment": "NUMA placement and obsolete calls docker's default also refuses.",
+      "names": ["get_mempolicy", "set_mempolicy", "mbind", "move_pages", "uselib", "userfaultfd", "ustat", "nfsservctl", "lookup_dcookie", "vm86", "vm86old"],
+      "action": "SCMP_ACT_ERRNO"
+    }
+  ]
+}

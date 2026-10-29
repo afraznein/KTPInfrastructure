@@ -94,6 +94,17 @@ on:
         required: false
         type: string
         default: main
+      seccomp:
+        description: >-
+          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
+          Docker seccomp profile for the hlds boot container only. Empty (the
+          default) is docker's default profile, i.e. today's behaviour. Set it
+          to `unconfined` to test whether the sandbox is what refuses hlds's
+          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
+          while every input under our control stayed identical.
+        required: false
+        type: string
+        default: 'ci/seccomp/lane-b-i386.json'
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -159,6 +170,26 @@ on:
         type: choice
         options: [full, corpus]
         default: full
+      socket_probe:
+        description: >-
+          Run ONLY the 32-bit socket syscall probe and skip Lane B itself.
+          Set to `true` to find out which call the sandbox refuses. A new
+          workflow file cannot be dispatched until it sits on the default
+          branch, which is why this lives here and not in its own file.
+        required: false
+        type: string
+        default: ''
+      seccomp:
+        description: >-
+          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
+          Docker seccomp profile for the hlds boot container only. Empty (the
+          default) is docker's default profile, i.e. today's behaviour. Set it
+          to `unconfined` to test whether the sandbox is what refuses hlds's
+          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
+          while every input under our control stayed identical.
+        required: false
+        type: string
+        default: 'ci/seccomp/lane-b-i386.json'
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -215,6 +246,7 @@ concurrency:
 
 jobs:
   lane-b:
+    if: ${{ inputs.socket_probe != 'true' }}
     name: Lane B (${{ inputs.lane || 'full' }}, ${{ matrix.target_ref }}, run ${{ matrix.run_index }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -241,6 +273,7 @@ jobs:
       # defaulting it to the infrastructure ref would silently inject on every
       # scheduled run.
       ENGINE_REF: ${{ inputs.engine_ref || '' }}
+      LANE_B_SECCOMP: ${{ inputs.seccomp || '' }}
       ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
@@ -288,6 +321,30 @@ jobs:
       # immutable values (or the exact detached working tree) rather than
       # resolving a moving branch a second time. For a SHA input, also verify
       # that actions/checkout landed on the requested commit/prefix.
+      - name: Validate the seccomp profile (fail fast)
+        run: |
+          set -euo pipefail
+          # Done HERE rather than at boot on purpose. The first run with a
+          # profile built the whole image and then failed in seconds because
+          # the file was not in the workspace: this job checks the repo out at
+          # INFRASTRUCTURE_REF, while the workflow file comes from the
+          # dispatched ref, so a profile on a branch is absent unless
+          # infrastructure_ref names that branch too.
+          prof="${LANE_B_SECCOMP:-}"
+          if [ -n "$prof" ] && [ "$prof" != unconfined ]; then
+            case "$prof" in /*) ;; *) prof="${GITHUB_WORKSPACE}/${prof}" ;; esac
+            if [ ! -f "$prof" ]; then
+              echo "::error::seccomp profile not found: $prof"
+              echo "::error::the workspace is checked out at INFRASTRUCTURE_REF ('${INFRASTRUCTURE_REF}'), which is NOT the ref carrying this workflow. Pass infrastructure_ref as well when the profile lives on a branch."
+              exit 1
+            fi
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$prof"
+            echo "seccomp profile: $prof (valid json)"
+          else
+            echo "seccomp profile: ${prof:-<docker default>}"
+          fi
+          echo "LANE_B_SECCOMP_RESOLVED=${prof}" >> "$GITHUB_ENV"
+
       - name: Resolve and validate exact bundle commits
         id: bundle
         shell: bash
@@ -526,7 +583,17 @@ jobs:
           # Written by the builder as paths under this same /work/build mount, holding only what the daemon ref carries.
           mapfile -t schema_migrations < build/lane-b-artifacts/artifacts/schema-migrations.txt
           test "${#schema_migrations[@]}" -gt 0
-          docker run --rm --network none \
+          # hlds is 32-bit and reaches sockets through socketcall. When this step
+          # dies at boot with "UDP_OpenSocket: Function not implemented" the cause
+          # is the sandbox refusing a syscall, not the engine -- and no run recorded
+          # which kernel or docker it was on, so the boot failures from 2026-10-26
+          # could not be told apart while every input of ours stayed identical.
+          echo "boot-env: kernel=$(uname -r) docker=$(docker version -f '{{.Server.Version}}') seccomp=${LANE_B_SECCOMP:-default}"
+          SECCOMP_ARGS=""
+          if [ -n "${LANE_B_SECCOMP_RESOLVED:-}" ]; then
+            SECCOMP_ARGS="--security-opt seccomp=${LANE_B_SECCOMP_RESOLVED}"
+          fi
+          docker run --rm --network none ${SECCOMP_ARGS} \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/config:/work/config:ro" \
@@ -649,3 +716,166 @@ jobs:
             build/lane-b-artifacts/engine/provenance.json
           if-no-files-found: warn
           retention-days: 30
+
+  socket-probe:
+    # Lane B dies at hlds boot with
+    #   WARNING: UDP_OpenSocket: port: 27015 socket: Function not implemented
+    # and KTP-ReHLDS net_ws.cpp:1589 shows the call is a plain
+    # socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP). ENOSYS is what docker's default
+    # seccomp profile returns for a syscall it does not allow, and hlds is
+    # 32-bit, so that call reaches the kernel either as the i386 `socket`
+    # syscall (359) or through the `socketcall` multiplexer (102). Which one
+    # is refused decides what a narrow profile must allow, and no Lane B log
+    # can say, because none of them records a syscall.
+    if: ${{ inputs.socket_probe == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # Needed only since arm 4: the narrow profile is a committed file,
+      # while probe.c is written inline. Arm 4's first run failed on exactly
+      # this, and reported it as a seccomp result.
+      - name: Check out (for ci/seccomp)
+        uses: actions/checkout@v6
+
+      - name: Environment under test
+        run: |
+          set -euo pipefail
+          echo "kernel     : $(uname -r)"
+          echo "docker     : $(docker version -f '{{.Server.Version}}')"
+          echo "libseccomp : $(dpkg-query -W -f='${Version}' libseccomp2 2>/dev/null || echo unknown)"
+
+      - name: Build the 32-bit static probe
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gcc-multilib >/dev/null
+          cat > probe.c <<'CEOF'
+          #define _GNU_SOURCE
+          #include <stdio.h>
+          #include <errno.h>
+          #include <string.h>
+          #include <unistd.h>
+          #include <sys/syscall.h>
+          #include <sys/socket.h>
+          #include <netinet/in.h>
+
+          /* i386 numbers, hardcoded because this binary is -m32 and which of the
+             two the filter refuses is the entire question. */
+          #define I386_SOCKETCALL 102
+          #define I386_SOCKET     359
+          #define SYS_SOCKET_OP   1
+
+          static void report(const char *what, long rc) {
+              if (rc >= 0) {
+                  printf("  %-26s OK (fd=%ld)\n", what, rc);
+                  close((int)rc);
+              } else {
+                  printf("  %-26s FAIL errno=%d (%s)%s\n", what, errno, strerror(errno),
+                         errno == ENOSYS ? "   <-- ENOSYS: refused by the filter" : "");
+              }
+          }
+
+          int main(void) {
+              printf("probe: 32-bit, statically linked\n");
+              errno = 0;
+              report("glibc socket()", (long)socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP));
+              errno = 0;
+              report("syscall(359) socket", syscall(I386_SOCKET, PF_INET, SOCK_DGRAM, IPPROTO_UDP));
+              unsigned long a[3] = { PF_INET, SOCK_DGRAM, IPPROTO_UDP };
+              errno = 0;
+              report("syscall(102) socketcall", syscall(I386_SOCKETCALL, SYS_SOCKET_OP, a));
+              /* Control: if this fails too, the probe is measuring something other
+                 than the socket rules. */
+              errno = 0;
+              report("control getpid()", (long)getpid());
+              return 0;
+          }
+          CEOF
+          # Static, so the container needs no 32-bit libraries and the answer
+          # is about the sandbox rather than about any image's contents.
+          gcc -m32 -static -O0 -o probe probe.c
+          file probe
+      # One helper, used by every arm: it is the guard, not the runner.
+      # An arm that prints nothing must FAIL, because the first version of
+      # this probe went green on three empty arms.
+      - name: Arm 0 - can a 32-bit static binary execute here at all?
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm --network none -v "${PWD}/probe:/probe:ro" \
+            ubuntu:24.04 /bin/sh -c '
+              echo "container arch : $(uname -m)";
+              echo "probe on disk  : $(ls -l /probe)";
+              /probe; echo "probe exit     : $?"
+            ' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 0 produced NO output at all"; exit 1; }
+          case "$out" in
+            *"container arch"*) : ;;
+            *) echo "::error::the container did not even reach uname; /probe never ran"; exit 1 ;;
+          esac
+
+      - name: Arm 1 - default seccomp profile (the failing condition)
+        run: |
+          set -euo pipefail
+          # No --security-opt: this is exactly what Lane B's boot container gets.
+          out="$(docker run --rm --network none \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          # The guard. An empty arm is not a passing arm.
+          test -n "$out" || { echo "::error::arm 1 produced NO output"; exit 1; }
+          echo "$out" | grep -q "probe:" || { echo "::error::arm 1 ran but the probe never printed its banner"; exit 1; }
+
+      - name: Arm 2 - unconfined (control - all four calls must succeed)
+        run: |
+          set -euo pipefail
+          # If anything FAILS here, the cause is not the profile and arms 1 and 3 mean nothing.
+          out="$(docker run --rm --network none --security-opt seccomp=unconfined \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          # The guard. An empty arm is not a passing arm.
+          test -n "$out" || { echo "::error::arm 2 produced NO output"; exit 1; }
+          echo "$out" | grep -q "probe:" || { echo "::error::arm 2 ran but the probe never printed its banner"; exit 1; }
+
+      - name: Arm 3 - allow-all filter (a profile rule, or seccomp itself?)
+        run: |
+          set -euo pipefail
+          # Still goes THROUGH seccomp, so passing here while arm 1 fails
+          # proves the cause is a profile RULE, which is what makes a narrow
+          # profile possible instead of unconfined.
+          cat > allow.json <<'JEOF'
+          {
+            "defaultAction": "SCMP_ACT_ALLOW",
+            "archMap": [
+              { "architecture": "SCMP_ARCH_X86_64",
+                "subArchitectures": ["SCMP_ARCH_X86", "SCMP_ARCH_X32"] }
+            ],
+            "syscalls": []
+          }
+          JEOF
+          out="$(docker run --rm --network none --security-opt seccomp=allow.json \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 3 produced NO output"; exit 1; }
+
+      - name: Arm 4 - the narrow profile (the proposed fix)
+        run: |
+          set -euo pipefail
+          # The whole point: socketcall must come back OK here while arm 1 still
+          # refuses it. If arm 4 and arm 1 agree, the profile changed nothing and
+          # the file is decoration.
+          out="$(docker run --rm --network none \
+            --security-opt seccomp=ci/seccomp/lane-b-i386.json \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 4 produced NO output"; exit 1; }
+          echo "$out" | grep -q "^probe:" || {
+            echo "::error::the probe never ran under this profile -- docker rejected it or the file is absent. That is NOT a seccomp result."; exit 1; }
+          echo "$out" | grep -q "socketcall    OK" || {
+            echo "::error::arm 4 did NOT unblock socketcall -- the profile does not fix the boot"; exit 1; }
+          echo "$out" | grep -q "glibc socket()             OK" || {
+            echo "::error::arm 4 unblocked the raw call but not glibc's socket()"; exit 1; }
+          echo "narrow profile allows socketcall and glibc socket(): the fix holds"
