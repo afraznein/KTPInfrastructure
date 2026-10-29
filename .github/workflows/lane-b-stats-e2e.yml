@@ -319,6 +319,30 @@ jobs:
       # immutable values (or the exact detached working tree) rather than
       # resolving a moving branch a second time. For a SHA input, also verify
       # that actions/checkout landed on the requested commit/prefix.
+      - name: Validate the seccomp profile (fail fast)
+        run: |
+          set -euo pipefail
+          # Done HERE rather than at boot on purpose. The first run with a
+          # profile built the whole image and then failed in seconds because
+          # the file was not in the workspace: this job checks the repo out at
+          # INFRASTRUCTURE_REF, while the workflow file comes from the
+          # dispatched ref, so a profile on a branch is absent unless
+          # infrastructure_ref names that branch too.
+          prof="${LANE_B_SECCOMP:-}"
+          if [ -n "$prof" ] && [ "$prof" != unconfined ]; then
+            case "$prof" in /*) ;; *) prof="${GITHUB_WORKSPACE}/${prof}" ;; esac
+            if [ ! -f "$prof" ]; then
+              echo "::error::seccomp profile not found: $prof"
+              echo "::error::the workspace is checked out at INFRASTRUCTURE_REF ('${INFRASTRUCTURE_REF}'), which is NOT the ref carrying this workflow. Pass infrastructure_ref as well when the profile lives on a branch."
+              exit 1
+            fi
+            python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$prof"
+            echo "seccomp profile: $prof (valid json)"
+          else
+            echo "seccomp profile: ${prof:-<docker default>}"
+          fi
+          echo "LANE_B_SECCOMP_RESOLVED=${prof}" >> "$GITHUB_ENV"
+
       - name: Resolve and validate exact bundle commits
         id: bundle
         shell: bash
@@ -564,8 +588,8 @@ jobs:
           # could not be told apart while every input of ours stayed identical.
           echo "boot-env: kernel=$(uname -r) docker=$(docker version -f '{{.Server.Version}}') seccomp=${LANE_B_SECCOMP:-default}"
           SECCOMP_ARGS=""
-          if [ -n "${LANE_B_SECCOMP:-}" ]; then
-            SECCOMP_ARGS="--security-opt seccomp=${LANE_B_SECCOMP}"
+          if [ -n "${LANE_B_SECCOMP_RESOLVED:-}" ]; then
+            SECCOMP_ARGS="--security-opt seccomp=${LANE_B_SECCOMP_RESOLVED}"
           fi
           docker run --rm --network none ${SECCOMP_ARGS} \
             -v "${PWD}/tests:/work/tests:ro" \
