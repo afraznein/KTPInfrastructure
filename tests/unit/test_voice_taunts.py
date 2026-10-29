@@ -172,3 +172,16 @@ def test_menu_picks_fold_into_the_same_command_and_keep_their_source():
     assert "voice_negative 2 (menu 1)" in text
     assert vt.command_of("signal_yes") == ("signal_yes", "signal")
     assert "voicemenu" in vt.presses_sql("2026-09-13")
+
+
+def test_rank_floor_is_half_the_median_and_ranks_by_per_match():
+    # chi: 6 taunts over 6 matches (1.0); hopper: 3 over 3 (1.0, fewer taunts); one-off: 3 in 1 match (3.0)
+    rows = ([row(i, f"2026-10-22 18:00:{i:02d}", spk=1, spk_name="chi", vic=7, vic_name="j3", secs=2) for i in range(6)]
+            + [row(100 + i, f"2026-10-22 19:00:{i:02d}", spk=2, spk_name="hopper", vic=7, vic_name="j3", secs=2) for i in range(3)]
+            + [row(200 + i, f"2026-10-22 20:00:{i:02d}", spk=3, spk_name="oneoff", vic=7, vic_name="j3", secs=2) for i in range(3)])
+    board = vt.leaderboard(vt.distinct(vt.nearest(rows)), {(1, 0): 6, (2, 0): 3, (3, 0): 1}, vt.OFFICIAL, window=5)
+    assert [(r["speaker"], r["ranked"]) for r in board] == [("chi", True), ("hopper", True), ("oneoff", False)]
+    assert (board[0]["median"], board[0]["floor"]) == (3, 2)
+    text = vt.report(vt.distinct(vt.nearest(rows)), {(1, 0): 6, (2, 0): 3, (3, 0): 1}, 5, 25, "2026-09-13", "now")
+    assert "at least 2 voice-capable matches (half the median of 3)" in text
+    assert "| - | oneoff |" in text
