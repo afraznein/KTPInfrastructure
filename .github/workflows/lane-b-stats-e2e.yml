@@ -827,3 +827,21 @@ jobs:
             /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
           printf '%s\n' "$out"
           test -n "$out" || { echo "::error::arm 3 produced NO output"; exit 1; }
+
+      - name: Arm 4 - the narrow profile (the proposed fix)
+        run: |
+          set -euo pipefail
+          # The whole point: socketcall must come back OK here while arm 1 still
+          # refuses it. If arm 4 and arm 1 agree, the profile changed nothing and
+          # the file is decoration.
+          out="$(docker run --rm --network none \
+            --security-opt seccomp=ci/seccomp/lane-b-i386.json \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 4 produced NO output"; exit 1; }
+          echo "$out" | grep -q "socketcall    OK" || {
+            echo "::error::arm 4 did NOT unblock socketcall -- the profile does not fix the boot"; exit 1; }
+          echo "$out" | grep -q "glibc socket()             OK" || {
+            echo "::error::arm 4 unblocked the raw call but not glibc's socket()"; exit 1; }
+          echo "narrow profile allows socketcall and glibc socket(): the fix holds"
