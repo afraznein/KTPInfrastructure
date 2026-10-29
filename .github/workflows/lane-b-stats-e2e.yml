@@ -705,6 +705,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # Needed only since arm 4: the narrow profile is a committed file,
+      # while probe.c is written inline. Arm 4's first run failed on exactly
+      # this, and reported it as a seccomp result.
+      - name: Check out (for ci/seccomp)
+        uses: actions/checkout@v6
+
       - name: Environment under test
         run: |
           set -euo pipefail
@@ -840,6 +846,8 @@ jobs:
             /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
           printf '%s\n' "$out"
           test -n "$out" || { echo "::error::arm 4 produced NO output"; exit 1; }
+          echo "$out" | grep -q "^probe:" || {
+            echo "::error::the probe never ran under this profile -- docker rejected it or the file is absent. That is NOT a seccomp result."; exit 1; }
           echo "$out" | grep -q "socketcall    OK" || {
             echo "::error::arm 4 did NOT unblock socketcall -- the profile does not fix the boot"; exit 1; }
           echo "$out" | grep -q "glibc socket()             OK" || {
