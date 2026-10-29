@@ -96,6 +96,7 @@ on:
         default: main
       seccomp:
         description: >-
+          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
           Docker seccomp profile for the hlds boot container only. Empty (the
           default) is docker's default profile, i.e. today's behaviour. Set it
           to `unconfined` to test whether the sandbox is what refuses hlds's
@@ -103,7 +104,7 @@ on:
           while every input under our control stayed identical.
         required: false
         type: string
-        default: ''
+        default: 'ci/seccomp/lane-b-i386.json'
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -180,6 +181,7 @@ on:
         default: ''
       seccomp:
         description: >-
+          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
           Docker seccomp profile for the hlds boot container only. Empty (the
           default) is docker's default profile, i.e. today's behaviour. Set it
           to `unconfined` to test whether the sandbox is what refuses hlds's
@@ -187,7 +189,7 @@ on:
           while every input under our control stayed identical.
         required: false
         type: string
-        default: ''
+        default: 'ci/seccomp/lane-b-i386.json'
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
