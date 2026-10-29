@@ -94,6 +94,16 @@ on:
         required: false
         type: string
         default: main
+      seccomp:
+        description: >-
+          Docker seccomp profile for the hlds boot container only. Empty (the
+          default) is docker's default profile, i.e. today's behaviour. Set it
+          to `unconfined` to test whether the sandbox is what refuses hlds's
+          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
+          while every input under our control stayed identical.
+        required: false
+        type: string
+        default: ''
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -159,6 +169,16 @@ on:
         type: choice
         options: [full, corpus]
         default: full
+      seccomp:
+        description: >-
+          Docker seccomp profile for the hlds boot container only. Empty (the
+          default) is docker's default profile, i.e. today's behaviour. Set it
+          to `unconfined` to test whether the sandbox is what refuses hlds's
+          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
+          while every input under our control stayed identical.
+        required: false
+        type: string
+        default: ''
       engine_ref:
         description: >-
           KTP-ReHLDS ref/SHA whose CI engine artifact replaces the image's baked
@@ -241,6 +261,7 @@ jobs:
       # defaulting it to the infrastructure ref would silently inject on every
       # scheduled run.
       ENGINE_REF: ${{ inputs.engine_ref || '' }}
+      LANE_B_SECCOMP: ${{ inputs.seccomp || '' }}
       ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
@@ -526,7 +547,17 @@ jobs:
           # Written by the builder as paths under this same /work/build mount, holding only what the daemon ref carries.
           mapfile -t schema_migrations < build/lane-b-artifacts/artifacts/schema-migrations.txt
           test "${#schema_migrations[@]}" -gt 0
-          docker run --rm --network none \
+          # hlds is 32-bit and reaches sockets through socketcall. When this step
+          # dies at boot with "UDP_OpenSocket: Function not implemented" the cause
+          # is the sandbox refusing a syscall, not the engine -- and no run recorded
+          # which kernel or docker it was on, so the boot failures from 2026-10-26
+          # could not be told apart while every input of ours stayed identical.
+          echo "boot-env: kernel=$(uname -r) docker=$(docker version -f '{{.Server.Version}}') seccomp=${LANE_B_SECCOMP:-default}"
+          SECCOMP_ARGS=""
+          if [ -n "${LANE_B_SECCOMP:-}" ]; then
+            SECCOMP_ARGS="--security-opt seccomp=${LANE_B_SECCOMP}"
+          fi
+          docker run --rm --network none ${SECCOMP_ARGS} \
             -v "${PWD}/tests:/work/tests:ro" \
             -v "${PWD}/scripts:/work/scripts:ro" \
             -v "${PWD}/config:/work/config:ro" \
