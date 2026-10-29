@@ -763,21 +763,55 @@ jobs:
           # is about the sandbox rather than about any image's contents.
           gcc -m32 -static -O0 -o probe probe.c
           file probe
+      # One helper, used by every arm: it is the guard, not the runner.
+      # An arm that prints nothing must FAIL, because the first version of
+      # this probe went green on three empty arms.
+      - name: Arm 0 - can a 32-bit static binary execute here at all?
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm --network none -v "${PWD}/probe:/probe:ro" \
+            ubuntu:24.04 /bin/sh -c '
+              echo "container arch : $(uname -m)";
+              echo "probe on disk  : $(ls -l /probe)";
+              /probe; echo "probe exit     : $?"
+            ' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 0 produced NO output at all"; exit 1; }
+          case "$out" in
+            *"container arch"*) : ;;
+            *) echo "::error::the container did not even reach uname; /probe never ran"; exit 1 ;;
+          esac
 
       - name: Arm 1 - default seccomp profile (the failing condition)
         run: |
-          docker run --rm --network none -v "${PWD}/probe:/probe:ro" ubuntu:24.04 /probe
+          set -euo pipefail
+          # No --security-opt: this is exactly what Lane B's boot container gets.
+          out="$(docker run --rm --network none \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          # The guard. An empty arm is not a passing arm.
+          test -n "$out" || { echo "::error::arm 1 produced NO output"; exit 1; }
+          echo "$out" | grep -q "probe:" || { echo "::error::arm 1 ran but the probe never printed its banner"; exit 1; }
 
-      - name: Arm 2 - unconfined (control, all four must pass)
+      - name: Arm 2 - unconfined (control - all four calls must succeed)
         run: |
-          docker run --rm --network none --security-opt seccomp=unconfined \
-            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 /probe
+          set -euo pipefail
+          # If anything FAILS here, the cause is not the profile and arms 1 and 3 mean nothing.
+          out="$(docker run --rm --network none --security-opt seccomp=unconfined \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          # The guard. An empty arm is not a passing arm.
+          test -n "$out" || { echo "::error::arm 2 produced NO output"; exit 1; }
+          echo "$out" | grep -q "probe:" || { echo "::error::arm 2 ran but the probe never printed its banner"; exit 1; }
 
       - name: Arm 3 - allow-all filter (a profile rule, or seccomp itself?)
         run: |
           set -euo pipefail
-          # Still goes through seccomp, so passing here where arm 1 fails means
-          # the cause is a profile RULE and a narrow profile is possible.
+          # Still goes THROUGH seccomp, so passing here while arm 1 fails
+          # proves the cause is a profile RULE, which is what makes a narrow
+          # profile possible instead of unconfined.
           cat > allow.json <<'JEOF'
           {
             "defaultAction": "SCMP_ACT_ALLOW",
@@ -788,5 +822,8 @@ jobs:
             "syscalls": []
           }
           JEOF
-          docker run --rm --network none --security-opt seccomp=allow.json \
-            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 /probe
+          out="$(docker run --rm --network none --security-opt seccomp=allow.json \
+            -v "${PWD}/probe:/probe:ro" ubuntu:24.04 \
+            /bin/sh -c '/probe; echo "probe exit: $?"' 2>&1 || true)"
+          printf '%s\n' "$out"
+          test -n "$out" || { echo "::error::arm 3 produced NO output"; exit 1; }
