@@ -1757,7 +1757,7 @@ def main() -> int:
             "signal": log_text.count('triggered "signal_'),
             # 27 voice-MENU picks, their own family (migration 049; stats_logging 1.33.0).
             "voicemenu": log_text.count('triggered "voicemenu_'),
-            # Killed with their own gun (migration 051; stats_logging 1.34.0).
+            # Killed with their own gun (migration 051; stats_logging 1.35.0).
             "own_weapon_kill": log_text.count('triggered "own_weapon_kill"'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
@@ -1897,7 +1897,7 @@ def main() -> int:
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),
-            # Own-weapon kills (migration 051; stats_logging 1.34.0): player-vs-player, like assist.
+            # Own-weapon kills (migration 051; stats_logging 1.35.0): player-vs-player, like assist.
             assertions.check_carried(db, "own_weapon_kill", emitted=report["emitted"]["own_weapon_kill"],
                                      table="hlstats_Events_PlayerPlayerActions",
                                      other_table="hlstats_Events_PlayerActions"),

@@ -193,7 +193,7 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_049_voice_menu_actions.sql",
     # ktp_shot_events.tgt_shift: how far the shooter's rewind moved the victim (stats_logging 1.34.0).
     "sql/migrate_050_shot_rewind_shift.sql",
-    # own_weapon_kill, a player-vs-player action like 003's assist (stats_logging 1.34.0).
+    # own_weapon_kill, a player-vs-player action like 003's assist (stats_logging 1.35.0).
     "sql/migrate_051_own_weapon_kill_action.sql",
 )
 

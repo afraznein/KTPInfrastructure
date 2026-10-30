@@ -1,4 +1,4 @@
-"""Drive and judge the own-weapon kill scenario (stats_logging 1.34.0, KTPHLStatsX migration 051).
+"""Drive and judge the own-weapon kill scenario (stats_logging 1.35.0, KTPHLStatsX migration 051).
 
 stats_logging keeps an owner stamp on every carried primary: DODX's `dod_client_weaponpickup` is
 silent at spawn and death, so a death or the drop key puts the gun on a ground list and a pickup

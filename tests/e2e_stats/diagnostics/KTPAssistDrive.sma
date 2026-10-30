@@ -199,14 +199,14 @@ public on_textmsg(id) {
 	}
 }
 
-// Own-weapon kill drive (stats_logging 1.34.0). Two live teammates A and B carrying different
+// Own-weapon kill drive (stats_logging 1.35.0). Two live teammates A and B carrying different
 // primaries. A dies for real (user_kill), so the game drops A's gun; B presses the drop key and is
 // put on A's body, so the game's own touch hands B that gun. Every dod_client_weaponpickup the
 // DODX poll fires for B is logged as [OW] FWD -- the game-side claim this scenario exists to
 // observe. If no real pickup arrives in 5 s, stats_logging's handler is called directly instead
 // ([OW] SYNTHETIC) so the ledger is still tested, and the verdict says the engine half was not.
 // The kill itself is a dispatched TEAMKILL: no frag_context marker, so no expected no-row diagnostic.
-new g_owA, g_owB, g_owWpn, g_owPolls, bool:g_owActive, bool:g_owPicked
+new g_owA, g_owB, g_owWpn, g_owPolls, g_owBits, bool:g_owActive, bool:g_owPicked
 new Float:g_owAOrigin[3]
 
 stock bool:ow_is_primary(w) {
@@ -216,6 +216,11 @@ stock bool:ow_is_primary(w) {
 			return true
 	}
 	return false
+}
+
+stock ow_bits(id) {
+	new wpns[32], num
+	return get_user_weapons(id, wpns, num)
 }
 
 stock ow_primary(id) {
@@ -267,11 +272,14 @@ public ow_drop() {
 		log_amx("[OW] ABORT a or b left")
 		return
 	}
+	g_owBits = ow_bits(g_owB)
+	log_amx("[OW] DROP b=%d bits_before=%d", g_owB, g_owBits)
 	amxclient_cmd(g_owB, "drop")
 	set_task(0.5, "ow_touch", 77302)
 }
 
 public ow_touch() {
+	log_amx("[OW] DROPPED b=%d bits_after=%d", g_owB, ow_bits(g_owB))
 	dodx_set_user_origin(g_owB, g_owAOrigin)
 	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, g_owAOrigin[0], g_owAOrigin[1], g_owAOrigin[2])
 	g_owPolls = 0
@@ -279,12 +287,21 @@ public ow_touch() {
 }
 
 public ow_poll() {
+	// Bot AI walks B off the gun; keep it standing on A's body for the whole window.
+	new bits = ow_bits(g_owB)
+	if (bits != g_owBits) {
+		log_amx("[OW] BITS b=%d bits=%d", g_owB, bits)
+		g_owBits = bits
+	}
 	if (!g_owPicked && ++g_owPolls < 20) {
+		dodx_set_user_origin(g_owB, g_owAOrigin)
 		set_task(0.25, "ow_poll", 77302)
 		return
 	}
 	if (!g_owPicked) {
 		log_amx("[OW] SYNTHETIC no real pickup in 5 s")
+		// The ledger claims by distance, so the claim must happen on the gun.
+		dodx_set_user_origin(g_owB, g_owAOrigin)
 		if (callfunc_begin("dod_client_weaponpickup", "stats_logging.amxx") == 1) {
 			callfunc_push_int(g_owB)
 			callfunc_push_int(g_owWpn)
