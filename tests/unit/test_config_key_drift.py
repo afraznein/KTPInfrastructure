@@ -256,8 +256,11 @@ def test_the_four_not_compared_reasons_are_distinguishable(check):
     assert len(set(reasons)) == 4, reasons
     # And the two source refusals must not prescribe the same remedy: a reader
     # fixes a mixed file, and only an operator ruling fixes a sectioned one.
-    assert "operator decision" in check.reason_source_unparsable(SECTIONED)
-    assert "operator decision" not in check.reason_source_unparsable(MIXED)
+    # Since the 2026-10-29 ruling the sectioned refusal names a line the reader
+    # could not place -- a fix in the file -- rather than deferring to a ruling.
+    assert "section.key" in check.reason_source_unparsable(SECTIONED)
+    assert "operator decision" not in check.reason_source_unparsable(SECTIONED)
+    assert "reader can be chosen" in check.reason_source_unparsable(MIXED)
 
 
 def test_an_excluded_and_unparsable_path_says_a_reader_would_not_help(check):
@@ -298,26 +301,74 @@ def test_a_missing_excluded_count_defaults_rather_than_raising(check):
     assert "excluded-everywhere: 0" in headline
 
 
-# ----------------------------------------- sectioned INIs are refused by name
-def test_an_entry_less_sectioned_ini_is_refused_not_read_as_three_fake_keys():
+# ------------------------------- sectioned INIs: keys are SECTION-QUALIFIED
+# Ruled 2026-10-29. The bare form was refused because the map list gives every
+# section the same entry names, so a bare reader collapses the file onto those
+# few keys and then reports agreement on everything it dropped -- wrong rather
+# than merely incomplete.
+def test_an_entry_less_sectioned_ini_yields_no_keys_not_three_fake_ones():
     """`config/local/grenade_loadout.ini` is exactly this file: sections and no
-    entries. Before this it classified as `list` with keys literally named
-    `[allies]`, `[axis]`, `[british]`, and comparing it against a populated copy
-    would have compared invented keys against real ones -- the same class as the
-    `;`-read-as-a-key bug the module header records."""
+    entries. Before the sectioned reader existed it classified as `list` with
+    keys literally named `[allies]`, `[axis]`, `[british]` -- the same class as
+    the `;`-read-as-a-key bug the module header records. An empty key set is a
+    real answer: against a populated instance every key there is named."""
     from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
 
-    assert pt("[allies]\n[axis]\n[british]\n", "stub") == (SECTIONED, None)
+    flavour, keys = pt("[allies]\n[axis]\n[british]\n", "stub")
+    assert (flavour, keys) == (SECTIONED, {})
 
 
-def test_a_populated_sectioned_ini_is_refused_by_section_not_by_mixed():
-    """So stripping its entries cannot un-refuse it. Both live sectioned files
-    were already refused, but only as a side effect of their headers being the
-    only lines without `=`."""
+def test_two_sections_setting_the_same_entry_name_do_not_collapse():
+    """The whole reason the ruling was needed, as a test rather than a comment.
+    Under bare naming these are one key, so one of the two values is compared
+    and the other is reported as agreeing."""
     from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
 
-    flavour, keys = pt("[allies]\ngarand = 1\nk98 = 1\n", "g")
-    assert (flavour, keys) == (SECTIONED, None)
+    flavour, keys = pt("[allies]\nrifle = 1\n[axis]\nrifle = 2\n", "g")
+    assert flavour == SECTIONED
+    assert keys == {"allies.rifle": "1", "axis.rifle": "2"}
+
+
+def test_a_section_header_is_never_itself_a_key():
+    from ktp_config_kv import parse_text as pt  # noqa: PLC0415
+
+    keys = pt("[allies]\ngarand = 1\nk98 = 1\n", "g")[1]
+    assert sorted(keys) == ["allies.garand", "allies.k98"]
+    assert not any("[" in k or "]" in k for k in keys)
+
+
+def test_the_live_sectioned_files_parse_and_keep_their_section_names():
+    """Against the committed copies, so a shape change in either is caught here
+    rather than on the fleet."""
+    from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2]
+    for rel in ("config/local/grenade_loadout.ini", "config/local/ktp_maps.ini"):
+        text = (root / rel).read_text(encoding="utf-8")
+        flavour, keys = pt(text, rel)
+        assert flavour == SECTIONED, rel
+        assert keys is not None, rel
+        assert all("." in k for k in keys), rel
+
+    maps = pt((root / "config/local/ktp_maps.ini").read_text(encoding="utf-8"),
+              "maps")[1]
+    assert maps, "an empty parse would make the assertion below vacuous"
+    # Every map section sets the same entry names, so the bare set is smaller.
+    assert len(set(k.split(".", 1)[1] for k in maps)) < len(maps)
+
+
+@pytest.mark.parametrize("text,why", [
+    ("rifle = 1\n[allies]\n", "an entry before any section cannot be qualified"),
+    ("[a]\nk = 1\n[a]\nj = 2\n", "a repeated section would merge two blocks"),
+    ("[a]\nk = 1\nbare\n", "a bare token in a section is not `key = value`"),
+    ("[a]\nk = 1\nk = 2\n", "a duplicate key would be a silent last-wins"),
+])
+def test_a_sectioned_file_the_reader_cannot_place_is_still_refused(text, why):
+    """And refused as SECTIONED, not as MIXED: the two prescribe different
+    remedies, and the reason text is what the weekly issue carries."""
+    from ktp_config_kv import SECTIONED, parse_text as pt  # noqa: PLC0415
+
+    assert pt(text, "x") == (SECTIONED, None), why
 
 
 def test_a_bracketed_cvar_value_is_not_a_section_header():

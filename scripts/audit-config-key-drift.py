@@ -59,11 +59,13 @@ SCOPE, whatever the runbook used to promise. `scope` is built from
 excluded on all 24 targets stays in scope, is compared against nothing, and is
 reported as uncompared -- correctly, but until 2026-10-28 under a message that
 said "could not be parsed". `listip.cfg` has been in that state since the
-2026-10-05 servers.json edit and parses fine. Whether `scope` SHOULD intersect
-`accepts` is an open operator decision, not this script's to take: narrowing
-scope to look quiet is how an unscanned path gets reported clean. So the fix here
-is to name the cause, not to drop the path -- `excluded-everywhere` in the
-headline is a subset of `inconclusive`, never a replacement for it.
+2026-10-05 servers.json edit and parses fine. RULED 2026-10-29: the two sets
+stay un-intersected and such a path keeps its own bucket, because an
+out-of-scope path never prints its name, so intersecting is not reversible by
+inspection and every future path that falls out of the watch patterns would
+report clean by default. So the fix is to name the cause, not to drop the path --
+`excluded-everywhere` in the headline is a subset of `inconclusive`, never a
+replacement for it.
 
 The ONE list in this file, `REQUIRED_PARSABLE`, is not a scope allow-list and
 cannot make anything pass: a path named there which is absent, unparsable, or
@@ -415,12 +417,14 @@ def reason_source_unparsable(flavour, excluded_everywhere=False):
     """Why the SOURCE copy yielded no key set, by refusal kind.
 
     Separated because the remedies differ: a `mixed` file needs a reader, and a
-    `sectioned` one needs the operator's ruling on what a key is first.
+    `sectioned` one has one -- so its refusal names a line the reader could not
+    place, which is a fix in the file rather than in this script.
     """
     if flavour == SECTIONED:
-        why = ("sectioned INI -- `[section]` headers are not keys in any "
-               "flavour, and what a key IS here (`allies.garand` or `garand`, "
-               "which collides across sections) is an open operator decision")
+        why = ("sectioned INI the section-qualified reader could not read -- an "
+               "entry outside any `[section]`, a repeated section or key, or an "
+               "entry that is not `key = value`; keys here are `section.key` "
+               "(ruled 2026-10-29), so the fix is in the file")
     else:
         why = ("source lines disagree about the flavour (`key = value` and "
                "bare-token lines in one file), or carry a duplicate key; no "
@@ -496,9 +500,10 @@ def build_report(findings, stats, inconclusive, unreachable, previous, verbose):
     # The headline is WORK DONE, in the order a reader needs it. "findings: 0"
     # alone was the 2026-08-19 alert, and it was zero because nothing ran.
     # `excluded-everywhere` is a SUBSET of `inconclusive`, not a fourth bucket
-    # beside it: moving those paths out would drop the exit code to 0 on a run
-    # that compared nothing for them, and whether scope should be narrowed that
-    # way is an open operator decision, not this script's to take.
+    # that replaces it. Moving those paths out would return 0 on a run that
+    # compared nothing for them. RULED 2026-10-29: the two sets stay
+    # un-intersected and such a path keeps its own count, because an out-of-scope
+    # path never prints its name.
     headline = ("instances compared: %d/%d  paths compared: %d/%d  "
                 "keys compared: %d  findings: %d  inconclusive: %d  "
                 "nothing-to-compare: %d  excluded-everywhere: %d"
@@ -993,15 +998,25 @@ def selftest():
           compare({}, {"a": {}}, ["a"], total=1)[1] == 0)
 
     # Sectioned INIs, and the four reasons a path is not compared.
-    check("an entry-less sectioned INI is REFUSED, not read as a list whose "
-          "keys are literally `[allies]`, `[axis]`, `[british]`",
-          parse_text("[allies]\n[axis]\n[british]\n", "stub") == (SECTIONED, None))
-    check("a populated sectioned INI is refused by SECTION, not as a side "
-          "effect of `mixed` -- so stripping its entries cannot unrefuse it",
-          parse_text("[allies]\ngarand = 1\n", "g")[0] == SECTIONED)
+    check("an entry-less sectioned INI yields NO keys, never three keys "
+          "literally named `[allies]`, `[axis]`, `[british]`",
+          parse_text("[allies]\n[axis]\n[british]\n", "stub") == (SECTIONED, {}))
+    check("a sectioned INI is read with SECTION-QUALIFIED keys (ruled "
+          "2026-10-29), so two sections setting the same entry name do not "
+          "collapse onto one key",
+          parse_text("[allies]\nrifle = 1\n[axis]\nrifle = 2\n", "g")[1]
+          == {"allies.rifle": "1", "axis.rifle": "2"})
+    check("a sectioned entry that cannot be placed under a section is still "
+          "refused, and as SECTIONED rather than as `mixed`",
+          parse_text("rifle = 1\n[allies]\n", "g") == (SECTIONED, None))
+    check("a repeated section is refused rather than silently merged",
+          parse_text("[a]\nk = 1\n[a]\nj = 2\n", "g") == (SECTIONED, None))
     check("a bracketed cvar VALUE is not a section header",
           parse_text('hostname "[KTP] Dallas 1"\n', "h")[1]
           == {"hostname": "[KTP] Dallas 1"})
+    check("the sectioned refusal no longer defers to an operator ruling",
+          "operator decision" not in reason_source_unparsable(SECTIONED)
+          and "section.key" in reason_source_unparsable(SECTIONED))
     check("the accepted-by-no-target reason does not blame the parser",
           "accepted by no target" in reason_excluded_everywhere()
           and "could not be parsed" not in reason_excluded_everywhere())
