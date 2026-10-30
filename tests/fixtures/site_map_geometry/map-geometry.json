@@ -81,7 +81,7 @@
     1
    ]
   ],
-  "technical_validation": "passed"
+  "technical_validation": "unreviewed"
  },
  "dod_thunder2": {
   "geometry_version": "goldsrc_spectator_v1-0446a0963425",
@@ -123,6 +123,6 @@
     1.0
    ]
   ],
-  "technical_validation": "passed"
+  "technical_validation": "unreviewed"
  }
 }
