@@ -50,7 +50,7 @@ from scripts.match_analytics import (  # noqa: E402
     render_markdown as render_private_analytics_markdown,
 )
 from scripts import team_score_telemetry  # noqa: E402
-from tests.e2e_stats import voice_menu_scenario  # noqa: E402
+from tests.e2e_stats import own_weapon_scenario, voice_menu_scenario  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, engine_telemetry, log_invariants,
                              metamod)
@@ -1388,6 +1388,12 @@ def main() -> int:
                             print("staging voice-menu scenario (27 slots)", flush=True)
                             report["voice_menu_scenario"] = voice_menu_scenario.run(
                                 handle, args.log)
+                            # Own-weapon kill: teammate A dies for real, B is put on A's
+                            # gun so the game's own touch hands it over, then a dispatched
+                            # teamkill of A with that gun must log one own_weapon_kill.
+                            print("staging own-weapon kill scenario", flush=True)
+                            report["own_weapon_scenario"] = own_weapon_scenario.run(
+                                handle, args.log)
 
                     def _stage_break_diagnostics():
                         if drive_amxx is None or args.no_break_scenarios:
@@ -1751,6 +1757,8 @@ def main() -> int:
             "signal": log_text.count('triggered "signal_'),
             # 27 voice-MENU picks, their own family (migration 049; stats_logging 1.33.0).
             "voicemenu": log_text.count('triggered "voicemenu_'),
+            # Killed with their own gun (migration 051; stats_logging 1.34.0).
+            "own_weapon_kill": log_text.count('triggered "own_weapon_kill"'),
             # Phase 5 retired the dedicated "headshot_kill" marker for
             # `(headshot "1")` as one property on the canonical
             # "frag_context" marker each non-teamkill player frag emits.
@@ -1889,6 +1897,10 @@ def main() -> int:
                                      table="hlstats_Events_PlayerActions",
                                      other_table="hlstats_Events_PlayerPlayerActions",
                                      prefix=True),
+            # Own-weapon kills (migration 051; stats_logging 1.34.0): player-vs-player, like assist.
+            assertions.check_carried(db, "own_weapon_kill", emitted=report["emitted"]["own_weapon_kill"],
+                                     table="hlstats_Events_PlayerPlayerActions",
+                                     other_table="hlstats_Events_PlayerActions"),
             assertions.check_frag_context_diagnostics(
                 expected=expected_frag_diagnostics,
                 observed=observed_frag_diagnostics,
@@ -1993,6 +2005,8 @@ def main() -> int:
             carried.append(report["assist_scenario"])
         if report.get("voice_menu_scenario"):
             carried.append(report["voice_menu_scenario"])
+        if report.get("own_weapon_scenario"):
+            carried.append(report["own_weapon_scenario"])
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")

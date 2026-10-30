@@ -191,6 +191,8 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_048_hand_signal_actions.sql",
     # The 27 voice-MENU picks as their own family (voicemenu_*), so bound vs menu stays a dimension.
     "sql/migrate_049_voice_menu_actions.sql",
+    # own_weapon_kill, a player-vs-player action like 003's assist (stats_logging 1.34.0).
+    "sql/migrate_051_own_weapon_kill_action.sql",
 )
 
 DEFAULT_SEED_FILES = (
