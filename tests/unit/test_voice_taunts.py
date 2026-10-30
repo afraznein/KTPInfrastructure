@@ -185,3 +185,30 @@ def test_rank_floor_is_half_the_median_and_ranks_by_per_match():
     text = vt.report(vt.distinct(vt.nearest(rows)), {(1, 0): 6, (2, 0): 3, (3, 0): 1}, 5, 25, "2026-09-13", "now")
     assert "at least 2 voice-capable matches (half the median of 3)" in text
     assert "| - | oneoff |" in text
+
+
+def test_website_snapshot_is_the_report_as_data_and_upserts_by_day(monkeypatch):
+    import json
+    rows = [row(1, "2026-10-26 18:00:00", code="voicemenu_negative", vic=7, vic_name="j3", secs=2),
+            row(2, "2026-10-26 18:01:00", spk=2, spk_name="cope", vic=8, vic_name="ana", secs=1)]
+    events = vt.distinct(vt.nearest(rows))
+    snap = vt.snapshot(events, {(1, 0): 2, (2, 0): 2}, 5, "2026-09-13", "now")
+    assert vt.render(json.loads(json.dumps(snap)), 25) == vt.report(events, {(1, 0): 2, (2, 0): 2}, 5, 25, "2026-09-13", "now")
+    assert [b["key"] for b in snap["boards"]] == ["official", "all"] and snap["taunts"] == 2
+    sent = {}
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake(req, timeout):
+        sent.update(url=req.full_url, body=json.loads(req.data), prefer=req.get_header("Prefer"),
+                    profile=req.get_header("Content-profile"))
+        return Resp()
+    monkeypatch.setenv("KTP_SUPABASE_URL", "https://x.supabase.co/")
+    monkeypatch.setenv("KTP_SUPABASE_SECRET_KEY", "k")
+    monkeypatch.setattr(vt.urllib.request, "urlopen", fake)
+    vt.publish_snapshot(snap, "2026-10-30")
+    assert sent["url"] == "https://x.supabase.co/rest/v1/voice_taunt_snapshot?on_conflict=snapshot_date"
+    assert sent["body"]["snapshot_date"] == "2026-10-30" and sent["body"]["payload"]["taunts"] == 2
+    assert "merge-duplicates" in sent["prefer"] and sent["profile"] == "ktp"

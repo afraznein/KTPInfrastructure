@@ -16,7 +16,10 @@ EnvironmentFile=-/etc/ktp/reports.env
 # Then publish the three files into the PRIVATE coordination repo (research/infra-voice-taunts-report/)
 # so they can be read on GitHub by the people with access. Without the deploy key the publisher
 # prints NOT PUBLISHED and exits 0: the local files are the product either way.
-ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-voice-taunts && /usr/local/bin/voice_taunts.py --out latest.md --tsv latest.tsv && cp latest.md "voice-taunts-$(date +%%F).md" && /usr/local/bin/ktp-coord-publish.sh research/infra-voice-taunts-report latest.md latest.tsv "voice-taunts-$(date +%%F).md"'
+# --website also upserts the same numbers into ktp.voice_taunt_snapshot for the admin-only page
+# (keep-the-prac /admin/voice-taunts). Exit 3 = only that upsert failed: the files still publish,
+# then the unit fails so the on-failure alert fires. Any other non-zero stops before publishing.
+ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-voice-taunts; /usr/local/bin/voice_taunts.py --out latest.md --tsv latest.tsv --website; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 3 ] || exit $$rc; cp latest.md "voice-taunts-$(date +%%F).md" && /usr/local/bin/ktp-coord-publish.sh research/infra-voice-taunts-report latest.md latest.tsv "voice-taunts-$(date +%%F).md" || exit 1; exit $$rc'
 TimeoutStartSec=10min
 
 [Install]
