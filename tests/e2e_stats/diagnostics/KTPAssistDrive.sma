@@ -20,6 +20,7 @@ public plugin_init() {
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
 	register_srvcmd("ktp_vc_run", "cmd_voice")
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
+	register_srvcmd("ktp_ow_run", "cmd_own_weapon")
 	register_event("TextMsg", "on_textmsg", "b")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
@@ -196,4 +197,128 @@ public on_textmsg(id) {
 			return
 		}
 	}
+}
+
+// Own-weapon kill drive (stats_logging 1.35.0). Two live teammates A and B carrying different
+// primaries. A dies for real (user_kill), so the game drops A's gun; B presses the drop key and is
+// put on A's body, so the game's own touch hands B that gun. Every dod_client_weaponpickup the
+// DODX poll fires for B is logged as [OW] FWD -- the game-side claim this scenario exists to
+// observe. If no real pickup arrives in 5 s, stats_logging's handler is called directly instead
+// ([OW] SYNTHETIC) so the ledger is still tested, and the verdict says the engine half was not.
+// The kill itself is a dispatched TEAMKILL: no frag_context marker, so no expected no-row diagnostic.
+new g_owA, g_owB, g_owWpn, g_owPolls, g_owBits, bool:g_owActive, bool:g_owPicked
+new Float:g_owAOrigin[3]
+
+stock bool:ow_is_primary(w) {
+	switch (w) {
+		case DODW_GARAND, DODW_SCOPED_KAR, DODW_THOMPSON, DODW_STG44, DODW_SPRINGFIELD,
+			DODW_KAR, DODW_BAR, DODW_MP40, DODW_M1_CARBINE, DODW_GREASEGUN, DODW_FG42, DODW_K43:
+			return true
+	}
+	return false
+}
+
+stock ow_bits(id) {
+	new wpns[32], num
+	return get_user_weapons(id, wpns, num)
+}
+
+stock ow_primary(id) {
+	new wpns[32], num
+	new bits = get_user_weapons(id, wpns, num)
+	for (new w = 1; w < 32; w++)
+		if ((bits & (1 << w)) && ow_is_primary(w))
+			return w
+	return 0
+}
+
+public cmd_own_weapon() {
+	new players[32], num
+	get_players(players, num, "a")
+	g_owA = g_owB = 0
+	for (new i = 0; i < num && !g_owB; i++) {
+		new wa = ow_primary(players[i]), t = get_user_team(players[i])
+		if (!wa || (t != 1 && t != 2))
+			continue
+		for (new j = 0; j < num; j++) {
+			new wb = ow_primary(players[j])
+			if (j != i && get_user_team(players[j]) == t && wb && wb != wa) {
+				g_owA = players[i]
+				g_owB = players[j]
+				g_owWpn = wa
+				break
+			}
+		}
+	}
+	if (!g_owB) {
+		log_amx("[OW] ABORT need two live teammates carrying different primaries")
+		return PLUGIN_HANDLED
+	}
+	new aname[32], bname[32], wname[32]
+	get_user_name(g_owA, aname, charsmax(aname))
+	get_user_name(g_owB, bname, charsmax(bname))
+	xmod_get_wpnlogname(g_owWpn, wname, charsmax(wname))
+	log_amx("[OW] BEGIN a=%d aname=%s b=%d bname=%s wpn=%s", g_owA, aname, g_owB, bname, wname)
+	g_owActive = true
+	g_owPicked = false
+	user_kill(g_owA)
+	set_task(0.3, "ow_drop", 77302)
+	return PLUGIN_HANDLED
+}
+
+public ow_drop() {
+	if (!is_user_connected(g_owA) || !is_user_connected(g_owB) || !dodx_get_user_origin(g_owA, g_owAOrigin)) {
+		g_owActive = false
+		log_amx("[OW] ABORT a or b left")
+		return
+	}
+	g_owBits = ow_bits(g_owB)
+	log_amx("[OW] DROP b=%d bits_before=%d", g_owB, g_owBits)
+	amxclient_cmd(g_owB, "drop")
+	set_task(0.5, "ow_touch", 77302)
+}
+
+public ow_touch() {
+	log_amx("[OW] DROPPED b=%d bits_after=%d", g_owB, ow_bits(g_owB))
+	dodx_set_user_origin(g_owB, g_owAOrigin)
+	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, g_owAOrigin[0], g_owAOrigin[1], g_owAOrigin[2])
+	g_owPolls = 0
+	set_task(0.25, "ow_poll", 77302)
+}
+
+public ow_poll() {
+	// Bot AI walks B off the gun; keep it standing on A's body for the whole window.
+	new bits = ow_bits(g_owB)
+	if (bits != g_owBits) {
+		log_amx("[OW] BITS b=%d bits=%d", g_owB, bits)
+		g_owBits = bits
+	}
+	if (!g_owPicked && ++g_owPolls < 20) {
+		dodx_set_user_origin(g_owB, g_owAOrigin)
+		set_task(0.25, "ow_poll", 77302)
+		return
+	}
+	if (!g_owPicked) {
+		log_amx("[OW] SYNTHETIC no real pickup in 5 s")
+		// The ledger claims by distance, so the claim must happen on the gun.
+		dodx_set_user_origin(g_owB, g_owAOrigin)
+		if (callfunc_begin("dod_client_weaponpickup", "stats_logging.amxx") == 1) {
+			callfunc_push_int(g_owB)
+			callfunc_push_int(g_owWpn)
+			callfunc_push_int(1)
+			callfunc_end()
+		}
+	}
+	dodx_test_dispatch_client_death(g_owB, g_owA, g_owWpn, 2, 1)
+	ad_flush_stats_capture()
+	g_owActive = false
+	log_amx("[OW] END mode=%s", g_owPicked ? "real" : "synthetic")
+}
+
+public dod_client_weaponpickup(id, weapon, value) {
+	if (!g_owActive || id != g_owB)
+		return
+	log_amx("[OW] FWD id=%d wpn=%d value=%d", id, weapon, value)
+	if (value && weapon == g_owWpn)
+		g_owPicked = true
 }
