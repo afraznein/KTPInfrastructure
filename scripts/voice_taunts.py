@@ -33,13 +33,15 @@ Two leaderboards: official matches only (match_type 0/4) and every tracked type.
 most-taunted players, and one section per speaker listing their victims -- the "search" in a
 markdown file is Ctrl-F on the speaker's name.
 
-Hidden by construction: the report is a file on the data server (`--out`), read over SSH.
-Nothing on the website reads any of this; if the shape proves useful it moves there later.
+Hidden by construction: the report is a file on the data server (`--out`), published to the
+PRIVATE coordination repo. `--website` also upserts the same numbers (snapshot(), one JSON row per
+day) into `ktp.voice_taunt_snapshot`, which only KTP admins can read: keep-the-prac's
+/admin/voice-taunts renders it (drew, 2026-10-30). Never a public table.
 
 MySQL is read-only over the local socket, no credentials, same as weekly_outliers.py.
 
     voice_taunts.py --out /var/lib/ktp-voice-taunts/latest.md [--tsv presses.tsv]
-                    [--since 2026-09-13] [--window 5] [--top 25] [--no-aliases]
+                    [--since 2026-09-13] [--window 5] [--top 25] [--no-aliases] [--website]
 """
 from __future__ import annotations
 
@@ -326,16 +328,83 @@ def esc(s: str) -> str:
     return s.replace("|", "\\|")
 
 
+def snapshot(events: list[dict], played: dict[tuple[int, int], int], window: int,
+             since: str, generated: str, names_note: str = "") -> dict:
+    """Everything the report shows, as data. The markdown renders it and the website's admin page
+    stores it as-is (ktp.voice_taunt_snapshot), so the two can never disagree."""
+    all_types = tuple(sorted({e["match_type"] for e in events}))
+    taunts = [e for e in events if is_taunt(e, window)]
+    boards = []
+    for key, title, types in (("official", "Official matches", OFFICIAL), ("all", "All match types", all_types)):
+        rows = leaderboard(events, played, types, window)
+        boards.append({"key": key, "title": title, "types": sorted({TYPE_NAME[t] for t in types}),
+                       "floor": rows[0]["floor"] if rows else None, "median": rows[0]["median"] if rows else None,
+                       "rows": [{k: v for k, v in r.items() if k not in ("floor", "median")} for r in rows]})
+    victims: dict[str, dict] = {}
+    for e in taunts:
+        v = victims.setdefault(e["victim"], {"n": 0, "by": defaultdict(int)})
+        v["n"] += 1
+        v["by"][e["speaker"]] += 1
+    by_spk: dict[str, list[dict]] = defaultdict(list)
+    for e in taunts:
+        by_spk[e["speaker"]].append(e)
+    speakers = []
+    for spk, es in sorted(by_spk.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        per: dict[str, dict] = {}
+        for e in es:
+            v = per.setdefault(e["victim"], {"n": 0, "codes": defaultdict(int), "menu": defaultdict(int), "weapons": defaultdict(int), "last": ""})
+            v["n"] += 1
+            cmd, via = command_of(e["code"])
+            v["codes"][cmd] += 1
+            v["menu"][cmd] += via == "menu"
+            v["weapons"][e["weapon"]] += 1
+            v["last"] = max(v["last"], e["time"])
+        speakers.append({"speaker": spk, "taunts": len(es), "presses": sum(e["presses"] for e in es), "victims": [
+            {"victim": name, "n": v["n"], "last": v["last"],
+             "codes": [[c, n, v["menu"][c]] for c, n in sorted(v["codes"].items(), key=lambda kv: -kv[1])],
+             "weapons": [[w, n] for w, n in sorted(v["weapons"].items(), key=lambda kv: -kv[1])]}
+            for name, v in sorted(per.items(), key=lambda kv: (-kv[1]["n"], kv[0]))]})
+    codes: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])
+    for e in events:
+        cmd, via = command_of(e["code"])
+        c = codes[cmd]
+        c[0] += 1
+        c[1] += via != "menu"
+        c[2] += via == "menu"
+        c[3] += is_taunt(e, window)
+    hist: dict[str, int] = defaultdict(int)
+    for e in events:
+        hist["none within %d s" % LOOKBACK if e["secs"] is None else str(e["secs"])] += 1
+    return {
+        "generated": generated, "since": since, "window": window, "names_note": names_note,
+        "presses": sum(e["presses"] for e in events), "distinct": len(events), "taunts": len(taunts),
+        "boards": boards,
+        "victims": [{"victim": name, "n": v["n"], "by": sorted(v["by"].items(), key=lambda kv: (-kv[1], kv[0]))}
+                    for name, v in sorted(victims.items(), key=lambda kv: (-kv[1]["n"], kv[0]))],
+        "speakers": speakers,
+        "shape": [{"type": TYPE_NAME[t], "code": t,
+                   "presses": sum(e["presses"] for e in events if e["match_type"] == t),
+                   "distinct": sum(1 for e in events if e["match_type"] == t),
+                   "taunts": sum(1 for e in events if e["match_type"] == t and is_taunt(e, window))}
+                  for t in all_types],
+        "commands": [{"command": c, "distinct": n, "bound": b, "menu": m, "taunts": t}
+                     for c, (n, b, m, t) in sorted(codes.items(), key=lambda kv: -kv[1][0])],
+        "delays": [[k, hist[k]] for k in sorted(hist, key=lambda k: (k.startswith("none"), int(k) if k.isdigit() else 0))],
+    }
+
+
 def report(events: list[dict], played: dict[tuple[int, int], int], window: int, top: int,
            since: str, generated: str, names_note: str = "") -> str:
-    all_types = tuple(sorted({e["match_type"] for e in events}))
-    presses = sum(e["presses"] for e in events)
-    taunts = [e for e in events if is_taunt(e, window)]
+    return render(snapshot(events, played, window, since, generated, names_note), top)
+
+
+def render(S: dict, top: int) -> str:
+    window, generated, since = S["window"], S["generated"], S["since"]
     L = ["# Voice taunts", "",
          f"Generated {generated}. Tracked matches since {since}, every type. "
-         f"{presses} voice/signal presses = {len(events)} distinct commands; "
-         f"{len(taunts)} of those came within {window} s of the speaker's own kill "
-         f"({100 * len(taunts) / len(events):.0f}%)." if events else
+         f"{S['presses']} voice/signal presses = {S['distinct']} distinct commands; "
+         f"{S['taunts']} of those came within {window} s of the speaker's own kill "
+         f"({100 * S['taunts'] / S['distinct']:.0f}%)." if S["distinct"] else
          f"Generated {generated}. No voice commands in tracked matches since {since}.", "",
          f"A taunt = a voice command or hand signal <= {window} s after the speaker's own kill; the victim of that "
          "kill is the target. Presses by one speaker in one second count once (the key is spammed; "
@@ -348,17 +417,17 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
          "Per match = taunts / matches the speaker appeared in "
          "on a server whose plugin captures voice commands (stats_logging >= 1.28.0, live fleet-wide since "
          "2026-10-22); earlier matches could not have recorded one and are not counted. "
-         + (names_note or "Names: league alias where the website knows the player, else the in-game alias."),
+         + (S["names_note"] or "Names: league alias where the website knows the player, else the in-game alias."),
          ""]
-    for title, types in (("Official matches", OFFICIAL), ("All match types", all_types)):
-        rows = leaderboard(events, played, types, window)
-        L += [f"## {title} — top {min(top, len(rows))} of {len(rows)} speakers "
-              f"(sorted by per match; types {', '.join(sorted({TYPE_NAME[t] for t in types}))})", ""]
+    for b in S["boards"]:
+        rows = b["rows"]
+        L += [f"## {b['title']} — top {min(top, len(rows))} of {len(rows)} speakers "
+              f"(sorted by per match; types {', '.join(b['types'])})", ""]
         if not rows:
             L += ["none", ""]
             continue
-        L += [f"Ranked: speakers with at least {rows[0]['floor']} voice-capable matches (half the median of "
-              f"{rows[0]['median']:g}); fewer than that are listed after, unranked (#  -).", ""]
+        L += [f"Ranked: speakers with at least {b['floor']} voice-capable matches (half the median of "
+              f"{b['median']:g}); fewer than that are listed after, unranked (#  -).", ""]
         L += ["| # | speaker | taunts | key presses (during taunts) | spam (peak presses / s) | matches (voice-capable) | matches with a taunt | % of matches taunted | per match | taunts per taunting match | favourite target | favourite command | via voice menu |",
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for i, r in enumerate(rows[:top], 1):
@@ -366,65 +435,49 @@ def report(events: list[dict], played: dict[tuple[int, int], int], window: int, 
                      f"| {r['matches_with']} | {pct(r['share'])} | {fmt(r['per_match'])} | {fmt(r['per_taunting'])} "
                      f"| {esc(r['top_victim'])} | {r['top_code']} | {r['menu']} of {r['taunts']} |")
         L.append("")
-    victims: dict[str, dict] = {}
-    for e in taunts:
-        v = victims.setdefault(e["victim"], {"n": 0, "by": defaultdict(int)})
-        v["n"] += 1
-        v["by"][e["speaker"]] += 1
+    victims = S["victims"]
     L += [f"## Most taunted — top {min(top, len(victims))} of {len(victims)}", ""]
     if victims:
         L += ["| # | victim | taunts received | from |", "|---|---|---|---|"]
-        for i, (name, v) in enumerate(sorted(victims.items(), key=lambda kv: (-kv[1]["n"], kv[0]))[:top], 1):
-            by = ", ".join(f"{esc(s)} {n}" for s, n in sorted(v["by"].items(), key=lambda kv: (-kv[1], kv[0]))[:4])
-            L.append(f"| {i} | {esc(name)} | {v['n']} | {by} |")
+        for i, v in enumerate(victims[:top], 1):
+            by = ", ".join(f"{esc(s)} {n}" for s, n in v["by"][:4])
+            L.append(f"| {i} | {esc(v['victim'])} | {v['n']} | {by} |")
     else:
         L.append("none")
     L.append("")
     L += ["## Per speaker (Ctrl-F a name)", ""]
-    by_spk: dict[str, list[dict]] = defaultdict(list)
-    for e in taunts:
-        by_spk[e["speaker"]].append(e)
-    for spk, es in sorted(by_spk.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        L += [f"### {esc(spk)} — {len(es)} taunts, {sum(e['presses'] for e in es)} key presses during taunts", "",
+    for sp in S["speakers"]:
+        L += [f"### {esc(sp['speaker'])} — {sp['taunts']} taunts, {sp['presses']} key presses during taunts", "",
               "| victim | taunts | commands | weapons | last |", "|---|---|---|---|---|"]
-        per: dict[str, dict] = {}
-        for e in es:
-            v = per.setdefault(e["victim"], {"n": 0, "codes": defaultdict(int), "menu": defaultdict(int), "weapons": defaultdict(int), "last": ""})
-            v["n"] += 1
-            cmd, via = command_of(e["code"])
-            v["codes"][cmd] += 1
-            v["menu"][cmd] += via == "menu"
-            v["weapons"][e["weapon"]] += 1
-            v["last"] = max(v["last"], e["time"])
-        for name, v in sorted(per.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
-            codes = ", ".join(f"{c} {n}" + (f" (menu {v['menu'][c]})" if v["menu"][c] else "")
-                              for c, n in sorted(v["codes"].items(), key=lambda kv: -kv[1]))
-            weapons = ", ".join(f"{w} {n}" for w, n in sorted(v["weapons"].items(), key=lambda kv: -kv[1])[:3])
-            L.append(f"| {esc(name)} | {v['n']} | {codes} | {weapons} | {v['last']} |")
+        for v in sp["victims"]:
+            codes = ", ".join(f"{c} {n}" + (f" (menu {m})" if m else "") for c, n, m in v["codes"])
+            weapons = ", ".join(f"{w} {n}" for w, n in v["weapons"][:3])
+            L.append(f"| {esc(v['victim'])} | {v['n']} | {codes} | {weapons} | {v['last']} |")
         L.append("")
     L += ["## Shape", "", "| | presses | distinct | taunts |", "|---|---|---|---|"]
-    for t in all_types:
-        es = [e for e in events if e["match_type"] == t]
-        L.append(f"| {TYPE_NAME[t]} ({t}) | {sum(e['presses'] for e in es)} | {len(es)} "
-                 f"| {sum(1 for e in es if is_taunt(e, window))} |")
+    for t in S["shape"]:
+        L.append(f"| {t['type']} ({t['code']}) | {t['presses']} | {t['distinct']} | {t['taunts']} |")
     L += ["", "| command | distinct | bound key | voice menu | taunts |", "|---|---|---|---|---|"]
-    codes: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0, 0])
-    for e in events:
-        cmd, via = command_of(e["code"])
-        c = codes[cmd]
-        c[0] += 1
-        c[1] += via != "menu"
-        c[2] += via == "menu"
-        c[3] += is_taunt(e, window)
-    for c, (n, b, m, t) in sorted(codes.items(), key=lambda kv: -kv[1][0]):
-        L.append(f"| {c} | {n} | {b} | {m} | {t} |")
+    for c in S["commands"]:
+        L.append(f"| {c['command']} | {c['distinct']} | {c['bound']} | {c['menu']} | {c['taunts']} |")
     L += ["", "| seconds after own kill | distinct voice commands |", "|---|---|"]
-    hist: dict[str, int] = defaultdict(int)
-    for e in events:
-        hist["none within %d s" % LOOKBACK if e["secs"] is None else str(e["secs"])] += 1
-    for k in sorted(hist, key=lambda k: (k.startswith("none"), int(k) if k.isdigit() else 0)):
-        L.append(f"| {k} | {hist[k]} |")
+    for k, n in S["delays"]:
+        L.append(f"| {k} | {n} |")
     return "\n".join(L) + "\n"
+
+
+def publish_snapshot(S: dict, day: str) -> None:
+    """Upsert tonight's snapshot into ktp.voice_taunt_snapshot, which only KTP admins can read on the
+    website. Keyed by date: a rerun replaces the day, and a retry after a lost reply is safe."""
+    base = os.environ["KTP_SUPABASE_URL"].rstrip("/")
+    key = os.environ["KTP_SUPABASE_SECRET_KEY"]
+    req = urllib.request.Request(
+        f"{base}/rest/v1/voice_taunt_snapshot?on_conflict=snapshot_date", method="POST",
+        data=json.dumps({"snapshot_date": day, "payload": S}).encode("utf-8"),
+        headers={"apikey": key, "Authorization": f"Bearer {key}", "Content-Profile": "ktp",
+                 "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal"})
+    with urllib.request.urlopen(req, timeout=60):
+        pass
 
 
 def main() -> int:
@@ -436,10 +489,13 @@ def main() -> int:
     ap.add_argument("--out", help="write the markdown here instead of stdout")
     ap.add_argument("--tsv", help="also dump every distinct voice command with its nearest-kill delta")
     ap.add_argument("--no-aliases", action="store_true", help="skip the website lookup; in-game names only")
+    ap.add_argument("--website", action="store_true",
+                    help="also upsert the snapshot into ktp.voice_taunt_snapshot (the admin page reads it)")
     a = ap.parse_args()
     if a.window > LOOKBACK:
         raise SystemExit(f"--window {a.window} exceeds the {LOOKBACK} s lookback the query carries")
 
+    rc = 0
     events = distinct(nearest(q(presses_sql(a.since), a.db)))
     capable = voice_capable_matches(q(manifests_sql(a.since), a.db))
     played = matches_played(q(played_sql(a.since), a.db), capable)
@@ -459,8 +515,19 @@ def main() -> int:
             n = resolve_names(events, steam_of, index)
             names_note = (f"Names: league alias for {n} of {len(players)} players the website knows "
                           f"({len(index)} linked steam ids); the rest keep the alias they played under.")
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    text = report(events, played, a.window, a.top, a.since, generated, names_note)
+    now = datetime.now(timezone.utc)
+    generated = now.strftime("%Y-%m-%d %H:%M UTC")
+    snap = snapshot(events, played, a.window, a.since, generated, names_note)
+    text = render(snap, a.top)
+    if a.website:
+        # A failed upsert must not cost the night's markdown: write it anyway, exit 3 (website only)
+        # so the unit still publishes the files and then fails, which fires the alert.
+        try:
+            publish_snapshot(snap, now.strftime("%Y-%m-%d"))
+            print(f"website: ktp.voice_taunt_snapshot upserted for {now:%Y-%m-%d}")
+        except (KeyError, urllib.error.URLError, TimeoutError) as exc:
+            print(f"website: snapshot NOT published ({exc!r})", file=sys.stderr)
+            rc = 3
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -476,7 +543,7 @@ def main() -> int:
             fh.write("\t".join(cols) + "\n")
             for e in sorted(events, key=lambda e: e["time"]):
                 fh.write("\t".join("" if e.get(c) is None else str(e.get(c)) for c in cols) + "\n")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
