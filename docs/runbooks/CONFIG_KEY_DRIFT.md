@@ -200,7 +200,7 @@ added on **2026-10-05** took nothing out of it. ⚠️ **So following the old ad
 runbook's own "the list is finite and the gate nags until it is zero" is
 unachievable by the route it recommended. The check now says *"accepted by no
 target"* rather than *"could not be parsed"*, which is the honest label; **the
-nag itself stands until the open decision below is ruled.**
+nag itself stands, and that is now the ruled outcome — see decision 4.**
 
 The one list in the script, `REQUIRED_PARSABLE`, **cannot make anything pass**:
 a path named there which is absent, unparsable, or short of full coverage forces
@@ -238,7 +238,7 @@ hiding two of the three items below.
 | `configs/ktp_railyard.cfg`, `_railyard_b6.cfg` | `exec` | `differs` | `uniform` 24/24 | Changes what the map config execs |
 | 13 root-level legacy map configs | whole file | `file-missing-instance` | 5 instances | Nothing — unchanged since 2025-12-29, so no event has ever fired. Matches the file-level check's standing finding |
 | ~~`listip.cfg`~~ | whole file | ~~`file-missing-instance`~~ → `excluded-everywhere` | — | **SUPERSEDED 2026-10-05.** It was added to `excludePatterns` on all 24 game entries that day (`servers.json` mtime `2026-10-05 11:30:11 -0400`; 24 occurrences, measured 2026-10-28). It is no longer a finding in this check or in the file-level one — it is **compared against nothing**, under `excluded-everywhere`. ⛔ The file parses fine; do not look for a reader |
-| `grenade_loadout.ini`, `ktp_maps.ini` | — | `inconclusive` (`sectioned`) | — | **Sectioned INIs.** The lines without `=` are exactly and only the `[section]` headers, which are not keys in any of the three flavours. Needs the operator ruling in decision 4 below, **not** a reader and **not** an `excludePatterns` entry |
+| ~~`grenade_loadout.ini`, `ktp_maps.ini`~~ | — | ~~`inconclusive` (`sectioned`)~~ → compared | — | **SUPERSEDED 2026-10-29 by the ruling in decision 3.** Keys in a sectioned file are **section-qualified** (`allies.garand`), and `ktp_config_kv` now reads them. ✅ **Measured 2026-10-30: both are one md5 on 24/24 and equal to the distributor source, so the first run that compares them yields zero key findings.** ⚠️ If a burst ever arrives it is the measurement arriving, absorbed by the delta mechanism after one run — not a fleet regression |
 
 ### Decisions this needs from the operator
 
@@ -280,36 +280,49 @@ The check reports; it does not fix. None of these is the checker's to decide.
    fleet. So the disable works and costs nothing, and it works for a different
    reason than the one a reader assumes. ➡️ **Use `//` for a new one**, so the
    disable does not depend on a silent-unknown-command path.
-3. **The two sectioned configs — and the question is *what is a key*, not *who
-   writes the reader*.** `grenade_loadout.ini` and `ktp_maps.ini` are sectioned;
-   `ktp_config_kv` models three **flat** flavours, so `classify()` returns
-   `sectioned` and the files are honestly refused. Measured against the canonical
-   copies 2026-10-28: `grenade_loadout.ini` 26 content lines / 23 with `=` / 3
-   without (`[allies]`, `[axis]`, `[british]`); `ktp_maps.ini` 78 / 58 / 20.
-   Control: `dodserver.cfg.example` classifies `cvar` with 115 keys.
+3. ✅ **RULED 2026-10-29 — a key in a sectioned file is SECTION-QUALIFIED,
+   never bare.** So `allies.garand`, and `ktp_config_kv.parse_sectioned_text`
+   reads `grenade_loadout.ini` and `ktp_maps.ini` instead of refusing them.
 
-   📌 **The ruling needed: `allies.garand` or `garand`?** ⛔ Not hygiene — the
-   bare form **collides across the three sections**, which set the same weapon
-   slots, so picking it would compare one section's value against another's and
-   can raise new findings on 24 instances. A reader cannot be written without
-   this answer.
+   🔑 **The reason is stronger than the one this runbook used to give.** The old
+   wording said the bare form *"collides across the three sections, which set the
+   same weapon slots"* — ⛔ **measurably false: the three nation sections of
+   `grenade_loadout.ini` share no entry name at all.** The collision is entirely in
+   the other file: every map section of `ktp_maps.ini` sets the same few entry
+   names, so under bare keys the check would compare those few and **report
+   agreement on every entry it dropped** — wrong rather than merely incomplete,
+   which is the one outcome the script's own header exists to prevent.
 
-   ⛔ **And "declare them out of scope in `servers.json`" is NOT an option here**
-   — see decision 4. The old wording offered it; it does not work.
-4. 🆕 **Should `scope` intersect `accepts`?** Today it does not, so a path
-   excluded on every target stays in scope and is reported `excluded-everywhere`
-   every week, forever. `listip.cfg` is in exactly that state.
+   ✅ **The first-run burst the ruling accepted does not exist at today's fleet
+   state.** Measured read-only 2026-10-30: both files return **one md5 on 24/24**,
+   equal to the distributor source (`grenade_loadout.ini`
+   `f9e0069d0798082515b946c121c95e9b`, `ktp_maps.ini`
+   `c87f68c34864c7d732abd1c10e68be8b`; a third config in the same directory is the
+   positive control and also reads one md5 on 24/24, and a nonsense filename is
+   absent on all 24, so the `md5sum` path is real). Identical bytes mean identical
+   keys under any convention, so a section-qualified reader shipped today yields
+   **zero key findings**. ⚠️ **The burst is a risk only if the fleet diverges
+   first** — an argument for shipping sooner, not a cost to brace for. ⛔ If one
+   does arrive, it is the measurement arriving and the delta mechanism absorbs it
+   after one run; do not read it as a fleet regression.
 
-   ⛔ **Not a free yes.** The script's own header warns that *narrowing scope to
-   look quiet is how an unscanned path gets reported clean*, so intersecting
-   trades a mislabelled nag for a real blind spot: a path silently dropped from
-   `servers.json`'s `includePatterns` would then vanish from the report instead
-   of appearing in it.
+   ⛔ **A sectioned file the qualified reader cannot place is still refused** — an
+   entry outside any `[section]`, a repeated section or key, or an entry that is not
+   `key = value`. The refusal reports `sectioned` rather than `mixed`, because the
+   remedy is a fix in the file and not a new reader.
 
-   ➡️ **Three options, operator's call:** (a) intersect, and accept the blind
-   spot; (b) leave it, and reconcile `listip.cfg` the other way — mirror the
-   per-instance copies and drop the exclusion, which makes it comparable again;
-   (c) leave it, and give the gate a per-path mute list for exclusions that are
-   deliberate, which keeps the path in `paths_in_scope` and visible in the report
-   while taking it out of the weekly reason text. Nothing here is the checker's
-   to decide, and the label is now correct either way.
+4. ✅ **RULED 2026-10-29 — `scope` does NOT intersect `accepts`; the path stays
+   in scope and keeps its own bucket.** `listip.cfg` is reported
+   `excluded-everywhere` every week, by design, and that is the cheaper failure.
+
+   🔑 **The deciding reason: an out-of-scope path never prints its name, so
+   intersecting the two sets is not reversible by inspection.** Every future path
+   that falls out of `servers.json`'s `includePatterns` would then report clean by
+   default, which is the blind spot the script's own header warns about —
+   *narrowing scope to look quiet is how an unscanned path gets reported clean*.
+
+   ✅ **No code change was owed for this:** `excluded-everywhere` is already counted
+   separately in the headline (a subset of `inconclusive`, never a replacement for
+   it), which is the "own bucket" the ruling asks for. ➡️ **To stop the weekly line
+   for `listip.cfg`, reconcile the file rather than the check** — mirror the
+   per-instance copies and drop the exclusion, which makes it comparable again.

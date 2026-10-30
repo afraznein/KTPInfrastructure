@@ -40,11 +40,16 @@ below, which produced three findings that could not be fixed and could not be
 true. So a bracketed header is detected first and the file is refused by name,
 which holds whether or not the entries are present.
 
-⚠️ This is NOT the ruling on what a key is in a sectioned file. `allies.garand`
-or `garand`? The bare form collides across sections that set the same weapon
-slots, so a reader cannot be written without that decision, and it is the
-operator's (`docs/runbooks/CONFIG_KEY_DRIFT.md`, open decisions). Until then the
-honest answer is the refusal, and this makes it say why.
+RULED 2026-10-29: A KEY IN A SECTIONED FILE IS SECTION-QUALIFIED, NEVER BARE
+
+So `allies.garand`, not `garand`, and `parse_sectioned_text` below reads these
+files rather than refusing them. The bare form was refused because `ktp_maps.ini`
+gives every map section the same entry names, so a bare reader collapses the
+whole file onto those few keys and then REPORTS AGREEMENT on everything it
+dropped -- wrong rather than merely incomplete, which is the one outcome this
+module exists to avoid. A sectioned file that the qualified reader cannot read is
+still refused, and `parse_text` says SECTIONED rather than MIXED so the caller
+can name which refusal it was.
 
 COMMENT STRIPPING IS QUOTE-AWARE, AND THAT IS NOT FUSSINESS
 
@@ -196,6 +201,48 @@ def parse_cvar_text(text, label="<text>"):
     return out
 
 
+def parse_sectioned_text(text, label="<text>"):
+    """`[section]` headers over `key = value` entries, keyed `section.key`.
+
+    Section-qualified because the bare name is not unique: the map list gives
+    every section the same entry names, so bare keys compare one map's value
+    against another's and report agreement on the rest.
+
+    Raises ValueError on an entry that cannot be placed under a section, on a
+    repeated section or key, or on an entry that is not `key = value`. Each of
+    those would otherwise merge two blocks or invent a key, and this module's one
+    rule is that refusing beats guessing.
+    """
+    out = {}
+    section = None
+    seen_sections = set()
+    for lineno, line in content_lines(text, markers=(";",)):
+        if _SECTION_LINE_RE.match(line):
+            section = line[1:-1].strip().lower()
+            if not section:
+                raise ValueError("%s:%d: empty section header" % (label, lineno))
+            if section in seen_sections:
+                raise ValueError("%s:%d: duplicate section %r"
+                                 % (label, lineno, section))
+            seen_sections.add(section)
+            continue
+        if section is None:
+            raise ValueError("%s:%d: entry before any [section]: %r"
+                             % (label, lineno, line))
+        if "=" not in line:
+            raise ValueError("%s:%d: expected `key = value`, got %r"
+                             % (label, lineno, line))
+        name, _, value = line.partition("=")
+        key = "%s.%s" % (section, name.strip().lower())
+        value = value.strip()
+        if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+            value = value[1:-1]
+        if key in out:
+            raise ValueError("%s:%d: duplicate key %r" % (label, lineno, key))
+        out[key] = value
+    return out
+
+
 def parse_text(text, label="<text>"):
     """(flavour, {key: value}), or (MIXED, None) which means "could not parse".
 
@@ -206,18 +253,21 @@ def parse_text(text, label="<text>"):
     comparison in precisely the direction that matters -- an emptied source file
     against a populated fleet is the 2026-08-19 revert taken to its limit.
 
-    MIXED and SECTIONED are the unparsed outcomes, and the caller must treat a
-    None as "could not compare" rather than as a file with no drift. The flavour
-    is still returned with it, so the caller can say WHICH refusal it was: a
-    reader would fix a MIXED file, and only an operator ruling fixes a SECTIONED
-    one.
+    A None is "could not compare", never "a file with no drift", and the flavour
+    is returned with it so the caller can say WHICH refusal it was: a reader
+    would fix a MIXED file, while a SECTIONED None means the section-qualified
+    reader met an entry it could not place.
     """
     flavour = classify(text)
-    if flavour in (MIXED, SECTIONED):
+    if flavour == MIXED:
         return flavour, None
     try:
+        if flavour == SECTIONED:
+            return flavour, parse_sectioned_text(text, label)
         if flavour == KV:
             return flavour, parse_kv_text(text, label)
         return flavour, parse_cvar_text(text, label)
     except ValueError:
-        return MIXED, None
+        # A sectioned file keeps its own refusal kind. Collapsing it to MIXED
+        # would prescribe the wrong remedy -- a reader for a file that has one.
+        return (SECTIONED if flavour == SECTIONED else MIXED), None
