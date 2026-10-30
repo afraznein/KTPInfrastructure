@@ -49,11 +49,11 @@ costs a match.
 A row that is detected but not alerted is a report nobody reads. A row that is
 alerted but not remediated is fine, and is most of this estate.
 
-## Four shapes that make a `yes` in this matrix untrue
+## Shapes that make a `yes` in this matrix untrue
 
 Every one has already happened here, and none leaves a gap a reader of the matrix
 can see — the row says *alerted*, the check runs on schedule, and the fault goes
-past it anyway. Test a new row against all four before writing `yes`.
+past it anyway. Test a new row against every shape below before writing `yes`.
 
 - **A cumulative counter under a windowed headline makes the worst night and an
   ordinary one produce the same number.** The headline is an average, and an
@@ -96,6 +96,32 @@ past it anyway. Test a new row against all four before writing `yes`.
   rejection-reason table in `hlstatsx`, so the row proves a loss happened and
   cannot say what caused it. **A rejection counter needs a reason beside it, or
   the alert it feeds can only ever page a human to go and read logs.**
+- 🔴 **AND ONE THAT RUNS THE OTHER WAY, MANUFACTURING A DEAD CHECK OUT OF A
+  HEALTHY ONE: the health LOG cannot answer *"has this check ever fired"*, so
+  grepping it for a check's name is not a measurement of coverage.**
+  `ktp-data-server-health.sh` alerts on transitions only, and an item's key
+  reaches `/var/log/ktp-data-server-health.log` only on the `TRANSITIONS:` line
+  — a persistently-down item is counted in `no transitions (currently down: N)`
+  and never named again. Measured 2026-10-30: `no transitions` on 635 lines of
+  the live log and 382 of `.1`, against a handful of `TRANSITIONS:` lines.
+  ⛔ **So a token's count in that log measures how often a check's state
+  CHANGED, never whether its gate can open.** ➡️ **The instrument is
+  `/var/lib/ktp-data-server-health.json` — `.down[]` with `since` and
+  `fault_since` — not the log.** ⚠️ **And the keys are UNIT NAMES, not prose: a
+  grep for `voice taunt` or `map coefficient` cannot match
+  `ktp-voice-taunts.timer=…` or `failed-unit:ktp-map-coefficients.service`.**
+  Measured in the same pass: `map coefficient` returns 0 while
+  `map-coefficients` returns 2, and both are real `failed-unit:` transitions on
+  2026-10-15 — down at 00:17, recovered at 09:17 — so the prose spelling turned
+  a check that had provably fired into one that had *"never printed a line"*.
+  `voice-taunts` and `hltv-api` are genuinely 0 in both spellings (positive
+  control `weapon-context` 672, nonsense token 0) and that is the benign
+  reading, settled by their gates rather than by their silence:
+  `hltv-api.service` reads `active`, the drift log's staleness leg measured
+  42,394 s against its 172,800 s threshold, and `ktp-voice-taunts.service`
+  finishes clean nightly in the journal. 🔑 **The sibling firing is what makes
+  finding-only a measurement here instead of an inference** — the two silent
+  gates are the same shape as the one that opened.
 
 ---
 
