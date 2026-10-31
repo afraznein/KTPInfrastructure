@@ -10,6 +10,10 @@
 #
 # Triggers narrowly: only when the configs OR the tests/tested code
 # change. Pure refactors of unrelated code don't pay the round-trip.
+# `docs/runbooks/ALERT_COVERAGE.md` is in the filter for one reason: a unit
+# test here reads it (the CRITICAL_TIMERS-vs-timer-table invariant), and a
+# `scripts/`-shaped filter would let a PR delete a row from that table and skip
+# the only job that runs the guard.
 #
 # Catches:
 #   - Typo in plugins.ini / modules.ini referring to a non-existent file
@@ -66,7 +70,7 @@ jobs:
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
           if git diff --name-only "$base" "$head" \
-              | grep -qE '^(config/|tests/config_parse/|tests/smoke/|tests/unit/|tests/fixtures/|scripts/|changelog\.d/|CHANGELOG\.md$|provision/lan-web-sync\.exclude$|provision/deploy-lan-web\.sh$|provision/install-linuxgsm\.sh$|\.github/workflows/config-tests\.yml$|\.github/workflows/lane-b-stats-e2e\.yml$|\.github/workflows/analytics-schema-decision\.yml$|tests/e2e_stats/artifacts\.py$)'; then
+              | grep -qE '^(config/|tests/config_parse/|tests/smoke/|tests/unit/|tests/fixtures/|scripts/|changelog\.d/|CHANGELOG\.md$|docs/runbooks/ALERT_COVERAGE\.md$|provision/lan-web-sync\.exclude$|provision/deploy-lan-web\.sh$|provision/install-linuxgsm\.sh$|\.github/workflows/config-tests\.yml$|\.github/workflows/lane-b-stats-e2e\.yml$|\.github/workflows/analytics-schema-decision\.yml$|tests/e2e_stats/artifacts\.py$)'; then
             echo "run=1" >> "$GITHUB_OUTPUT"
             echo "Relevant files changed; will run pytest."
           else
