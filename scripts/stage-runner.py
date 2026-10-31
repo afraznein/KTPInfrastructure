@@ -31,6 +31,18 @@ the only thing that could have caught it was that literal.
 
 It does NOT restart anything -- the Tier-2 workflow starts its own hlds per run.
 
+WHAT STAGING DOES NOT DO, which is the part that keeps being discovered the hard
+way: the runner's plugins tree is NOT what the Tier-2 gate tests. The workflow
+compiles its own copy of the plugins it gates on and `install -D`s each one over
+whatever is staged, then sets the version the suite asserts from that build --
+and env OUTRANKS this manifest in `_stage_manifest.expected_version`'s
+resolution order (env -> manifest -> floor). So staging a newer build cannot
+move that gate; only the workflow's pin can. Staging still earns its keep: it is
+what `stage-wave.py --expect-runner` reads, and what a suite run outside the
+workflow falls back to. One consequence shows up in `--show`: for an artifact
+the workflow rebuilds, a manifest/disk md5 disagreement is the steady state
+rather than a fault, because each run bakes a fresh per-minute BUILD_TIME.
+
 Ordering, which matters: restage the runner only AFTER a wave has activated and
 post-activation verify passes, because the runner mirrors the LIVE fleet. The
 one deliberate exception is the pre-activation gate, where the runner is meant
@@ -66,6 +78,7 @@ import hashlib
 import json
 import os
 import posixpath
+import re
 import sys
 import time
 
@@ -93,6 +106,53 @@ DLLS_DIR = "dod/addons/ktpamx/dlls"
 # module" trap this file already hit once for dodx. ktp-tier2-stack-drift.py's
 # STACK_FILES confirms the split path.
 CORE_BASENAMES = {"ktpamx_i386.so"}
+
+TIER2_WORKFLOW = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    ".github", "workflows", "tier2-integration.yml",
+)
+
+# Only the install destination, never a path the workflow merely checks for: a
+# pattern that also matched the `test -f` verify step would claim artifacts the
+# workflow leaves alone, and suppress the one disagreement worth printing.
+_WORKFLOW_INSTALL_RE = re.compile(
+    r"install\s+-D\s+\S+\s*(?:\\\s*)?\s*\"?[^\"\s]*/(?:plugins|modules|dlls)/([A-Za-z0-9_.+-]+)"
+)
+
+
+def workflow_rebuilt(path=TIER2_WORKFLOW):
+    """Artifacts the Tier-2 workflow compiles and installs itself, every run.
+
+    Derived from the workflow rather than listed here because this file already
+    carries one hand-kept mirror of a fact owned elsewhere, and says so.
+    Returns None when the workflow cannot be read -- which must stay distinct
+    from "it rebuilds nothing", or an unreadable file would silence the flag.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    return {m.group(1) for m in _WORKFLOW_INSTALL_RE.finditer(text)}
+
+
+def disk_flag(name, disk, manifest_md5, rebuilt):
+    """What to say about one artifact's manifest-vs-disk comparison.
+
+    The disagreement line used to be unscoped, so it fired on every artifact the
+    workflow rebuilds -- each run bakes a fresh per-minute BUILD_TIME, so those
+    can never match what was staged, and a reader chasing the warning finds
+    nothing wrong.
+    """
+    if disk == "ABSENT":
+        return "  <-- not on the runner"
+    if manifest_md5 == "-" or disk == manifest_md5:
+        return ""
+    if rebuilt is None:
+        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the Tier-2 workflow)"
+    if name in rebuilt:
+        return "  <-- rebuilt per run by the Tier-2 workflow; not the build the gate tests"
+    return "  <-- MANIFEST DISAGREES WITH DISK"
 
 
 def artifact_dir(name: str) -> str:
@@ -166,16 +226,13 @@ def show(ssh):
         p = ln.split()
         if len(p) == 2:
             on_disk[posixpath.basename(p[1])] = p[0].lower()
+    rebuilt = workflow_rebuilt()
     print(f"{'artifact':<26} {'version':<12} {'manifest md5':<34} on-disk")
     for n in names:
         e = man.get(n, {})
         disk = on_disk.get(n, "ABSENT")
         mmd5 = e.get("md5", "-")
-        flag = ""
-        if disk != "ABSENT" and mmd5 != "-" and disk != mmd5:
-            flag = "  <-- MANIFEST DISAGREES WITH DISK"
-        elif disk == "ABSENT":
-            flag = "  <-- not on the runner"
+        flag = disk_flag(n, disk, mmd5, rebuilt)
         print(f"{n:<26} {e.get('version','-'):<12} {mmd5:<34} {disk}{flag}")
     return man
 
