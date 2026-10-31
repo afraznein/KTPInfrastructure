@@ -31,6 +31,21 @@ the only thing that could have caught it was that literal.
 
 It does NOT restart anything -- the Tier-2 workflow starts its own hlds per run.
 
+WHAT STAGING DOES NOT DO, which is the part that keeps being discovered the hard
+way: the runner's plugins tree is NOT what the Tier-2 gate tests. The workflow
+compiles its own copy of the plugins it gates on and `install -D`s each one over
+whatever is staged, then sets the version the suite asserts from that build --
+and env OUTRANKS this manifest in `_stage_manifest.expected_version`'s
+resolution order (env -> manifest -> floor). So staging a newer build cannot
+move that gate; only the workflow's pin can. Staging still earns its keep: it is
+what `stage-wave.py --expect-runner` reads, and what a suite run outside the
+workflow falls back to. One consequence shows up in `--show`: for an artifact
+the workflow rebuilds, a manifest/disk md5 disagreement is the steady state
+rather than a fault, because each run bakes a fresh per-minute BUILD_TIME. The
+same goes for a stack file `sync-runner-stack.py` mirrors from the fleet -- its
+record is the fleet, not this manifest -- so `--show` names both cases instead
+of calling either one drift.
+
 Ordering, which matters: restage the runner only AFTER a wave has activated and
 post-activation verify passes, because the runner mirrors the LIVE fleet. The
 one deliberate exception is the pre-activation gate, where the runner is meant
@@ -63,9 +78,11 @@ than failing.
 import argparse
 import getpass
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
+import re
 import sys
 import time
 
@@ -93,6 +110,85 @@ DLLS_DIR = "dod/addons/ktpamx/dlls"
 # module" trap this file already hit once for dodx. ktp-tier2-stack-drift.py's
 # STACK_FILES confirms the split path.
 CORE_BASENAMES = {"ktpamx_i386.so"}
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TIER2_WORKFLOW = os.path.join(
+    os.path.dirname(HERE), ".github", "workflows", "tier2-integration.yml"
+)
+
+# Only the install destination, never a path the workflow merely checks for: a
+# pattern that also matched the `test -f` verify step would claim artifacts the
+# workflow leaves alone, and suppress the one disagreement worth printing.
+_WORKFLOW_INSTALL_RE = re.compile(
+    r"install\s+-D\s+\S+\s*(?:\\\s*)?\s*\"?[^\"\s]*/(?:plugins|modules|dlls)/([A-Za-z0-9_.+-]+)"
+)
+
+
+def workflow_rebuilt(path=TIER2_WORKFLOW):
+    """Artifacts the Tier-2 workflow compiles and installs itself, every run.
+
+    Derived from the workflow rather than listed here because this file already
+    carries one hand-kept mirror of a fact owned elsewhere, and says so.
+    Returns None when the workflow cannot be read -- which must stay distinct
+    from "it rebuilds nothing", or an unreadable file would silence the flag.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    return {m.group(1) for m in _WORKFLOW_INSTALL_RE.finditer(text)}
+
+
+DRIFT_CHECKER = os.path.join(HERE, "ktp-tier2-stack-drift.py")
+
+
+def fleet_mirrored(path=DRIFT_CHECKER):
+    """Artifacts `sync-runner-stack.py` mirrors from the fleet, by basename.
+
+    Their record is the fleet, not this manifest, so a difference here says
+    nothing -- and saying it anyway is how a healthy runner got written up as a
+    three-artifact defect. Read from the drift checker the sync tool reads, for
+    the same reason: one list, not a fourth copy.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("ktp_tier2_stack_drift", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        paths = list(mod.STACK_FILES) + list(mod.PLUGINS_STRICT)
+    # Its top level exits when paramiko is absent, and an unreadable sibling
+    # must not take `--show` down with it.
+    except (OSError, SystemExit, AttributeError):
+        return None
+    return {posixpath.basename(p) for p in paths}
+
+
+def disk_flag(name, disk, manifest_md5, rebuilt, mirrored=frozenset()):
+    """What to say about one artifact's manifest-vs-disk comparison.
+
+    The disagreement line used to be unscoped, so it fired on everything whose
+    record is deliberately somewhere else -- the plugins the workflow rebuilds
+    per run (each baking a fresh BUILD_TIME, so they can never match what was
+    staged) and the stack files mirrored from the fleet. A reader chasing either
+    finds nothing wrong.
+    """
+    if disk == "ABSENT":
+        return "  <-- not on the runner"
+    if manifest_md5 == "-" or disk == manifest_md5:
+        return ""
+    if rebuilt is None:
+        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the Tier-2 workflow)"
+    # Workflow first: when a file is both, its bytes are whatever the last run
+    # installed, so that is the honest thing to say about it.
+    if name in rebuilt:
+        return "  <-- rebuilt per run by the Tier-2 workflow; not the build the gate tests"
+    if mirrored is None:
+        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the drift checker)"
+    if name in mirrored:
+        return "  <-- fleet mirror, synced by sync-runner-stack.py; this manifest is not its record"
+    return "  <-- MANIFEST DISAGREES WITH DISK"
 
 
 def artifact_dir(name: str) -> str:
@@ -166,16 +262,14 @@ def show(ssh):
         p = ln.split()
         if len(p) == 2:
             on_disk[posixpath.basename(p[1])] = p[0].lower()
+    rebuilt = workflow_rebuilt()
+    mirrored = fleet_mirrored()
     print(f"{'artifact':<26} {'version':<12} {'manifest md5':<34} on-disk")
     for n in names:
         e = man.get(n, {})
         disk = on_disk.get(n, "ABSENT")
         mmd5 = e.get("md5", "-")
-        flag = ""
-        if disk != "ABSENT" and mmd5 != "-" and disk != mmd5:
-            flag = "  <-- MANIFEST DISAGREES WITH DISK"
-        elif disk == "ABSENT":
-            flag = "  <-- not on the runner"
+        flag = disk_flag(n, disk, mmd5, rebuilt, mirrored)
         print(f"{n:<26} {e.get('version','-'):<12} {mmd5:<34} {disk}{flag}")
     return man
 
