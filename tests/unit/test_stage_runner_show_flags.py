@@ -1,18 +1,22 @@
 """Unit tests for stage-runner.py's `--show` manifest-vs-disk flagging.
 
-`MANIFEST DISAGREES WITH DISK` used to be unscoped. The Tier-2 workflow compiles
-its own copy of the plugins it gates on and installs each over whatever was
-staged, baking a fresh per-minute BUILD_TIME every run — so for those artifacts
-the staged md5 can never match disk, the warning fired on every run of `--show`,
-and the reader who chased it found nothing wrong. These tests pull in both
-directions: the noise class must be suppressed, and an artifact the workflow
-leaves alone must still report a real disagreement.
+`MANIFEST DISAGREES WITH DISK` used to be unscoped, and two classes of artifact
+on that runner keep their record somewhere other than this manifest. The Tier-2
+workflow compiles its own copy of the plugins it gates on and installs each over
+whatever was staged, baking a fresh per-minute BUILD_TIME every run; and
+`sync-runner-stack.py` mirrors the stack files from the fleet, where byte
+equality with the fleet is the point. For both, the warning fired on every run
+of `--show` and the reader who chased it found nothing wrong — one of them got
+written up as a three-artifact defect on a healthy runner.
 
-The scope is DERIVED from `.github/workflows/tier2-integration.yml` rather than
-listed in the script, so the parse gets its own tests — including the
-over-matching direction, which is the dangerous one: a pattern that also matched
-the workflow's `test -f` verify step would claim artifacts the workflow never
-installs and silence the one line worth printing.
+These tests pull in both directions: each noise class must be suppressed, and an
+artifact in neither class must still report a real disagreement.
+
+Both scopes are DERIVED — the workflow's install destinations, and the drift
+checker's own lists — rather than listed in the script, so each parse gets its
+own tests. The over-matching direction is the dangerous one: a pattern that also
+matched the workflow's `test -f` verify step would claim artifacts the workflow
+never installs and silence the only line worth printing.
 """
 from __future__ import annotations
 
@@ -97,6 +101,38 @@ def test_real_workflow_parses_and_scopes_a_strict_subset():
 
 
 # ---------------------------------------------------------------------------
+# Deriving the fleet-mirror scope from the drift checker
+# ---------------------------------------------------------------------------
+
+def test_fleet_mirrored_is_the_drift_checkers_own_lists_by_basename():
+    """The three artifacts whose manifest drift was mistaken for a defect are
+    all in here — their record is the fleet, not this manifest."""
+    mirrored = stage_runner.fleet_mirrored()
+    assert mirrored, "no fleet-mirrored basenames read out of the drift checker"
+    for owned in ("ktp_cvar.amxx", "KTPGrenadeLoadout.amxx", "dodx_ktp_i386.so"):
+        assert owned in mirrored
+    assert "/" not in "".join(mirrored), "paths must be reduced to basenames"
+
+
+def test_fleet_mirrored_is_none_when_the_drift_checker_cannot_be_loaded(tmp_path):
+    """Same distinction as the workflow side, and it needed its own test: a
+    `None`-vs-empty bug here is invisible to any test that hands `disk_flag` a
+    `None` directly."""
+    assert stage_runner.fleet_mirrored(tmp_path / "absent.py") is None
+    assert stage_runner.fleet_mirrored(tmp_path) is None
+    broken = tmp_path / "broken.py"
+    broken.write_text("STACK_FILES = ['a']\n", encoding="utf-8")  # no PLUGINS_STRICT
+    assert stage_runner.fleet_mirrored(broken) is None
+
+
+def test_fleet_mirrored_excludes_the_test_mode_builds():
+    """The sync tool refuses to touch these, so the manifest IS their record and
+    a disagreement on one is real. Overlap here would silence that."""
+    mirrored = stage_runner.fleet_mirrored()
+    assert not (mirrored & stage_runner.TESTMODE_PLUGINS)
+
+
+# ---------------------------------------------------------------------------
 # The flag itself
 # ---------------------------------------------------------------------------
 
@@ -116,8 +152,8 @@ def test_unstaged_artifact_is_not_a_disagreement():
     assert stage_runner.disk_flag("Gamma.amxx", MD5_A, "-", set()) == ""
 
 
-def test_disagreement_still_reports_for_an_artifact_the_workflow_leaves_alone():
-    flag = stage_runner.disk_flag("Gamma.amxx", MD5_A, MD5_B, {"Alpha.amxx"})
+def test_disagreement_still_reports_for_an_artifact_in_neither_class():
+    flag = stage_runner.disk_flag("Gamma.amxx", MD5_A, MD5_B, {"Alpha.amxx"}, {"Beta.amxx"})
     assert "MANIFEST DISAGREES WITH DISK" in flag
 
 
@@ -127,9 +163,28 @@ def test_disagreement_is_suppressed_for_a_workflow_rebuilt_artifact():
     assert "rebuilt per run" in flag
 
 
+def test_disagreement_is_suppressed_for_a_fleet_mirror():
+    flag = stage_runner.disk_flag("Beta.amxx", MD5_A, MD5_B, {"Alpha.amxx"}, {"Beta.amxx"})
+    assert "MANIFEST DISAGREES WITH DISK" not in flag
+    assert "fleet mirror" in flag
+
+
+def test_workflow_rebuilt_wins_when_an_artifact_is_in_both():
+    """Disjoint by construction today, and the sync tool asserts that. If they
+    ever overlap, disk holds whatever the last run installed."""
+    flag = stage_runner.disk_flag("Alpha.amxx", MD5_A, MD5_B, {"Alpha.amxx"}, {"Alpha.amxx"})
+    assert "rebuilt per run" in flag
+
+
 def test_unreadable_workflow_keeps_the_warning_and_says_so():
     """Fail towards printing. The scope is an improvement on the warning, not a
     precondition for it."""
     flag = stage_runner.disk_flag("Alpha.amxx", MD5_A, MD5_B, None)
     assert "MANIFEST DISAGREES WITH DISK" in flag
     assert "could not read the Tier-2 workflow" in flag
+
+
+def test_unreadable_drift_checker_keeps_the_warning_and_says_so():
+    flag = stage_runner.disk_flag("Beta.amxx", MD5_A, MD5_B, {"Alpha.amxx"}, None)
+    assert "MANIFEST DISAGREES WITH DISK" in flag
+    assert "could not read the drift checker" in flag

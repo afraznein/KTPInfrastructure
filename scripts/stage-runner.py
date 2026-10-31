@@ -41,7 +41,10 @@ move that gate; only the workflow's pin can. Staging still earns its keep: it is
 what `stage-wave.py --expect-runner` reads, and what a suite run outside the
 workflow falls back to. One consequence shows up in `--show`: for an artifact
 the workflow rebuilds, a manifest/disk md5 disagreement is the steady state
-rather than a fault, because each run bakes a fresh per-minute BUILD_TIME.
+rather than a fault, because each run bakes a fresh per-minute BUILD_TIME. The
+same goes for a stack file `sync-runner-stack.py` mirrors from the fleet -- its
+record is the fleet, not this manifest -- so `--show` names both cases instead
+of calling either one drift.
 
 Ordering, which matters: restage the runner only AFTER a wave has activated and
 post-activation verify passes, because the runner mirrors the LIVE fleet. The
@@ -75,6 +78,7 @@ than failing.
 import argparse
 import getpass
 import hashlib
+import importlib.util
 import json
 import os
 import posixpath
@@ -107,9 +111,9 @@ DLLS_DIR = "dod/addons/ktpamx/dlls"
 # STACK_FILES confirms the split path.
 CORE_BASENAMES = {"ktpamx_i386.so"}
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 TIER2_WORKFLOW = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    ".github", "workflows", "tier2-integration.yml",
+    os.path.dirname(HERE), ".github", "workflows", "tier2-integration.yml"
 )
 
 # Only the install destination, never a path the workflow merely checks for: a
@@ -136,13 +140,39 @@ def workflow_rebuilt(path=TIER2_WORKFLOW):
     return {m.group(1) for m in _WORKFLOW_INSTALL_RE.finditer(text)}
 
 
-def disk_flag(name, disk, manifest_md5, rebuilt):
+DRIFT_CHECKER = os.path.join(HERE, "ktp-tier2-stack-drift.py")
+
+
+def fleet_mirrored(path=DRIFT_CHECKER):
+    """Artifacts `sync-runner-stack.py` mirrors from the fleet, by basename.
+
+    Their record is the fleet, not this manifest, so a difference here says
+    nothing -- and saying it anyway is how a healthy runner got written up as a
+    three-artifact defect. Read from the drift checker the sync tool reads, for
+    the same reason: one list, not a fourth copy.
+    """
+    try:
+        spec = importlib.util.spec_from_file_location("ktp_tier2_stack_drift", path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        paths = list(mod.STACK_FILES) + list(mod.PLUGINS_STRICT)
+    # Its top level exits when paramiko is absent, and an unreadable sibling
+    # must not take `--show` down with it.
+    except (OSError, SystemExit, AttributeError):
+        return None
+    return {posixpath.basename(p) for p in paths}
+
+
+def disk_flag(name, disk, manifest_md5, rebuilt, mirrored=frozenset()):
     """What to say about one artifact's manifest-vs-disk comparison.
 
-    The disagreement line used to be unscoped, so it fired on every artifact the
-    workflow rebuilds -- each run bakes a fresh per-minute BUILD_TIME, so those
-    can never match what was staged, and a reader chasing the warning finds
-    nothing wrong.
+    The disagreement line used to be unscoped, so it fired on everything whose
+    record is deliberately somewhere else -- the plugins the workflow rebuilds
+    per run (each baking a fresh BUILD_TIME, so they can never match what was
+    staged) and the stack files mirrored from the fleet. A reader chasing either
+    finds nothing wrong.
     """
     if disk == "ABSENT":
         return "  <-- not on the runner"
@@ -150,8 +180,14 @@ def disk_flag(name, disk, manifest_md5, rebuilt):
         return ""
     if rebuilt is None:
         return "  <-- MANIFEST DISAGREES WITH DISK (could not read the Tier-2 workflow)"
+    # Workflow first: when a file is both, its bytes are whatever the last run
+    # installed, so that is the honest thing to say about it.
     if name in rebuilt:
         return "  <-- rebuilt per run by the Tier-2 workflow; not the build the gate tests"
+    if mirrored is None:
+        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the drift checker)"
+    if name in mirrored:
+        return "  <-- fleet mirror, synced by sync-runner-stack.py; this manifest is not its record"
     return "  <-- MANIFEST DISAGREES WITH DISK"
 
 
@@ -227,12 +263,13 @@ def show(ssh):
         if len(p) == 2:
             on_disk[posixpath.basename(p[1])] = p[0].lower()
     rebuilt = workflow_rebuilt()
+    mirrored = fleet_mirrored()
     print(f"{'artifact':<26} {'version':<12} {'manifest md5':<34} on-disk")
     for n in names:
         e = man.get(n, {})
         disk = on_disk.get(n, "ABSENT")
         mmd5 = e.get("md5", "-")
-        flag = disk_flag(n, disk, mmd5, rebuilt)
+        flag = disk_flag(n, disk, mmd5, rebuilt, mirrored)
         print(f"{n:<26} {e.get('version','-'):<12} {mmd5:<34} {disk}{flag}")
     return man
 
