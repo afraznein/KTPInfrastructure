@@ -211,6 +211,8 @@ document, which is how four of them sat here unlisted until 2026-10-12.
 | `ktp-corpus-push.timer` / `-denver` | yes (2026-09-16) | corpus pushes stop silently |
 | `ktp-roster-history-audit.timer` | yes (2026-09-16) | audit stops silently |
 | `ktp-identity-reconcile.timer` | yes (2026-09-16) | the *service* has `OnFailure=`, so a failing run alerts; a timer that stops firing does not |
+| `ktp-install-freshness.timer` | yes (2026-10-13) | nothing reports that the box has drifted from the repo — and the drift this job exists to find is itself silent, so a stopped timer and a clean estate produce the same output. A failing RUN alerts (`OnFailure=` via `dropins/ktp-install-freshness.service.d/`), and `SuccessExitStatus=0` only, so a drift finding is a failure by design. 🔴 **THIS ROW IS THE ONE PLACE TO READ BEFORE TRUSTING THAT LIST: the entry names a unit this repo marks `⛔ NOT INSTALLED OR ENABLED — proposal` on the timer's own first line.** The `CRITICAL_TIMERS` leg flags anything that is not `active` **and** `enabled`, so an entry for a unit nobody installed is an hourly page that can never clear by itself — the one failure mode that trains a reader to skim this report. ➡️ **Settle it on the box, not here:** `systemctl cat ktp-install-freshness.timer` (`show` on a nonexistent unit answers like a stopped one), then `grep -c 'ktp-install-freshness' /var/lib/ktp-data-server-health.json`. ⚠️ The entry was added *so the units could be installed* — the runbook rule below requires a timer and its entry in one change, and the entry went first, which is the rule met in the order that leaves this gap |
+| `ktp-map-coefficients.timer` | yes (2026-10-14) | the weekly refit stops, in the quietest way available: it only ever PROPOSES, never writing to `main`, so the committed coefficient table stays put and keeps serving — indistinguishable from "the maps have not changed". The 2026-10-14 dry run is the measure: after weeks unfitted it proposed 13 changes, one of them a map whose alive coefficient had halved. ⚠️ **No `OnFailure=`** — no unit-level directive and no drop-in under `scripts/systemd/dropins/`, against `ktp-stats-export.service.d/` as a control that has one — so a failing run reaches only the hourly sweep's generic `failed-unit:` leg, which covers it purely because a weekly oneshot sits `failed` long enough to be sampled. `TimeoutStartSec=3h`, `Mon 14:00 UTC` |
 | `ktp-monday-reminder.timer` | **no** | reminder stops; human-visible |
 | `ktp-reports.timer` | **no** | report regeneration stops; the last files stay in place and read current. A failing RUN alerts (`OnFailure=` present) — the journal only says `exit-code`, and the cause is in `/var/log/ktp-report-service.log`. Fires at `:04,:19,:34,:49` |
 | `ktp-telemetry-export.timer` | **no** | the baseline export stops; the last baseline stays in place and reads current, so the site's telemetry page goes stale with no error. A failing RUN alerts (`OnFailure=` present). Hourly at `:40` |
@@ -226,6 +228,20 @@ still had no row in this one.** ➡️ **So reconcile the table against the live
 against a remembered figure**, and scope any grep to this table: `ktp-telemetry-export`
 resolved once in this file and the hit was a prose mention 140 lines below, which reads
 exactly like a row.
+
+🔴 **AND IT HAPPENED AGAIN WITHIN A FORTNIGHT, WHICH IS WHY THE RULE NOW HAS A TEST RATHER
+THAN A PARAGRAPH.** `ktp-install-freshness.timer` (2026-10-13) and `ktp-map-coefficients.timer`
+(2026-10-14) both joined `CRITICAL_TIMERS` with a reason written into the array and no row in
+this table — each in a change that cited this document — so the list named fourteen timers
+while the table described twelve of them. 🔑 **The two directions are not symmetrical and only
+one of them is a defect:** a row marked `**no**` for a timer outside `CRITICAL_TIMERS` is the
+table doing its job, so the invariant is one-way — **every entry in the list has a row here**,
+and not the reverse. ➡️ **Held by `tests/unit/test_alert_coverage_timer_table.py`**, which
+parses the array out of the shipped script (dropping its comments, which name units that are
+deliberately unlisted) and the first column out of this table, so the next entry added without
+a row fails CI instead of being found by a sweep. ⚠️ **`config-tests.yml`'s path filter now
+carries this file**, because the guard reads a doc and that job's filter was `scripts/`-shaped:
+without it, deleting a row here would skip the only job that runs the guard.
 
 The distinction that matters: `OnFailure=` fires when a unit **runs and fails**.
 Nothing fires when a unit **stops running at all**. Five of the incidents in the
@@ -377,8 +393,22 @@ Ranked by what they would cost during Season 10.
    audit's gate, which triages a state file older than 6h and any item open more
    than 3 days — the latter being the ten-day identity-reconcile shape, which
    presence-reporting alone never surfaced.
-5. **`ktp-restart-drift.py` runs on no schedule.** The drift it was written to
-   find is real and, as of 2026-08-30, still open.
+5. ~~**`ktp-restart-drift.py` runs on no schedule.**~~ The schedule half is
+   false, and has been since the weekly audit became a workflow.
+   `.github/workflows/fleet-audit.yml` runs it every Monday
+   (`cron: "0 9 * * 1"`) as the `restart_drift` step, and `fleet-audit-gate.sh`
+   reads the result on two legs rather than printing it: a CHANGE in what the
+   check reports (`DRIFT:` / `UNREACHABLE` lines diffed against
+   `ktp-restart-drift-ci.txt`), and the check failing to complete at all, which
+   it keys on the absence of a `^hosts reached:` line — a broken check and a
+   clean fleet both produce no findings otherwise. ⚠️ **It runs from the CI
+   checkout and is not expected on the box**; that is the point of moving the
+   audit into a workflow, since `/opt/ktp-infra` never pulls, so a `find` for it
+   under `/usr/local/bin` returning nothing is the design and not a gap.
+   ⛔ **Do not re-file this as an alerting hole.** The hole was "nothing runs
+   it", and something does. **What this entry no longer says anything about is
+   whether a divergence is currently REPORTED** — that is the audit's output,
+   not this file's: read the newest run's `restart-drift.txt` artifact.
 6. **Narrowed 2026-09-21, not closed: an age is only as old as the watcher that
    stamped it.** `since` in `/var/lib/ktp-data-server-health.json` is the first
    run of the health check that *saw* an item — a detection date. `systemctl

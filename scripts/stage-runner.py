@@ -209,8 +209,10 @@ MANIFEST = os.environ.get(
 )
 
 # Plugins the runner runs as KTP_TEST_MODE builds. Mirrors PLUGINS_TESTMODE in
-# ktp-tier2-stack-drift.py and RUNNER_TESTMODE_PLUGINS in stage-wave.py --
-# three lists, one fact. Keep them in step.
+# ktp-tier2-stack-drift.py exactly. stage-wave.py's RUNNER_TESTMODE_PLUGINS is
+# deliberately one short -- KTPHudObserver is externally maintained and is never
+# staged or waved from here -- so "keep the three in step" is wrong and cost a
+# reader a measurement; it is two identical lists and one narrower one.
 TESTMODE_PLUGINS = {"KTPMatchHandler.amxx", "KTPPracticeMode.amxx", "KTPHudObserver.amxx"}
 
 

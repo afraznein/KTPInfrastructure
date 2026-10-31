@@ -16,8 +16,25 @@ the act of staging instead of from someone remembering. Resolution order:
                      running the suite by hand) still asserts *something*
                      rather than silently skipping the check.
 
-The version cannot be read out of the compiled `.amxx` (XXMA+zlib), which is
-why the stager has to write it down and the test cannot just discover it.
+⛔ This file used to say the version "cannot be read out of the compiled `.amxx`
+(XXMA+zlib), which is why the stager has to write it down". That is false and
+`scripts/stage-runner.py` corrected it on 2026-08-10: it cannot be read by
+`strings`, which is where the belief came from, but inflating the container and
+reading cell-form yields it directly, which is what `scripts/amxx_version.py`
+does and what the stager now uses to DERIVE what it records. So the manifest is
+provenance -- a durable record of what was staged, when and by whom -- and not
+a workaround for an unreadable artifact. Keep it for the resolution order
+above; do not re-justify it with the claim.
+
+⚠️ `staged_md5()` is read by nothing in this repo, and that is the current
+state rather than an oversight to fix blind. A suite assertion comparing
+manifest to disk would be permanently red for most of what the manifest holds:
+the Tier-2 workflow rebuilds the plugins it gates on every run (each baking a
+fresh per-minute BUILD_TIME), and `sync-runner-stack.py` mirrors the stack files
+from the fleet, whose record is the fleet. `stage-runner.py --show` is the one
+place that comparison is made, and it classifies those two cases rather than
+calling either drift. Before wiring this into a test, settle which artifacts are
+left -- the manifest is their record and only theirs.
 """
 
 from __future__ import annotations
