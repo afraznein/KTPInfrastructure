@@ -76,9 +76,19 @@ def vd(monkeypatch, tmp_path):
 def test_the_script_exists_and_declares_distinct_exit_codes(vd) -> None:
     """Without this every assertion below could pass on a renamed constant."""
     assert SCRIPT.is_file()
-    codes = (vd.EXIT_GREEN, vd.EXIT_NOT_GREEN, vd.EXIT_FATAL, vd.EXIT_NO_CREDENTIAL)
-    assert len(set(codes)) == 4, "a verdict and a refusal must not share an exit code"
+    codes = (vd.EXIT_GREEN, vd.EXIT_NOT_GREEN, vd.EXIT_FATAL,
+             vd.EXIT_FRESHNESS_REFUSED, vd.EXIT_NO_CREDENTIAL)
+    assert len(set(codes)) == 5, "a verdict and a refusal must not share an exit code"
     assert vd.EXIT_NO_CREDENTIAL != 0
+
+
+def test_the_credential_refusal_does_not_take_the_freshness_guards_code(vd) -> None:
+    """`require_current` raises SystemExit(3), and the deploy ledger's verify leg
+    reads "3 = the freshness guard REFUSED and the install did not take". A
+    second meaning for 3 would make that reading wrong without changing it."""
+    guard = (REPO / "scripts" / "ktp_script_freshness.py").read_text(encoding="utf-8")
+    assert f"raise SystemExit({vd.EXIT_FRESHNESS_REFUSED})" in guard
+    assert vd.EXIT_NO_CREDENTIAL != vd.EXIT_FRESHNESS_REFUSED
 
 
 def test_home_redirection_is_live(vd, tmp_path) -> None:

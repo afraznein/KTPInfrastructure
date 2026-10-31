@@ -7,8 +7,12 @@
   about the fleet. Hit on 2026-10-26: the overdue 03:00 verify printed
   `fleet SSH password not configured` and ended, and nothing in the status said so.
   The exit codes are now stated in the module docstring and distinct: `0` GREEN, `1` not
-  GREEN, `2` fatal (reference unreachable or empty manifest), `3` refused before starting.
-  The refusal says `NO HOST WAS CONTACTED AND NO VERDICT WAS REACHED`.
+  GREEN, `2` fatal (reference unreachable or empty manifest), `3` reserved -- that is
+  `ktp_script_freshness.require_current()`'s `SystemExit(3)`, which `dpl-1b8f`'s verify leg
+  already reads as "the freshness guard REFUSED and the install did not take" -- and `4`
+  refused before starting. The refusal says
+  `NO HOST WAS CONTACTED AND NO VERDICT WAS REACHED`. A test pins 3 against the literal in
+  the guard, so neither side can take the other's code silently.
 - Every missing credential is named in one pass instead of the first one only. The rcon
   password's own absence was reachable only after supplying the SSH password, which is a
   second round trip against a fleet already waiting on a verdict.

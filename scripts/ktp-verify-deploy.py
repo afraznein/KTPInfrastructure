@@ -54,7 +54,9 @@ must not look like a run that found nothing wrong:
   0  GREEN
   1  not GREEN (red/yellow/unreachable) — a verdict
   2  fatal: the reference host was unreachable or returned an empty manifest
-  3  refused before starting: a required credential is not configured
+  3  the freshness guard refused — raised by ktp_script_freshness, not here,
+     and already documented as 3 in the deploy ledger's verify leg
+  4  refused before starting: a required credential is not configured
 
 The credential is $KTP_FLEET_SSH_PASSWORD (a password; $KTP_FLEET_SSH_KEY is
 not read here), plus $KTP_RCON_PASSWORD for --check-runtime.
@@ -99,7 +101,12 @@ GAME_USER = "dodserver"
 EXIT_GREEN = 0
 EXIT_NOT_GREEN = 1
 EXIT_FATAL = 2
-EXIT_NO_CREDENTIAL = 3
+# Not ours to raise: ktp_script_freshness.require_current() does. Named here so
+# nothing in this file takes it -- the deploy ledger's verify leg reads "3 = the
+# freshness guard REFUSED and the install did not take", and a second meaning
+# would make that reading wrong without changing a line of it.
+EXIT_FRESHNESS_REFUSED = 3
+EXIT_NO_CREDENTIAL = 4
 
 # label -> (env var, dotfile). The rcon one is the game-server rcon password,
 # uniform fleet-wide per dodserver.cfg.
