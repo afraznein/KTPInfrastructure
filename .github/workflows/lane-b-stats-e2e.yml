@@ -96,12 +96,15 @@ on:
         default: main
       seccomp:
         description: >-
-          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
-          Docker seccomp profile for the hlds boot container only. Empty (the
-          default) is docker's default profile, i.e. today's behaviour. Set it
-          to `unconfined` to test whether the sandbox is what refuses hlds's
-          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
-          while every input under our control stayed identical.
+          Docker seccomp profile for the hlds boot container only. Defaults to
+          the narrow i386 profile, which is what makes hlds boot at all on
+          kernels where docker's default filter refuses the `socketcall`
+          multiplexer (measured 2026-10-29: syscall 102 denied, the direct
+          `socket` 359 allowed, so a 32-bit glibc cannot open a UDP socket).
+          Pass an empty string for docker's default filter, or `unconfined` for
+          no filter. This default reaches `workflow_dispatch` and
+          `workflow_call` only; the nightly gets the `LANE_B_SECCOMP` env
+          fallback, which is why that line names the profile too.
         required: false
         type: string
         default: 'ci/seccomp/lane-b-i386.json'
@@ -181,12 +184,15 @@ on:
         default: ''
       seccomp:
         description: >-
-          Defaults to the narrow profile, which is what makes hlds boot at all on kernels where docker's default filter refuses the i386 socketcall multiplexer. Pass an empty string for docker's default filter, or `unconfined` for no filter.
-          Docker seccomp profile for the hlds boot container only. Empty (the
-          default) is docker's default profile, i.e. today's behaviour. Set it
-          to `unconfined` to test whether the sandbox is what refuses hlds's
-          32-bit socket call: the boot has died with ENOSYS since 2026-10-26
-          while every input under our control stayed identical.
+          Docker seccomp profile for the hlds boot container only. Defaults to
+          the narrow i386 profile, which is what makes hlds boot at all on
+          kernels where docker's default filter refuses the `socketcall`
+          multiplexer (measured 2026-10-29: syscall 102 denied, the direct
+          `socket` 359 allowed, so a 32-bit glibc cannot open a UDP socket).
+          Pass an empty string for docker's default filter, or `unconfined` for
+          no filter. This default reaches `workflow_dispatch` and
+          `workflow_call` only; the nightly gets the `LANE_B_SECCOMP` env
+          fallback, which is why that line names the profile too.
         required: false
         type: string
         default: 'ci/seccomp/lane-b-i386.json'
@@ -273,7 +279,15 @@ jobs:
       # defaulting it to the infrastructure ref would silently inject on every
       # scheduled run.
       ENGINE_REF: ${{ inputs.engine_ref || '' }}
-      LANE_B_SECCOMP: ${{ inputs.seccomp || '' }}
+      # `inputs` is EMPTY on a `schedule` event, so an input default never
+      # reaches a nightly -- which is why every other value here carries its own
+      # literal fallback. This one kept the '' it had when the input was added
+      # as an experiment, so making the narrow profile the input default armed
+      # every trigger except the only one nobody dispatches: the 2026-10-30
+      # nightly printed `seccomp=default` and died on ENOSYS ×3, same as the
+      # four before it. '' is a MEANINGFUL value here (docker's own filter), so
+      # `|| 'ci/...'` is wrong -- it would override a caller who asked for it.
+      LANE_B_SECCOMP: ${{ github.event_name == 'schedule' && 'ci/seccomp/lane-b-i386.json' || inputs.seccomp }}
       ENGINE_REPO: ${{ github.repository_owner }}/KTP-ReHLDS
       MAP_NAME: ${{ inputs.map_name || 'dod_anzio' }}
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
