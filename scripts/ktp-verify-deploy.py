@@ -47,6 +47,20 @@ Defaults:
   --out           -                 (stdout)
   --scope         all
   --check-runtime off (extra UDP rcon traffic per instance)
+
+Exit codes. 0 and 1 are a verdict ABOUT THE FLEET; anything higher says no
+verdict was reached, and they are distinct because a run that contacted no host
+must not look like a run that found nothing wrong:
+  0  GREEN
+  1  not GREEN (red/yellow/unreachable) — a verdict
+  2  fatal: the reference host was unreachable or returned an empty manifest
+  3  the freshness guard refused — raised by ktp_script_freshness, not here,
+     and already documented as 3 in the deploy ledger's verify leg
+  4  refused before starting: a required credential is not configured
+
+The credential is $KTP_FLEET_SSH_PASSWORD (a password; $KTP_FLEET_SSH_KEY is
+not read here), plus $KTP_RCON_PASSWORD for --check-runtime.
+scripts/run-fleet-script.py supplies the first from ktp_hosts.
 """
 
 from __future__ import annotations
@@ -83,23 +97,79 @@ GAME_HOSTS = [
 GAME_USER = "dodserver"
 
 
-def _resolve_secret(env_var: str, dotfile: str, label: str) -> str:
-    """Env var, then ~ dotfile — never hardcoded. This file is TRACKED in a
-    public repo; the pre-2026-07-07 deployed copy carried real values inline
-    and was one careless `git add` from repeating the 2026-05-31 leak."""
+# A verdict about the fleet, versus no verdict at all. See the docstring.
+EXIT_GREEN = 0
+EXIT_NOT_GREEN = 1
+EXIT_FATAL = 2
+# Not ours to raise: the freshness guard does, as SystemExit(3). Named here so
+# nothing in this file takes it -- the deploy ledger's verify leg reads "3 = the
+# freshness guard REFUSED and the install did not take", and a second meaning
+# would make that reading wrong without changing a line of it.
+# (Spelled without a trailing paren on purpose: test_fleet_script_freshness.py
+# locates the guard's call site as the first line whose text looks like a call
+# to it, so any mention above main() reads to that test as gating before
+# parse_args -- which it then reports as "--help would need the network".)
+EXIT_FRESHNESS_REFUSED = 3
+EXIT_NO_CREDENTIAL = 4
+
+# label -> (env var, dotfile). The rcon one is the game-server rcon password,
+# uniform fleet-wide per dodserver.cfg.
+CREDENTIALS = {
+    "fleet SSH password": ("KTP_FLEET_SSH_PASSWORD", "~/.ktp_fleet_ssh_password"),
+    "rcon password":      ("KTP_RCON_PASSWORD", "~/.ktp_rcon_password"),
+}
+
+# Resolved by resolve_credentials() from main(), never at import. Import-time
+# resolution exited before argparse could run, so `--help` was unreadable; it
+# demanded the rcon password from runs that issue no rcon; and it reported only
+# the first missing value, which is how the rcon leg stayed hidden behind the
+# SSH one. Empty here means nothing has resolved them yet, and every path that
+# needs one raises rather than connecting.
+GAME_PASS = ""
+RCON_PASS = ""
+
+
+def _lookup_secret(env_var: str, dotfile: str) -> str:
+    """Env var, then ~ dotfile, else empty — never hardcoded. This file is
+    TRACKED in a public repo; the pre-2026-07-07 deployed copy carried real
+    values inline and was one careless `git add` from repeating the 2026-05-31
+    leak."""
     val = os.environ.get(env_var, "")
-    if not val:
-        p = os.path.expanduser(dotfile)
-        if os.path.exists(p):
-            val = open(p).read().strip()
-    if not val:
-        sys.exit(f"{label} not configured — set ${env_var} or write it to {dotfile}")
-    return val
+    if val:
+        return val
+    p = os.path.expanduser(dotfile)
+    if os.path.exists(p):
+        try:
+            with open(p) as f:
+                return f.read().strip()
+        except OSError:
+            return ""
+    return ""
 
 
-GAME_PASS = _resolve_secret("KTP_FLEET_SSH_PASSWORD", "~/.ktp_fleet_ssh_password", "fleet SSH password")
-# Game-server rcon password — uniform fleet-wide per dodserver.cfg.
-RCON_PASS = _resolve_secret("KTP_RCON_PASSWORD", "~/.ktp_rcon_password", "rcon password")
+def resolve_credentials(need_rcon: bool) -> list[str]:
+    """Populate GAME_PASS/RCON_PASS; return the labels this invocation requires
+    and could not find. An empty list means the run is fully configured.
+
+    Returns all of them rather than exiting on the first: being stopped by the
+    second credential after supplying the first is another round trip against a
+    fleet already waiting on a verdict.
+    """
+    global GAME_PASS, RCON_PASS
+    required = ["fleet SSH password"]
+    if need_rcon:
+        required.append("rcon password")
+    found: dict[str, str] = {}
+    missing: list[str] = []
+    for label in required:
+        val = _lookup_secret(*CREDENTIALS[label])
+        if val:
+            found[label] = val
+        else:
+            missing.append(label)
+    GAME_PASS = found.get("fleet SSH password", "")
+    RCON_PASS = found.get("rcon password", "")
+    return missing
 
 # What to walk under each instance's addons/ktpamx/. Glob patterns relative
 # to the dod/ root. Engine check (serverfiles/*.so) is opt-in via --include-engine.
@@ -135,17 +205,25 @@ KNOWN_PARTIAL_RUNTIME: set[str] = {
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
 
-def ssh_connect(host: str, user: str = GAME_USER, password: Optional[str] = GAME_PASS,
+def ssh_connect(host: str, user: str = GAME_USER, password: Optional[str] = None,
                 retries: int = 3) -> Optional[paramiko.SSHClient]:
-    """Connect with retry. Returns None if all attempts fail."""
+    """Connect with retry. Returns None if all attempts fail.
+
+    None for an unreachable host is deliberate — the caller marks that instance
+    unreachable. An UNRESOLVED credential is a different thing and raises: the
+    old key-auth fallback here was unreachable (import-time resolution exited
+    first) and would now be the quiet path a bare run takes to contact nothing.
+    """
+    if password is None:
+        password = GAME_PASS
+    if not password:
+        raise RuntimeError("fleet SSH password not resolved — resolve_credentials() "
+                           "must run before any host is contacted")
     for attempt in range(retries):
         try:
             ssh = paramiko.SSHClient()
             ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            if password:
-                ssh.connect(host, username=user, password=password, timeout=15)
-            else:
-                ssh.connect(host, username=user, timeout=15)
+            ssh.connect(host, username=user, password=password, timeout=15)
             return ssh
         except Exception as e:
             if attempt == retries - 1:
@@ -284,7 +362,7 @@ class _RconClient:
         return body[1:].rstrip(b"\x00").decode("utf-8", errors="replace")
 
 
-def collect_runtime_versions(host: str, port: int, password: str = RCON_PASS,
+def collect_runtime_versions(host: str, port: int, password: Optional[str] = None,
                              timeout: float = 4.0) -> dict[str, dict[str, str]]:
     """Run `amx_ktp_versions` rcon, return {plugin_display_name: {version, sha, build_time}}.
 
@@ -303,8 +381,15 @@ def collect_runtime_versions(host: str, port: int, password: str = RCON_PASS,
     when defaults are used and the host stalls. For 24 sequential instances
     this caps the run at ~3.75 minutes.
 
-    Raises RconError on connectivity / protocol failure.
+    Raises RconError on connectivity / protocol failure, and on an unresolved
+    password — an empty one would authenticate nothing and come back as a
+    protocol error from the host.
     """
+    if password is None:
+        password = RCON_PASS
+    if not password:
+        raise RconError("rcon password not resolved — resolve_credentials(need_rcon=True) "
+                        "must run before any rcon query")
     client = _RconClient(host=host, port=port, password=password, timeout=timeout)
     output = client.execute("amx_ktp_versions")
     return _parse_amx_ktp_versions(output)
@@ -585,6 +670,30 @@ def main() -> int:
     require_current(__file__,
                     purpose="issue the verdict a wave is judged by")
 
+    # Before anything else that could be mistaken for work. Every wave is signed
+    # off against this script's verdict, so "no credential" has to be its own
+    # exit code and its own banner: the 2026-10-26 run printed one line, the
+    # exit code was not distinguishable from a verdict, and the fleet was one
+    # trusted exit status away from being reported healthy on a run that
+    # contacted nothing.
+    missing = resolve_credentials(need_rcon=args.check_runtime)
+    if missing:
+        print("[verify-deploy] REFUSING TO RUN — NO HOST WAS CONTACTED AND NO "
+              "VERDICT WAS REACHED.", file=sys.stderr)
+        for label in missing:
+            env_var, dotfile = CREDENTIALS[label]
+            print(f"[verify-deploy]   missing {label}: set ${env_var} or write it "
+                  f"to {dotfile}", file=sys.stderr)
+        if os.environ.get("KTP_FLEET_SSH_KEY", "").strip():
+            print("[verify-deploy]   $KTP_FLEET_SSH_KEY is set and this script does "
+                  "not read it — it authenticates with a password, and "
+                  "run-fleet-script.py stops importing one once a key is present.",
+                  file=sys.stderr)
+        print(f"[verify-deploy] exit {EXIT_NO_CREDENTIAL} — this is NOT a green "
+              "fleet. scripts/run-fleet-script.py supplies the SSH password from "
+              "ktp_hosts.", file=sys.stderr)
+        return EXIT_NO_CREDENTIAL
+
     report = verify_fleet(args.reference, args.scope, args.include_engine,
                           check_runtime=args.check_runtime)
 
@@ -602,8 +711,8 @@ def main() -> int:
     print(f"\n[verify-deploy] overall={overall} {dict(counts)}", file=sys.stderr)
     if "error" in report:
         print(f"[verify-deploy] FATAL: {report['error']}", file=sys.stderr)
-        return 2
-    return 0 if overall == "GREEN" else 1
+        return EXIT_FATAL
+    return EXIT_GREEN if overall == "GREEN" else EXIT_NOT_GREEN
 
 
 if __name__ == "__main__":
