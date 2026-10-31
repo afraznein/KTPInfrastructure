@@ -101,10 +101,14 @@ GAME_USER = "dodserver"
 EXIT_GREEN = 0
 EXIT_NOT_GREEN = 1
 EXIT_FATAL = 2
-# Not ours to raise: ktp_script_freshness.require_current() does. Named here so
+# Not ours to raise: the freshness guard does, as SystemExit(3). Named here so
 # nothing in this file takes it -- the deploy ledger's verify leg reads "3 = the
 # freshness guard REFUSED and the install did not take", and a second meaning
 # would make that reading wrong without changing a line of it.
+# (Spelled without a trailing paren on purpose: test_fleet_script_freshness.py
+# locates the guard's call site as the first line whose text looks like a call
+# to it, so any mention above main() reads to that test as gating before
+# parse_args -- which it then reports as "--help would need the network".)
 EXIT_FRESHNESS_REFUSED = 3
 EXIT_NO_CREDENTIAL = 4
 
