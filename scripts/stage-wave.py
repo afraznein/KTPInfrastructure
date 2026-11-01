@@ -75,13 +75,24 @@ holding it true):
      The md5 answers "is this the same file" and never "has this moved since",
      and the base is a fact only the person running this command holds -- this
      tool has no idea which repo the artifact came out of.
-     It cannot be recovered afterwards. NONE of these artifacts is
-     byte-reproducible: `.amxx` bakes a per-minute BUILD_TIME and ReHLDS bakes a
-     build-id and `__DATE__`, so rebuilding candidate commits and comparing md5s
-     returns a MISMATCH for the CORRECT base and reads as "none of these built
-     it". `stats_logging.amxx`'s base is unrecoverable for exactly that reason.
-     Stage time is the last moment the base is known, which is why it is a gate
-     here and not a reminder in a checklist.
+     Reproducibility is per ARTIFACT CLASS, and reading it as "none of them"
+     discourages the one check that catches a bad build:
+       - KTPAMXX's IN-TREE plugins (`plugins/dod/stats_logging.sma`,
+         `plugins/admin.sma`) bake NEITHER a sha NOR a timestamp --
+         `ktp_version_reporter.inc` defaults KTP_BUILD_SHA and KTP_BUILD_TIME to
+         the literal "unknown" and no build script in that repo defines either --
+         so a rebuild from the same commit IS byte-identical and rebuild-and-
+         compare DOES find the base. The catch is the compiler, not the source:
+         no commit pins `amxxpc`, so the answer is only as good as the binary
+         you rebuild with.
+       - A plugin built by its OWN repo's `compile.sh` bakes a per-minute
+         KTP_BUILD_TIME, so rebuild-and-compare returns a MISMATCH for the
+         CORRECT base unless the exact UTC minute is already known.
+       - The C++ side (ReHLDS, modules) bakes a build-id and `__DATE__`, same
+         outcome.
+     Stage time is the last moment the base is known for the latter two, which is
+     why this is a gate here and not a reminder in a checklist -- and recording it
+     for the first class too is what keeps the reproducibility check cheap.
 
   8. ACTIVATION-DAY GATE. A staged `.new` swaps in at the next 03:00 ET, so the
      rule is judged by the day it ACTIVATES, not the day it is staged: fleet
@@ -192,10 +203,16 @@ STAMP_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\dZ")
 def build_stamp(path):
     """KTP_BUILD_TIME baked into a compiled .amxx, or None.
 
-    The one value that makes an artifact rebuildable, and the one that cannot be
-    recovered after the fact: `.amxx` md5s are not reproducible across minutes,
-    so an artifact whose stamp went unrecorded cannot be rebuilt to its own md5
-    even from the exact commit. Read it while the file is in hand.
+    The one value that makes a STAMPED artifact rebuildable, and the one that
+    cannot be recovered after the fact: a `.amxx` built by its own repo's
+    `compile.sh` is not reproducible across minutes, so an artifact whose stamp
+    went unrecorded cannot be rebuilt to its own md5 even from the exact commit.
+    Read it while the file is in hand.
+
+    None here is not a defect. KTPAMXX's in-tree plugins define no stamp at all
+    (`ktp_version_reporter.inc` falls back to the literal "unknown"), so None
+    means "this class is byte-reproducible from its commit", not "the stamp was
+    lost" -- against the same `amxxpc`, which no commit pins.
 
     `strings` finds nothing here -- the AMX image is zlib-compressed inside the
     AMXX container, and Pawn stores a string one character per 32-bit cell. So:
@@ -516,12 +533,14 @@ def main():
                     help="The source commit this artifact was BUILT FROM, e.g. "
                          "KTPMatchHandler.amxx=afraznein/KTPMatchHandler@b891b0e. Repeatable, "
                          "and REQUIRED -- see --allow-missing-base. Written into the wave ledger "
-                         "beside the md5; it cannot be recovered afterwards, because none of "
-                         "these artifacts is byte-reproducible.")
+                         "beside the md5. For a stamped `.amxx` and for the C++ side it cannot be "
+                         "recovered afterwards; KTPAMXX's in-tree plugins ARE byte-reproducible "
+                         "from their commit, against the same amxxpc.")
     ap.add_argument("--allow-missing-base", action="store_true",
                     help="Stage without recording a build base. The ledger then says NOT "
-                         "RECORDED for that artifact -- permanently, since rebuilding candidate "
-                         "commits and comparing md5s cannot find it.")
+                         "RECORDED for that artifact -- permanently for a stamped `.amxx` or the "
+                         "C++ side, since rebuilding candidate commits and comparing md5s cannot "
+                         "find those. A KTPAMXX in-tree plugin can still be found that way.")
     ap.add_argument("--hosts", default="all",
                     help=f'Comma-separated (or "all"). Choices: {",".join(d2f.SERVERS)}')
     ap.add_argument("--ports", default="all",
@@ -684,9 +703,11 @@ def main():
     # and that second question is the one asked six weeks later. Only the person
     # running this command knows the answer -- this tool has no idea which of the
     # ~30 repos the artifact came out of -- and by the time anyone asks, it is
-    # gone: rebuilding candidates and comparing md5s returns a mismatch for the
-    # CORRECT base, because nothing here is byte-reproducible. So it is required,
-    # with a loud, explicit opt-out rather than a silent optional field.
+    # gone: for a stamped `.amxx` or the C++ side, rebuilding candidates and
+    # comparing md5s returns a mismatch for the CORRECT base. So it is required,
+    # with a loud, explicit opt-out rather than a silent optional field -- and
+    # required for KTPAMXX's reproducible in-tree plugins too, because a recorded
+    # base is what makes their rebuild-and-compare check a one-liner.
     try:
         bases = parse_base_pins(args.base)
     except ValueError as ex:
@@ -701,9 +722,10 @@ def main():
               f"{', '.join(a.basename for a in unbased)}", file=sys.stderr)
         print("The wave ledger would record the md5 and nothing about where it came from, so", file=sys.stderr)
         print('"has this moved since?" becomes unanswerable -- and it stays unanswerable, because', file=sys.stderr)
-        print("`.amxx` bakes a per-minute BUILD_TIME and ReHLDS bakes a build-id and __DATE__:", file=sys.stderr)
-        print("rebuilding candidate commits and comparing md5s returns a MISMATCH for the base", file=sys.stderr)
-        print("that actually built it. Supply it:", file=sys.stderr)
+        print("a `.amxx` from its own repo's compile.sh bakes a per-minute BUILD_TIME and the", file=sys.stderr)
+        print("C++ side bakes a build-id and __DATE__: rebuilding candidate commits and comparing", file=sys.stderr)
+        print("md5s returns a MISMATCH for the base that actually built it. (KTPAMXX's in-tree", file=sys.stderr)
+        print("plugins are the exception -- byte-reproducible against the same amxxpc.) Supply it:", file=sys.stderr)
         for a in unbased:
             guess = detect_build_base(a.local_path)
             hint = (f"   # that tree's HEAD is {guess} -- CHECK it is what you built"
@@ -714,8 +736,9 @@ def main():
     if unbased:
         print("WARNING: --allow-missing-base -- no build base for "
               f"{', '.join(a.basename for a in unbased)}.")
-        print("  The ledger will read NOT RECORDED for these, and that is permanent: they are not")
-        print("  byte-reproducible, so the base cannot be found later by rebuilding and comparing.")
+        print("  The ledger will read NOT RECORDED for these, and for a stamped `.amxx` or the C++")
+        print("  side that is permanent: the base cannot be found later by rebuilding and comparing.")
+        print("  KTPAMXX's in-tree plugins can still be found that way, against the same amxxpc.")
 
     print(f"Artifacts ({len(artifacts)}):")
     for a in artifacts:
