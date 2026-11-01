@@ -16,6 +16,7 @@ correct alone and the chain does nothing.
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 
@@ -40,7 +41,11 @@ def block(name):
 
 
 def test_it_is_syntactically_valid():
-    p = subprocess.run([BASH, "-n", str(GUARD)], capture_output=True, text=True)
+    # A relative path with a cwd, not an absolute one: an absolute Windows path reaches
+    # bash with its separators eaten, so this leg failed off-CI while every other leg
+    # in the file passed -- a red that says nothing about the guard.
+    p = subprocess.run([BASH, "-n", GUARD.relative_to(ROOT).as_posix()],
+                       cwd=str(ROOT), capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
 
 
@@ -107,6 +112,114 @@ def test_the_session_is_read_only_on_every_query():
     gains one later."""
     assert TEXT.count("SET SESSION TRANSACTION READ ONLY") >= 2, \
         "both the scalar helper and the report path must set it"
+
+
+def test_the_read_only_proof_asks_the_server_rather_than_the_script():
+    """The directive above is a REQUEST. It binds the credential it is given and no
+    other, so on a write-capable login it is silently ineffective -- which is how an
+    estate probe read a successful CREATE TABLE as a refusal. Counting the directive in
+    this file can never see that. The proof has to come back from the server."""
+    proof = block("ktp-corpus-guard-readonly-proof")
+    assert "transaction_read_only" in proof, "the session state is never read back"
+    assert "die " in proof, "a failed proof must refuse, not log and continue"
+    # and the refusal must be keyed on a PRESENT expected value, not on the absence of
+    # an error -- an empty answer is the case that used to read as a pass
+    assert '[ "$ro" = "1" ]' in proof, "an empty or unexpected answer must not pass"
+
+
+# ---------------------------------------------------------------------------
+# Behavioural legs. Everything above reads the script; these RUN it against a
+# mysql double, because a text assertion cannot tell a proof from a sentence.
+# ---------------------------------------------------------------------------
+
+STUB = r"""#!/usr/bin/env bash
+# Test double for mysql(1). Answers only what this guard asks, from the environment, so
+# each leg of the read-only proof can be driven on its own.
+sql=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -e) sql="${2-}"; shift 2 ;;
+        *)  shift ;;
+    esac
+done
+case "$sql" in
+    *ktp_corpus_guard_no_such_variable*)
+        printf '%s\n' "${STUB_DISC-ERROR 1193 (HY000) at line 1: Unknown system variable}"
+        exit 1 ;;
+    *transaction_read_only*|*tx_read_only*) printf '%s\n' "${STUB_RO-1}" ;;
+    # order matters: the orphan predicate names ktp_matches in a subquery, so the
+    # per-stream defect counts must be matched before the sentinel's bare read
+    *WHERE*)                                printf '0
+' ;;
+    *MAX*)                                  printf '100
+' ;;
+    *ktp_matches*)                          printf '5
+' ;;
+    *COUNT*)                                printf '0
+' ;;
+esac
+"""
+
+
+def run_guard(tmp_path, **stub_env):
+    """Run the real guard with a stubbed mysql. Returns (returncode, combined output)."""
+    stub = tmp_path / "mysql"
+    stub.write_text(STUB, encoding="utf-8", newline="\n")
+    os.chmod(str(stub), 0o755)
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    settings = {
+        "KTP_CORPUS_GUARD_MYSQL": "./mysql",
+        "KTP_CORPUS_GUARD_STATE": "./state",
+        # only read on the accrual branch, which a clean stub run never takes
+        "KTP_CORPUS_GUARD_SQL": "./sql",
+        # point the relay at nothing: post_alert must never reach a network from a test,
+        # and on the data server itself the real conf IS readable
+        "KTP_CORPUS_GUARD_RELAY": "./no-such-relay.conf",
+    }
+    settings.update(stub_env)
+    rel = os.path.relpath(str(GUARD), str(tmp_path)).replace(os.sep, "/")
+    # Assignments go inside bash rather than through `env=`: `bash` on a Windows dev box
+    # can resolve to WSL, which does not inherit the parent's environment, and the guard
+    # then silently used its production defaults -- /var/lib and the real relay conf.
+    script = "".join("export %s=%s\n" % (k, shlex.quote(v)) for k, v in settings.items())
+    script += "exec bash %s\n" % shlex.quote(rel)
+    p = subprocess.run([BASH, "-c", script], cwd=str(tmp_path),
+                       capture_output=True, text=True)
+    return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+
+def test_a_read_only_session_passes_the_proof_and_the_guard_runs(tmp_path):
+    """The positive control. Without it a proof that refuses everything would look
+    like a working guard."""
+    rc, out = run_guard(tmp_path, STUB_RO="1")
+    assert "read-only proof ok" in out, out
+    assert "sentinel ok" in out, "the proof must not block a healthy run: %s" % out
+    assert rc == 0, out
+
+
+def test_a_writable_session_is_refused(tmp_path):
+    rc, out = run_guard(tmp_path, STUB_RO="0")
+    assert rc == 2, out
+    assert "did not read back read-only" in out, out
+    assert "sentinel ok" not in out, "it must refuse BEFORE reading the corpus"
+
+
+def test_an_empty_answer_is_a_failed_proof_and_not_a_quiet_pass(tmp_path):
+    """The actual 2026-10-21 defect, in one assertion: silence read as a refusal.
+    A write that succeeds prints nothing on this transport."""
+    rc, out = run_guard(tmp_path, STUB_RO="")
+    assert rc == 2, out
+    assert "did not read back read-only" in out and "<empty>" in out, out
+
+
+def test_a_harness_that_cannot_report_an_error_is_refused(tmp_path):
+    """If the query helper swallows failures then the read-back above passes on
+    nothing, so the instrument is checked before the measurement."""
+    rc, out = run_guard(tmp_path, STUB_DISC="")
+    assert rc == 2, out
+    assert "cannot discriminate" in out, out
+    assert "read-only proof ok" not in out, out
 
 
 def test_the_guard_issues_no_writes_of_its_own():
