@@ -88,7 +88,7 @@ CREATE TABLE ktp_flag_positions (
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE ktp_match_stats (
   match_id varchar(64), player_id int, half tinyint, kills int, deaths int,
-  score int
+  damage int, score int
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 CREATE TABLE ktp_flag_state_events (
   id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY, server_id int,
@@ -260,13 +260,16 @@ INSERT INTO ktp_position_samples
   ('phase-a-contract-TEST',2,12,2,40,100,0,100,'2026-08-16 20:12:40');
 INSERT INTO ktp_flag_positions VALUES
   (2,'dod_anzio',0,'POINT_ANZIO_STREET',100,100);
+-- damage is each attacker's own SUM(damage_capped) over this fixture's
+-- ktp_damage_events, including the friendly-fire and self rows: that is what
+-- the daemon writes, and what damage_reconciliation compares against.
 INSERT INTO ktp_match_stats VALUES
-  ('phase-a-contract-TEST',1,0,1,1,2),('phase-a-contract-TEST',2,0,1,1,1),
-  ('phase-a-contract-TEST',3,0,1,1,0),('phase-a-contract-TEST',4,0,1,1,0),
-  ('phase-a-contract-TEST',5,0,1,1,0),('phase-a-contract-TEST',6,0,1,1,0),
-  ('phase-a-contract-TEST',7,0,1,1,0),('phase-a-contract-TEST',8,0,1,1,1),
-  ('phase-a-contract-TEST',9,0,1,1,0),('phase-a-contract-TEST',10,0,1,1,0),
-  ('phase-a-contract-TEST',11,0,1,1,0),('phase-a-contract-TEST',12,0,1,1,0);
+  ('phase-a-contract-TEST',1,0,1,1,120,2),('phase-a-contract-TEST',2,0,1,1,80,1),
+  ('phase-a-contract-TEST',3,0,1,1,95,0),('phase-a-contract-TEST',4,0,1,1,100,0),
+  ('phase-a-contract-TEST',5,0,1,1,100,0),('phase-a-contract-TEST',6,0,1,1,70,0),
+  ('phase-a-contract-TEST',7,0,1,1,100,0),('phase-a-contract-TEST',8,0,1,1,80,1),
+  ('phase-a-contract-TEST',9,0,1,1,90,0),('phase-a-contract-TEST',10,0,1,1,100,0),
+  ('phase-a-contract-TEST',11,0,1,1,100,0),('phase-a-contract-TEST',12,0,1,1,70,0);
 
 INSERT INTO ktp_flag_state_events
   (server_id,match_id,half,map_name,flag_index,flag_name,owner_team,is_initial,game_time,event_time)

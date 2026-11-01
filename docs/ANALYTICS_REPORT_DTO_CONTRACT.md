@@ -185,6 +185,45 @@ filter it to the three grenade weapon names for a kill-location map, using
 the same attacker/victim coordinates and team/half/game_time every other
 frag vector carries.
 
+## What `damage_dealt` is not comparable to
+
+`players[].damage_dealt` is **opponent damage only**. `ktp_match_stats.damage`
+is **every hit the attacker landed**: the ingest query in `KTPHLStatsX`
+`doEvent_KTPMatchEnd` groups `ktp_damage_events` by `attacker_id` with no victim
+join and no team predicate, and that table records enemy, team and self hits
+alike. So the two figures are different quantities and the ingest one is
+necessarily the larger. Comparing them is how one match's 6621 against 6460 was
+carried as an open question for a season (`KTPInfrastructure`#780); the deficit
+there sat inside the range self damage alone covers, before friendly fire was
+counted at all.
+
+The comparable quantity is the whole partition:
+
+```
+damage_dealt + team_damage + self_damage  ==  ktp_match_stats.damage (half=0)
+```
+
+Both sides are roster-scoped -- the ingest `INSERT` selects `FROM
+ktp_match_players` -- so the identity is well formed over the roster and a
+player absent from it is on neither side.
+
+Two `quality` checks assert it, on a match with per-hit damage and a cache to
+compare against:
+
+| check | asserts |
+|---|---|
+| `damage_reconciliation` | the identity above. `WARN`, not `PASS`, when `ktp_match_stats` half=0 carries no damage figure at all -- the daemon writes `NULL` for a half with no ledger rows, so an absent figure is not a cached zero. Also `WARN` when a per-hit row is tagged for a different match: `player_match_fact.sql` filters on `match_id` alone, so such a row is summed into this report and was never in the daemon's accumulators, and the totals cannot settle either way. That it reaches `damage_dealt` at all is a separate defect, named by this check rather than absorbed into a `FAIL` about the totals |
+| `damage_partition_exhaustive` | that no per-hit row reaches no column. The three arms in `player_match_fact.sql` read the teams through `LEFT JOIN roster`, so a hit whose victim is off the roster leaves both `victim.team <> r.team` and `victim.team = r.team` at `NULL`: neither arm fires, the damage lands in no column, and the ingest side counts it. `damage_taken` and `grenade_damage_taken` carry the mirror hole through the attacker |
+
+`damage_balance` is blind to all of this by construction: it compares dealt
+against taken, both of which lose the same rows.
+
+**No fourth published column, deliberately.** Folding unresolved-side damage
+into `damage_dealt` would make the numbers agree and the meaning wrong, and a
+fourth column is a contract change -- a `contract_version` row and every
+consumer -- so the hole is reported as a check result rather than published.
+Adding the column stays open; what is closed is the silence.
+
 ## `key_moments` (v1.4.0)
 
 `definition: highlight_windows_v1`. The match's highlight windows: clusters of
