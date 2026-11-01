@@ -80,6 +80,8 @@ CRITICAL_TIMERS=(
     ktp-weekly-outliers.timer
     # The nightly voice-taunt report stops; yesterday's file stays in place and reads as current.
     ktp-voice-taunts.timer
+    # The nightly own-weapon kill report stops; the public page keeps yesterday's snapshot as current.
+    ktp-own-weapon-kills.timer
     # Compares every installed file against the commit its manifest row names. If
     # this timer stops, nothing reports that the box has drifted from the repo --
     # and the drift it exists to find is itself silent, so a stopped timer and a

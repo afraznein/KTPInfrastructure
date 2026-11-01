@@ -1,0 +1,20 @@
+[Unit]
+Description=KTP nightly own-weapon kill report: players killed with the gun they spawned with, by whoever picked it up
+Documentation=https://github.com/afraznein/KTPInfrastructure
+After=mysql.service
+
+[Service]
+Type=oneshot
+StateDirectory=ktp-own-weapon-kills
+# League aliases and the snapshot upsert both use the reports credentials; the dash makes the
+# file optional -- without it the report runs on in-game names and the upsert exits 3.
+EnvironmentFile=-/etc/ktp/reports.env
+# own_weapon_kills.py imports voice_taunts.py from /usr/local/bin: install both.
+# PUBLIC stat (drew, 2026-10-31): --website upserts into ktp.own_weapon_kill_snapshot, which anon
+# may read, for keep-the-prac's public page. Exit 3 = only that upsert failed: the dated copy is
+# still written, then the unit fails so the on-failure alert fires.
+ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-own-weapon-kills; /usr/local/bin/own_weapon_kills.py --out latest.md --website; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 3 ] || exit $$rc; cp latest.md "own-weapon-kills-$(date +%%F).md" || exit 1; exit $$rc'
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

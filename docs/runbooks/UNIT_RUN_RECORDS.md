@@ -131,6 +131,7 @@ nobody reads, and a unit's successes are not what anyone goes looking for.
 |---|---|---|---|
 | `ktp-weekly-outliers` | Mon 06:00 | dated, default 400d | ~57 |
 | `ktp-voice-taunts` | daily 06:10 | dated, default 400d | ~400 (plus the coordination-repo push) |
+| `ktp-own-weapon-kills` | daily 06:15 | dated, default 400d | ~400 |
 | `ktp-install-freshness` | daily 06:20 ET | dated, default 400d | ~400 |
 | `ktp-hlstatsx-ingest-monitor` | hourly | dated, `KEEP_DAYS=30` | ~720 |
 | `ktp-telemetry-export` | hourly at `:40` | dated, `KEEP_DAYS=30` | ~720 |
