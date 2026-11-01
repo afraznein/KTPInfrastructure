@@ -29,9 +29,11 @@
 - `sql/analytics/quality_inventory.sql` supplies what those checks read: `cached_damage`,
   `cached_damage_rows` (`COUNT(damage)`, so NULL is distinguishable from 0),
   `cached_damage_off_roster`, and the unpartitioned damage and hit counts for each side.
-  The unpartitioned predicates use `<=>` so a NULL `victim_id` counts as unpartitioned
-  instead of being dropped by a three-valued comparison, and `NOT EXISTS` rather than
-  `NOT IN` so a NULL roster `player_id` cannot turn the whole count into a silent zero.
+  The unpartitioned predicates are NULL-safe -- `<=>` rather than `=` on `victim_id`,
+  `NOT EXISTS` rather than `NOT IN` on the roster, an explicit `team IS NOT NULL` -- which
+  is a guard against a later nullable column and **not** a fix for a live case: measured in
+  the DDL, `ktp_damage_events.attacker_id` / `.victim_id` and `ktp_match_players.player_id`
+  / `.team` are all `NOT NULL`. The reachable hole is the `LEFT JOIN` miss alone.
 
 ### Changed
 - `docs/ANALYTICS_REPORT_DTO_CONTRACT.md` records that `players[].damage_dealt` is not
