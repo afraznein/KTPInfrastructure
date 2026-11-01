@@ -83,10 +83,22 @@
   `migrate_002_half_damage_score.sql`; the fixture carried `kills`, `deaths` and `score`
   only. `legacy_player_cache.sql` already selected `SUM(damage)` from that table and was
   therefore unrunnable against the fixture too -- reachable only on a legacy match, which
-  the fixture is not. **So no e2e test could ever have compared the ingest damage total
-  against anything**, which is the same silence #780 reports, one layer down. The fixture
-  now carries the column, with each attacker's own ledger sum, so the identity is
-  exercised against a real MySQL rather than only in a Python fixture.
+  the fixture is not. The fixture now carries the column, with each attacker's own ledger
+  sum, so the identity is exercised against a real MySQL rather than only in a Python
+  fixture.
+- **The gap was already known and worked around per test, which is the part worth
+  recording.** `test_per_hit_damage_coverage_integration.py` and
+  `test_producer_absent_not_zero_integration.py` each ran
+  `ALTER TABLE ktp_match_stats ADD COLUMN damage int` against the loaded fixture, under a
+  comment saying production carries it and the fixture does not. So two tests needed the
+  production shape, added it for themselves, and left the shared fixture short -- and
+  every test that builds a whole report on the contract match ran against a table without
+  the column. Both `ALTER`s are gone now (they fail as duplicates), which is how the
+  second corpus run found them. **An earlier draft of this fragment said no e2e test
+  could ever have compared the ingest damage total against anything. That is too strong
+  and is retracted:** those two could, for the legacy and Statsme damage paths. What holds
+  is narrower -- nothing compared the identity, and the fixture itself never carried the
+  column.
 - Two pins in `tests/unit/` for that class of defect: the fixture must carry the column,
   and its positional `INSERT` must match its own DDL arity. Both run in the cheap lane;
   without them the only thing that notices is the corpus lane, twenty minutes in. Red
