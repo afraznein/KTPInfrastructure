@@ -44,4 +44,67 @@ SELECT
   (SELECT COALESCE(SUM(kills), 0) FROM ktp_match_stats
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_kills,
   (SELECT COALESCE(SUM(deaths), 0) FROM ktp_match_stats
-    WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_deaths;
+    WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_deaths,
+  -- Every hit the attacker landed: the ingest query groups ktp_damage_events
+  -- by attacker_id with no victim join and no team predicate. So the report
+  -- side comparable with it is damage_dealt + team_damage + self_damage.
+  (SELECT COALESCE(SUM(damage), 0) FROM ktp_match_stats
+    WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_damage,
+  -- COUNT ignores NULL, and the daemon writes NULL for a half with no ledger
+  -- rows -- so zero here is "no cached figure", not a cached zero.
+  (SELECT COUNT(damage) FROM ktp_match_stats
+    WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_damage_rows,
+  -- A cache row for a player the roster no longer carries is in cached_damage
+  -- and in no report row. The ingest INSERT selects FROM ktp_match_players, so
+  -- this can only be a cache that outlived a roster row.
+  (SELECT COALESCE(SUM(ms.damage), 0) FROM ktp_match_stats ms
+    WHERE ms.match_id = {{MATCH_ID}} AND ms.half = 0
+      AND NOT EXISTS (SELECT 1 FROM ktp_match_players mp
+                       WHERE mp.match_id = ms.match_id
+                         AND mp.player_id = ms.player_id)) AS cached_damage_off_roster,
+  -- player_match_fact.sql reads both teams through LEFT JOIN roster, so an
+  -- unresolvable team leaves `victim.team <> r.team` and `victim.team = r.team`
+  -- both NULL: no arm fires and the hit reaches no column. <=> keeps a NULL
+  -- victim_id in this count instead of dropping it three-valued.
+  (SELECT COALESCE(SUM(d.damage_capped), 0) FROM ktp_damage_events d
+     JOIN ktp_match_players a
+       ON a.match_id = d.match_id AND a.player_id = d.attacker_id
+    WHERE d.match_id = {{MATCH_ID}}
+      AND NOT (d.victim_id <=> d.attacker_id)
+      AND NOT EXISTS (SELECT 1 FROM ktp_match_players v
+                       WHERE v.match_id = d.match_id
+                         AND v.player_id = d.victim_id
+                         AND v.team IS NOT NULL
+                         AND a.team IS NOT NULL)) AS unpartitioned_damage_dealt,
+  (SELECT COUNT(*) FROM ktp_damage_events d
+     JOIN ktp_match_players a
+       ON a.match_id = d.match_id AND a.player_id = d.attacker_id
+    WHERE d.match_id = {{MATCH_ID}}
+      AND NOT (d.victim_id <=> d.attacker_id)
+      AND NOT EXISTS (SELECT 1 FROM ktp_match_players v
+                       WHERE v.match_id = d.match_id
+                         AND v.player_id = d.victim_id
+                         AND v.team IS NOT NULL
+                         AND a.team IS NOT NULL)) AS unpartitioned_hits_dealt,
+  -- The mirror hole, through LEFT JOIN roster attacker. Same-team damage
+  -- received is not unpartitioned: it is held on the attacker's team_damage.
+  (SELECT COALESCE(SUM(d.damage_capped), 0) FROM ktp_damage_events d
+     JOIN ktp_match_players v
+       ON v.match_id = d.match_id AND v.player_id = d.victim_id
+    WHERE d.match_id = {{MATCH_ID}}
+      AND NOT (d.victim_id <=> d.attacker_id)
+      AND NOT EXISTS (SELECT 1 FROM ktp_match_players a
+                       WHERE a.match_id = d.match_id
+                         AND a.player_id = d.attacker_id
+                         AND a.team IS NOT NULL
+                         AND v.team IS NOT NULL)) AS unpartitioned_damage_taken,
+  (SELECT COUNT(*) FROM ktp_damage_events d
+     JOIN ktp_match_players v
+       ON v.match_id = d.match_id AND v.player_id = d.victim_id
+    WHERE d.match_id = {{MATCH_ID}}
+      AND NOT (d.victim_id <=> d.attacker_id)
+      AND NOT EXISTS (SELECT 1 FROM ktp_match_players a
+                       WHERE a.match_id = d.match_id
+                         AND a.player_id = d.attacker_id
+                         AND a.team IS NOT NULL
+                         AND v.team IS NOT NULL)) AS unpartitioned_hits_taken;

@@ -188,6 +188,9 @@ INTEGER_COLUMNS = {
     "invalid_half_frags", "damage_events", "invalid_half_damage",
     "statsme_rows", "statsme2_rows", "statsme_hits", "unique_capture_events",
     "cached_player_totals", "cached_kills", "cached_deaths", "victim_id",
+    "cached_damage", "cached_damage_rows", "cached_damage_off_roster",
+    "unpartitioned_damage_dealt", "unpartitioned_hits_dealt",
+    "unpartitioned_damage_taken", "unpartitioned_hits_taken",
     "legacy_damage_dealt", "legacy_kills", "statsme_damage_dealt", "statsme_frags",
     "event_id", "event_unix", "killer_id", "killer_team", "victim_team",
     "match_type", "flag_index", "owner_team", "is_initial",
@@ -1114,6 +1117,55 @@ def evaluate_quality(
             if dealt == taken else "Opponent damage dealt and taken do not balance.",
             damage_dealt=dealt, damage_taken=taken,
         ))
+        # ktp_match_stats.damage is every hit the attacker landed and
+        # damage_dealt is opponent damage only, so the comparable quantity is
+        # the whole partition. damage_balance loses the same rows both sides.
+        team_damage = sum(p.get("team_damage") or 0 for p in players)
+        self_damage = sum(p.get("self_damage") or 0 for p in players)
+        partitioned = dealt + team_damage + self_damage
+        unpartitioned_dealt = inventory.get("unpartitioned_damage_dealt", 0)
+        unpartitioned_taken = inventory.get("unpartitioned_damage_taken", 0)
+        exhaustive = unpartitioned_dealt == 0 and unpartitioned_taken == 0
+        checks.append(check(
+            "PASS" if exhaustive else "FAIL", "damage_partition_exhaustive",
+            "Every per-hit row reaches a damage column."
+            if exhaustive else
+            "Some per-hit damage reaches no damage column: a side's team does "
+            "not resolve through the roster, so neither the opponent nor the "
+            "friendly-fire arm fires and the hit is counted by the ingest side "
+            "alone.",
+            unpartitioned_damage_dealt=unpartitioned_dealt,
+            unpartitioned_hits_dealt=inventory.get("unpartitioned_hits_dealt", 0),
+            unpartitioned_damage_taken=unpartitioned_taken,
+            unpartitioned_hits_taken=inventory.get("unpartitioned_hits_taken", 0),
+        ))
+        cached_damage_rows = inventory.get("cached_damage_rows", 0)
+        if cached_rows == 0 or cached_damage_rows == 0:
+            # The daemon writes NULL damage for a half it has no ledger rows
+            # for, so no cached figure is a real answer and not a zero.
+            checks.append(check(
+                "WARN", "damage_reconciliation",
+                "ktp_match_stats half=0 carries no damage figure; the per-hit "
+                "partition cannot be reconciled against the ingest total.",
+                fact_damage=partitioned, cached_damage_rows=cached_damage_rows,
+            ))
+        else:
+            cached_damage = inventory.get("cached_damage", 0)
+            reconciles = partitioned == cached_damage
+            checks.append(check(
+                "PASS" if reconciles else "FAIL", "damage_reconciliation",
+                "Opponent, friendly-fire and self damage together reconcile "
+                "with ktp_match_stats half=0."
+                if reconciles else
+                "Opponent, friendly-fire and self damage together disagree "
+                "with ktp_match_stats half=0.",
+                fact_damage=partitioned, cached_damage=cached_damage,
+                damage_dealt=dealt, team_damage=team_damage,
+                self_damage=self_damage,
+                unpartitioned_damage_dealt=unpartitioned_dealt,
+                cached_damage_off_roster=inventory.get(
+                    "cached_damage_off_roster", 0),
+            ))
 
     checks.append(check(
         "PASS" if sources["assists"] else "WARN", "assist_source_coverage",
