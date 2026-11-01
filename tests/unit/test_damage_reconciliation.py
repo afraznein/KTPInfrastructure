@@ -210,3 +210,41 @@ def test_the_new_inventory_columns_are_coerced_to_integers():
         assert _value(column, "143") == 143
     # Control: the coercion is per column, not applied to everything.
     assert _value("map_name", "143") == "143"
+
+
+# --- the e2e fixture has to carry the column the query reads ----------------
+
+FIXTURE = (REPO / "tests" / "e2e_stats" / "fixtures"
+           / "analytics-phase-a-contract.sql")
+
+
+def _match_stats_ddl() -> list[str]:
+    # The closing paren is the one starting a line; the first `)` in the text
+    # is inside `varchar(64)`.
+    block = FIXTURE.read_text(encoding="utf-8").split(
+        "CREATE TABLE ktp_match_stats (", 1)[1].split("\n)", 1)[0]
+    flat = re.sub(r"\([^)]*\)", "", block).replace("\n", " ")
+    return [c.split()[0] for c in flat.split(",") if c.split()]
+
+
+def test_the_contract_fixture_carries_the_cached_damage_column():
+    """`quality_inventory.sql` selects `ktp_match_stats.damage` for every match,
+    so a fixture without the column is not a wrong number -- the query dies on
+    `Unknown column` and only the corpus lane finds out, twenty minutes in.
+    Production has carried it since `migrate_002_half_damage_score.sql`."""
+    columns = _match_stats_ddl()
+    assert "damage" in columns, columns
+    assert "score" in columns, columns  # control: a column already there
+    assert "damage_dealt" not in columns  # control: that is the report's name
+
+
+def test_the_fixture_insert_matches_its_own_column_count():
+    """The INSERT is positional, so widening the DDL without widening every
+    tuple slides `score` into `damage`. MySQL rejects it -- in the one lane
+    that runs a real server."""
+    body = FIXTURE.read_text(encoding="utf-8").split(
+        "INSERT INTO ktp_match_stats VALUES", 1)[1].split(";", 1)[0]
+    tuples = re.findall(r"\('phase-a-contract-TEST'[^)]*\)", body)
+    assert len(tuples) == 12, len(tuples)
+    widths = {t.count(",") + 1 for t in tuples}
+    assert widths == {len(_match_stats_ddl())}, widths

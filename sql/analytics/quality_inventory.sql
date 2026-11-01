@@ -55,7 +55,7 @@ SELECT
   (SELECT COUNT(damage) FROM ktp_match_stats
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_damage_rows,
   -- A cache row for a player the roster no longer carries is in cached_damage
-  -- and in no report row. The ingest INSERT selects FROM ktp_match_players, so
+  -- and in no report row. ktp_match_players drives the ingest side, so
   -- this can only be a cache that outlived a roster row.
   (SELECT COALESCE(SUM(ms.damage), 0) FROM ktp_match_stats ms
     WHERE ms.match_id = {{MATCH_ID}} AND ms.half = 0

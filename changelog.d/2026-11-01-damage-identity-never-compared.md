@@ -61,6 +61,24 @@
   deliberately broken statement as the control. Read-only; no database was contacted and
   no report was regenerated.
 
+### Fixed
+- The e2e contract fixture's `ktp_match_stats` had no `damage` column at all, so
+  `quality_inventory.sql` died on `Unknown column 'damage'` the moment it read the one
+  figure this change is about. Production has carried it since
+  `migrate_002_half_damage_score.sql`; the fixture carried `kills`, `deaths` and `score`
+  only. `legacy_player_cache.sql` already selected `SUM(damage)` from that table and was
+  therefore unrunnable against the fixture too -- reachable only on a legacy match, which
+  the fixture is not. **So no e2e test could ever have compared the ingest damage total
+  against anything**, which is the same silence #780 reports, one layer down. The fixture
+  now carries the column, with each attacker's own ledger sum, so the identity is
+  exercised against a real MySQL rather than only in a Python fixture.
+- Two pins in `tests/unit/` for that class of defect: the fixture must carry the column,
+  and its positional `INSERT` must match its own DDL arity. Both run in the cheap lane;
+  without them the only thing that notices is the corpus lane, twenty minutes in. Red
+  tested in three directions (column removed, DDL widened without the tuples, a row
+  dropped), each killed on its own message, with an unrelated column rename as the
+  scope control.
+
 ### Not done here
 - Disposition 2 of #780 asked for damage inside `aggregate_reconciliation`. It is a
   separate check instead, because that one compares raw event facts against the cache for

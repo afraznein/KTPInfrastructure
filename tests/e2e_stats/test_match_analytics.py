@@ -41,6 +41,16 @@ def _inventory():
         "cached_kills": 12,
         "cached_deaths": 12,
         "damage_events": 20,
+        # 12 players x damage_dealt 100, no friendly-fire and no self damage,
+        # so the whole partition is 1200 -- which is what the ingest query
+        # sums per attacker and writes to ktp_match_stats half=0.
+        "cached_damage": 1200,
+        "cached_damage_rows": 12,
+        "cached_damage_off_roster": 0,
+        "unpartitioned_damage_dealt": 0,
+        "unpartitioned_hits_dealt": 0,
+        "unpartitioned_damage_taken": 0,
+        "unpartitioned_hits_taken": 0,
         "statsme_rows": 12,
         "statsme2_rows": 12,
         "statsme_hits": 36,
