@@ -60,8 +60,6 @@ def _check(report: dict, code: str) -> dict | None:
 def test_damage_is_gated_on_the_ledger_covering_the_match(tmp_path):
     with EphemeralMysql.start(parent=tmp_path) as db:
         analytics.load_fixture(db, FIXTURE)
-        # Production's ktp_match_stats carries damage; the fixture's does not.
-        db.sql("ALTER TABLE ktp_match_stats ADD COLUMN damage int")
         # The fixture's damage ledger first fires on 2026-08-16.
         _add_match(db, LEGACY, "2026-01-20", legacy_damage=True)
         _add_match(db, QUIET, "2026-09-01", legacy_damage=False)
