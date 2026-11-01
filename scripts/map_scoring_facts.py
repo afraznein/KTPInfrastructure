@@ -46,6 +46,17 @@ import subprocess
 import sys
 from pathlib import Path
 
+# A map config is ktp_<map_config>.cfg, and ktp_maps.ini's `config =` is that same
+# filename -- so the two sides of the binding are one string apart. Shared rather
+# than restated, because two definitions of a naming rule disagree eventually.
+CONFIG_FILE_PREFIX = "ktp_"
+
+
+def map_config_name(filename: str) -> str:
+    """`ktp_saints.cfg` -> `saints`, the `map_config` key both analytics files use."""
+    return Path(filename).stem.removeprefix(CONFIG_FILE_PREFIX)
+
+
 # ktpbasic.cfg's values, applied where a map config does not override them.
 BASE_DEFAULTS = {"scoring_delay_seconds": 30, "capout_bonus_allies": 40, "capout_bonus_axis": 40}
 
@@ -86,7 +97,7 @@ def parse_config(path: Path, defaults: dict) -> dict | None:
 
     # Stored in HUD order. The config writes them reversed.
     return {
-        "map_config": path.stem.removeprefix("ktp_"),
+        "map_config": map_config_name(path.name),
         "flags": len(allies),
         "tick_value_allies": [int(c) for c in reversed(allies)],
         "tick_value_axis": [int(c) for c in reversed(axis)],
@@ -107,7 +118,7 @@ def build(config_root: Path) -> dict:
                 defaults[key] = int(raw)
 
     maps = []
-    for path in sorted(config_root.glob("ktp_*.cfg")):
+    for path in sorted(config_root.glob(f"{CONFIG_FILE_PREFIX}*.cfg")):
         entry = parse_config(path, defaults)
         if entry is not None:
             maps.append(entry)
