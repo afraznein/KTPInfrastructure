@@ -51,6 +51,7 @@ def _inventory():
         "unpartitioned_hits_dealt": 0,
         "unpartitioned_damage_taken": 0,
         "unpartitioned_hits_taken": 0,
+        "cross_tagged_damage_rows": 0,
         "statsme_rows": 12,
         "statsme2_rows": 12,
         "statsme_hits": 36,

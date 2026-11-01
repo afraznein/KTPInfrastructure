@@ -107,4 +107,12 @@ SELECT
                        WHERE a.match_id = d.match_id
                          AND a.player_id = d.attacker_id
                          AND a.team IS NOT NULL
-                         AND v.team IS NOT NULL)) AS unpartitioned_hits_taken;
+                         AND v.team IS NOT NULL)) AS unpartitioned_hits_taken,
+  -- A ledger row tagged for a different match is summed into this match's
+  -- report and was never in the daemon's accumulators, so the two totals are
+  -- not comparable. The IS NOT NULL arm is explicit, not load-bearing: an
+  -- untagged row is pre-producer-context, and `NULL <> 'x'` already excludes.
+  (SELECT COUNT(*) FROM ktp_damage_events
+    WHERE match_id = {{MATCH_ID}}
+      AND producer_match_id IS NOT NULL
+      AND producer_match_id <> {{MATCH_ID}}) AS cross_tagged_damage_rows;

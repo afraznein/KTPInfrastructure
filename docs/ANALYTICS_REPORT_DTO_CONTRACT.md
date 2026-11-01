@@ -212,7 +212,7 @@ compare against:
 
 | check | asserts |
 |---|---|
-| `damage_reconciliation` | the identity above. `WARN`, not `PASS`, when `ktp_match_stats` half=0 carries no damage figure at all -- the daemon writes `NULL` for a half with no ledger rows, so an absent figure is not a cached zero |
+| `damage_reconciliation` | the identity above. `WARN`, not `PASS`, when `ktp_match_stats` half=0 carries no damage figure at all -- the daemon writes `NULL` for a half with no ledger rows, so an absent figure is not a cached zero. Also `WARN` when a per-hit row is tagged for a different match: `player_match_fact.sql` filters on `match_id` alone, so such a row is summed into this report and was never in the daemon's accumulators, and the totals cannot settle either way. That it reaches `damage_dealt` at all is a separate defect, named by this check rather than absorbed into a `FAIL` about the totals |
 | `damage_partition_exhaustive` | that no per-hit row reaches no column. The three arms in `player_match_fact.sql` read the teams through `LEFT JOIN roster`, so a hit whose victim is off the roster leaves both `victim.team <> r.team` and `victim.team = r.team` at `NULL`: neither arm fires, the damage lands in no column, and the ingest side counts it. `damage_taken` and `grenade_damage_taken` carry the mirror hole through the attacker |
 
 `damage_balance` is blind to all of this by construction: it compares dealt

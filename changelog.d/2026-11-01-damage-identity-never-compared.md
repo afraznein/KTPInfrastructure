@@ -61,6 +61,21 @@
   deliberately broken statement as the control. Read-only; no database was contacted and
   no report was regenerated.
 
+- `damage_reconciliation` is also **WARN** when the ledger carries a row tagged for a
+  different match (`cross_tagged_damage_rows`). `player_match_fact.sql` filters on
+  `match_id` alone, so such a row is summed into this report while the daemon's
+  accumulators never saw it: the totals cannot settle either way, and a `FAIL` would name
+  the wrong cause. That the row reaches `damage_dealt` at all is a separate defect, now
+  named rather than silent. Found by the corpus lane -- an integration test injects
+  exactly that row and asserts the report still publishes at `WARN`, which is what
+  established that the gate belongs here rather than in the verdict.
+- One mutation in that gate **survives and is meant to**: dropping
+  `producer_match_id IS NOT NULL` changes nothing, because `NULL <> 'x'` is already not
+  true. It is recorded as explicit-not-load-bearing in the query rather than pinned by a
+  test that would only assert a spelling. The first pass called it killed -- a `cp`
+  restore had left a stale `__pycache__`, so the verdict came from the previous run's
+  bytecode. Mutation runs here clear `scripts/__pycache__` between steps.
+
 ### Fixed
 - The e2e contract fixture's `ktp_match_stats` had no `damage` column at all, so
   `quality_inventory.sql` died on `Unknown column 'damage'` the moment it read the one

@@ -37,6 +37,7 @@ NEW_COLUMNS = (
     "cached_damage", "cached_damage_rows", "cached_damage_off_roster",
     "unpartitioned_damage_dealt", "unpartitioned_hits_dealt",
     "unpartitioned_damage_taken", "unpartitioned_hits_taken",
+    "cross_tagged_damage_rows",
 )
 
 
@@ -64,6 +65,7 @@ def _inventory(**over) -> dict:
         "cached_damage_off_roster": 0,
         "unpartitioned_damage_dealt": 0, "unpartitioned_hits_dealt": 0,
         "unpartitioned_damage_taken": 0, "unpartitioned_hits_taken": 0,
+        "cross_tagged_damage_rows": 0,
         "statsme_rows": 1, "statsme2_rows": 0,
         "capture_credits": 0, "unique_capture_events": 0,
         "position_samples": 1,
@@ -210,6 +212,29 @@ def test_the_new_inventory_columns_are_coerced_to_integers():
         assert _value(column, "143") == 143
     # Control: the coercion is per column, not applied to everything.
     assert _value("map_name", "143") == "143"
+
+
+def test_a_ledger_row_tagged_for_another_match_warns_rather_than_failing():
+    """`player_match_fact.sql` filters on `match_id` alone, so a row whose
+    producer context names a different match is summed into this report and was
+    never in the daemon's accumulators. The totals then cannot settle either
+    way: FAILing would name the wrong cause, and silence would hide it."""
+    got = _check("damage_reconciliation",
+                 _players(dealt=6000, taken=6000, team=0, own=0),
+                 _inventory(cached_damage=12000, cross_tagged_damage_rows=1))
+    assert got["level"] == "WARN", got
+    assert got["evidence"]["cross_tagged_damage_rows"] == 1
+    # The comparison did not happen, so the cached figure is not evidence.
+    assert "cached_damage" not in got["evidence"]
+
+
+def test_the_cross_tag_gate_does_not_swallow_a_real_disagreement():
+    """Control for the test above: with no cross-tagged row the same numbers
+    FAIL, so the WARN is the gate firing and not the check giving up."""
+    got = _check("damage_reconciliation",
+                 _players(dealt=6000, taken=6000, team=0, own=0),
+                 _inventory(cached_damage=12001))
+    assert got["level"] == "FAIL", got
 
 
 # --- the e2e fixture has to carry the column the query reads ----------------

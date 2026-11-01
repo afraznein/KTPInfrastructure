@@ -191,6 +191,7 @@ INTEGER_COLUMNS = {
     "cached_damage", "cached_damage_rows", "cached_damage_off_roster",
     "unpartitioned_damage_dealt", "unpartitioned_hits_dealt",
     "unpartitioned_damage_taken", "unpartitioned_hits_taken",
+    "cross_tagged_damage_rows",
     "legacy_damage_dealt", "legacy_kills", "statsme_damage_dealt", "statsme_frags",
     "event_id", "event_unix", "killer_id", "killer_team", "victim_team",
     "match_type", "flag_index", "owner_team", "is_initial",
@@ -1140,7 +1141,20 @@ def evaluate_quality(
             unpartitioned_hits_taken=inventory.get("unpartitioned_hits_taken", 0),
         ))
         cached_damage_rows = inventory.get("cached_damage_rows", 0)
-        if cached_rows == 0 or cached_damage_rows == 0:
+        cross_tagged = inventory.get("cross_tagged_damage_rows", 0)
+        if cross_tagged:
+            # The row is in this match's ledger and in no accumulator the
+            # daemon kept, so the identity cannot settle either way. That it
+            # reaches damage_dealt at all is a separate defect, named here
+            # rather than absorbed into a FAIL about the totals.
+            checks.append(check(
+                "WARN", "damage_reconciliation",
+                "Some per-hit rows are tagged for a different match, so the "
+                "report's damage and the ingest total are not comparable.",
+                fact_damage=partitioned,
+                cross_tagged_damage_rows=cross_tagged,
+            ))
+        elif cached_rows == 0 or cached_damage_rows == 0:
             # The daemon writes NULL damage for a half it has no ledger rows
             # for, so no cached figure is a real answer and not a zero.
             checks.append(check(
