@@ -3,12 +3,12 @@
  "provisional": true,
  "notice": "Provisional rating: recomputed from the whole season every week, so published values change retroactively.",
  "method_version": "openskill_pl_v1",
- "generated_at": "2026-10-26T19:36:53+00:00",
+ "generated_at": "2026-11-02T14:01:35+00:00",
  "min_matches": 3,
  "max_uncertainty": 4.167,
- "rated_players": 202,
- "withheld_players": 202,
+ "rated_players": 213,
+ "withheld_players": 213,
  "players": [],
- "source_report_count": 73,
+ "source_report_count": 76,
  "report_schema_version": 9
 }
