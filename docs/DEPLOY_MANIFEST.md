@@ -277,3 +277,27 @@ md5 of its last row **and** equal the blob at the fetched `origin/main` for that
 `KTP_FRESHNESS_REPO` (default `/opt/ktp-infra`). Install the script with `ktp-install`, never `cp`, or
 the verifier refuses every run with "no deploy manifest records it"; install the guard module beside it
 from the same commit, since an older guard has no installed-copy rule at all.
+
+## Where a backup of an installed script goes
+
+**Not `/usr/local/bin`.** That directory is on `PATH` and is what every cron entry
+resolves against. A backup left beside the live copy is also counted by the freshness
+and integrity checks, so it reads as deployed surface rather than as a spare.
+
+Backups of installed scripts go in **`/root/ktp-script-backups`**, mode 700. There was
+no documented destination until 46 of them had accumulated in `/usr/local/bin` on the
+data server, and the two directories being used were in no document at all -- so a move
+"back to the documented home" had nowhere to go.
+
+**A backup marker must be a SUFFIX, never a substring anywhere in the name.** Match
+`.bak`, `.bak-*`, `.bak.*`, `.pre-*`, `.prev`, `.orig`, `.old`, `.save` or a trailing
+`~`. The reason is concrete: `ktp-backup-watchdog.sh` is a live, cron-invoked script
+whose own name contains `-backup-`, so a `*-backup-*` sweep carries it out of the
+execution path. That sweep also inflates the count by one, which is how the wrong
+figure ends up in the ticket that asks for the move.
+
+**Copy, verify by hash, then remove -- in that order, and never `mv`.** The destination
+must be proved to hold every file, compared by md5 rather than by count, before
+anything leaves the source. A move that half-completes in a directory on the execution
+path is the one outcome worth designing against, and a rename is a move: it leaves
+nothing behind to fall back to.
