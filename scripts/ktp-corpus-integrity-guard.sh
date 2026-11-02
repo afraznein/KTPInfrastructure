@@ -37,8 +37,14 @@
 # exit 2 ALWAYS posts, because "could not look" reading as "nothing there" is the defect
 # this whole effort exists to kill.
 #
-# READ-ONLY. Every statement is a SELECT and the session is opened READ ONLY, so the
-# server refuses a write even if one is ever added to a definition.
+# READ-ONLY, AND PROVED SO BEFORE THE FIRST READ. Every statement is a SELECT and the
+# session asks for READ ONLY -- but ⛔ the directive is a request, not a proof. It binds
+# the credential it is given and no other, so against a write-capable login it is
+# silently ineffective, and a write that SUCCEEDS prints nothing on this transport while
+# a write that is REFUSED prints an error. An estate probe read that silence as a refusal
+# and created a table in production. So the session is asked what it IS (and the asking
+# harness is shown to report an error at all) before anything is counted; either answer
+# missing is exit 2, never a pass.
 #
 # Exit codes: 0 = read, no accrual. 1 = read, accrual found. 2 = could not look.
 set -uo pipefail
@@ -105,6 +111,24 @@ post_alert() {
 
 [ -d "$STATE_DIR" ] || mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
 command -v "$MYSQL_BIN" >/dev/null || die "$MYSQL_BIN not on PATH"
+
+# >>> ktp-corpus-guard-readonly-proof
+# Order matters: the instrument is checked first. If q() cannot surface a failure then
+# the read-back below passes on nothing, which is the whole shape being guarded against.
+disc="$(q 'SELECT @@session.ktp_corpus_guard_no_such_variable')"
+case "$disc" in
+    ''|1) die "read-only proof cannot discriminate -- a statement the server cannot run answered '${disc:-<empty>}' instead of an error" ;;
+esac
+
+# Now the session itself. ⛔ Require a PRESENT, EXPECTED value; an empty answer is a
+# failed check, not a quiet success. @@session.tx_read_only is the pre-5.7.20 spelling.
+ro="$(q 'SELECT @@session.transaction_read_only')"
+case "$ro" in
+    ''|*[!0-9]*) ro="$(q 'SELECT @@session.tx_read_only')" ;;
+esac
+[ "$ro" = "1" ] || die "session did not read back read-only (got '${ro:-<empty>}') -- refusing to read with an unproven session"
+log "read-only proof ok: session reads back read-only, and the harness reports errors"
+# <<< ktp-corpus-guard-readonly-proof
 
 # The sentinel the .sql files halt on: an ungranted or empty ktp_matches turns every row
 # into an orphan, so refuse to report rather than report a corpus-wide false finding.
