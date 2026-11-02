@@ -20,7 +20,7 @@ the tool; it was that the documented way to invoke it was undocumented.
 This is that shim, once, in the repo.
 
 WHAT IT DOES NOT DO. It adds no deploy logic and makes no connection of its own.
-It resolves two environment variables and execs a sibling. Every gate -- the
+It resolves a credential pair and the version rows, and execs a sibling. Every gate -- the
 attribution check, the md5 pins, --pull-live, the row-flip gate, the activation-day
 gate -- belongs to the script being run and is untouched.
 
@@ -47,6 +47,12 @@ ENVIRONMENT
                            <project>/ktp_hosts.py and passed to the child only
   KTP_FLEET_SSH_KEY        passed through untouched -- it selects a per-person key
                            and the child prefers it over any password
+  KTP_RCON_PASSWORD        honoured if already set; else imported from
+                           ktp_hosts.py, and only for the one script that issues
+                           rcon (NEEDS_RCON). Without it ktp-verify-deploy.py
+                           refuses its --check-runtime leg, which is the whole
+                           point of the leg: a runtime verify that quietly did
+                           not happen reads as a fleet that passed one
   KTP_CLAUDE_MD            version rows; defaults to <project>/.claude/skills/
                            fleet-versions/SKILL.md. stage-wave.py has no
                            --claude-md flag, so this is the only way to point it
@@ -75,6 +81,11 @@ RUNNABLE = (
     "ktp-wave-ledger.py",
     "sync-runner-stack.py",
 )
+
+# Who gets the rcon credential: the one script that issues rcon, and nothing else.
+# A wrapper that holds a live value hands out as little of it as the job needs, and
+# the four others have no reference to it at all. Narrower than RUNNABLE on purpose.
+NEEDS_RCON = ("ktp-verify-deploy.py",)
 
 # Never forwarded: each one loosens the guard the child runs behind. Same list as
 # ktp-wave-sweep.py, for the same reason.
@@ -121,9 +132,13 @@ def child_env(name: str) -> dict:
 
     # A key beats a password in the child, so do not import a credential it will
     # not use: the import is the only step that touches live values.
-    if env.get("KTP_FLEET_SSH_KEY", "").strip():
-        return env
-    if env.get("KTP_FLEET_SSH_PASSWORD"):
+    want_ssh = not (env.get("KTP_FLEET_SSH_KEY", "").strip()
+                    or env.get("KTP_FLEET_SSH_PASSWORD"))
+    # Only ktp-verify-deploy.py issues rcon, and only under --check-runtime. Giving
+    # it the value whenever it is the child beats parsing the child's flags here --
+    # that coupling breaks the next time the child grows a flag.
+    want_rcon = name in NEEDS_RCON and not env.get("KTP_RCON_PASSWORD")
+    if not (want_ssh or want_rcon):
         return env
 
     root = project_root()
@@ -134,14 +149,27 @@ def child_env(name: str) -> dict:
     except ImportError as exc:
         raise SystemExit(
             "cannot import ktp_hosts from %s for the fleet credential (%s).\n"
-            "Set $KTP_FLEET_SSH_KEY or $KTP_FLEET_SSH_PASSWORD instead, or run "
-            "this from a checkout that sits inside the project root." % (root, exc))
-    try:
-        env["KTP_FLEET_SSH_PASSWORD"] = ktp_hosts.FLEET_SSH_PASSWORD
-    except AttributeError as exc:
-        raise SystemExit("ktp_hosts has no FLEET_SSH_PASSWORD (%s) -- a renamed "
-                         "attribute surfaces downstream as AuthenticationException, "
-                         "which reads like a host problem." % exc)
+            "Set the credential in the environment instead, or run this from a "
+            "checkout that sits inside the project root." % (root, exc))
+
+    if want_ssh:
+        try:
+            env["KTP_FLEET_SSH_PASSWORD"] = ktp_hosts.FLEET_SSH_PASSWORD
+        except AttributeError as exc:
+            raise SystemExit("ktp_hosts has no FLEET_SSH_PASSWORD (%s) -- a renamed "
+                             "attribute surfaces downstream as AuthenticationException, "
+                             "which reads like a host problem." % exc)
+    if want_rcon:
+        try:
+            env["KTP_RCON_PASSWORD"] = ktp_hosts.FLEET_RCON_PASSWORD
+        except AttributeError:
+            # Said, not raised. The child already exits non-zero naming this
+            # credential and saying no host was contacted, and a second gate in
+            # front of a working one is a second thing to misfire. Silence is the
+            # only wrong answer: it is what made a partial verify look complete.
+            print("ktp_hosts has no FLEET_RCON_PASSWORD, so %s cannot be given one "
+                  "-- it will refuse a --check-runtime leg rather than skip it"
+                  % name, file=sys.stderr)
     return env
 
 
@@ -167,9 +195,11 @@ def main(argv: list) -> int:
     # Everything but the credential, so a transcript shows what was run.
     print("script: %s" % target)
     print("rows:   %s" % env["KTP_CLAUDE_MD"])
-    print("creds:  %s set in child env, value not shown"
-          % ("KTP_FLEET_SSH_KEY" if env.get("KTP_FLEET_SSH_KEY", "").strip()
-             else "KTP_FLEET_SSH_PASSWORD"))
+    supplied = ["KTP_FLEET_SSH_KEY" if env.get("KTP_FLEET_SSH_KEY", "").strip()
+                else "KTP_FLEET_SSH_PASSWORD"]
+    if env.get("KTP_RCON_PASSWORD"):
+        supplied.append("KTP_RCON_PASSWORD")
+    print("creds:  %s set in child env, value not shown" % ", ".join(supplied))
     print("-" * 70)
     sys.stdout.flush()
     return subprocess.call([sys.executable, target] + argv[1:], env=env)

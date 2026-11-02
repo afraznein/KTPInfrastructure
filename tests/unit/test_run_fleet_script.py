@@ -20,6 +20,14 @@ parts that are easy to regress by making it more convenient:
 - AN ALREADY-SET CREDENTIAL IS HONOURED, so the ktp_hosts import -- the only step
   that touches live values -- does not happen when it is not needed. These tests
   rely on that: they set a dummy password and never import ktp_hosts.
+- THE RCON CREDENTIAL REACHES ONLY THE SCRIPT THAT ISSUES RCON. The wrapper holds a
+  live value; handing it to all five would be the convenient change. Four of them have
+  no reference to KTP_RCON_PASSWORD at all.
+- A MISSING FLEET_RCON_PASSWORD IS SAID, NOT GUESSED AND NOT SWALLOWED. This is the
+  defect that prompted it: ktp_hosts.py had no rcon attribute, so the sanctioned path
+  could not run a runtime verify, and every wave verify taken that way was missing the
+  leg while reporting GREEN. The child already refuses loudly, so the wrapper only has
+  to not invent a value and not stay quiet about why.
 - KTP_HOSTS_DIR. Fleet scripts must run from a detached worktree at origin/main,
   and a worktree on another drive has no project root above it. Without the
   override the default resolves to a directory holding neither the rows nor
@@ -163,3 +171,111 @@ def test_missing_rows_fails_closed_with_a_specific_message(mod, tmp_path, monkey
     # is indistinguishable from "the rows are fine" unless this says otherwise.
     assert "version rows not found" in msg
     assert "KTP_CLAUDE_MD" in msg
+
+
+# --- the rcon credential ----------------------------------------------------
+# These inject a FAKE ktp_hosts rather than the real one: the point is the wiring,
+# and a test that imported the real module would depend on the operator's own box.
+
+class _FakeHosts:
+    FLEET_SSH_PASSWORD = "dummy-ssh-not-a-real-credential"
+    FLEET_RCON_PASSWORD = "dummy-rcon-not-a-real-credential"
+
+
+def _fake_hosts(monkeypatch, **attrs):
+    mod = type(sys)("ktp_hosts")
+    for k, v in attrs.items():
+        setattr(mod, k, v)
+    monkeypatch.setitem(sys.modules, "ktp_hosts", mod)
+    return mod
+
+
+def test_rcon_is_imported_for_the_script_that_issues_rcon(mod, tmp_path, monkeypatch):
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("KTP_RCON_PASSWORD", raising=False)
+    _fake_hosts(monkeypatch, FLEET_RCON_PASSWORD=_FakeHosts.FLEET_RCON_PASSWORD)
+    env = mod.child_env("ktp-verify-deploy.py")
+    assert env["KTP_RCON_PASSWORD"] == _FakeHosts.FLEET_RCON_PASSWORD
+
+
+def test_rcon_is_not_handed_to_scripts_that_do_not_issue_it(mod, tmp_path, monkeypatch):
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("KTP_RCON_PASSWORD", raising=False)
+    # None in sys.modules makes `import ktp_hosts` raise: if any of these reached for
+    # it, this fails rather than quietly widening who gets a live credential.
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    for name in mod.RUNNABLE:
+        if name in mod.NEEDS_RCON:
+            continue
+        assert "KTP_RCON_PASSWORD" not in mod.child_env(name), name
+
+
+def test_needs_rcon_is_narrower_than_the_allowlist(mod):
+    # If these ever match, least privilege has been lost without anyone deciding to.
+    assert set(mod.NEEDS_RCON) < set(mod.RUNNABLE)
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "scripts")
+    for name in mod.NEEDS_RCON:
+        body = open(os.path.join(scripts_dir, name), encoding="utf-8").read()
+        # the child must actually read the variable, or we are handing out a
+        # credential nothing consumes
+        assert "KTP_RCON_PASSWORD" in body, name
+    for name in set(mod.RUNNABLE) - set(mod.NEEDS_RCON):
+        body = open(os.path.join(scripts_dir, name), encoding="utf-8").read()
+        assert "KTP_RCON_PASSWORD" not in body, (
+            "%s reads KTP_RCON_PASSWORD but is not in NEEDS_RCON" % name)
+
+
+def test_an_already_set_rcon_password_is_honoured(mod, tmp_path, monkeypatch):
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("KTP_RCON_PASSWORD", "preset-not-a-real-credential")
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    env = mod.child_env("ktp-verify-deploy.py")
+    assert env["KTP_RCON_PASSWORD"] == "preset-not-a-real-credential"
+
+
+def test_a_missing_rcon_attribute_is_announced_and_not_invented(mod, tmp_path,
+                                                                monkeypatch, capsys):
+    """THE NEGATIVE CONTROL. The attribute absent is the state this change fixes."""
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("KTP_RCON_PASSWORD", raising=False)
+    _fake_hosts(monkeypatch, FLEET_SSH_PASSWORD=_FakeHosts.FLEET_SSH_PASSWORD)
+    env = mod.child_env("ktp-verify-deploy.py")
+    # no value invented, and nothing empty either -- an empty string is a value the
+    # child would accept and then fail an rcon handshake with
+    assert "KTP_RCON_PASSWORD" not in env
+    err = capsys.readouterr().err
+    assert "FLEET_RCON_PASSWORD" in err
+    assert "ktp-verify-deploy.py" in err
+
+
+def test_an_ssh_only_run_still_resolves_ssh_when_rcon_is_absent(mod, tmp_path, monkeypatch):
+    # The two must not be coupled: no rcon attribute cannot break staging a wave.
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("KTP_FLEET_SSH_PASSWORD")
+    _fake_hosts(monkeypatch, FLEET_SSH_PASSWORD=_FakeHosts.FLEET_SSH_PASSWORD)
+    env = mod.child_env("ktp-verify-deploy.py")
+    assert env["KTP_FLEET_SSH_PASSWORD"] == _FakeHosts.FLEET_SSH_PASSWORD
+
+
+def test_a_missing_ssh_attribute_still_refuses(mod, tmp_path, monkeypatch):
+    # Unchanged behaviour, asserted because the resolution was restructured around it.
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("KTP_FLEET_SSH_PASSWORD")
+    _fake_hosts(monkeypatch, FLEET_RCON_PASSWORD=_FakeHosts.FLEET_RCON_PASSWORD)
+    with pytest.raises(SystemExit) as exc:
+        mod.child_env("stage-wave.py")
+    assert "FLEET_SSH_PASSWORD" in str(exc.value)
+
+
+def test_the_transcript_line_names_rcon_only_when_it_was_supplied(mod):
+    # The printed line is how a reader of a wave transcript knows which legs could
+    # have run. It must not claim a credential that is not in the child env.
+    body = open(SCRIPT, encoding="utf-8").read()
+    assert 'if env.get("KTP_RCON_PASSWORD"):' in body
+    assert "value not shown" in body
