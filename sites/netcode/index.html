@@ -235,7 +235,7 @@ html{scrollbar-gutter:stable}
 <div class="cfgblock" id="cfg">
 <div class="line"><span class="cmd">rate 100000</span><span class="cmt">          // locked by the server; anything else is auto-corrected</span></div>
 <div class="line"><span class="cmd">cl_updaterate 102</span><span class="cmt">    // the true client maximum (the game caps at 102 internally)</span></div>
-<div class="line"><span class="cmd">cl_cmdrate 101</span><span class="cmt">       // a hair above fps_max (engine renders fps_max+1); higher cap? round up: 240 → 250</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 105</span><span class="cmt">       // a few % clear of fps_max, never equal; higher cap? round up: 240 → 250</span></div>
 <div class="line"><span class="cmd">ex_interp 0.01</span><span class="cmt">       // one update interval of buffer, shows enemies closest to true position</span></div>
 <div class="line"><span class="cmd">fps_max 100</span><span class="cmt">          // full physics fidelity; use your monitor refresh (144/240) if higher</span></div>
 <div class="line"><span class="cmd">cl_lc 1</span><span class="cmt">              // lag compensation for your shots; 0 means leading by your full ping</span></div>
@@ -245,7 +245,7 @@ html{scrollbar-gutter:stable}
 <button class="copybtn" id="copybtn" onclick="copyCfg()">Copy</button>
 </div>
 
-<p class="dim">If you run a frame cap above 100, raise <code>cl_cmdrate</code> to match it (<code>fps_max 240</code> pairs with <code>cl_cmdrate 250</code>).</p>
+<p class="dim">If you run a frame cap above 100, raise <code>cl_cmdrate</code> with it — a few percent clear, not matching it exactly (<code>fps_max 144</code> pairs with <code>cl_cmdrate 150</code>, <code>fps_max 240</code> with <code>cl_cmdrate 250</code>).</p>
 
 <div class="note"><b>Heads up:</b> <code>cl_filterstuffcmd</code> must be <code>0</code> so the server can correct your cvars. Locked values like <code>rate</code> are enforced by KTPCvarChecker; fighting them in your config just causes correction churn.</div>
 
@@ -265,9 +265,12 @@ html{scrollbar-gutter:stable}
 
 <div class="card">
   <h3>cl_cmdrate</h3>
-  <div class="meta"><span class="pill">default 30</span><span class="pill">allowed 100-1000</span><span class="pill rec">set 101 (or a bit above your fps_max)</span></div>
-  <p>How many command packets (your movement, aim, and button presses) you send per second. <b>This is a ceiling, not a scheduler:</b> the client sends at most one packet per rendered frame, so your real send rate is always <i>min(your fps, cl_cmdrate)</i>. Below your frame rate it throttles input; above it, the excess does nothing. The floor of 100 keeps input latency at &le;10&nbsp;ms per packet; engine research indicates the Steam client caps effective cmdrate near ~100 anyway, so 101 covers most players.</p>
-  <p><b>Why "a bit above" and not exactly equal?</b> The frame limiter's off-by-one (see the fps_max card) means a cap of 240 actually renders ~241&nbsp;fps — so <code>cl_cmdrate 240</code> would sit one below your true frame rate, the single worst value, quietly throttling about one packet a second. Since overshoot is free, round up with margin: <code>fps_max 100 &rarr; 101</code>, <code>fps_max 240 &rarr; 250</code>. Nothing is magic about the exact number — 242, 250, or 300 behave identically at a 240 cap; anything comfortably above your real frame rate is correct.</p>
+  <div class="meta"><span class="pill">default 30</span><span class="pill">allowed 100-1000</span><span class="pill rec">set 105 (or a few % above your fps_max)</span></div>
+  <p>How many command packets (your movement, aim, and button presses) you send per second. <b>This is a ceiling, not a scheduler:</b> the client sends at most one packet per rendered frame, so your real send rate is always <i>min(your fps, cl_cmdrate)</i>. Below your frame rate it throttles input; above it, the excess does nothing. The floor of 100 keeps input latency at &le;10&nbsp;ms per packet; engine research indicates the Steam client caps effective cmdrate near ~100 anyway, so a setting just clear of your frame cap is all anyone needs.</p>
+  <p><b>Why "a bit above" and not exactly equal?</b> The frame limiter's off-by-one (see the fps_max card) means a cap of 240 actually renders ~241&nbsp;fps — so <code>cl_cmdrate 240</code> would sit one below your true frame rate, the single worst value, quietly throttling about one packet a second. Since overshoot is free, round up with margin: <code>fps_max 100 &rarr; 105</code>, <code>fps_max 144 &rarr; 150</code>, <code>fps_max 240 &rarr; 250</code>. Nothing is magic about the exact number — 242, 250, or 300 behave identically at a 240 cap; anything comfortably above your real frame rate is correct.</p>
+  <p>Leave yourself a few percent of headroom rather than one or two. <code>cl_cmdrate 101</code> on <code>fps_max 100</code> was the older recommendation here, and it is the one pairing that gives no margin at all: the off-by-one means that cap really renders ~101&nbsp;fps, so the two sit level instead of clear.</p>
+  <p>There are two ways of describing what goes wrong at or below your frame rate, and both match what we see. The client sends at most one packet per rendered frame, so a cap under your fps throttles input outright. And once the cap is at or beneath your frame rate, input from more than one frame ends up travelling together in a single packet — so the server hears from you less often than your settings suggest.</p>
+  <p><b>This changes how often your packets arrive, and nothing else.</b> Hit registration came out the same across every <code>cl_cmdrate</code> and <code>fps_max</code> combination we looked at, so treat getting this right as a free tidy-up rather than an aim or hit-registration fix.</p>
 </div>
 
 <div class="card">
@@ -390,7 +393,7 @@ html{scrollbar-gutter:stable}
 <div class="cfgblock">
 <div class="line"><span class="cmd">rate 100000</span></div>
 <div class="line"><span class="cmd">cl_updaterate 101</span></div>
-<div class="line"><span class="cmd">cl_cmdrate 725</span><span class="cmt">   // matched to the frame cap, per the guidance above</span></div>
+<div class="line"><span class="cmd">cl_cmdrate 725</span><span class="cmt">   // just clear of the frame cap, per the guidance above</span></div>
 <div class="line"><span class="cmd">ex_interp 0.01</span></div>
 <div class="line"><span class="cmd">fps_max 719</span></div>
 <div class="line"><span class="cmd">cl_lc 1</span></div>
