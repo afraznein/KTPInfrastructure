@@ -150,6 +150,16 @@ def test_an_optional_stream_with_no_producer_is_fine():
     _assert(PRODUCER_SNAPSHOT)
 
 
+def test_shot_miss_is_registered_ahead_of_the_producer_that_emits_it():
+    """Registered here before KTPAMXX #185 is fielded, for the reason in the
+    module docstring: the health row comes off the plugin's enum, not off its
+    capabilities, so the gate that would otherwise make this safe does not."""
+    assert "shot_miss" in CAPTURE_EVENT_TYPES_OPTIONAL
+    assert "shot_miss" not in CAPTURE_EVENT_TYPES, (
+        "an optional stream in the required set fails every half that lacks it")
+    _assert(PRODUCER_SNAPSHOT)
+
+
 def test_an_enum_member_with_no_name_is_named():
     """Pawn zero-fills the short tail, so the new type emits under an empty name."""
     widened = PRODUCER_SNAPSHOT.replace(

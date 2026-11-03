@@ -166,6 +166,10 @@ CAPTURE_EVENT_TYPES_OPTIONAL = (
     # 2026-09-29, taking four Lane B assertions and a report authorization down
     # with it.
     "aim_vis",
+    # Shot-miss ray (KTPHLStatsX migration 052). Same reason as `aim_vis`
+    # directly above, and the reason has to land BEFORE the producer is fielded:
+    # the plugin emits the health row off its enum, not off its capabilities.
+    "shot_miss",
 )
 TEAM_NAMES = {1: "Allies", 2: "Axis"}
 GRENADE_WEAPON_TYPES = {13: "handgrenade", 14: "stickgrenade", 36: "mills_bomb"}
