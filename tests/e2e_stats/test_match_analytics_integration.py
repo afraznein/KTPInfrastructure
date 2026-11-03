@@ -105,6 +105,14 @@ def test_the_aim_vis_health_type_is_accepted_as_optional():
     assert _health_errors(types) == []
 
 
+def test_the_shot_miss_health_type_is_accepted_as_optional():
+    """Same shape as the two above, and registered the same way round: ahead of
+    the build that emits it, because the health row comes off the plugin's event
+    enum rather than off the capabilities it announces."""
+    types = tuple(analytics.CAPTURE_EVENT_TYPES) + ("shot_miss",)
+    assert _health_errors(types) == []
+
+
 def test_a_missing_required_health_type_is_still_an_error():
     """The point of the list: a stream that went dark must be caught."""
     types = tuple(t for t in analytics.CAPTURE_EVENT_TYPES if t != "damage")

@@ -195,6 +195,9 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_050_shot_rewind_shift.sql",
     # own_weapon_kill, a player-vs-player action like 003's assist (stats_logging 1.35.0).
     "sql/migrate_051_own_weapon_kill_action.sql",
+    # ktp_shot_miss_events: the ray of a shot that hit nobody, which the shot
+    # line had no room for (stats_logging 1.37.0, capability-gated).
+    "sql/migrate_052_shot_miss_events.sql",
 )
 
 DEFAULT_SEED_FILES = (
