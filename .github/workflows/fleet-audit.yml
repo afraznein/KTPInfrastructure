@@ -1,12 +1,16 @@
 # Weekly fleet audit, triaged by Claude, handed to a human as a GitHub issue.
 #
 # WHY THIS EXISTS
-# The audit itself has run every Monday since April, as a root cron on the data
-# server against /opt/ktp-infra. That checkout is 135 commits behind origin/main
-# and by design never pulls, so a check merged to main is not a check that runs:
-# ktp-monitor-patch-check.sh is in main and is not on the box. The wrapper prints
+# A root cron on the data server used to run this every Monday against
+# /opt/ktp-infra. That cron is RETIRED. Its checkout ran well behind origin/main
+# and by design never pulled, so a check merged to main was not a check that ran:
+# ktp-monitor-patch-check.sh was in main and never on the box. The wrapper printed
 # its own staleness every week into /var/log/ktp-fleet-audit.log, which nothing
-# reads. See docs/runbooks/FLEET_AUDIT_ACCESS.md.
+# read. See docs/runbooks/FLEET_AUDIT_ACCESS.md.
+#
+# Judge this audit from this workflow's run list, never from the retired cron's log
+# or its state file's mtime. Those artifacts outlived the cron, so they still look
+# current -- reading them that way is how an owed reinstall was once judged done.
 #
 # A workflow checks out the reviewed commit on every run, so that whole class of
 # problem disappears: baselines are always what main says, and merged means
