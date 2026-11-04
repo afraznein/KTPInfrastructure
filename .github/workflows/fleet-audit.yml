@@ -40,15 +40,31 @@
 #
 # TRIGGERS ARE DELIBERATELY NARROW
 # The self-hosted runner executes as root on the data server and can reach all
-# five game hosts. `pull_request` must never appear in this file -- a fork PR
-# would run attacker-controlled code there. Schedule and manual dispatch only.
+# five game hosts. `pull_request` must never appear in the `on:` block below --
+# a fork PR would run attacker-controlled code there. Schedule and manual
+# dispatch only. (Said that way on purpose: a checker that greps the whole file
+# for the token matches this very sentence, which is how one false alarm went.)
 #
-# RELATIONSHIP TO THE EXISTING CRON
-# Both run for now. This workflow uses its own state file so the two do not eat
-# each other's "new since last run" delta, and does NOT pass --alert-discord, so
-# it does not double-post: the cron keeps that job, and this workflow's only
-# Discord output is a one-line notice pointing at the issue. Retire the cron once
-# this has proven itself, then drop the -ci suffix below.
+# THE CRON IS GONE -- THIS WORKFLOW IS THE ONLY CALLER
+# Measured 2026-10-30: nothing under /etc/cron.d, cron.weekly, cron.daily,
+# /etc/crontab or root's spool references the fleet audit, against a control of 23
+# /etc/cron.d entries. This paragraph used to say "both run for now", and leaving
+# it that way cost real time twice: a reader who believes the cron still runs
+# weekly concludes a merged check needs installing on /opt/ktp-infra before it
+# takes effect, which was concluded for two separate merges. It does not -- the
+# checkout above is a fresh tree, so merged means running.
+#
+# The reason this workflow withholds --alert-discord has gone with the cron.
+# That flag is passed only by scripts/ktp-fleet-audit.sh, the wrapper the cron
+# ran, so nothing passes it anywhere now and there is no double-post left to
+# avoid. This workflow's one-line notice and the issue it points at are the whole
+# Discord output. Adding --alert-discord here is a real decision about alert
+# volume, not the cleanup this paragraph once implied.
+#
+# The -ci suffix on the state files below is kept deliberately. The retired
+# cron's own state file still sits beside them and is dated 2026-10-05; dropping
+# the suffix would start a fresh timeline under a name that implies continuity
+# with it.
 #
 # SETUP, BEFORE THE FIRST RUN
 #   1. `claude setup-token` locally, then store the result as the repository
