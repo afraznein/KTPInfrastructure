@@ -1630,6 +1630,111 @@ else
     down+=("weapon-context-store=scan-failed")
 fi
 
+# ---- AC review digest: did the backlog reach a person? ----
+# The weekly digest is the only thing that routes the review backlog to anyone,
+# and its cadence marker advances ONLY on a delivered post -- every other
+# outcome rolls it back on purpose, so a late session surfaces at the next tick.
+# One marker value therefore means both "quiet" and "broken", and the service's
+# own log is the only place the two are distinguishable. Its failure line says
+# so in as many words: nobody was told. Nothing read that log on a schedule.
+#
+# Keyed on work NOT done -- a post that was owed and never made. ktp-ac-api is
+# active through all of it, so the unit's state is silent on every case here.
+#
+# The three literals below are the contract with the API's digest service. A
+# reword there has to arrive here too, or this goes blind in the quiet
+# direction; the `loop-silent` leg is the only one that still fires, and only
+# while a post is due. tests/unit/test_health_review_digest.py pins them.
+# >>> ktp-ac-digest — extracted verbatim by tests/unit/test_health_review_digest.py
+AC_DIGEST_UNIT="${AC_DIGEST_UNIT:-ktp-ac-api}"
+AC_DIGEST_MARKER_KEY="${AC_DIGEST_MARKER_KEY:-LastUnreviewedDigestAt}"
+AC_DIGEST_POSTED_LITERAL="${AC_DIGEST_POSTED_LITERAL:-posted unreviewed-review digest}"
+AC_DIGEST_QUIET_LITERAL="${AC_DIGEST_QUIET_LITERAL:-unreviewed digest stayed quiet}"
+AC_DIGEST_FAILED_LITERAL="${AC_DIGEST_FAILED_LITERAL:-did NOT post and nobody was told}"
+# Mirrors the service's own period. The window spans several of its ticks on
+# purpose: a rolled-back marker is retried at the next one, so a broken digest
+# keeps re-logging instead of falling silent, and a window far shorter than the
+# period is still sound. It also keeps the journal floor an easy bar to clear --
+# that journal is size-bounded, not time-bounded, so the floor is derived per
+# run and a window it cannot cover is reported rather than scored.
+AC_DIGEST_PERIOD_HOURS="${AC_DIGEST_PERIOD_HOURS:-168}"
+AC_DIGEST_WINDOW_HOURS="${AC_DIGEST_WINDOW_HOURS:-24}"
+# A digest that owed a post and did not make one is an unrouted week. CLEAR must
+# stay at or above 1 for the same reason the upload-abort leg does: at 0 the
+# mid-band test is true for every count and the item never clears again.
+AC_DIGEST_FAIL_WARN="${AC_DIGEST_FAIL_WARN:-1}"
+AC_DIGEST_FAIL_CLEAR="${AC_DIGEST_FAIL_CLEAR:-1}"
+
+# ac_digest_rows <marker-age-hours> <journal-floor-age-hours>, journal lines on
+# stdin -> key<TAB>value<TAB>note rows. Both ages are arguments rather than read
+# from the clock, so the caller -- and the test -- decide the window.
+#
+# An unreadable marker or a journal that does not reach back across the window
+# is `unmeasurable`, never a clean zero: both answer "no failures found" out of
+# a check that could not have found one.
+ac_digest_rows() {
+    local marker_age=$1 floor_age=$2
+    awk -v marker_age="$marker_age" -v floor_age="$floor_age" \
+        -v window="$AC_DIGEST_WINDOW_HOURS" -v period="$AC_DIGEST_PERIOD_HOURS" \
+        -v posted_lit="$AC_DIGEST_POSTED_LITERAL" -v quiet_lit="$AC_DIGEST_QUIET_LITERAL" \
+        -v failed_lit="$AC_DIGEST_FAILED_LITERAL" '
+        index($0, failed_lit) { failed++; next }
+        index($0, posted_lit) { posted++; next }
+        index($0, quiet_lit)  { quiet++; next }
+        END {
+            if (marker_age !~ /^[0-9]+$/) {
+                printf "ac-review-digest=unmeasurable\t0\tthe digest cadence marker could not be read, so whether a digest is owed is unknown -- not fine\n"
+                exit 0
+            }
+            if (floor_age !~ /^[0-9]+$/ || floor_age + 0 < window + 0) {
+                printf "ac-review-digest=unmeasurable\t0\tthe journal does not reach back across the window, so a quiet result would mean nothing\n"
+                exit 0
+            }
+            if (failed + 0 > 0) {
+                printf "ac-review-digest:failed\t%d\t%d digest tick(s) owed a post, did not make one and said so only in the journal\n", failed, failed
+            }
+            if (marker_age + 0 >= period + 0 && posted + quiet + failed == 0) {
+                printf "ac-review-digest:loop-silent\t1\ta digest is overdue and the service logged no outcome of any kind -- it is not ticking, and it reads as active throughout\n"
+            }
+        }'
+}
+# <<< ktp-ac-digest
+
+# Root socket, same auth as the capture legs. A failed read is its own down item
+# rather than a skip: a dropped marker row would otherwise read as a digest that
+# is simply not due, forever.
+digest_marker_age=$(mysql hlstatsx -N -B -e "
+        SELECT TIMESTAMPDIFF(HOUR,
+                   STR_TO_DATE(LEFT(config_value, 19), '%Y-%m-%dT%H:%i:%s'),
+                   UTC_TIMESTAMP())
+        FROM ktp_ac_config
+        WHERE config_key = '$AC_DIGEST_MARKER_KEY'" 2>/dev/null | head -1 || true)
+# Oldest retained entry, derived per run. -o short-unix so the floor is an epoch
+# and not a locale; head closes the pipe, so this does not read the journal.
+digest_floor_epoch=$(journalctl -o short-unix --no-pager 2>/dev/null | head -1 | awk '{print int($1)}' || true)
+if [[ ${digest_floor_epoch:-} =~ ^[0-9]+$ ]] && [ "$digest_floor_epoch" -gt 0 ]; then
+    digest_floor_age=$(( (now_epoch - digest_floor_epoch) / 3600 ))
+else
+    digest_floor_age=unknown
+fi
+digest_window=$(journalctl -u "$AC_DIGEST_UNIT" --no-pager \
+    --since "${AC_DIGEST_WINDOW_HOURS} hours ago" 2>/dev/null || true)
+
+while IFS=$'\t' read -r _key _val _note; do
+    if [ -z "${_key:-}" ]; then continue; fi
+    echo "[$now_ts] ac-review-digest: $_key ($_note)"
+    case $_key in
+        ac-review-digest:failed)
+            if latched "$_key" "$_val" "$AC_DIGEST_FAIL_WARN" "$AC_DIGEST_FAIL_CLEAR"; then
+                down+=("$_key"); detail[$_key]="$_note"
+            fi
+            ;;
+        *)
+            down+=("$_key"); detail[$_key]="$_note"
+            ;;
+    esac
+done <<< "$(printf '%s\n' "$digest_window" | ac_digest_rows "${digest_marker_age:-unknown}" "$digest_floor_age")"
+
 # ---- Build sorted lists for set comparison ----
 # curr.list: sorted, deduplicated set of currently-down items
 # prev.list: read at the top of the run, because the disk checks latch on it
