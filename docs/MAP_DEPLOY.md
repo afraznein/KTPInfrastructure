@@ -159,6 +159,19 @@ A map does not need a restart to become playable — but nothing here should be
 taken as licence to restart anything. **Never restart a game server without
 explicit permission.**
 
+⛔ **Deploy the FILES first and `ktp_maps.ini` LAST.** The distributor pushes on
+change and reaches the fleet in sweeps rather than atomically — the
+`dod_catania_a05` deploy took about three to cover all 24 (12 → 18 → 24). Writing
+the ini first makes the map selectable on hosts that do not have it yet, so a
+`.changemap` can land a player on a map their server cannot load. Assert every
+destination **absent** before writing, and write with `cat src > dest`.
+
+⚠️ **Put a new entry under REMAINING MAPS, alphabetically, unless it is genuinely
+on the schedule — not in the seasonal block.** `.changemap` lists maps in file
+order, so an entry in the seasonal block reads to players as a scheduled map. A
+pre-alpha or a one-off test map belongs in the alphabetical section.
+`type = competitive` is the normal value; `practice` is for aim maps.
+
 ## 5. Verify after deploying
 
 Two separate questions, and the second is the one that gets skipped.
