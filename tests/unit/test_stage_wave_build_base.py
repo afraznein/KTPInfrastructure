@@ -191,10 +191,14 @@ def _gate(monkeypatch, argv, artifacts):
 
     Everything before the gate is stubbed out; anything after it would need the
     network, and none of these cases is expected to get that far.
+    `--allow-unresolved-natives` is in the argv for exactly that reason: the
+    native-resolution gate sits AFTER this one and reads the fleet, so without
+    the skip the two passing cases below reach out over SSH.
     """
     monkeypatch.setattr(sw.ledger, "gate", lambda *a, **k: sw.ledger.GateResult("clear", []))
     monkeypatch.setattr(sw.d2f, "build_artifacts", lambda files, override_remote: artifacts)
-    monkeypatch.setattr(sys, "argv", ["stage-wave.py", "--allow-existing-new", "--dry-run"] + argv)
+    monkeypatch.setattr(sys, "argv", ["stage-wave.py", "--allow-existing-new",
+                                      "--allow-unresolved-natives", "--dry-run"] + argv)
     return sw.main()
 
 

@@ -111,9 +111,10 @@ holding it true):
      the call does not help, because the reference is in the table either way.
      This is the gate for the cross-component half of a wave: a plugin and a
      module from one commit are fine, a plugin from a newer commit than the
-     fielded module is a fleet-wide outage of that plugin. `--allow-unresolved-
-     natives` is the opt-out, for the case where the module half is being staged
-     in the SAME wave (both activate together, so the mid-state never runs).
+     fielded module is a fleet-wide outage of that plugin.
+     `--allow-unresolved-natives` skips the gate, which is correct only when the
+     module half is in the SAME wave: both activate at one restart, so the
+     mid-state never runs.
 
 Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
@@ -633,10 +634,10 @@ def main():
                          "C++ side, since rebuilding candidate commits and comparing md5s cannot "
                          "find those. A KTPAMXX in-tree plugin can still be found that way.")
     ap.add_argument("--allow-unresolved-natives", action="store_true",
-                    help="Stage a plugin that calls a native the FIELDED modules do not export. "
-                         "Only correct when the module half is in the SAME wave, so both activate "
-                         "at one restart and the mid-state never runs. Otherwise the plugin goes "
-                         "ps_bad_load on every instance at once and nothing on the host says so.")
+                    help="Skip the native-resolution gate. Correct when the MODULE half is in the "
+                         "SAME wave -- both activate at one restart, so the mid-state never runs -- "
+                         "and wrong otherwise: the plugin goes ps_bad_load on every instance at "
+                         "once and nothing on the host says so.")
     ap.add_argument("--hosts", default="all",
                     help=f'Comma-separated (or "all"). Choices: {",".join(d2f.SERVERS)}')
     ap.add_argument("--ports", default="all",
@@ -854,7 +855,13 @@ def main():
     # whether the fleet can LOAD it. A plugin from a newer commit than the
     # fielded module is not a degraded plugin; it is no plugin, on every
     # instance, with nothing on the host to say so.
-    if any(a.basename.endswith(".amxx") for a in artifacts):
+    if not any(a.basename.endswith(".amxx") for a in artifacts):
+        pass
+    elif args.allow_unresolved_natives:
+        print("Preflight: native resolution SKIPPED (--allow-unresolved-natives).")
+        print("  Only safe if the MODULE half of this wave activates at the same restart.")
+        print("  If it does not, the plugin will not load on any instance and nothing will say so.\n")
+    else:
         print("Preflight: resolving each plugin's natives against the FIELDED modules...")
         nfind, nerr = native_resolution(host_keys, artifacts, port_filter)
         if nerr:
@@ -863,7 +870,7 @@ def main():
                 print(f"  {where} {name or ''} {msg}", file=sys.stderr)
             sys.exit("FATAL: could not resolve natives on every target -- aborting "
                      "(nothing staged). A gate that cannot see is not a gate that agrees.")
-        if nfind and not args.allow_unresolved_natives:
+        if nfind:
             print("FATAL: this plugin calls natives the FIELDED modules do not export:",
                   file=sys.stderr)
             for hk, p, name, missing in nfind:
@@ -879,14 +886,7 @@ def main():
             print("is also when --allow-unresolved-natives is the right flag -- the mid-state never", file=sys.stderr)
             print("runs. Staging the plugin alone and the module 'next time' is the outage.", file=sys.stderr)
             sys.exit("Aborting (nothing staged).")
-        if nfind:
-            print("WARNING: --allow-unresolved-natives -- staging a plugin whose natives do not")
-            print("  resolve against the modules fielded RIGHT NOW. This is only safe if the module")
-            print("  half activates at the SAME restart. If it does not, the plugin will not load.")
-            for hk, p, name, missing in nfind:
-                print(f"    [{hk}:{p}] {name}: {', '.join(missing)}")
-        else:
-            print(f"  clean -- every native resolves on {len(targets)} instance(s).\n")
+        print(f"  clean -- every native resolves on {len(targets)} instance(s).\n")
 
     # ---- Wave-time runner gate ----
     # The drift checker answers "has the runner fallen behind the FLEET". It
