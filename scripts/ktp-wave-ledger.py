@@ -52,6 +52,16 @@ Usage:
   ktp-wave-ledger.py sweep [--no-ledger]        # the same whole-fleet read, marks nothing (timer)
   ktp-wave-ledger.py record -a NAME=MD5:REMOTE_DIR [-a ...] --hosts a,b --targets 24 \
                             --base NAME=owner/repo@sha
+  ktp-wave-ledger.py cancel WAVE_ID --reason "why"  # unstaged before its swap; reads the fleet
+
+A wave has two resolved states, not one. `reconcile` closes a wave that shipped;
+`cancel` closes one whose artifacts were deliberately removed before 03:00, which
+otherwise stays pending for ever and blocks the NEXT stage on a row that is never
+going to flip. Until `cancel` existed the only way past that was
+`--allow-unreconciled`, which lifts the gate for every wave instead of resolving
+one. `cancel` reads the fleet and REFUSES unless it can show the artifact is not
+live and no matching `.new` remains -- a row claiming a wave never happened, over
+a fleet running it, is worse than the pending row it replaces.
 
 "No fleet, no network" is not "no side effect": `check` MARKS a satisfied wave
 reconciled in the ledger unless `--no-clear` is passed. `sweep` says it marks
@@ -389,6 +399,9 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
 
 
 def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
+    """Unresolved waves, oldest first. Resolved means reconciled OR cancelled --
+    a wave unstaged before its swap never activates, so leaving it pending would
+    block the next stage on a row that is never going to flip."""
     d = ledger_dir()
     if not os.path.isdir(d):
         return []
@@ -402,7 +415,7 @@ def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
                 entry = json.load(fh)
         except Exception:
             continue
-        if entry.get("reconciled_at") and not include_reconciled:
+        if (entry.get("reconciled_at") or entry.get("cancelled_at")) and not include_reconciled:
             continue
         out.append((p, entry))
     out.sort(key=lambda pe: pe[1].get("staged_at", 0))
@@ -414,6 +427,70 @@ def mark_reconciled(path: str, entry: dict, by: str) -> None:
     entry["reconciled_by"] = by
     entry["reconciled_actor"] = deploy_actor()
     os.replace(_write_json(path, entry), path)
+
+
+def mark_cancelled(path: str, entry: dict, reason: str, by: str) -> None:
+    entry["cancelled_at"] = int(time.time())
+    entry["cancelled_by"] = by
+    entry["cancelled_actor"] = deploy_actor()
+    entry["cancelled_reason"] = reason
+    os.replace(_write_json(path, entry), path)
+
+
+@dataclass
+class CancelCheck:
+    """Why a wave may or may not be recorded as cancelled."""
+    ok: bool
+    lines: list[str] = field(default_factory=list)
+
+
+def cancel_check(entry: dict, read: FleetRead) -> CancelCheck:
+    """Can we PROVE this wave did not activate?
+
+    Cancelling is a claim about the past, so an unprovable one is refused rather
+    than written: a row saying a wave never happened, over a fleet running its
+    artifact, is worse than the pending row it replaces. Four ways to fail, and
+    the last is the one nobody expects.
+    """
+    bad = []
+    for a in entry["artifacts"]:
+        b, want = a["basename"], a["md5"]
+        hosts = set(entry["hosts"])
+        live = {i: m for i, m in read.live.get(b, {}).items()
+                if i.split(":", 1)[0] in hosts}
+        staged = {i: m for i, m in read.staged.get(b, {}).items()
+                  if i.split(":", 1)[0] in hosts}
+
+        if not live:
+            bad.append(f"  {b}: no instance reported this artifact -- absence is unestablished, "
+                       f"not proven. Nothing written.")
+            continue
+        still = sorted(i for i, m in staged.items() if m == want)
+        if still:
+            bad.append(f"  {b}: STILL STAGED on {len(still)} instance(s) as .new on {want} "
+                       f"({', '.join(still[:4])}{', ...' if len(still) > 4 else ''}). "
+                       f"Cancel records an unstage that already happened -- unstage first.")
+            continue
+        on = sorted(i for i, m in live.items() if m == want)
+        # Uniform first, and deliberately NOT called "activated": the ledger
+        # records no replaced md5, so a wave that swapped and a wave that staged
+        # bytes already live read identically here. Neither is a cancel.
+        if on and len(on) == len(live):
+            bad.append(f"  {b}: {want} is live on all {len(live)} instance(s) -- either this wave "
+                       f"activated or it staged bytes that were already live, and the fleet cannot "
+                       f"tell those apart. Either way it did not fail to ship: reconcile it.")
+            continue
+        if on:
+            bad.append(f"  {b}: this wave ACTIVATED on part of its scope -- {want} is live on "
+                       f"{len(on)}/{len(live)} instance(s) ({', '.join(on[:4])}"
+                       f"{', ...' if len(on) > 4 else ''}). A partial swap is a wave to finish or "
+                       f"roll back, not one to cancel.")
+    if bad:
+        return CancelCheck(False, ["Refusing to record this wave as cancelled:", ""] + bad)
+    insts = {i for a in entry["artifacts"] for i in read.live.get(a["basename"], {})}
+    return CancelCheck(True, [
+        f"Verified across {len(insts)} instance(s): no artifact of this wave is live, and no "
+        f"matching .new remains."])
 
 
 # --------------------------------------------------------------------------
@@ -752,6 +829,8 @@ def _cmd_status(args) -> int:
         due = "ACTIVATED" if e["activates_after"] <= now else "pending activation"
         if e.get("reconciled_at"):
             due = f"reconciled by {e['reconciled_by']}"
+        if e.get("cancelled_at"):
+            due = f"CANCELLED -- {e.get('cancelled_reason') or 'no reason recorded'}"
         print(f"{e['wave_id']}  [{due}]  {e['targets']} instance(s)"
               f"  staged by {e.get('staged_by') or 'NOT RECORDED'}"
               f"{'  NARROWED (not a fleet wave)' if e.get('narrowed') else ''}")
@@ -932,6 +1011,54 @@ def _cmd_record(args) -> int:
     return 0
 
 
+def _cmd_cancel(args) -> int:
+    waves = {e["wave_id"]: (p, e) for p, e in load_waves(include_reconciled=True)}
+    got = waves.get(args.wave_id)
+    if got is None:
+        print(f"No wave {args.wave_id} in {ledger_dir()}. Known: "
+              f"{', '.join(sorted(waves)) or '(none)'}", file=sys.stderr)
+        return 2
+    path, entry = got
+
+    if entry.get("reconciled_at"):
+        when = datetime.fromtimestamp(entry["reconciled_at"], tz=timezone.utc)
+        print(f"wave {args.wave_id} was reconciled at {when:%Y-%m-%d %H:%M} UTC by "
+              f"{entry.get('reconciled_by')} -- a wave that shipped cannot be cancelled.",
+              file=sys.stderr)
+        return 2
+    if entry.get("cancelled_at"):
+        when = datetime.fromtimestamp(entry["cancelled_at"], tz=timezone.utc)
+        print(f"wave {args.wave_id} is already cancelled, at {when:%Y-%m-%d %H:%M} UTC by "
+              f"{entry.get('cancelled_by')}: {entry.get('cancelled_reason')}", file=sys.stderr)
+        return 2
+
+    print(f"wave {entry['wave_id']} ({entry['targets']} instance(s)), staged by "
+          f"{entry.get('staged_by') or 'NOT RECORDED'}:")
+    for a in entry["artifacts"]:
+        print(f"  {a['basename']}  {a['md5']}"
+              f"{'  ' + a['version'] if a.get('version') else ''}")
+
+    read = fleet_read(sweep_basenames([(path, entry)]), hosts=entry["hosts"])
+    if read.errors:
+        _print_read_errors(read)
+        print("Cancelling claims a wave did not activate, so an unread fleet is a refusal, not a "
+              "warning. Nothing written.", file=sys.stderr)
+        return 2
+
+    chk = cancel_check(entry, read)
+    stream = sys.stderr if not chk.ok else sys.stdout
+    for ln in chk.lines:
+        print(ln, file=stream)
+    if not chk.ok:
+        return 2
+
+    mark_cancelled(path, entry, args.reason, "cancel")
+    print(f"\nRecorded: wave {entry['wave_id']} CANCELLED -- {args.reason}")
+    print("The row-flip gate now treats it as resolved, so the next stage is not blocked by it. "
+          "No version row changes: nothing shipped.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -973,6 +1100,14 @@ def main(argv=None) -> int:
     w.add_argument("--hosts", required=True)
     w.add_argument("--targets", type=int, required=True)
     w.set_defaults(func=_cmd_record)
+
+    k = sub.add_parser("cancel", help="Record a wave that was unstaged before its swap, so the "
+                                      "row-flip gate stops waiting for a row that will never flip.")
+    k.add_argument("wave_id")
+    k.add_argument("--reason", required=True,
+                   help="Why it was unstaged. Stored on the row: a cancelled wave is the only "
+                        "resolved state carrying no artifact to explain itself.")
+    k.set_defaults(func=_cmd_cancel)
 
     args = ap.parse_args(argv)
     require_current(__file__, also=["deploy-to-fleet.py"],
