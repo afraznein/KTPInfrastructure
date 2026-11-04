@@ -98,3 +98,18 @@ def test_exemption_is_wired_to_its_own_exit_code():
     assert text.count("report_env_fault") == 2, "defined once and called once"
     assert '"$RC" -eq 4' in text, "the verdict must branch on the env-fault code"
     assert '"$RC" -eq 3' in text, "the image-fault verdict must still exist independently"
+
+
+def test_env_fault_verdict_reaches_the_downstream_assertions():
+    """The boot step exiting 0 is not enough on its own.
+
+    A step that exits 0 does not stop the next one, so the assertion steps ran
+    against a server that had never started and failed the job anyway -- the
+    exemption looked wired and was not.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert 'echo "KTP_ENV_FAULT=1" >> "$GITHUB_ENV"' in text, \
+        "the fault must cross the step boundary"
+    for name in ("assert_module", "assert_plugin"):
+        gate = "inputs.%s != '' && env.KTP_ENV_FAULT != '1'" % name
+        assert gate in text, "%s is not gated on the env fault" % name

@@ -507,6 +507,9 @@ jobs:
           }
 
           report_env_fault() {
+            # Later steps are separate processes, so the verdict has to survive the
+            # step boundary -- a step that exits 0 does not stop the next one.
+            echo "KTP_ENV_FAULT=1" >> "$GITHUB_ENV"
             echo "::warning title=Runner environment fault (not your change)::${UNDER_TEST_LABEL}: the game server could not open its UDP socket on this runner, so it exited before any assertion about your change could run. This job is NOT reporting a regression in your code, and it is NOT reporting a pass either. Detail: ${ENV_FAULT_DETAIL}"
             {
               echo "### Runner environment fault -- the smoke assertion did not run"
@@ -611,12 +614,12 @@ jobs:
           exit 1
 
       - name: Assert module loaded
-        if: ${{ inputs.assert_module != '' }}
+        if: ${{ inputs.assert_module != '' && env.KTP_ENV_FAULT != '1' }}
         working-directory: KTPInfrastructure
         run: python -m tests.smoke.cli assert-modules --port 27016 --rcon-password "$RCON_PASSWORD" --expect "${{ inputs.assert_module }}"
 
       - name: Assert plugin running
-        if: ${{ inputs.assert_plugin != '' }}
+        if: ${{ inputs.assert_plugin != '' && env.KTP_ENV_FAULT != '1' }}
         working-directory: KTPInfrastructure
         run: python -m tests.smoke.cli assert-plugins --port 27016 --rcon-password "$RCON_PASSWORD" --expect "${{ inputs.assert_plugin }}"
 
