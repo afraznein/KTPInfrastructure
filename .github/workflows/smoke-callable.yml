@@ -444,11 +444,25 @@ jobs:
           echo "under-test scope for assert-no-failed: ${UNDER_TEST:-<none: strict mode>}"
 
           IMAGE_FAULT_DETAIL=""
+          ENV_FAULT_DETAIL=""
 
           boot_and_check() {
             export KTP_PROJECT_ROOT="$(cd .. && pwd)"
             docker compose -f docker-compose.local.yml up -d --no-build ktp-game-1 || return 1
-            python -m tests.smoke.cli wait-ready --port 27016 --rcon-password "$RCON_PASSWORD" --timeout 120 || return 1
+            if ! python -m tests.smoke.cli wait-ready --port 27016 --rcon-password "$RCON_PASSWORD" --timeout 120; then
+              # ENOSYS on the listen socket means the server died before loading
+              # anything, so the run can say nothing about the change. Deliberately
+              # narrow: it must not excuse an ordinary boot timeout, and it must not
+              # excuse a socket error with another cause such as a port already taken.
+              # smoke-env-fault-pattern-begin
+              if docker compose -f docker-compose.local.yml logs --no-color ktp-game-1 2>&1 \
+                   | grep -qE 'UDP_OpenSocket.*Function not implemented'; then
+              # smoke-env-fault-pattern-end
+                ENV_FAULT_DETAIL="$(docker compose -f docker-compose.local.yml logs --no-color --tail 40 ktp-game-1 2>&1 | grep -E 'UDP_OpenSocket|NET_OpenIP' | head -3)"
+                return 4
+              fi
+              return 1
+            fi
 
             # KTPAMXX defers plugin_init until AFTER precache phase finishes
             # (boot logs "Loaded N plugin(s) during precache (plugin_init
@@ -492,6 +506,25 @@ jobs:
             return "$rc"
           }
 
+          report_env_fault() {
+            echo "::warning title=Runner environment fault (not your change)::${UNDER_TEST_LABEL}: the game server could not open its UDP socket on this runner, so it exited before any assertion about your change could run. This job is NOT reporting a regression in your code, and it is NOT reporting a pass either. Detail: ${ENV_FAULT_DETAIL}"
+            {
+              echo "### Runner environment fault -- the smoke assertion did not run"
+              echo ""
+              echo "The server process started and then exited because the host refused a UDP"
+              echo "socket. This reproduces on an unchanged `main`, so it is not"
+              echo "specific to this change or to this repository."
+              echo ""
+              echo "```"
+              echo "${ENV_FAULT_DETAIL}"
+              echo "```"
+              echo ""
+              echo "**This is not a pass.** Nothing was asserted about **${UNDER_TEST_LABEL}**:"
+              echo "the plugin-load check never ran, so this run is unmeasurable rather than"
+              echo "green. The compile step above is the only evidence it produced."
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+          
           report_image_fault() {
             echo "::warning title=KTP base image fault (not your change)::${UNDER_TEST_LABEL}: the runtime image shipped something that failed to load, and none of it is the change under test. This job is NOT reporting a regression in your code. Owner: afraznein/KTPInfrastructure (publish-base-image.yml). Detail: ${IMAGE_FAULT_DETAIL}"
             {
@@ -531,6 +564,13 @@ jobs:
           RC=0
           boot_and_check || RC=$?
           if [ "$RC" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$RC" -eq 4 ]; then
+            # Nothing about the change was exercised, so neither a pass nor a
+            # failure is available. A forced re-pull cannot supply a missing
+            # syscall, so this returns before either path retries.
+            report_env_fault
             exit 0
           fi
 
