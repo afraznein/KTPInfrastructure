@@ -125,3 +125,10 @@ jobs:
         run: |
           python3 scripts/check-live-script-inventory.py --selftest
           python3 scripts/check-live-script-inventory.py
+
+      # Enumerated explicitly, because an unlisted selftest never runs. Offline:
+      # it synthesises its own XXMA container and never touches the fleet, so it
+      # is unconditional like the two above. What it guards is the AMX header
+      # arithmetic and the decision rule -- both of which look right when wrong.
+      - name: Plugin native-resolution gate selftest
+        run: python3 scripts/ktp-check-plugin-natives.py --selftest

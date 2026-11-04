@@ -102,6 +102,20 @@ holding it true):
      operator's named call for a fix to something broken in production right
      now; the reason is written into the wave ledger. Never an agent's judgment.
 
+  9. NATIVE-RESOLUTION GATE (`.amxx` artifacts only). Refuses to stage a plugin
+     that calls a native the FIELDED modules do not export. AMXX resolves a
+     plugin's natives table at LOAD, not at call, so one missing name makes the
+     whole plugin `ps_bad_load` -- it does not degrade, it does not run -- and
+     nothing on the host reports it: the swap is `mv -f` and the post-swap script
+     looks for leftover `.new` files, not load status. A runtime `if` in front of
+     the call does not help, because the reference is in the table either way.
+     This is the gate for the cross-component half of a wave: a plugin and a
+     module from one commit are fine, a plugin from a newer commit than the
+     fielded module is a fleet-wide outage of that plugin.
+     `--allow-unresolved-natives` skips the gate, which is correct only when the
+     module half is in the SAME wave: both activate at one restart, so the
+     mid-state never runs.
+
 Then it stages every artifact as `<name>.new` to all selected instances,
 mode-matches each `.new` to the live file it will replace (so the post-swap
 permissions are correct), re-verifies md5 24/24, and prints the exact
@@ -180,6 +194,7 @@ def _load_sibling(mod_name, filename):
 
 d2f = _load_sibling("deploy_to_fleet", "deploy-to-fleet.py")
 ledger = _load_sibling("ktp_wave_ledger", "ktp-wave-ledger.py")
+natgate = _load_sibling("ktp_check_plugin_natives", "ktp-check-plugin-natives.py")
 
 # A wave stager that is itself behind origin/main stages happily and skips, in
 # silence, every gate it has never heard of. Checks the siblings too: a fresh
@@ -424,6 +439,83 @@ def mode_match(host_keys, artifacts, port_filter=None):
     return errs
 
 
+def native_resolution(host_keys, artifacts, port_filter=None):
+    """Which natives each `.amxx` artifact needs that its target cannot supply.
+
+    AMXX resolves a plugin's natives table at LOAD. One unresolved name and the
+    plugin is `ps_bad_load` -- the whole plugin, not the one call -- and the host
+    says nothing, because the swap is `mv -f` and the post-swap script checks for
+    leftover `.new` files rather than load status.
+
+    The baseline is the LIVE artifact of the same basename, not a name list: it
+    is loading right now, so every native IT references is resolvable here by
+    demonstration. That matters because AMXX's CORE natives are not all
+    recoverable from a `.so` string table (`copy` and `log_message` are not), so
+    a bare "is this name in the module" test reports false positives on a plugin
+    that has run for weeks. What this returns is the natives the INCOMING build
+    adds and the instance cannot supply -- the only set that can turn a working
+    plugin into a dead one.
+
+    Returns (findings, errors), findings as (hk, port, basename, [names]). An
+    instance that cannot be read, or whose live counterpart is absent, is an
+    ERROR -- never a pass. A gate that cannot see is not a gate that agrees.
+    """
+    plugins = [a for a in artifacts if a.basename.endswith(".amxx")]
+    if not plugins:
+        return [], []
+    need = {a.basename: set(natgate.required_natives(a.local_path)) for a in plugins}
+    unreadable = [b for b, n in need.items() if not n]
+    if unreadable:
+        return [], [(None, None, b, "no natives table read out of the local artifact")
+                    for b in unreadable]
+
+    findings, errors = [], []
+
+    def worker(hk):
+        info = d2f.SERVERS[hk]
+        found, errs = [], []
+        try:
+            ssh = _connect(info)
+            sftp = ssh.open_sftp()
+        except Exception as e:
+            return [], [(hk, None, None, f"connect: {e!r}")]
+        home = f"/home/{info['user']}"
+        try:
+            for p in _ports_for(hk, port_filter):
+                inst = f"dod-{p}"
+
+                def run(cmd, _s=ssh):
+                    _, so, _ = _s.exec_command(cmd, timeout=120)
+                    return so.read().decode("utf-8", "replace")
+
+                provided, socount = natgate.provided_natives(run, inst)
+                if socount < 1 or len(provided) < natgate.PROVIDER_FLOOR:
+                    errs.append((hk, p, None,
+                                 f"provider set {len(provided)} tokens from {socount} .so "
+                                 "-- probe untrustworthy, not a finding"))
+                    continue
+                for a in plugins:
+                    baseline = natgate._fetch_natives(sftp, home, inst, a.basename)
+                    if not baseline:
+                        errs.append((hk, p, a.basename,
+                                     "no live counterpart to baseline against "
+                                     "-- probe untrustworthy, not a finding"))
+                        continue
+                    missing = sorted(need[a.basename] - provided - baseline)
+                    if missing:
+                        found.append((hk, p, a.basename, missing))
+        finally:
+            sftp.close()
+            ssh.close()
+        return found, errs
+
+    with ThreadPoolExecutor(max_workers=len(host_keys)) as ex:
+        for f, e in ex.map(worker, host_keys):
+            findings.extend(f)
+            errors.extend(e)
+    return findings, errors
+
+
 def pull_live(host_keys, artifacts, dest, port_filter=None):
     """Download the LIVE counterpart of every artifact from every target instance.
 
@@ -541,6 +633,11 @@ def main():
                          "RECORDED for that artifact -- permanently for a stamped `.amxx` or the "
                          "C++ side, since rebuilding candidate commits and comparing md5s cannot "
                          "find those. A KTPAMXX in-tree plugin can still be found that way.")
+    ap.add_argument("--allow-unresolved-natives", action="store_true",
+                    help="Skip the native-resolution gate. Correct when the MODULE half is in the "
+                         "SAME wave -- both activate at one restart, so the mid-state never runs -- "
+                         "and wrong otherwise: the plugin goes ps_bad_load on every instance at "
+                         "once and nothing on the host says so.")
     ap.add_argument("--hosts", default="all",
                     help=f'Comma-separated (or "all"). Choices: {",".join(d2f.SERVERS)}')
     ap.add_argument("--ports", default="all",
@@ -752,6 +849,44 @@ def main():
         listed = ", ".join(f"{hk}:{p}" for hk, p in targets)
         print(f"Targets: {len(targets)} instance(s) -- NARROWED by --ports: {listed}")
         print("  ** This is NOT a fleet wave. The other instances keep their current build. **\n")
+
+    # ---- Native-resolution gate (before anything is staged) ----
+    # The md5 gates ask "is this the artifact we reviewed". None of them asks
+    # whether the fleet can LOAD it. A plugin from a newer commit than the
+    # fielded module is not a degraded plugin; it is no plugin, on every
+    # instance, with nothing on the host to say so.
+    if not any(a.basename.endswith(".amxx") for a in artifacts):
+        pass
+    elif args.allow_unresolved_natives:
+        print("Preflight: native resolution SKIPPED (--allow-unresolved-natives).")
+        print("  Only safe if the MODULE half of this wave activates at the same restart.")
+        print("  If it does not, the plugin will not load on any instance and nothing will say so.\n")
+    else:
+        print("Preflight: resolving each plugin's natives against the FIELDED modules...")
+        nfind, nerr = native_resolution(host_keys, artifacts, port_filter)
+        if nerr:
+            for hk, p, name, msg in nerr:
+                where = f"[{hk}:{p}]" if p else f"[{hk or 'local'}]"
+                print(f"  {where} {name or ''} {msg}", file=sys.stderr)
+            sys.exit("FATAL: could not resolve natives on every target -- aborting "
+                     "(nothing staged). A gate that cannot see is not a gate that agrees.")
+        if nfind:
+            print("FATAL: this plugin calls natives the FIELDED modules do not export:",
+                  file=sys.stderr)
+            for hk, p, name, missing in nfind:
+                print(f"  [{hk}:{p}] {name}: {', '.join(missing)}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print("AMXX resolves the natives table at LOAD, so this does not degrade the plugin --", file=sys.stderr)
+            print("it makes the whole plugin ps_bad_load on every instance above, at one restart,", file=sys.stderr)
+            print("and nothing on the host reports it. A runtime `if` in front of the call does not", file=sys.stderr)
+            print("help: the reference is in the table whether the branch is taken or not.", file=sys.stderr)
+            print("", file=sys.stderr)
+            print("Almost always this means the MODULE half of the wave was not staged with the", file=sys.stderr)
+            print("plugin half. Stage both in this one invocation and they activate together, which", file=sys.stderr)
+            print("is also when --allow-unresolved-natives is the right flag -- the mid-state never", file=sys.stderr)
+            print("runs. Staging the plugin alone and the module 'next time' is the outage.", file=sys.stderr)
+            sys.exit("Aborting (nothing staged).")
+        print(f"  clean -- every native resolves on {len(targets)} instance(s).\n")
 
     # ---- Wave-time runner gate ----
     # The drift checker answers "has the runner fallen behind the FLEET". It
