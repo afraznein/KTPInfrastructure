@@ -77,6 +77,26 @@ SETTLE_MINUTES = 10
 # so single-half matches get a longer settle instead: long enough that a real
 # halftime would have started h2, short enough to still report the abandoned one.
 SINGLE_HALF_SETTLE_MINUTES = 45
+# Nine halves between 2026-08-26 and 2026-10-24 received every marker the producer
+# sent and stored none of them. ktp-data-server-health.sh ALREADY pages on that --
+# `capture-half-loss` scored the 10-24 half at "100% of 5729 position events lost"
+# and took fourteen keys down at 19:17:09, the same hour the half ended. What no
+# surface carried was the CAUSE, nine times running, and the cause is one line of
+# arithmetic away: compare the half's own marker stamp against the ktp_matches
+# interval the daemon resolves it against. This check exists for that sentence.
+#
+# It is deliberately keyed on the half rather than the stream: the health script's
+# leg reports the worst (half, event_type) ratio, so one dead half arrives as
+# fourteen separate keys and the half-wide shape has to be reassembled by hand.
+#
+# Threshold measured over the whole ktp_capture_health history (1,713 half-groups,
+# 2026-08-31 to 2026-11-04): 1,704 groups lose no stream outright, exactly ONE
+# loses a single stream, and the remaining eight lose 4, 5, 5, 10, 11, 12, 12 and
+# 13. The gap between 1 and 4 is the signal. The lone 1-stream group is a
+# one-second boundary race -- a team_membership marker stamped 22:38:05 against an
+# interval closed at 22:38:04, one event -- and paging on that trains the reader to
+# ignore the finding that matters. Two is the floor with a 2x margin either side.
+CAPTURE_LOSS_MIN_STREAMS = 2
 # A match is finished when every half has an end_time and the last one has
 # settled -- and, if only one half exists, when that longer settle has passed.
 FINISHED = """
@@ -231,6 +251,79 @@ def check_half_ratio(db: str, since: int, findings: list[str]) -> None:
             % (mid, k1, s1, r1, k2, s2, r2, 100.0 * r2 / r1))
 
 
+def check_capture_total_loss(db: str, since: int, findings: list[str]) -> None:
+    """Halves where the capture streams received everything and kept nothing.
+
+    `daemon_rejected == daemon_received` with a non-zero receive means the daemon
+    saw every marker the producer sent and wrote none of them. Both known causes
+    are the same mechanism: `doEvent_KTPMatchStart` upserts `ktp_matches` on
+    (match_id, half) and only ever fills a NULL match_type, so a (match_id, half)
+    that comes round twice keeps the FIRST interval's start_time and end_time.
+    `ktpResolveProducerEventContext` then finds no interval containing the half's
+    own event epochs, and every event-time-gated stream drops with
+    "found 0 event-time match intervals". Seen two ways on the fleet: a reused
+    match_id (a captain typing ".confirm" at the 1.3 Queue ID prompt made
+    `1.3-confirm-NY1`, an id an earlier match on that instance already owned eight
+    months before -- refused since KTPMatchHandler 0.10.180, which is fielded) and a
+    half replayed after its own interval was closed, which nothing refuses: the
+    upsert cannot reopen a closed interval, so the second run of a (match_id, half)
+    is still lost today. Three of the nine measured halves are that second shape.
+
+    No settle window, unlike the summary checks: a health row records a rejection
+    that has already happened, so a half still being written can only under-count.
+    Both ktp_capture_health and ktp_matches are ktp_* tables, so this join needs no
+    explicit collation -- COLL is for the upstream hlstats_Events_* family.
+    """
+    rows = q(db, """
+        SELECT h.server_id, h.match_id, h.half,
+               SUM(h.daemon_received > 0 AND h.daemon_rejected = h.daemon_received) lost,
+               COUNT(*) streams,
+               SUM(CASE WHEN h.daemon_received > 0
+                         AND h.daemon_rejected = h.daemon_received
+                        THEN h.daemon_rejected ELSE 0 END) events_lost,
+               FROM_UNIXTIME(MIN(h.event_epoch)) marker_stamp,
+               IFNULL(MAX(m.start_time), '') iv_start,
+               IFNULL(MAX(m.end_time), '') iv_end,
+               IFNULL(MAX(m.id IS NOT NULL), 0) iv_present
+        FROM ktp_capture_health h
+        LEFT JOIN ktp_matches m
+               ON m.match_id = h.match_id AND m.half = h.half
+              AND m.server_id = h.server_id
+        WHERE h.event_time > NOW() - INTERVAL %d MINUTE
+        GROUP BY h.server_id, h.match_id, h.half
+        HAVING lost >= %d
+        ORDER BY marker_stamp
+    """ % (int(since), CAPTURE_LOSS_MIN_STREAMS))
+    for sid, mid, half, lost, streams, events, stamp, iv_start, iv_end, iv_present in rows:
+        # The HAVING above is for the server's benefit; this is the floor itself,
+        # off the same constant, so the threshold is exercised rather than asserted
+        # as a string in a test that cannot run the query.
+        if int(lost) < CAPTURE_LOSS_MIN_STREAMS:
+            continue
+        if not int(iv_present):
+            why = ("There is no ktp_matches row for that (server, match, half) at "
+                   "all, so no interval can contain the half.")
+        elif stamp < iv_start:
+            why = ("The half's own markers are stamped %s but its ktp_matches "
+                   "interval starts %s -- the interval belongs to a later run of "
+                   "the same (match_id, half)." % (stamp, iv_start))
+        elif iv_end and stamp > iv_end:
+            why = ("The half's own markers are stamped %s but its ktp_matches "
+                   "interval is %s..%s -- the interval belongs to an earlier run "
+                   "of the same (match_id, half), and the upsert on (match_id, "
+                   "half) never refreshed it." % (stamp, iv_start, iv_end))
+        else:
+            why = ("The ktp_matches interval %s..%s does contain the markers "
+                   "(stamped %s), so this is NOT the stale-interval shape -- read "
+                   "rejection_reasons on these rows before assuming a cause."
+                   % (iv_start, iv_end or "open", stamp))
+        findings.append(
+            "capture TOTAL LOSS: %s h%s on server %s -- %s of %s streams rejected "
+            "every event they received, %s events discarded. %s Nothing downstream "
+            "of ktp_capture_health can tell this half from one that was never "
+            "played." % (mid, half, sid, lost, streams, events, why))
+
+
 def check_unresolved_actions(findings: list[str], info: list[str]) -> None:
     """Read the daemon's own health line. Silent unless it has something to say."""
     out = subprocess.run(
@@ -358,6 +451,7 @@ def main() -> int:
     check_missing_halves(args.db, args.since, findings)
     check_aggregate_vs_events(args.db, args.since, findings, info)
     check_half_ratio(args.db, args.since, findings)
+    check_capture_total_loss(args.db, args.since, findings)
     check_unresolved_actions(findings, info)
     if args.logs:
         check_logs_against_db(args.db, args.logs, args.since, findings)
