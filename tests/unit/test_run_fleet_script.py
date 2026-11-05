@@ -28,6 +28,13 @@ parts that are easy to regress by making it more convenient:
   could not run a runtime verify, and every wave verify taken that way was missing the
   leg while reporting GREEN. The child already refuses loudly, so the wrapper only has
   to not invent a value and not stay quiet about why.
+- THE NAMES SET MATCH THE NAMES READ. sync-runner-stack.py reads the fleet credential
+  as GAME_SSH_PASSWORD, not KTP_FLEET_SSH_PASSWORD, so for as long as nobody ran it
+  through here it was allowlisted and unusable: paramiko raised "No authentication
+  methods available", which reads like a host or key fault rather than a wiring one.
+  The alias table fixes that one case; the test that the names read are all either
+  supplied or declared is what stops the next one, because a hand-kept table is the
+  same defect one layer up.
 - KTP_HOSTS_DIR. Fleet scripts must run from a detached worktree at origin/main,
   and a worktree on another drive has no project root above it. Without the
   override the default resolves to a directory holding neither the rows nor
@@ -279,3 +286,101 @@ def test_the_transcript_line_names_rcon_only_when_it_was_supplied(mod):
     body = open(SCRIPT, encoding="utf-8").read()
     assert 'if env.get("KTP_RCON_PASSWORD"):' in body
     assert "value not shown" in body
+
+
+def test_the_ssh_alias_reaches_the_child_that_reads_it(mod, tmp_path, monkeypatch):
+    # sync-runner-stack.py's fleet-reference connection reads GAME_SSH_PASSWORD and
+    # passes no key, so without this it is allowlisted and cannot authenticate.
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GAME_SSH_PASSWORD", raising=False)
+    env = mod.child_env("sync-runner-stack.py")
+    assert env["GAME_SSH_PASSWORD"] == env["KTP_FLEET_SSH_PASSWORD"]
+
+
+def test_the_alias_is_a_copy_and_triggers_no_import(mod, tmp_path, monkeypatch):
+    # The import is the only step that touches live values. An alias satisfiable from
+    # what is already set must not reach for one -- None in sys.modules makes
+    # `import ktp_hosts` raise, so a reach fails here rather than passing quietly.
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GAME_SSH_PASSWORD", raising=False)
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    env = mod.child_env("sync-runner-stack.py")
+    assert env["GAME_SSH_PASSWORD"] == env["KTP_FLEET_SSH_PASSWORD"]
+
+
+def test_an_already_set_alias_is_not_overwritten(mod, tmp_path, monkeypatch):
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("GAME_SSH_PASSWORD", "preset-not-a-real-credential")
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    env = mod.child_env("sync-runner-stack.py")
+    assert env["GAME_SSH_PASSWORD"] == "preset-not-a-real-credential"
+
+
+def test_aliases_are_only_given_to_children_that_read_them(mod, tmp_path, monkeypatch):
+    # Same least-privilege shape as NEEDS_RCON: the value is live, so a child that does
+    # not read the name does not get it.
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "scripts")
+    for name, aliases in mod.SSH_PASSWORD_ALIASES.items():
+        assert name in mod.RUNNABLE, name
+        body = open(os.path.join(scripts_dir, name), encoding="utf-8").read()
+        for alias in aliases:
+            assert alias in body, "%s is given %s and never reads it" % (name, alias)
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GAME_SSH_PASSWORD", raising=False)
+    monkeypatch.setenv("KTP_RCON_PASSWORD", "preset-not-a-real-credential")
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    for name in mod.RUNNABLE:
+        if name in mod.SSH_PASSWORD_ALIASES:
+            continue
+        assert "GAME_SSH_PASSWORD" not in mod.child_env(name), name
+
+
+def test_every_credential_name_a_child_reads_is_supplied_or_declared(mod, tmp_path,
+                                                                     monkeypatch):
+    """The guard that does not rot, and the one that would have caught the gap.
+
+    Read out of each child's own source: every literal credential name it resolves
+    must be one this wrapper sets, or one KNOWN_UNSATISFIED accounts for in writing.
+    A child that starts reading a new name fails here until someone decides which.
+    """
+    for k, v in _env(tmp_path).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GAME_SSH_PASSWORD", raising=False)
+    monkeypatch.setenv("KTP_RCON_PASSWORD", "preset-not-a-real-credential")
+    monkeypatch.setitem(sys.modules, "ktp_hosts", None)
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "scripts")
+    for name in mod.RUNNABLE:
+        env = mod.child_env(name)
+        target = os.path.join(scripts_dir, name)
+        undeclared = [n for n in mod.unsatisfied_credentials(target, env)
+                      if n not in mod.KNOWN_UNSATISFIED]
+        assert not undeclared, (
+            "%s reads %s, which nothing supplies and nothing declares. Either add it "
+            "to SSH_PASSWORD_ALIASES or record in KNOWN_UNSATISFIED why it is fine."
+            % (name, ", ".join(undeclared)))
+
+
+def test_the_credential_scan_finds_a_literal_name_and_admits_its_blind_spot(mod,
+                                                                            tmp_path):
+    # Positive: it finds the name the gap was about.
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "scripts")
+    runner = os.path.join(scripts_dir, "sync-runner-stack.py")
+    assert "GAME_SSH_PASSWORD" in mod.unsatisfied_credentials(runner, {})
+    # Negative: a name with no credential word in it is not swept up.
+    assert "KTP_DRIFT_REF_HOST" not in mod.unsatisfied_credentials(runner, {})
+    # Blind spot, asserted so it stays documented rather than assumed away:
+    # ktp-verify-deploy.py resolves its credentials through a computed name, so the
+    # scan sees nothing there. An empty result means "no literal gap", not "wired".
+    verify = os.path.join(scripts_dir, "ktp-verify-deploy.py")
+    assert 'os.environ.get(env_var' in open(verify, encoding="utf-8").read()
+    assert mod.unsatisfied_credentials(verify, {}) == []
+
+
+def test_known_unsatisfied_entries_carry_a_reason(mod):
+    # A bare name here would be an exemption with no argument behind it.
+    for name, why in mod.KNOWN_UNSATISFIED.items():
+        assert name.isupper() and len(why.split()) >= 6, name
