@@ -23,6 +23,26 @@ Each check below is one of those, turned into something that fires on the day.
   Reports the delta since the previous run. On the production data server this
   counter is already non-zero, so the fleet is losing lines today.
 - **Halves with no summary rows at all** — the empty-match-id shape.
+- **Halves where the capture streams kept nothing — and *why*.** `daemon_rejected ==
+  daemon_received` on two or more streams of one half: the daemon saw every marker
+  and wrote none. ⚠️ **The loss itself is not news to the estate and this check is
+  not what detects it**: `ktp-data-server-health.sh`'s `capture-half-loss` leg
+  already scored the 2026-10-24 half at *"100% of 5729 position events lost"* and
+  took fourteen keys down at 19:17:09, the hour the half ended. **What nine such
+  halves never carried was a cause.** So the finding prints the half's own marker
+  stamp beside its `ktp_matches` interval, which is where the cause is:
+  `doEvent_KTPMatchStart` upserts on `(match_id, half)` and never refreshes
+  `start_time`, so a (match_id, half) that comes round twice keeps the first run's
+  window and every event-time-gated stream resolves *"found 0 event-time match
+  intervals"*. Two routes reach it — a reused match_id (refused since
+  KTPMatchHandler 0.10.180, fielded) and a half replayed after its own interval was
+  closed, which **nothing refuses today**. It is keyed on the half, not the stream,
+  because the health script's leg reports the worst `(half, event_type)` ratio and
+  one dead half therefore arrives as fourteen keys. ⚠️ The two-stream floor is
+  measured, not chosen: over the whole table (1,713 half-groups) the distribution
+  is 1,704 at zero, exactly one at a single stream, then 4, 5, 5, 10, 11, 12, 12
+  and 13. The lone 1-stream group is a one-second boundary race worth one event,
+  and paging on it would train the reader to ignore the rest.
 - **Summaries short of the events they summarise.** The reverse direction is
   reported as information, not a finding: `recordEvent` only stamps `match_id`
   while the round is live, so freeze-time kills land untagged and the summary
