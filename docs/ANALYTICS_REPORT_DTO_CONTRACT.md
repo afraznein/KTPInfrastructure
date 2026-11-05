@@ -61,6 +61,19 @@ POSTs only the missing ones, so a regenerate adds a row beside the old one
 rather than replacing it. Every consumer therefore has to pick a row, and
 picking is where they differ.
 
+**`match_report.contract_version` is not the payload's vintage.** It is the
+module constant `analytics_report_dto.CONTRACT_VERSION`, stamped by
+`sanitize_report` at sync time and never read from the stored report. The
+payload's vintage is `report_schema_version`, which the DTO copies from the
+stored report into `source.report_schema_version`. So a row can read the
+current contract and carry a years-old schema: the contract column records
+which sync-time code wrote the row. Any question about what a payload
+*contains* keys on the schema version; the contract version only says which
+minor's guarantees the writer was promising. The prefix every reader filters on
+is the major, so this does not break them — it does mean a check written
+against the contract string will clear a row whose payload predates the thing
+being checked for.
+
 | Surface | Reader | Query | Picks | Prefix filter |
 |---|---|---|---|---|
 | `/stats/matches` (list) | `getMatchReportSummaries`, `features/public-match-report/data.ts` | `order(id desc).limit(limit * 4)`, default `limit` 200 | first row seen per `match_id`, i.e. the highest `id` | before the pick |

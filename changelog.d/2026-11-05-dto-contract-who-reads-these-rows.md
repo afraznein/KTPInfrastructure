@@ -24,3 +24,10 @@
   page showing two fields backwards, and the remedy is a regenerate and resync,
   not a website change. How many versions are actually being served is left as a
   stated open question with the row-picking rule a query has to replicate.
+- Recorded in the same section: `match_report.contract_version` is the module
+  constant `analytics_report_dto.CONTRACT_VERSION`, stamped by `sanitize_report`
+  at sync time and never read from the stored report, so it records which
+  sync-time code wrote the row and not what the payload contains. A row can read
+  the current contract and carry an old schema. Any question about payload
+  contents keys on `report_schema_version`; a check written against the contract
+  string clears a row whose payload predates the thing it is checking for.
