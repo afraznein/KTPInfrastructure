@@ -42,6 +42,85 @@ The report `schema_version` changes whenever `build_report` output changes, and
 `report_service generate` regenerates every in-season match that has no report
 at the current schema. `report_sync` then inserts those as new rows.
 
+## Who reads these rows
+
+This section is here because the rest of the file describes what the producer
+writes and says nothing about what a consumer does with it — and the four
+exception classes below are only safe to the extent that each consumer handles
+them. It is written off `searse/keep-the-prac` at `main` `1972d07c`
+(2026-11-04); the files and symbols are the stable part, line numbers are not.
+
+The served table is **`ktp.match_report`**, not `public.match_report`.
+`report_sync.supabase()` sends `Accept-Profile: ktp` and `Content-Profile: ktp`
+on every request, so a reader or a hand-run query that omits the schema either
+errors or reads whatever is in `public`.
+
+Rows are **append-only and never updated or deleted**. `report_sync` asks the
+site which `(match_id, report_schema_version, revision)` triples exist and
+POSTs only the missing ones, so a regenerate adds a row beside the old one
+rather than replacing it. Every consumer therefore has to pick a row, and
+picking is where they differ.
+
+| Surface | Reader | Query | Picks | Prefix filter |
+|---|---|---|---|---|
+| `/stats/matches` (list) | `getMatchReportSummaries`, `features/public-match-report/data.ts` | `order(id desc).limit(limit * 4)`, default `limit` 200 | first row seen per `match_id`, i.e. the highest `id` | before the pick |
+| `/stats/matches/<id>` (one match) | `getMatchReport`, same file | `eq(match_id).order(id desc).limit(1)` | the highest `id`, unconditionally | **after** the pick |
+| Season stats | `latestReports`, `features/stats/report-aggregate.ts`, fed by `features/stats/report-data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Player page | `latestReports`, `features/players/modern-depth.ts`, fed by `modern-depth-data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Weapons page | `latestReports`, `features/weapons/faction/attribute.ts`, fed by `faction/data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Captain's series proposal | `newer`, `features/ktp/result-report-stats-data.ts` | `in("match_id", …)` — no order, no limit | highest `(report_schema_version, revision, id)` | **none** |
+
+The prefix is the literal `analytics-report-dto-v1.`, declared independently in
+four of those modules. So the additive guarantee is load-bearing in exactly the
+way the top of this file states it: a reader that matches the prefix will be
+handed a row from any v1 minor and must treat an absent block as absent.
+
+Four consequences worth knowing before changing anything here:
+
+- **Three readers fetch every row for every match with no order and no limit**
+  and only then reduce. The reduction is the whole safety story. Moving or
+  dropping `latestReports` would not drop data — it would double-count it: every
+  historical revision of a match would be summed into the season totals, the
+  player's career line and the weapon aggregates alongside the current one.
+- **The list page's fetch is a budget, not a filter.** It reads the 800 highest
+  `id`s in the table with no season or time bound, then reduces to one row per
+  match and keeps 200. Once the table holds more than 800 rows, the matches
+  whose newest row falls outside that window stop appearing — oldest first,
+  silently, with no error on either side. The trigger is the table's total row
+  count, not any one match's revision count.
+- **The one-match page picks before it filters.** If a match's highest-`id` row
+  ever carried a non-`v1.` contract, the page would return nothing at all
+  rather than fall back to the conforming row underneath it, while the list page
+  would still list the match.
+- **The captain's series proposal orders by `(schema_version, revision, id)`
+  and checks no contract version.** That agrees with the other five only while
+  `id` order agrees with schema/revision order. An out-of-order insert — a
+  backfill regenerated at an older schema, say — makes the captain-facing
+  proposal and the public match page read different rows for the same match.
+
+### What the consumers cannot cover
+
+Row multiplicity and the `null`-not-`0` classes below are handled: the table only
+ever accumulates, every reader reduces to one row per match, and a field whose
+producer predates the match is `null` with a per-field coverage counter beside it.
+
+The class none of that reaches is **a value that is present, correctly shaped
+and wrong** — which is exactly the pre-schema-19 `map_control` and
+`progression.flag_differential` described further down. The caveat machinery can
+only ever say that a key is absent because a later schema added it, so an
+inverted half-1 value passes every check a consumer makes and renders. A served
+row below schema 19 is a published match page showing two of its fields
+backwards, and the remedy is `report_service generate` plus `report_sync` for
+those matches, not a website change.
+
+**Open question, deliberately not answered here:** how many contract versions
+and schema versions the site is serving *today*. That is the distinct count over
+the rows these readers pick, one per match — not the number of versions this
+file documents, which is every version ever cut. The two have no reason to
+agree and conflating them has been the standing mistake. It is a single
+read-only query against `ktp.match_report`; this file states the row-picking
+rule it has to replicate.
+
 ## `connection` (v1.13.0, players removed in v1.14.0, `halves` for the private tier in v1.15.0)
 
 Server-level connection quality for this match. **Per-player rows are not here**: ruled 2026-10-11 that a player's own connection numbers (worst-of shares, per-shot ping, engine session) are visible only to that player on their own stats page. The producer's report still carries them under `connection.players[]`; the private player tier reads them there, keyed to the signed-in player. The public block:
