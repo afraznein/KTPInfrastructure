@@ -87,6 +87,73 @@ sudo sysctl -p
 sysctl net.core.rmem_max  # Should show 26214400 (25MB)
 ```
 
+### Static IP Must Survive a Carrier Loss (Required on baremetal)
+
+**A 4-minute NIC flap on Dallas cost two full restarts of all five instances and five crash cores.**
+`igb enp1s0f0: NIC Link is Down` at 13:06:53 ET on 2026-09-29; networkd removed the static address with
+the carrier; every `gsquery` then failed, so the LinuxGSM monitor — which cannot tell *my network is
+down* from *the server hung* — restarted all five into a network where the bind could not succeed.
+Each new process died with `bind: Cannot assign requested address` →
+`NET_OpenIP: Couldn't allocate dedicated server IP port` (EADDRNOTAVAIL) → `Sys_Error` → core.
+No match was in progress, which was luck rather than design.
+
+**Fix: tell netplan to keep the address when the carrier drops.** Install as an additive override so
+the provider's own file is never edited — the revert is deleting one file:
+
+```bash
+# /etc/netplan/99-ktp-carrier.yaml   (mode 600)
+network:
+  version: 2
+  ethernets:
+    <DEVICE>:
+      ignore-carrier: true
+```
+
+⚠️ **Derive `<DEVICE>` per host — the fleet is NOT uniform and a copied override names the wrong
+interface.** Atlanta, Dallas and New York are `enp1s0f0` on a `/24` from `50-cloud-init.yaml`; Denver is
+`enp2s0f0` on a `/32` with an on-link default route from a GlobalTeleHost `01-netcfg.yaml`. Read it,
+never assume it:
+
+```bash
+ip -o route show default | awk '{print $5}'      # the device this host actually routes over
+netplan get ethernets                            # the merged authority, not a grep of one file
+```
+
+⛔ **Chicago is excluded and must not get this file.** It is not a netplan host at all: its
+`01-netcfg.yaml` is the stock comment stub with zero configuration lines, `netplan get` returns nothing,
+and `/run/systemd/network/` is empty — which is the very directory this override takes effect in. `eth0`
+is configured directly by `/etc/systemd/network/05-eth0.network`. It is also a KVM VPS on `virtio_net`,
+so it has no physical switch port to lose carrier on. If it is ever wanted there, the correct form is a
+drop-in under `/etc/systemd/network/05-eth0.network.d/`, not netplan.
+
+**Verify by EFFECT, not by the file** — the generated backend is what networkd actually reads:
+
+```bash
+DEV=$(ip -o route show default | awk '{print $5}')
+grep -c 'ConfigureWithoutCarrier=yes' /run/systemd/network/10-netplan-$DEV.network   # want 1
+wc -l < /run/systemd/network/10-netplan-$DEV.network                                 # haystack, ~13
+grep -c 'zzz-no-such-key' /run/systemd/network/10-netplan-$DEV.network               # control, want 0
+```
+
+🔴 **Both of those paths are ROOT-ONLY, and as `dodserver` they return a FALSE ZERO rather than an
+error.** `/etc/netplan` and `/run/systemd/network/*.network` are both unreadable to the game user, and
+`sudo -n` requires a password on every host, so a `grep -c` run as `dodserver` reports `0` for a
+correctly configured host. `journalctl -k` is denied to that user too, so a link-down count also reads
+`0`. **Print the haystack beside every count and have the probe distinguish unreadable from zero**; this
+has produced a wrong answer twice on this check.
+
+**Applying it restarts nothing, and that is worth proving rather than assuming.** The roll on
+2026-11-03 compared every `hlds_linux` start time before and after on each host and they were identical,
+which is why it could run outside a maintenance window. Worth keeping in any repeat: validate in a
+sandbox first (`netplan generate --root-dir` on a copy, gated on the string `Error in network
+definition` — **not** the exit status, which returns 0 even for a bogus key — with a deliberately bogus
+key as a negative control that must fire), and arm a timed revert
+(`systemd-run --on-active=300`) *before* the apply.
+
+📌 **Fielded on all four baremetals; verified 2026-11-06 with `ConfigureWithoutCarrier=yes` live on each
+and `link-down` 0 since the roll against kernel-journal haystacks of 16,355–19,479.** The override has
+therefore not yet been exercised by a real carrier loss — it is installed and live, not field-proven.
+
 ### Game Server Performance Tuning (Required)
 Critical kernel and network settings for competitive game server performance. Applied to all servers 2026-04-13.
 
