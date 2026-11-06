@@ -946,6 +946,9 @@ def load_half_player_stats(tournament_only: bool = True):
         assists, breaks, side = hud.get(key, (0.0, 0.0, None))
         damage = hlx_dmg.get((pid, match_id, str(half)), 0.0)   # HLstatsX stat, not HUD
         if side is None:
+            # Only the SUMMARY is missing here -- hud_ev reads the event tables, so
+            # these halves have real numbers; without this they publish as zero.
+            assists, breaks = hud_ev.get(key, (0.0, 0.0))
             team_int = kmp.get((steam_id, match_id))
             o = orient.get(match_id)
             if team_int is not None and o is not None:

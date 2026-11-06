@@ -63,16 +63,20 @@ half-order effect plus noise.
 
 ### D2 — half dropout is non-random, and pairing makes it visible
 
-`load_half_player_stats:729-730`:
+> **Superseded 2026-11-06.** This section described the loader as it stood before the
+> roster fallback was added. The dropout is real and is worse-shaped than described, but
+> halves with no HUD row are **no longer dropped** — see *What S1a actually found*, below.
+
+`load_half_player_stats` once read:
 
 ```python
 if side is None:
     continue    # no HUD row for this player/match/half -> can't tell which side
 ```
 
-Halves with no HUD row are dropped. `DATA_QUALITY.md:7` characterises the divergence
-precisely: it is a **half-coverage gap**, and *every divergent player has fewer HUD halves
-than HLstatsX halves* — HUD drops half-snapshots.
+`DATA_QUALITY.md:7` characterises the divergence precisely: it is a **half-coverage gap**,
+and *every divergent player has fewer HUD halves than HLstatsX halves* — HUD drops
+half-snapshots.
 
 For the current unpaired estimator this is a silent thinning of one pool. For a **paired**
 estimator it is louder and more tractable: a match where only one of a player's two halves
@@ -80,6 +84,35 @@ survived contributes **no pair at all**, and you can count exactly how many pair
 
 **This is an improvement, not a new problem.** The pairing makes an existing bias
 observable. But the drop must be reported, not silently absorbed — see the gates.
+
+### What S1a actually found — measured 2026-11-06, read-only
+
+S1a was run as specced and the answer was not the one this spec anticipates. On the S9
+tournament cohort (55 matches, 61 players, 2026-08-01/02):
+
+* **1,320** HLstatsX player-match-halves against **1,271** summarised by the HUD, so
+  **49** halves and **49** one-sided pairs: 660 eligible pairs, 611 formed, **7.42%**
+  pair loss, and `lost_both_halves` is 0.
+* **The dropout is entirely half 2.** 49 of 49; `lost_half1` is 0. That is a 50.00pp
+  imbalance at z = -7, so it is systematic at half-2 finalisation rather than random
+  thinning — stronger than "non-random" and worth knowing before anything is published.
+* **It is side-neutral**: 25 allies against 24 axis, z = 0.143, and no formed pair is
+  same-side. So the bias this spec worried the paired estimator would inherit is a
+  *half-order* bias and not a side bias, and the side correction is not threatened by it.
+* **The loader already recovers every one of the 49.** The roster fallback
+  (`ktp_match_players` plus a per-match orientation) resolves all of them; orientation
+  calibrates on 55 of 55 matches, uniquely. **So pair loss in the loader's OUTPUT is
+  zero, and the 7.42% above describes `hud_player_stats`, not what the estimator
+  receives.** S1a's gate condition — *"if pair loss is large or correlated with side, the
+  paired estimator inherits the bias it was meant to remove"* — is therefore satisfied.
+
+⚠️ **What the fallback did NOT recover, and this is the reason S2b was deferred:** those
+49 halves arrived with `assists = 0` and `breaks = 0`, because the `hud` dict was built by
+iterating the summary rows. **45 of them carry real assist events** and 12 carry cap-break
+events — **201 assists and 14 cap-breaks**, 3.75% and 4.03% of the cohort — computed by
+`_hud_event_stats` from independent tables and then discarded. Fixed in the same change
+that added this section; a zeroed half inflates exactly the half-to-half residual that
+S2b's `r_halves` measures, so the error bar could not be computed honestly before it.
 
 ---
 
@@ -270,7 +303,9 @@ compared against them.
 
 ## Done when
 
-- [ ] half-coverage and pair-loss numbers published (S1a)
+- [x] half-coverage and pair-loss numbers published (S1a) — 1,320 HLstatsX vs 1,271 HUD
+      halves, 49 one-sided pairs, 7.42% pair loss, all of it half 2 and side-neutral;
+      the loader recovers all 49, so loss in its output is zero
 - [ ] `avg_latency_ms` reports a real value (S1b)
 - [ ] pooled `β̂` agrees in sign with the existing `side_report` finding and is tighter
 - [ ] per-map `β̂` published with intervals, pooled fallback where they cross zero
