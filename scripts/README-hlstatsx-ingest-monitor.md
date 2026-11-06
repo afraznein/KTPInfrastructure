@@ -68,10 +68,24 @@ Each check below is one of those, turned into something that fires on the day.
 
 ```bash
 install -m 755 hlstatsx-ingest-monitor.py /usr/local/bin/
-install -m 644 ktp-hlstatsx-ingest-monitor.{service,timer} /etc/systemd/system/
+install -m 644 systemd/ktp-hlstatsx-ingest-monitor.{service,timer} /etc/systemd/system/
+install -m 644 -D systemd/dropins/ktp-hlstatsx-ingest-monitor.service.d/00-ktp-onfailure-alert.conf \
+  /etc/systemd/system/ktp-hlstatsx-ingest-monitor.service.d/00-ktp-onfailure-alert.conf
 systemctl daemon-reload
 systemctl enable --now ktp-hlstatsx-ingest-monitor.timer
+systemctl show -p OnFailure ktp-hlstatsx-ingest-monitor.service
 ```
+
+The units come from `systemd/`, not the copies sitting beside this README.
+Those are a pre-move pair kept only until one of the two is removed, and that service
+has no `ktp-run-record.sh` wrapping, so its findings die with journald in about two
+days. The `OnFailure` drop-in lives only under `systemd/dropins/` and is what
+carries the Discord path: skip it and the monitor's failures reach nobody, which is
+the failure this monitor exists to catch.
+
+Read the wiring back with `systemctl show -p OnFailure`, never a grep of the unit.
+This unit once claimed the directive in a comment while it was absent, and the grep
+read as wired while its failures went nowhere.
 
 A finding makes the unit fail, which fires the existing `ktp-systemd-alert`
 `OnFailure` wiring and lands in Discord. That delivery path is the point — a
