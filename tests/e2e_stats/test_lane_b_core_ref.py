@@ -264,13 +264,16 @@ def test_build_refuses_partial_lane_b_core_support():
 
 
 def test_daemon_starts_only_after_hlds_is_rcon_ready():
-    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    text = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    runner = code_text(text, flavour=PYTHON, origin="lane_b_e2e.py")
 
     ready = 'print(f"server up (attempt {attempt})", flush=True)'
     daemon_start = "daemon.start()"
-    assert runner.count(daemon_start) == 1
-    assert runner.index(ready) < runner.index(daemon_start)
-    assert "failed-attempt rows can neither be ingested" in runner
+    assert len(runner.occurrences(daemon_start)) == 1
+    assert_in_order(runner, ready, daemon_start)
+    # Raw text on purpose: this one IS the rationale comment, and keeping the
+    # reason beside the ordering is what is being pinned.
+    assert "failed-attempt rows can neither be ingested" in text
 
 
 def test_only_static_flag_positions_are_replayed_from_boot(tmp_path):
