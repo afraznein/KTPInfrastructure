@@ -327,3 +327,106 @@ def test_the_fit_survives_a_commit_that_fails(world):
         "an hour of fitting was discarded by a failed commit\n" + log
     assert "dod_donner" in proposed.read_text(encoding="utf-8")
     assert (world["proposal"] / "diff.txt").is_file(), "the diff was lost too"
+
+
+# --------------------------------------------------------------------------
+# found on the box: 2026-11-02, four dated patches beside one undated diff
+# --------------------------------------------------------------------------
+
+def _plant_a_previous_run(world):
+    """What /var/lib/ktp-map-coefficients actually held, measured 2026-11-07.
+
+    Four dated patches -- 10-15, 10-19, 10-26, 11-02 -- beside a diff.txt,
+    body.md and proposed table carrying only the 11-02 run. Checked against
+    origin/main that day, THREE of the four patches still applied cleanly, so
+    reading the newest diff and applying the first patch you saw was a silent
+    way to ship a different week.
+    """
+    d = world["proposal"]
+    d.mkdir(parents=True, exist_ok=True)
+    stale = d / "0001-map-coefficients-weekly-refit-2026-10-19.patch"
+    stale.write_text("stale patch from a run nobody merged\n", encoding="utf-8")
+    (d / "diff.txt").write_text("stale diff\n", encoding="utf-8")
+    (d / "body.md").write_text("stale body\n", encoding="utf-8")
+    (d / "map_coefficients.proposed.json").write_text('{"stale": 1}\n',
+                                                      encoding="utf-8")
+    return stale
+
+
+def test_a_previous_runs_patch_is_never_left_beside_a_new_diff(world):
+    stale = _plant_a_previous_run(world)
+    rc, log = _run(world, KTP_FIT_WRITE=0)
+    assert rc == 0, log
+    top = sorted(p.name for p in world["proposal"].glob("0001-*.patch"))
+    assert len(top) == 1, "a reviewer can still pick the wrong week: %r" % top
+    assert stale.name not in top
+    assert not stale.exists(), "the superseded patch is still applicable"
+
+
+def test_superseding_moves_the_old_set_rather_than_deleting_it(world):
+    """The commit a patch came from lived in the worktree the EXIT trap
+    removes, so the patch file is the only copy of that proposal."""
+    stale = _plant_a_previous_run(world)
+    rc, log = _run(world, KTP_FIT_WRITE=0)
+    assert rc == 0, log
+    kept = list(world["proposal"].glob("superseded/*/" + stale.name))
+    assert len(kept) == 1, "the only copy of a previous proposal was destroyed"
+    assert kept[0].read_text(encoding="utf-8").startswith("stale patch")
+    # the undated artifacts moved WITH it, so nothing left behind is mixed
+    assert (kept[0].parent / "diff.txt").read_text(encoding="utf-8") == "stale diff\n"
+
+
+def test_the_diff_at_the_top_level_is_this_runs(world):
+    _plant_a_previous_run(world)
+    rc, log = _run(world, KTP_FIT_WRITE=0)
+    assert rc == 0, log
+    assert "stale" not in (world["proposal"] / "diff.txt").read_text(encoding="utf-8")
+
+
+def test_the_manifest_names_the_one_patch_the_artifacts_belong_to(world):
+    rc, log = _run(world, KTP_FIT_WRITE=0)
+    assert rc == 0, log
+    manifest = (world["proposal"] / "MANIFEST.md").read_text(encoding="utf-8")
+    patch = next(iter(world["proposal"].glob("0001-*.patch"))).name
+    assert patch in manifest, "the manifest does not name the patch:\n" + manifest
+    for name in ("diff.txt", "body.md", "map_coefficients.proposed.json"):
+        assert name in manifest, "%s is unaccounted for:\n%s" % (name, manifest)
+
+
+def test_a_failed_fit_leaves_no_patch_at_all_rather_than_an_old_one(world):
+    """A partial run has to be unambiguous too. With the previous set already
+    moved aside there is nothing left to `git am` by mistake -- and the
+    previous proposal is still readable one directory down."""
+    stale = _plant_a_previous_run(world)
+    rc, log = _run(world, KTP_FIT_WRITE=3)
+    assert rc != 0, "a failed fit must not report success\n" + log
+    assert list(world["proposal"].glob("0001-*.patch")) == [], \
+        "a failed fit left a previous run's patch applicable"
+    assert list(world["proposal"].glob("superseded/*/" + stale.name)), \
+        "the previous proposal was lost as well as superseded"
+
+
+def test_a_first_ever_run_has_nothing_to_supersede(world):
+    """The pass must not fail the run on an empty directory, which is what a
+    fresh install sees once."""
+    rc, log = _run(world, KTP_FIT_WRITE=0)
+    assert rc == 0, log
+    assert "no previous proposal to supersede" in log
+    assert len(list(world["proposal"].glob("0001-*.patch"))) == 1
+
+
+def test_exactly_one_patch_is_asserted_not_assumed():
+    code = code_lines()
+    assert "format-patch" in code
+    assert "${#PATCHES[@]}" in code and "-ne 1" in code, \
+        "nothing checks that format-patch left exactly one patch"
+
+
+def test_the_run_date_is_read_once():
+    """The branch name, the commit subject and therefore the patch filename all
+    carry the date. Read three times they can straddle a UTC midnight."""
+    code = code_lines()
+    assert 'RUN_DATE="$(date -u +%Y-%m-%d)"' in code
+    assert code.count("+%Y-%m-%d)") == 1, \
+        "the run date is read more than once; the branch, the commit subject " \
+        "and the patch filename can then name different days"
