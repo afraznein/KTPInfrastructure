@@ -14,8 +14,10 @@ from pathlib import Path
 import pytest
 
 from . import break_scenarios as bs
+from ..source_anchors import PAWN, assert_in_order, code_text, pawn_source
 
 ROOT = Path(__file__).resolve().parents[2]
+PLUGIN_SOURCE = ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma"
 
 # Verbatim from the run that produced the false report.
 REAL_BREAK = ('L 08/10/2026 - 13:18:52: "Fox<3><BOT><Allies>" triggered '
@@ -91,44 +93,38 @@ def test_capping_team_death_in_far_kill_window_makes_it_inconclusive():
 
 
 def test_far_probe_waits_past_production_candidate_ttl():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     assert "#define BD_OFFPOINT_DEATH_QUIET_SECS 4.1" in source
     assert ("get_gametime() - g_bdLastTeamDeath[team] <\n"
             "\t\t\tBD_OFFPOINT_DEATH_QUIET_SECS") in source
 
 
 def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     # The stage allowance covers the in-plugin roster-acquisition freeze
     # (BD_KILL_ACQUIRE_MAX_POLLS at 0.1s) plus the capture wait.
     assert 0 < bs.BreakDriver.FAR_STAGE_TIMEOUT <= 45.0
     assert bs.BreakDriver.SERIES_TIMEOUT < 20 * 60
     assert "#define BD_FAR_KILL_MAX_POLLS BD_KILL_MAX_POLLS" in source
     assert "#define BD_KILL_ACQUIRE_MAX_POLLS 300" in source
-    arm = source[source.index("public cmd_arm_kill()"):
-                 source.index("public bd_kill_poll()")]
-    assert arm.index("remove_task(BD_TASK_KILL_POLL)") < arm.index(
-        "g_bdKillPolls = 0"
-    ) < arm.index("bd_begin_test_isolation()") < arm.index(
-        'set_task(0.1, "bd_kill_poll"'
-    )
-    poll_acquire = source[source.index("public bd_kill_poll()"):
-                          source.index("public cmd_arm_restart()")]
+    # Ends at the next function, not at bd_kill_poll(): cmd_disarm_kill() sits
+    # between them and repeats these very lines.
+    arm = source.body("public cmd_arm_kill()", "public cmd_disarm_kill()")
+    assert_in_order(arm, "remove_task(BD_TASK_KILL_POLL)", "g_bdKillPolls = 0",
+                    "bd_begin_test_isolation()", 'set_task(0.1, "bd_kill_poll"')
+    poll_acquire = source.body("public bd_kill_poll()", "public cmd_arm_restart()")
     assert poll_acquire.index("bd_hold_test_players()") < poll_acquire.index(
         "bd_series_roster_current(true)"
     ) < poll_acquire.index("bd_prepare_capture(")
-    prepare = source[source.index("stock bool:bd_prepare_capture"):
-                     source.index("stock bd_find_prepared_capture")]
+    prepare = source.body("stock bool:bd_prepare_capture", "stock bd_find_prepared_capture")
     assert "bd_area_center" in prepare
     assert "dodx_set_user_origin(id, anchor)" in prepare
     assert "dodx_set_user_origin(id, center)" in prepare
     assert "CA_timetocap, BD_PREPARED_CAPTURE_SECS" in prepare
-    poll = source[source.index("public bd_kill_poll()"):
-                  source.index("stock bool:bd_execute_restart")]
+    poll = source.body("public bd_kill_poll()", "stock bool:bd_execute_restart")
     assert "g_bdKillNear ? BD_KILL_MAX_POLLS : BD_FAR_KILL_MAX_POLLS" in poll
     assert 'register_srvcmd("ktp_bd_disarm_kill", "cmd_disarm_kill")' in source
-    disarm = source[source.index("public cmd_disarm_kill()"):
-                    source.index("public bd_kill_poll()")]
+    disarm = source.body("public cmd_disarm_kill()", "public bd_kill_poll()")
     assert "remove_task(BD_TASK_KILL_POLL)" in disarm
     assert 'server_print("KTP_BD_KILL_DISARMED")' in disarm
 
@@ -136,16 +132,15 @@ def test_far_probe_prepares_a_real_capture_and_is_bounded_before_halftime():
 def test_near_diagnostics_do_not_require_a_far_away_anchor():
     """Only the far-kill probe asserts an off-point distance.  Restart and
     walk-off setup merely need a safe origin outside the capture areas."""
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    prepare = source[source.index("stock bool:bd_prepare_capture"):
-                     source.index("stock bd_find_prepared_capture")]
+    source = pawn_source(PLUGIN_SOURCE)
+    prepare = source.body("stock bool:bd_prepare_capture", "stock bd_find_prepared_capture")
     assert "need_far && !bd_far_anchor(candidate, far_origin)" in prepare
     assert "!need_far && !bd_safe_anchor(far_origin)" in prepare
     assert "stock bd_safe_anchor(Float:anchor[3])" in source
 
 
 def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     seconds = float(next(
         line.rsplit(" ", 1)[1]
         for line in source.splitlines()
@@ -157,8 +152,7 @@ def test_both_kill_probes_freeze_all_live_players_past_the_evidence_window():
     assert "bd_hold_test_players()" in source
     assert bs._ISOLATION_END_RE.search("[BD] isolation END")
 
-    kill_fn = source[source.index("stock bool:bd_execute_kill"):
-                     source.index("public cmd_kill()")]
+    kill_fn = source.body("stock bool:bd_execute_kill", "public cmd_kill()")
     victim = kill_fn.index("new victim = bd_pick")
     killer = kill_fn.index("new killer = bd_pick_enemy")
     isolate = kill_fn.index("isolated = g_bdIsolationActive ?")
@@ -728,7 +722,7 @@ def test_manifest_activation_plugin_reload_and_userid_epoch_are_boundaries():
 
 
 def test_pawn_series_abort_removes_mutators_and_guards_every_arm_command():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     assert "public server_changelevel(map[])" in source
     assert "public ktp_half_end(" in source
     assert "bd_abort_series(\"half_end\", true)" in source
@@ -736,8 +730,7 @@ def test_pawn_series_abort_removes_mutators_and_guards_every_arm_command():
     assert "bd_abort_series(\"match_end\", true)" in source
     assert "public client_putinserver(id)" in source
     assert "public client_disconnected(id)" in source
-    cleanup = source[source.index("stock bd_cleanup_tasks()"):
-                     source.index("stock bd_abort_series")]
+    cleanup = source.body("stock bd_cleanup_tasks()", "stock bd_abort_series")
     for task in (
         "BD_TASK_KILL_POLL", "BD_TASK_WALKOFF_POLL",
         "BD_TASK_RESTART_ARM_POLL", "BD_TASK_RESTART_POLL",
@@ -749,19 +742,15 @@ def test_pawn_series_abort_removes_mutators_and_guards_every_arm_command():
         "cmd_arm_kill", "cmd_arm_restart", "cmd_arm_walkoff",
         "cmd_arm_clean_capture", "cmd_stage_canonical_frag",
     ):
-        body = source[source.index(f"public {command}()"):
-                      source.index("}", source.index(f"public {command}()"))]
+        body = source.body(f"public {command}()", "}")
         assert "bd_series_guard" in body
 
 
 def test_pawn_clean_capture_is_real_closed_world_and_fail_closed():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    arm = source[source.index("public cmd_arm_clean_capture()"):
-                 source.index("public bd_clean_capture_poll()")]
-    poll = source[source.index("public bd_clean_capture_poll()"):
-                  source.index("public bd_clean_capture_finish()")]
-    finish = source[source.index("public bd_clean_capture_finish()"):
-                    source.index("/**\n * ktp_bd_walkoff")]
+    source = pawn_source(PLUGIN_SOURCE)
+    arm = source.body("public cmd_arm_clean_capture()", "public bd_clean_capture_poll()")
+    poll = source.body("public bd_clean_capture_poll()", "public bd_clean_capture_finish()")
+    finish = source.body("public bd_clean_capture_finish()", "/**\n * ktp_bd_walkoff")
     assert 'register_srvcmd("ktp_bd_arm_clean_capture"' in source
     assert "bd_flush_stats_capture()" in arm
     assert "g_bdCleanArming = true" in arm
@@ -802,21 +791,22 @@ def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
     -1 (probe run 34005203795); mid-match neutralization reports 0. Every
     restart-path neutrality gate must therefore reject only ALLIES/AXIS,
     never require owner == 0, or the scenario can never stage."""
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
 
-    plan = source[source.index("stock bool:bd_find_restart_plan"):
-                  source.index("stock bool:bd_restart_same_origin")]
+    plan = source.body(
+               "stock bool:bd_find_restart_plan",
+               "stock bool:bd_restart_same_origin")
     assert "owner == BD_TEAM_ALLIES || owner == BD_TEAM_AXIS ||" in plan
     assert "owner != 0" not in plan
 
-    blocker = source[source.index("stock bd_restart_stability_blocker"):
-                     source.index("stock bd_restart_drop_stability")]
+    blocker = source.body(
+                  "stock bd_restart_stability_blocker",
+                  "stock bd_restart_drop_stability")
     assert ("stable_owner == BD_TEAM_ALLIES || "
             "stable_owner == BD_TEAM_AXIS") in blocker
     assert "!= 0" not in blocker.split("CA_owning_team")[1].split("||")[0]
 
-    prepare = source[source.index("stock bool:bd_prepare_capture"):
-                     source.index("stock bd_find_prepared_capture")]
+    prepare = source.body("stock bool:bd_prepare_capture", "stock bd_find_prepared_capture")
     assert ("if (owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS)\n"
             "\t\t\towner = 0") in prepare
     normalize = prepare.index("owner != BD_TEAM_ALLIES && owner != BD_TEAM_AXIS")
@@ -830,11 +820,11 @@ def test_restart_neutral_gates_accept_virgin_owner_but_reject_team_ownership():
 
 
 def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    select = source[source.index("stock bool:bd_find_clean_plan"):
-                    source.index("stock bool:bd_clean_snapshot_roster")]
-    poll = source[source.index("public bd_clean_capture_poll()"):
-                  source.index("public bd_clean_capture_finish()")]
+    source = pawn_source(PLUGIN_SOURCE)
+    select = source.body(
+                 "stock bool:bd_find_clean_plan",
+                 "stock bool:bd_clean_snapshot_roster")
+    poll = source.body("public bd_clean_capture_poll()", "public bd_clean_capture_finish()")
 
     # Virgin flags report owner -1 (deterministically since #248 restarts the
     # map before canonical staging); selection normalizes any non-team owner
@@ -862,13 +852,12 @@ def test_clean_capture_rejects_invalid_owner_then_waits_for_stable_valid_target(
 
 
 def test_clean_capture_retry_reacquires_exact_full_series_roster():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    arm = source[source.index("public cmd_arm_clean_capture()"):
-                 source.index("public bd_clean_capture_poll()")]
-    snapshot = source[source.index("stock bool:bd_clean_snapshot_roster()"):
-                      source.index("stock bool:bd_clean_pin_cappers()")]
-    prepare = source[source.index("stock bool:bd_prepare_capture"):
-                     source.index("stock bd_find_prepared_capture")]
+    source = pawn_source(PLUGIN_SOURCE)
+    arm = source.body("public cmd_arm_clean_capture()", "public bd_clean_capture_poll()")
+    snapshot = source.body(
+                   "stock bool:bd_clean_snapshot_roster()",
+                   "stock bool:bd_clean_pin_cappers()")
+    prepare = source.body("stock bool:bd_prepare_capture", "stock bd_find_prepared_capture")
 
     assert arm.index("bd_end_test_isolation(false)") < arm.index(
         "bd_reset_clean_state()"
@@ -881,23 +870,18 @@ def test_clean_capture_retry_reacquires_exact_full_series_roster():
 
 
 def test_pawn_abort_and_end_cancel_and_guard_delayed_after_reports():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    cleanup = source[source.index("stock bd_cleanup_tasks()"):
-                     source.index("stock bd_abort_series")]
+    source = pawn_source(PLUGIN_SOURCE)
+    cleanup = source.body("stock bd_cleanup_tasks()", "stock bd_abort_series")
     assert "remove_task(BD_TASK_REPORT_BASE + f)" in cleanup
     assert 'set_task(1.5, "bd_report_after", f)' not in source
     assert 'set_task(1.5, "bd_report_after", taskid)' in source
 
-    callback = source[source.index("public bd_report_after(taskid)"):
-                      source.index("/**", source.index(
-                          "public bd_report_after(taskid)"))]
+    callback = source.body("public bd_report_after(taskid)", "/**")
     assert "if (!g_bdSeriesActive)" in callback
     assert "return PLUGIN_HANDLED" in callback
 
-    abort = source[source.index("stock bd_abort_series"):
-                   source.index("stock bool:bd_series_guard")]
-    end = source[source.index("public cmd_end_series()"):
-                 source.index("public cmd_clock_preflight()")]
+    abort = source.body("stock bd_abort_series", "stock bool:bd_series_guard")
+    end = source.body("public cmd_end_series()", "public cmd_clock_preflight()")
     for body in (abort, end):
         assert body.index("g_bdSeriesActive = false") < body.index(
             "bd_cleanup_tasks()"
@@ -1312,9 +1296,8 @@ def test_canonical_diagnostic_frag_rejects_missing_postflush_ack(monkeypatch):
 
 
 def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    command = source[source.index("public cmd_stage_canonical_frag()"):
-                     source.index("public client_death(")]
+    source = pawn_source(PLUGIN_SOURCE)
+    command = source.body("public cmd_stage_canonical_frag()", "public client_death(")
 
     assert '#include <hamsandwich>' not in source
     assert '#include <reapi>' in source
@@ -1326,11 +1309,11 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
     assert "bd_prepare_canonical_frag_pair" in command
     assert "bd_drive_canonical_attacker" in command
     assert "BD_IN_ATTACK" in source
-    drive = source[source.index("stock bd_drive_canonical_attacker"):
-                   source.index("stock bd_canonical_frag_abort")]
+    drive = source.body(
+                "stock bd_drive_canonical_attacker",
+                "stock bd_canonical_frag_abort")
     assert "(flags | FL_GODMODE) & ~FL_FROZEN" in drive
-    hold = source[source.index("stock bd_hold_test_players"):
-                  source.index("stock bd_allow_isolated_death")]
+    hold = source.body("stock bd_hold_test_players", "stock bd_allow_isolated_death")
     assert "id == g_bdCanonicalKiller" in hold
     assert "held_flags &= ~FL_FROZEN" in hold
     assert "id == g_bdCanonicalVictim" in hold
@@ -1338,14 +1321,13 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
     assert command.index("bd_begin_test_isolation()") < command.index(
         'log_amx("[BD] canonical_frag BEGIN'
     )
-    first_flush = command.index("bd_flush_stats_capture()")
-    assert first_flush < command.index(
-        'log_amx("[BD] canonical_frag BEGIN'
-    )
-    postflush = command.index("bd_flush_stats_capture()", first_flush + 1)
-    assert postflush < command.index(
-        'log_amx("[BD] canonical_frag FACT'
-    )
+    # Two flushes on purpose, one either side of the frag, so the count is
+    # asserted rather than a bare `index` quietly meaning the first.
+    flushes = command.occurrences("bd_flush_stats_capture()")
+    assert len(flushes) == 2, f"expected a flush either side of the frag, got {len(flushes)}"
+    first_flush, postflush = flushes
+    assert first_flush < command.index('log_amx("[BD] canonical_frag BEGIN')
+    assert postflush < command.index('log_amx("[BD] canonical_frag FACT')
     assert command.index(
         'log_amx("[BD] canonical_frag POSTFLUSH'
     ) < command.index('log_amx("[BD] canonical_frag FACT')
@@ -1357,12 +1339,13 @@ def test_pawn_canonical_frag_is_engine_owned_then_reacquires_full_roster():
 def test_pawn_canonical_frag_moves_attacker_off_the_staged_objective_after_death():
     """The factual kill is complete at the engine callback.  The attacker
     must not remain in the objective trigger while the victim respawns."""
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    death = source[source.index("public client_death("):
-                   source.index("// ---------------------------------------------------------------------------",
-                                source.index("public client_death("))]
-    restore = source[source.index("stock bool:bd_restore_canonical_killer_origin"):
-                     source.index("stock bd_canonical_restore_victim_health")]
+    source = pawn_source(PLUGIN_SOURCE)
+    death = source.body(
+                "public client_death(",
+                "// ---------------------------------------------------------------------------")
+    restore = source.body(
+                  "stock bool:bd_restore_canonical_killer_origin",
+                  "stock bd_canonical_restore_victim_health")
     assert "g_bdIsolationOriginSaved[killer]" in restore
     assert "dodx_set_user_origin(killer, g_bdIsolationOrigin[killer])" in restore
     assert death.index("bd_canonical_clear_attack()") < death.index(
@@ -1371,20 +1354,21 @@ def test_pawn_canonical_frag_moves_attacker_off_the_staged_objective_after_death
 
 
 def test_pawn_canonical_wait_progressively_acquires_dead_pinned_member_and_ignores_prewindow_death():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    arm = source[source.index("public cmd_stage_canonical_frag()"):
-                 source.index("public bd_canonical_frag_poll()")]
-    poll = source[source.index("public bd_canonical_frag_poll()"):
-                  source.index("public client_death(")]
-    death = source[source.index("public client_death("):
-                   source.index("// ---------------------------------------------------------------------------",
-                                source.index("public client_death("))]
-    hold = source[source.index("stock bd_hold_test_players"):
-                  source.index("stock bd_allow_isolated_death")]
-    identity = source[source.index("stock bool:bd_canonical_series_player_current"):
-                      source.index("stock bd_canonical_clear_attack")]
-    exact = source[source.index("stock bool:bd_isolation_exact_series"):
-                   source.index("stock bool:bd_owner_canonical")]
+    source = pawn_source(PLUGIN_SOURCE)
+    arm = source.body(
+              "public cmd_stage_canonical_frag()",
+              "public bd_canonical_frag_poll()")
+    poll = source.body("public bd_canonical_frag_poll()", "public client_death(")
+    death = source.body(
+                "public client_death(",
+                "// ---------------------------------------------------------------------------")
+    hold = source.body("stock bd_hold_test_players", "stock bd_allow_isolated_death")
+    identity = source.body(
+                   "stock bool:bd_canonical_series_player_current",
+                   "stock bd_canonical_clear_attack")
+    exact = source.body(
+                "stock bool:bd_isolation_exact_series",
+                "stock bool:bd_owner_canonical")
 
     # Isolation begins immediately without requiring the entire roster alive.
     assert "bd_series_roster_current(true)" not in arm
@@ -1431,7 +1415,7 @@ def test_pawn_canonical_wait_progressively_acquires_dead_pinned_member_and_ignor
 
 
 def test_canonical_frag_uses_only_the_actual_lane_b_module_set():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     module_lines = (ROOT / "config/local/modules.ini").read_text().splitlines()
     modules = {
         line.strip() for line in module_lines
@@ -1588,19 +1572,20 @@ def test_verified_neutral_zero_to_zero_count_collapse_is_clean():
 
 
 def test_probe_allows_only_frozen_monotonic_rebased_collapse_before_completion():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     expected = ("if (!(g_bdRestartRebased && count >= 0 &&\n"
                 "\t\t\t\t\tcount <= g_bdRestartCountQueued &&\n"
                 "\t\t\t\t\tg_bdRestartFrozenCount >= g_bdRestartCountQueued &&\n"
                 "\t\t\t\t\towner == g_bdRestartOwnerBefore))")
-    assert expected in source
-    assert source.index(expected) < source.index(
-        'kind=state_before_completion count=%d owner=%d')
+    # Both anchors are mid-line, so column 0 cannot separate them from prose
+    # and comment exclusion has to do it instead.
+    assert_in_order(code_text(str(source), PAWN, PLUGIN_SOURCE.name),
+                    expected, "kind=state_before_completion count=%d owner=%d")
 
 
 def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
     """Regression for r5 runs 1-4: PREPARED preceded bot respawns by ~1s."""
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     polls = int(next(
         line.rsplit(" ", 1)[1]
         for line in source.splitlines()
@@ -1610,14 +1595,12 @@ def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
     assert "public dod_client_spawn(id)" in source
     assert "g_bdSpawnGeneration[id]++" in source
 
-    arm = source[source.index("public cmd_arm_restart()"):
-                 source.index("public bd_restart_arm_poll()")]
+    arm = source.body("public cmd_arm_restart()", "public bd_restart_arm_poll()")
     assert arm.index("bd_snapshot_restart_roster()") < arm.index(
         'server_cmd("mp_clan_restartround 1")'
     )
 
-    poll = source[source.index("public bd_restart_arm_poll()"):
-                  source.index("public bd_restart_poll()")]
+    poll = source.body("public bd_restart_arm_poll()", "public bd_restart_poll()")
     normalizing_start = poll.index(
         "g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING"
     )
@@ -1660,11 +1643,11 @@ def test_normalization_clock_before_respawn_cannot_prepare_or_queue_early():
 
 
 def test_restart_stability_refreshes_isolation_on_a_new_spawn_generation():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
-    hold = source[source.index("stock bd_hold_test_players()"):
-                  source.index("stock bd_allow_isolated_death(id)")]
-    restore = source[source.index("stock bd_restore_isolated_players()"):
-                     source.index("stock bd_restore_prepared_capture()")]
+    source = pawn_source(PLUGIN_SOURCE)
+    hold = source.body("stock bd_hold_test_players()", "stock bd_allow_isolated_death(id)")
+    restore = source.body(
+                  "stock bd_restore_isolated_players()",
+                  "stock bd_restore_prepared_capture()")
     assert ("g_bdIsolationSpawnGeneration[id] != "
             "g_bdSpawnGeneration[id]") in hold
     assert ("g_bdIsolationSpawnGeneration[id] = "
@@ -1674,26 +1657,24 @@ def test_restart_stability_refreshes_isolation_on_a_new_spawn_generation():
 
 
 def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     assert bs.BreakDriver.SERIES_TIMEOUT == 300.0
-    completeness = source[source.index(
-        "stock bool:bd_restart_roster_pinned_complete"
-    ):source.index("stock bool:bd_restart_roster_live")]
+    completeness = source.body(
+                       "stock bool:bd_restart_roster_pinned_complete",
+                       "stock bool:bd_restart_roster_live")
     assert "get_players(players, num)" in completeness
     assert "!g_bdRestartRosterSelected[id]" in completeness
     assert "team != g_bdRestartRosterTeam[id]" in completeness
     assert "g_bdRestartRosterSpawnStable[id]" in completeness
     assert "g_bdRestartRosterSpawnBaseline[id] + 1" not in completeness
-    abort = source[source.index("stock bd_restart_arm_abort"):
-                   source.index("/** Create a real, bounded capture")]
+    abort = source.body("stock bd_restart_arm_abort", "/** Create a real, bounded capture")
     assert abort.index("remove_task(BD_TASK_RESTART_ARM_POLL)") < (
         abort.index('log_amx("[BD] restart ABORT')
     ) < abort.index("bd_end_test_isolation(false)")
     assert "bd_restore_restart_timer()" in abort
     assert "bd_reset_restart_arm_state()" in abort
 
-    poll = source[source.index("public bd_restart_arm_poll()"):
-                  source.index("public bd_restart_poll()")]
+    poll = source.body("public bd_restart_arm_poll()", "public bd_restart_poll()")
     assert "#define BD_RESTART_ARM_MAX_POLLS 300" in source
     assert poll.index("g_bdRestartArmPolls >= BD_RESTART_ARM_MAX_POLLS") < (
         poll.index("g_bdRestartArmPhase == BD_RESTART_ARM_NORMALIZING")
@@ -1705,24 +1686,20 @@ def test_restart_never_fires_late_when_respawn_or_lifecycle_stability_fails():
     assert 'bd_restart_arm_abort("combat roster changed while restart armed")' in poll
     assert 'bd_restart_arm_abort("roster respawned after capture preparation")' in poll
 
-    lifecycle = source[source.index("public ktp_half_end("):
-                       source.index("stock bd_reset_restart_arm_state()")]
+    lifecycle = source.body("public ktp_half_end(", "stock bd_reset_restart_arm_state()")
     assert 'bd_abort_series("half_end", true)' in lifecycle
     assert 'bd_abort_series("match_end", true)' in lifecycle
-    cleanup = source[source.index("stock bd_cleanup_tasks()"):
-                     source.index("stock bd_abort_series")]
+    cleanup = source.body("stock bd_cleanup_tasks()", "stock bd_abort_series")
     assert "remove_task(BD_TASK_RESTART_ARM_POLL)" in cleanup
-    restart = source[source.index("stock bool:bd_execute_restart"):
-                     source.index("public cmd_arm_restart()")]
+    restart = source.body("stock bool:bd_execute_restart", "public cmd_arm_restart()")
     assert "\n\tdod_user_kill(" not in restart
 
 
 def test_restart_probe_freezes_world_and_userid_safely_restores_players():
-    source = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    source = pawn_source(PLUGIN_SOURCE)
     assert ("g_bdRestartFrozenCount = g_bdIsolationActive ?\n"
             "\t\tbd_isolation_count() : bd_begin_test_isolation()") in source
-    freeze = source[source.index("stock bd_isolate_test_players()"):
-                    source.index("stock bd_hold_test_players()")]
+    freeze = source.body("stock bd_isolate_test_players()", "stock bd_hold_test_players()")
     assert "get_user_team(id)" not in freeze
     assert "flags | FL_FROZEN | FL_GODMODE" in freeze
     assert "g_bdIsolationWasGodmode[id] = bool:(flags & FL_GODMODE)" in source
@@ -1731,14 +1708,14 @@ def test_restart_probe_freezes_world_and_userid_safely_restores_players():
     assert "else flags &= ~FL_GODMODE" in source
     assert source.count("bd_end_test_isolation(false)") >= 3
 
-    kill_fn = source[source.index("stock bool:bd_execute_kill"):
-                     source.index("public cmd_kill()")]
+    kill_fn = source.body("stock bool:bd_execute_kill", "public cmd_kill()")
     dispatch = kill_fn.index("dodx_test_dispatch_client_death(killer, victim")
     allow = kill_fn.index("bd_allow_isolated_death(victim)", dispatch)
     kill = kill_fn.index("dod_user_kill(victim)", dispatch)
     assert dispatch < allow < kill
-    allow_fn = source[source.index("stock bd_allow_isolated_death(id)"):
-                      source.index("stock bd_begin_test_isolation()")]
+    allow_fn = source.body(
+                   "stock bd_allow_isolated_death(id)",
+                   "stock bd_begin_test_isolation()")
     assert "g_bdIsolationWasGodmode[id])" in allow_fn
     assert "flags & ~FL_GODMODE" in allow_fn
 
