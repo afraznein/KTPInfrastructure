@@ -32,11 +32,16 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 _WORKSPACE = Path(__file__).resolve().parents[2]
+if str(_WORKSPACE) not in sys.path:
+    sys.path.insert(0, str(_WORKSPACE))
+
+from tests.source_anchors import PAWN, blank_comments  # noqa: E402
 _FUNC = "handle_13_queue_id_input"
 
 # Candidate homes for the KTPMatchHandler source, in resolution order. The
@@ -72,42 +77,12 @@ def _resolve_source() -> Path:
 
 
 def strip_comments(src: str) -> str:
-    """Drop `//` and `/* */`, keep string and char literals. Pawn escapes with
-    `^`, not `\\`, and the guard under test is written with char literals, so a
-    stripper that mishandles either would be comparing the wrong text."""
-    out: list[str] = []
-    i, n = 0, len(src)
-    while i < n:
-        ch = src[i]
-        if ch in "\"'":
-            quote = ch
-            out.append(ch)
-            i += 1
-            while i < n and src[i] != quote:
-                if src[i] == "^":
-                    out.append(src[i])
-                    i += 1
-                    if i < n:
-                        out.append(src[i])
-                        i += 1
-                    continue
-                out.append(src[i])
-                i += 1
-            if i < n:
-                out.append(src[i])
-                i += 1
-            continue
-        if src.startswith("//", i):
-            while i < n and src[i] != "\n":
-                i += 1
-            continue
-        if src.startswith("/*", i):
-            end = src.find("*/", i + 2)
-            i = n if end < 0 else end + 2
-            continue
-        out.append(ch)
-        i += 1
-    return "".join(out)
+    """Drop `//` and `/* */`, keep string and char literals.
+
+    One definition, shared with every other guard that reads Pawn: two copies
+    of this drift, and the one that drifts is the one nobody is testing.
+    """
+    return blank_comments(src, PAWN)
 
 
 def _balanced(text: str, start: int, opener: str, closer: str) -> tuple[int, int]:

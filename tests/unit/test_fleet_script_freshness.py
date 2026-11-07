@@ -31,11 +31,17 @@ import importlib.util
 import os
 import re
 import subprocess
+import sys
 
 import pytest
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SCRIPTS = os.path.join(_ROOT, "scripts")
+
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from tests.source_anchors import sole_call_site  # noqa: E402
 
 
 def _load_guard():
@@ -132,29 +138,39 @@ def test_no_classification_outlives_its_script():
     assert not missing, "classified but not on disk: %s" % ", ".join(missing)
 
 
+def _script(name):
+    with open(os.path.join(_SCRIPTS, name), encoding="utf-8") as fh:
+        return fh.read()
+
+
 @pytest.mark.parametrize("name", sorted(GUARDED))
 def test_guarded_scripts_call_the_guard(name):
-    with open(os.path.join(_SCRIPTS, name), encoding="utf-8") as fh:
-        text = fh.read()
+    text = _script(name)
     assert "ktp_script_freshness" in text, f"{name} does not load the guard module"
-    calls = re.findall(r"^(\s*)\S*require_current\(", text, re.M)
-    # At least one call, and indented: at module scope it would fire on import,
-    # which breaks every test that loads these modules to read a constant.
-    assert calls, f"{name} loads the guard but never calls require_current()"
-    assert any(indent for indent in calls), (
-        f"{name} calls require_current() at module scope; it belongs inside main()"
+    line, column = sole_call_site(text, "require_current", name)
+    # Indented: at module scope it would fire on import, which breaks every
+    # test that loads these modules to read a constant.
+    assert column > 0, (
+        f"{name} calls require_current() at module scope (line {line}); it "
+        "belongs inside main()"
     )
 
 
 @pytest.mark.parametrize("name", sorted(GUARDED))
 def test_the_guard_runs_after_argument_parsing(name):
-    """`--help` must answer without a network, and a --dry-run must not."""
-    with open(os.path.join(_SCRIPTS, name), encoding="utf-8") as fh:
-        lines = fh.read().splitlines()
-    parse = next(i for i, ln in enumerate(lines) if "parse_args(" in ln)
-    call = next(i for i, ln in enumerate(lines) if "require_current(" in ln and "import" not in ln)
-    assert call > parse, (
-        f"{name} gates before parse_args, so --help would need the network"
+    """`--help` must answer without a network, and a --dry-run must not.
+
+    Both ends come from the parse tree. Located by text, a note naming the
+    guard above an unrelated function becomes the match and moves it EARLIER --
+    which reports a nonsense comparison in one direction and, in the other,
+    leaves this assertion true while the gate really does run first.
+    """
+    text = _script(name)
+    gate, _ = sole_call_site(text, "require_current", name)
+    parse, _ = sole_call_site(text, "parse_args", name)
+    assert gate > parse, (
+        f"{name} gates at line {gate} and parses arguments at line {parse}, so "
+        "--help would need the network"
     )
 
 
