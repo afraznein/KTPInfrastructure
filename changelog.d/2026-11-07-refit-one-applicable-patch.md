@@ -39,7 +39,7 @@ no pre-existing test; `mv` → `rm` reddens the two that say a previous proposal
 must survive; removing the one-patch assertion, the manifest, or the single
 `RUN_DATE` reddens exactly its own.
 
-**Not fixed here, and already recorded.** `diff.txt` still opens with 47 lines
+**Not fixed here, and already recorded.** `diff.txt` still opens with 46 lines
 of corpus-loader progress, because it is the `tee` of a single `--write` pass —
 named in the 2026-10-15 fragment, with the fix being to filter the progress out
 of the tee. And a map still earns a row with no minimum-halves floor: the 11-02
