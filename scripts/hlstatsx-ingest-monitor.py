@@ -267,7 +267,9 @@ def check_capture_total_loss(db: str, since: int, findings: list[str]) -> None:
     months before -- refused since KTPMatchHandler 0.10.180, which is fielded) and a
     half replayed after its own interval was closed, which nothing refuses: the
     upsert cannot reopen a closed interval, so the second run of a (match_id, half)
-    is still lost today. Three of the nine measured halves are that second shape.
+    is still lost today. Nothing here tells the two apart -- both stamp after their
+    own interval and take the same branch below -- so a hit is not evidence that
+    the refused shape has returned.
 
     No settle window, unlike the summary checks: a health row records a rejection
     that has already happened, so a half still being written can only under-count.

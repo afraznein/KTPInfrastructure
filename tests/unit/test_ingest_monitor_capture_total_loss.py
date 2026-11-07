@@ -73,8 +73,8 @@ def test_a_reused_match_id_reports_and_names_both_clocks():
 
 def test_a_replayed_half_reports_too():
     """Same mechanism, no id reuse: half 1 played twice and the upsert kept the
-    first window. A check that only caught the reused-id spelling would miss three
-    of the nine halves measured."""
+    first window. A check that only caught the reused-id spelling would miss the
+    one shape nothing refuses."""
     findings, _ = _run([REPLAYED_HALF])
     assert len(findings) == 1
     assert "1.3-6755-DAL1 h1" in findings[0]
