@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e_stats.artifacts import DEFAULT_SCHEMA_FILES, plan_schema_files
+from tests.source_anchors import PYTHON, assert_in_order, code_text, pawn_source
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                  match_epoch_interval,
                                  persist_preflight_failure,
@@ -421,19 +422,27 @@ def test_wait_for_match_start_log_matches_only_this_match(tmp_path):
     assert wait_for_match_start_log(log, "mine-TEST", timeout=0.2, poll=0.05)
 
 
+def _run_match_code():
+    """`run_match` with its comments and docstring excluded.
+
+    Nearly half of what `inspect.getsource` returns here is prose, and prose
+    about a step is written above it -- so on raw text a note naming a hook
+    moves that anchor earlier and these orderings hold whatever the code does.
+    """
+    return code_text(inspect.getsource(run_match), PYTHON, "run_match")
+
+
 def test_run_match_waits_on_go_live_before_the_after_live_hook():
-    source = inspect.getsource(run_match)
-    assert source.index("wait_for_match_start_log(") < source.index("after_live()")
+    assert_in_order(_run_match_code(), "wait_for_match_start_log(", "after_live()")
 
 
 def test_clock_preflight_runs_after_config_settle_and_before_play_hooks():
-    source = inspect.getsource(run_match)
-    assert source.index("time.sleep(5.0)") < source.index("after_live()")
-    assert source.index("after_live()") < source.index("before_play()")
+    assert_in_order(_run_match_code(), "time.sleep(5.0)", "after_live()",
+                    "before_play()")
 
 
 def test_clock_preflight_parser_is_bound_to_pawn_producer_and_no_boot_retry():
-    pawn = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    pawn = pawn_source(ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma")
     runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
     assert 'register_srvcmd("ktp_bd_clock_preflight"' in pawn
     assert "dodx_has_gamerules()" in pawn
