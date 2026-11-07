@@ -1,4 +1,6 @@
-# ⛔ NOT INSTALLED OR ENABLED — proposal. docs/runbooks/INSTALL_FRESHNESS.md.
+# ✅ LIVE: installed and enabled on the data server. docs/runbooks/INSTALL_FRESHNESS.md.
+# This header read "NOT INSTALLED OR ENABLED" for weeks after it was turned on, twice.
+# Derive it -- `systemctl show <unit> -p UnitFileState -p ActiveState` -- never from here.
 [Unit]
 Description=Daily install-freshness check
 

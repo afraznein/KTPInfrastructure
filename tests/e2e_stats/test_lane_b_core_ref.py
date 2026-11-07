@@ -92,8 +92,14 @@ def test_full_lane_builds_test_core_from_the_exact_amxx_checkout():
     assert 'if [ "$CORE_AMXX_SHA" != "$BUNDLE_AMXX_SHA" ]' in workflow
     assert '-v "${PWD}/.github:/work/.github:ro"' in workflow
     assert '-v "${PWD}/sql:/work/sql:ro"' in workflow
-    assert "    default: preprod" in action
-    assert 'REF="${LANEB_REF:-preprod}"' in script
+    # `preprod` is retired on KTPAMXX, so neither side may carry it as a default:
+    # the lane names its ref and the build refuses when nobody does.
+    assert "    default: preprod" not in action
+    assert "required: true" in action
+    assert "inputs.ref == ''" in action
+    assert 'REF="${LANEB_REF:-preprod}"' not in script
+    assert 'REF="${LANEB_REF:-}"' in script
+    assert "will not guess which core to build" in script
     assert "dodx-so-path:" in action
     assert "--dodx-so /work/build/dodx_ktp_i386.so" in workflow
     assert "--amxx-gamedata /work/build/artifacts/gamedata" in workflow
@@ -258,13 +264,16 @@ def test_build_refuses_partial_lane_b_core_support():
 
 
 def test_daemon_starts_only_after_hlds_is_rcon_ready():
-    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    text = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    runner = code_text(text, flavour=PYTHON, origin="lane_b_e2e.py")
 
     ready = 'print(f"server up (attempt {attempt})", flush=True)'
     daemon_start = "daemon.start()"
-    assert runner.count(daemon_start) == 1
-    assert runner.index(ready) < runner.index(daemon_start)
-    assert "failed-attempt rows can neither be ingested" in runner
+    assert len(runner.occurrences(daemon_start)) == 1
+    assert_in_order(runner, ready, daemon_start)
+    # Raw text on purpose: this one IS the rationale comment, and keeping the
+    # reason beside the ordering is what is being pinned.
+    assert "failed-attempt rows can neither be ingested" in text
 
 
 def test_only_static_flag_positions_are_replayed_from_boot(tmp_path):

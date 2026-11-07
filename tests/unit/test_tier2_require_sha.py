@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.source_anchors import HASH, assert_in_order, code_text
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "tier2-require-sha.sh"
 WORKFLOW = REPO / ".github" / "workflows" / "tier2-integration.yml"
@@ -114,9 +116,12 @@ def test_workflow_checks_out_and_builds_the_same_pinned_sha():
     checkout = _step_block(text, "Checkout reviewed KTPMatchHandler")
     assert "ref: ${{ env.KTP_MATCHHANDLER_SHA }}" in checkout
 
-    build = _step_block(text, "Build + install reviewed KTPMatchHandler")
+    build = code_text(_step_block(text, "Build + install reviewed KTPMatchHandler"),
+                      flavour=HASH, origin="tier2-integration.yml:build step")
     gate = 'BUILD_SHA="$(bash "$GITHUB_WORKSPACE/scripts/tier2-require-sha.sh" "$SRC" "$KTP_MATCHHANDLER_SHA")"'
     assert gate in build
-    assert build.index(gate) < build.index("amxxpc"), "the gate must run before the compile"
+    # The gate must run before the compile. A `#` note naming either one is not
+    # the step running it, and `amxxpc` appearing twice makes "before" ambiguous.
+    assert_in_order(build, gate, "amxxpc")
     assert "rev-parse" not in build, "the baked SHA must come from the gate, not a second lookup"
     assert '"$BUILD_SHA"' in build

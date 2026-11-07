@@ -227,6 +227,22 @@ sudo install -m 0644 /opt/ktp-reports/KTPInfrastructure/systemd/ktp-reports.time
 sudo systemctl daemon-reload
 ```
 
+⚠️ **Installing the unit does not change its start timeout.** The data server
+carries `/etc/systemd/system/ktp-reports.service.d/10-timeout.conf` with
+`TimeoutStartSec=5400`, and a drop-in outranks the unit — so the bound the repo
+ships is inert until that file is removed. It is untracked here, so nothing in
+this repo reports it either.
+
+```bash
+sudo rm /etc/systemd/system/ktp-reports.service.d/10-timeout.conf   # dir is then empty
+sudo systemctl daemon-reload
+systemctl show ktp-reports.service -p TimeoutStartUSec --value      # must read 10min
+```
+
+**Read the effective value, never the unit file.** `systemctl show` resolves
+drop-ins; a `grep` of `/etc/systemd/system/ktp-reports.service` reported the
+right number for a month while systemd was using 5400.
+
 Dry-run the sync before arming anything. This is the step that catches a
 misplaced or unreadable secret, and it writes nothing:
 

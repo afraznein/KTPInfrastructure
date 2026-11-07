@@ -10,6 +10,7 @@ import pytest
 
 from scripts import team_score_telemetry as score
 from scripts import project_team_score
+from tests.source_anchors import SQL, assert_in_order, code_text
 
 
 SOURCE_SERVER = "observer-a"
@@ -577,14 +578,12 @@ def test_projector_snapshot_uses_shared_lock_one_consistent_transaction():
     mysql = CapturingMysql()
     snapshot = mysql.fetch_match("official-a")
     assert snapshot.rows == ()
-    assert f"GET_LOCK('{score.LEDGER_LOCK}',30)" in mysql.sql
-    assert "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY" in mysql.sql
-    assert mysql.sql.index("KTP_SCORE_MANIFEST") < mysql.sql.index("KTP_SCORE_ROW")
-    assert mysql.sql.index("KTP_SCORE_ROW") < mysql.sql.index("KTP_SCORE_CONFLICT")
-    assert mysql.sql.index("KTP_SCORE_CONFLICT") < mysql.sql.index("KTP_SCORE_AUDIT")
-    assert mysql.sql.index("KTP_SCORE_AUDIT") < mysql.sql.index("KTP_SCORE_CONTEXT")
-    assert mysql.sql.index("KTP_SCORE_CONTEXT") < mysql.sql.index("COMMIT")
-    assert f"RELEASE_LOCK('{score.LEDGER_LOCK}')" in mysql.sql
+    sql = code_text(mysql.sql, flavour=SQL, origin="MysqlCli.fetch_match")
+    assert f"GET_LOCK('{score.LEDGER_LOCK}',30)" in sql
+    assert "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY" in sql
+    assert_in_order(sql, "KTP_SCORE_MANIFEST", "KTP_SCORE_ROW", "KTP_SCORE_CONFLICT",
+                    "KTP_SCORE_AUDIT", "KTP_SCORE_CONTEXT", "COMMIT")
+    assert f"RELEASE_LOCK('{score.LEDGER_LOCK}')" in sql
 
 
 def test_retention_classifier_matches_scheduled_policy():
