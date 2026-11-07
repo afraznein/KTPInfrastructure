@@ -274,8 +274,9 @@ manual re-run replays the stale payload. Background: `docs/CI_SETUP.md`
 behind `origin/main` stages a wave perfectly happily: the older copy never sees the flags it lacks, so
 nothing is rejected, the md5s verify, and it prints a clean 24/24 while every gate added since simply did
 not run. The loss that costs something is `--pull-live` — the fleet keeps no rollback copies, the swap is
-`mv -f`, and none of these artifacts is byte-reproducible, so the live build is the only copy of itself
-that exists.
+`mv -f`, and most of these artifacts are not byte-reproducible, so for those the live build is the only
+copy of itself that exists. KTPAMXX's in-tree plugins are the exception, and a narrow one: they rebuild
+byte-identically from their commit against the same `amxxpc`, and only if that commit was written down.
 
 `require_current()` compares the file that is executing, and the siblings it loads, against `origin/main`
 via `git diff`, and refuses with a report naming which flags and functions this copy is missing and which
