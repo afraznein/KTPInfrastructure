@@ -537,9 +537,17 @@ and why the weekly audit is the only path that reaches the fleet today, are in
 
 1. Do the five game hosts carry a local disk/inode check this repo does not
    track? Hole 1 assumes not.
-2. Is the LinuxGSM tmux patch currently in place on all 24 instances, and which
+2. ~~Is the LinuxGSM tmux patch currently in place on all 24 instances, and which
    LinuxGSM version is each host running? `ktp-monitor-patch-check.sh` answers
-   this in one read-only sweep; it has not been run against production.
+   this in one read-only sweep; it has not been run against production.~~
+   **It was run — 2026-10-12, clean on 24/24, recorded in
+   [`OBSERVABILITY_PLAN.md`](../../OBSERVABILITY_PLAN.md) § Re-measured 2026-10-12.**
+   ⛔ **Point-in-time, NOT standing, and that is the whole reason this entry is
+   rewritten rather than struck:** `./dodserver update-lgsm` overwrites the
+   patched file, so a clean sweep expires at the next LinuxGSM update. The
+   standing cover is `audit-fleet-drift.py` parsing that script in the weekly
+   workflow; a hand run only corroborates it. ➡️ **Re-derive before relying on
+   it; do not read the 10-12 result as today's state.**
 3. ~~Which Discord channels receive which alerts today?~~ **Answered 2026-09-15**,
    measured against all five game hosts and the data server: the full producer →
    channel table is in [`ALERT_ROUTING.md`](ALERT_ROUTING.md). Seven producers

@@ -17,7 +17,7 @@ Season 10 opens 2026-09-13.
 
 | Item | State |
 |---|---|
-| §2.4 LinuxGSM patch verification | **Shipped** — `ktp-monitor-patch-check.sh`, PR #297. Not yet run against production |
+| §2.4 LinuxGSM patch verification | **Shipped** — `ktp-monitor-patch-check.sh`, PR #297. ~~Not yet run against production~~ — **run 2026-10-12, clean on 24/24** (§ Re-measured 2026-10-12, and sequencing row 2). This row contradicted that one inside the same file. ⛔ Point-in-time: `update-lgsm` overwrites the patched file, so the weekly `audit-fleet-drift.py` parse is the cover |
 | §2.6 Alert coverage matrix | **Shipped** — `docs/runbooks/ALERT_COVERAGE.md`, PR #301 |
 | §2.3 Close the known drift | Detection is covered; closure needs a live-host rollout and per-host sign-off |
 | §2.5 Trend surface | **Researched below. The handover's guess was right, and one finding is urgent** |
