@@ -21,13 +21,20 @@ reminder. The intent is recorded at STAGE time, when the md5 is already known
 
 Each artifact also carries its BUILD BASE -- the source commit it was compiled
 from -- because the md5 alone answers "is this the same file" and never "has
-this moved since". Of eleven artifacts on the fleet only three had a base
-recorded anywhere, and the missing eight cannot be recovered: none of these
-artifacts is byte-reproducible (`.amxx` bakes a per-minute BUILD_TIME, ReHLDS
-bakes a build-id and `__DATE__`), so rebuilding candidate commits and comparing
-md5s returns a MISMATCH for the correct base and reads as "none of these built
-it". `stats_logging.amxx`'s base is gone for exactly that reason. Stage time is
-the only moment the base is known, so that is where it is written.
+this moved since". Most of the fleet's artifacts had no base recorded anywhere,
+and whether a missing one can be recovered depends on the ARTIFACT CLASS:
+
+  * KTPAMXX's IN-TREE plugins bake neither a sha nor a timestamp, so a rebuild
+    from the same commit is byte-identical and rebuilding candidate commits DOES
+    find the base -- against the same `amxxpc`, which no commit pins.
+  * A plugin built by its own repo's `compile.sh` bakes a per-minute
+    KTP_BUILD_TIME, and the C++ side bakes a build-id and `__DATE__`. For those
+    the rebuild-and-compare returns a MISMATCH for the CORRECT base and reads as
+    "none of these built it".
+
+Stage time is the only moment the base is known for the latter two, so that is
+where it is written -- and recording it for the first class too is what keeps
+its rebuild-and-compare a one-liner rather than an archaeology exercise.
 
 Three things this deliberately does NOT do:
 
@@ -145,8 +152,11 @@ MD5_IN_TEXT_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", re.IGNOREC
 BASE_RE = re.compile(r"^(?:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@)?[0-9a-f]{7,40}(?:-dirty)?$",
                      re.IGNORECASE)
 
-NO_BASE = ("NOT RECORDED -- and not recoverable: this artifact is not byte-reproducible, "
-           "so rebuilding candidate commits returns a mismatch for the CORRECT base")
+NO_BASE = ("NOT RECORDED -- whether it is recoverable depends on the artifact class: "
+           "KTPAMXX's in-tree plugins rebuild byte-identically from their commit (against "
+           "the same amxxpc), so candidate commits are still worth trying; a plugin built "
+           "by its own compile.sh bakes a per-minute stamp and the C++ side bakes "
+           "__DATE__, and for those a rebuild returns a mismatch for the CORRECT base")
 
 
 # --------------------------------------------------------------------------
@@ -360,9 +370,12 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
 
     `build_time` is the stamp the staged build baked, and `replaces_build_time`
     the stamps it overwrites. With `base` they are what makes an artifact
-    replayable: `.amxx` md5s are not reproducible across minutes, so a build
-    whose stamp was not recorded here cannot be rebuilt to its own md5 even from
-    the right commit, and the fleet keeps no rollback copies.
+    replayable: a STAMPED `.amxx` -- one built by its own repo's compile.sh --
+    carries a per-minute KTP_BUILD_TIME, so a build whose stamp was not recorded
+    here cannot be rebuilt to its own md5 even from the right commit, and the
+    fleet keeps no rollback copies. KTPAMXX's in-tree plugins bake no stamp at
+    all, which is why `build_stamp()` returns None for them: a class fact, not a
+    lost value.
     """
     staged_at = time.time() if staged_at is None else staged_at
     for a in artifacts:

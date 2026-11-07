@@ -27,6 +27,7 @@ from tests.source_anchors import (  # noqa: E402
     LINE_START,
     PAWN,
     PYTHON,
+    SQL,
     AnchoredSource,
     MislocatedAnchor,
     assert_in_order,
@@ -342,3 +343,85 @@ def test_an_unknown_rule_is_refused():
 
 def test_the_rule_constants_are_distinct():
     assert CODE != LINE_START
+
+
+# ---------------------------------------------------------------------------
+# SQL. The haystack here is a statement BUILT at run time, so the hazard is not
+# a note somebody wrote above a function -- it is a `--` line the builder emits
+# beside the thing a guard orders on. This estate already paid two CI cycles
+# for "a comment is query text" on the reading side of the same problem.
+# ---------------------------------------------------------------------------
+
+SQL_STATEMENT = """\
+START TRANSACTION;
+-- COMMIT and ROLLBACK are named here and neither happens
+DELETE t FROM `child` t;   # ROLLBACK
+/* COMMIT */
+SELECT 'a -- b' AS kept, 'it''s #1' AS also_kept, `odd#name` AS backticked;
+COMMIT;
+"""
+
+
+def _sql():
+    return code_text(SQL_STATEMENT, flavour=SQL, origin="built.sql")
+
+
+def test_a_dash_comment_cannot_answer_for_the_statement():
+    """The LOUD side: `COMMIT` exists twice in prose before it exists in code."""
+    assert SQL_STATEMENT.count("COMMIT") == 3
+    assert _sql().occurrences("COMMIT") == [SQL_STATEMENT.rindex("COMMIT")]
+
+
+def test_a_hash_comment_is_a_comment_in_mysql_wherever_it_starts():
+    """MySQL needs no whitespace before `#`, unlike YAML or shell."""
+    assert "ROLLBACK" in SQL_STATEMENT
+    assert "ROLLBACK" not in _sql()
+
+
+def test_a_comment_marker_inside_a_literal_is_data_and_stays():
+    sql = _sql()
+    assert "'a -- b' AS kept" in sql
+    assert "also_kept" in sql
+    assert "backticked" in sql
+
+
+def test_a_doubled_quote_leaves_the_literal_where_it_was():
+    """`''` needs no case of its own: two boundaries span what one escape does.
+
+    Held as a test rather than as a comment because the obvious reading is that
+    it needs one, and a branch written for it survived every mutation.
+    """
+    assert "also_kept" in code_text("select 'it''s -- fine' AS also_kept;",
+                                    flavour=SQL, origin="x")
+    assert "q, x" in code_text("select '''' AS q, x -- c", flavour=SQL, origin="x")
+
+
+def test_arithmetic_is_not_a_comment():
+    assert "b from" in code_text("select a--b from t;", flavour=SQL, origin="x")
+
+
+def test_the_quiet_side_a_comment_cannot_rescue_a_reordered_statement():
+    """Children before parent, with a `--` line naming the child beforehand.
+
+    The comment moves the first anchor EARLIER, which is the direction that
+    keeps an `A before B` assertion green while the statement really does the
+    parent first -- the half a reader cannot see.
+    """
+    reordered = ("-- DELETE t FROM `child` runs first\n"
+                 "DELETE t FROM `parent` t;\n"
+                 "DELETE t FROM `child` t;\n")
+    assert reordered.index("DELETE t FROM `child`") < reordered.index(
+        "DELETE t FROM `parent`"), "raw text calls the reordering fine"
+    with pytest.raises(AssertionError) as exc:
+        assert_in_order(code_text(reordered, flavour=SQL, origin="x"),
+                        "DELETE t FROM `child`", "DELETE t FROM `parent`")
+    assert "order of the code and not a mislocation" in str(exc.value)
+
+
+def test_blanking_sql_moves_no_offset():
+    assert len(blank_comments(SQL_STATEMENT, SQL)) == len(SQL_STATEMENT)
+
+
+def test_an_unterminated_block_comment_swallows_the_rest_rather_than_half():
+    text = "select 1; /* COMMIT\nCOMMIT;"
+    assert code_text(text, flavour=SQL, origin="x").occurrences("COMMIT") == []

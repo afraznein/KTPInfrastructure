@@ -15,9 +15,12 @@ The trap this closes, in the order it happens:
 
 The loss that costs something is `--pull-live`: it downloads each artifact's
 LIVE counterpart before staging, and the fleet keeps no rollback copies. The
-swap is `mv -f`, and these artifacts are not byte-reproducible (`.amxx` bakes a
-per-minute build stamp, ReHLDS bakes `__DATE__`). The running build is the only
-copy of itself that exists, and the stale stager walks past it without a word.
+swap is `mv -f`, and most of these artifacts are not byte-reproducible (a
+compile.sh-built `.amxx` bakes a per-minute build stamp, ReHLDS bakes
+`__DATE__`). For those the running build is the only copy of itself that exists,
+and the stale stager walks past it without a word. KTPAMXX's in-tree plugins are
+the exception and a narrow one: they rebuild byte-identically from their commit,
+against the same `amxxpc`, and only if that commit was written down.
 The wave ledger is the same shape of loss one layer up: the wave lands, the
 ledger has no entry, and `ktp-wave-ledger.py reconcile` is blind to it forever.
 
