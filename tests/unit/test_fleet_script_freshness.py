@@ -410,29 +410,85 @@ def test_an_installed_copy_edited_since_install_is_refused(installed):
     assert _md5(_NEW) in report
 
 
-def test_an_installed_copy_recorded_at_an_old_commit_is_stale(installed):
-    """An honest row about an old blob is still an old copy."""
-    _up, _work, install, _head, first = installed
+def test_an_installed_copy_behind_the_ref_runs_and_is_named(installed, capsys):
+    """The soak's case: cron has no checkout, so refusing it buys no verdict at all.
+
+    An honest row about an older blob is a copy that is BEHIND, which is not the
+    same finding as a copy that was EDITED, and only the object graph separates
+    them -- the row's own commit is the copy's word for itself.
+    """
+    _up, work, install, _head, first = installed
     dest = install(_OLD, first)
-    report = guard.check(str(dest))[0]
-    assert "is STALE" in report
-    assert "--pull-live" in report
-    assert "the fleet keeps no rollback copies" in report
+    assert guard.check(str(dest)) == []
+    err = capsys.readouterr().err
+    assert "is BEHIND origin/main but unedited" in err
+    # Which commit's version it is, computed, not the row's claim.
+    assert first[:12] in err
+    assert "ktp-install --report --against-ref origin/main" in err
+    # Named on one line, so it cannot be mistaken for a refusal report.
+    assert len([ln for ln in err.splitlines() if "[freshness]" in ln]) == 1
 
 
-def test_an_installed_copy_goes_stale_when_upstream_moves(installed):
-    """The ref is fetched, so a copy current at the last fetch is not current forever."""
+def test_an_installed_copy_falls_behind_but_keeps_running_when_upstream_moves(installed):
+    """The ref is fetched, so this is the merge that used to silence the soak."""
     up, work, install, head, _first = installed
     dest = install(_NEW, head)
     (up / "scripts" / "writer.py").write_text(_NEW + "\n# --dry-run\n", encoding="utf-8")
     _git(up, "commit", "-qam", "add --dry-run")
     before = _git(work, "rev-parse", "HEAD").stdout.strip()
 
-    report = guard.check(str(dest))[0]
-    assert "is STALE" in report and "--dry-run" in report
+    assert guard.check(str(dest)) == []
     # The fetch moved the remote-tracking ref and nothing else.
     assert _git(work, "rev-parse", "HEAD").stdout.strip() == before
     assert _git(work, "status", "--porcelain").stdout == ""
+
+
+def test_an_installed_copy_matching_no_commit_is_refused(installed):
+    """The control on the leg above: being unedited since install is not provenance.
+
+    These bytes have the md5 their row records, so leg 1 passes; they are no
+    version of that path the ref has ever carried, which is where accepting
+    "behind" would otherwise launder a copy from somewhere nobody committed.
+    """
+    _up, _work, install, head, _first = installed
+    forged = _NEW.replace("--row-version", "--rowversion")
+    dest = install(forged, head)
+    problems = guard.check(str(dest))
+    assert len(problems) == 1
+    report = problems[0]
+    assert str(dest) in report
+    # Leg 1 is not what caught it -- the md5 matches its row.
+    assert "DIFFERS from its deploy-manifest row" not in report
+    assert _md5(forged) == guard._manifest_row(str(dest))[0][1]["md5"]
+
+
+def test_the_refusal_for_uncommitted_bytes_says_which_leg_failed(installed):
+    """So the reader is not sent to refresh a checkout that cron does not have."""
+    _up, _work, install, head, _first = installed
+    dest = install(_NEW.replace("--row-version", "--rowversion"), head)
+    report = guard.check(str(dest))[0]
+    assert "NOT ANY COMMITTED VERSION" in report
+    assert "nothing edited it since install" in report
+    assert f"last {guard._HISTORY_WINDOW} commit(s)" in report
+
+
+def test_a_checkout_copy_that_is_merely_behind_is_still_refused(repos):
+    """The fix does not widen to a checkout: there, refreshing IS the available fix.
+
+    Same shape as the installed copy now accepted -- bytes that are an older
+    committed blob of the path -- and the shared-checkout hazard is why it still
+    refuses.
+    """
+    _up, work = repos
+    script = work / "scripts" / "writer.py"
+    script.write_text(_OLD, encoding="utf-8")
+    # It really is a committed version of this path, not a hand-edit.
+    assert _git(work, "show", "origin/main~1:scripts/writer.py").stdout == _OLD
+
+    problems = guard.check(str(script))
+    assert len(problems) == 1
+    assert "DIFFERS from origin/main" in problems[0]
+    assert "matches NO commit" not in problems[0]  # it is behind, and still refused
 
 
 def test_an_installed_copy_with_no_manifest_row_is_refused(installed):
