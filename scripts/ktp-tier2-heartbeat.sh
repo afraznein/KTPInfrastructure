@@ -107,6 +107,8 @@ under_cron() {
 WRITE_STATE="${KTP_TIER2_HEARTBEAT_WRITE:-}"
 case "${1:-}" in
     ""|--cron) ;;
+    # Not a read-only probe: the drift leg below runs either way and writes its
+    # own state file. This suppresses the post and THIS script's state, no more.
     --dry-run) WRITE_STATE=0 ;;
     --write)   WRITE_STATE=1 ;;
     *) echo "usage: ${0##*/} [--dry-run|--write]" >&2; exit 64 ;;
@@ -201,6 +203,9 @@ DRIFT_CHECKER="${KTP_TIER2_DRIFT_CHECKER:-/usr/local/bin/ktp-tier2-stack-drift.p
 AGG_ENV="${KTP_AGGREGATOR_ENV:-/opt/ktp-profile-aggregator/.env}"
 AGG_PY="${KTP_AGGREGATOR_PY:-/opt/ktp-profile-aggregator/venv/bin/python}"
 drifted=0
+# Outside any WRITE_STATE test on purpose -- see above. The checker takes no
+# flags, so --dry-run cannot reach it: it writes its drift-age state file here
+# whatever this script was asked to do, including clearing it when nothing drifts.
 if [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
     drift_out="$(set -a; . "$AGG_ENV" 2>/dev/null; set +a; "$AGG_PY" "$DRIFT_CHECKER" 2>&1)" && drift_rc=0 || drift_rc=$?
     if [ "$drift_rc" -eq 1 ]; then
