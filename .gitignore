@@ -193,3 +193,10 @@ spike-report.json
 # discord_drafts: crawl cache (raw Discord history) and the relay token never enter the repo
 scripts/discord_drafts/data/
 scripts/discord_drafts/.env
+
+# Lane B build-time archives. CI restores them here from a checksum-keyed
+# cache and the Dockerfile COPYs the directory in, so the directory is
+# tracked (empty) while its contents never are -- they are third-party
+# binaries pinned by sha256, not repo artifacts.
+/build/lane-b/vendor/*
+!/build/lane-b/vendor/.gitkeep

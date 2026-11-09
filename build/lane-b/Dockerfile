@@ -132,8 +132,9 @@ RUN dpkg --add-architecture i386 && \
 # binary in a test rig.
 #
 # Vendored override, for when the Drive link rots or the build host has no
-# outbound internet:
-#   docker build --build-arg NEW_BOT_URL=file:///vendor/new_bot-0.2.2.zip ...
+# outbound internet: drop the archive at build/lane-b/vendor/new_bot.zip and the
+# fetch below prefers it. The sha256 pin still has to match, so this is an
+# availability escape hatch and not a way around the checksum.
 #
 # ## Redistribution
 #
@@ -142,16 +143,40 @@ RUN dpkg --add-architecture i386 && \
 # artifact. The fleet consumes no images at all, so nothing here can reach
 # production by accident.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Vendored copies of the two build-time downloads, if the builder supplied any.
+#
+# Both fetches below are a single point of failure on a third-party host: the
+# Metamod-R release asset answered 504 for an entire retry budget one night and
+# failed PRs that touched nothing related to it. CI now restores these archives
+# from an actions/cache keyed on the pinned sha256s below, and each fetch block
+# prefers the local copy.
+#
+# Committed empty on purpose. A COPY whose source matches nothing fails the
+# build, so the directory has to exist even for a builder that populates
+# nothing -- that builder falls through to curl and behaves exactly as before.
+# ---------------------------------------------------------------------------
+COPY vendor/ /tmp/vendor/
+
 ARG NEW_BOT_VERSION=0.2.2
 ARG NEW_BOT_URL=https://drive.google.com/uc?export=download&id=1KWxlqTNOe_yTXPZ3CLL13qTiz-cL-WYu
 ARG NEW_BOT_SHA256=8f659fe14af21377c61e8c4645e2f0380d70cb33e4caf6f1f5caf4ed2d594f49
 
 RUN set -eux; \
-    # Retry transient Drive hiccups/rate-limits instead of failing an unrelated
-    # PR outright; sha256sum below still catches a payload that downloads fine
-    # but isn't the right bytes (an HTML rate-limit page, a moved file).
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
-      "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    # A vendored copy beats retrying here: Drive throttles under load and serves
+    # interstitial HTML, and no retry budget outlasts a host-side outage.
+    if [ -f /tmp/vendor/new_bot.zip ]; then \
+      cp /tmp/vendor/new_bot.zip /tmp/new_bot.zip; \
+    else \
+      # Retry transient Drive hiccups/rate-limits instead of failing an unrelated
+      # PR outright; sha256sum below still catches a payload that downloads fine
+      # but isn't the right bytes (an HTML rate-limit page, a moved file).
+      curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+        "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    fi; \
+    # Deliberately outside the branch: a cache is a transport, never a reason to
+    # trust bytes, so the pin is checked whichever way the archive arrived.
     echo "${NEW_BOT_SHA256}  /tmp/new_bot.zip" | sha256sum -c -; \
     # The archive is rooted at `dod/`, and the game tree is /opt/hlds/dod, so
     # extracting at /opt/hlds lands every file exactly where it belongs.
@@ -210,8 +235,14 @@ ARG METAMOD_URL=https://github.com/rehlds/Metamod-R/releases/download/1.3.0.149/
 ARG METAMOD_SHA256=ede7f59c4e0220afe8c02aa348a130cce527f87d36ffdb674e37a501ce57be94
 
 RUN set -eux; \
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
-      "$METAMOD_URL" -o /tmp/metamod.zip; \
+    # This is the asset whose 504 motivated the vendor cache.
+    if [ -f /tmp/vendor/metamod.zip ]; then \
+      cp /tmp/vendor/metamod.zip /tmp/metamod.zip; \
+    else \
+      curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+        "$METAMOD_URL" -o /tmp/metamod.zip; \
+    fi; \
+    # Deliberately outside the branch, for the same reason as the bot archive.
     echo "${METAMOD_SHA256}  /tmp/metamod.zip" | sha256sum -c -; \
     # Archive is rooted at `addons/`, so extract into the game dir.
     unzip -q -o /tmp/metamod.zip 'addons/*' -d /opt/hlds/dod; \
@@ -222,7 +253,9 @@ RUN set -eux; \
     # topologies in place, and boot A has to be able to get back to exactly
     # what production runs, byte for byte, or the A/B diff means nothing.
     cp /opt/hlds/dod/liblist.gam        /opt/hlds/dod/liblist.gam.production; \
-    cp /opt/hlds/dod/addons/extensions.ini /opt/hlds/dod/addons/extensions.ini.production
+    cp /opt/hlds/dod/addons/extensions.ini /opt/hlds/dod/addons/extensions.ini.production; \
+    # Last consumer of the vendor dir, so it is cleared here rather than left behind.
+    rm -rf /tmp/vendor
 
 LABEL ktp.metamod.version="${METAMOD_VERSION}"
 LABEL ktp.metamod.activated="false — run-time only, see tests/e2e_stats/metamod.py"
