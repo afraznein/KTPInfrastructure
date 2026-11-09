@@ -30,6 +30,11 @@ Behavior:
     - Summary table at end: OK / FAIL counts per artifact per host
     - --dry-run prints intent without connecting
 
+Exit codes:
+    0  every requested (instance, artifact) pair was staged
+    1  at least one push failed, or an Outcome went missing
+    4  no credential was reachable, so NOTHING was contacted
+
 Activation: NO automatic restart. The `.new` files sit on disk until the next
 nightly restart (`ktp-scheduled-restart.sh`, 03:00 ET) auto-swaps + restarts.
 This is intentional: never restart production servers without explicit operator
@@ -58,6 +63,12 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from ktp_script_freshness import require_current  # noqa: E402
 
+EXIT_OK = 0
+EXIT_NOT_ALL_PUSHED = 1
+# Same value as ktp-verify-deploy.py's, deliberately: one meaning across the
+# fleet scripts, and a caller that learns it once can read either of them.
+EXIT_NO_CREDENTIAL = 4
+
 
 def _fleet_ssh_password():
     """dodserver SSH password — from $KTP_FLEET_SSH_PASSWORD or ~/.ktp_fleet_ssh_password.
@@ -69,8 +80,12 @@ def _fleet_ssh_password():
         if os.path.exists(p):
             pw = open(p).read().strip()
     if not pw:
-        raise SystemExit('dodserver SSH password not configured — set $KTP_FLEET_SSH_PASSWORD '
-                         'or write it to ~/.ktp_fleet_ssh_password')
+        print('dodserver SSH password not configured -- set $KTP_FLEET_SSH_PASSWORD '
+              'or write it to ~/.ktp_fleet_ssh_password', file=sys.stderr)
+        print(f'[deploy-to-fleet] exit {EXIT_NO_CREDENTIAL} -- nothing was staged on any '
+              'instance. scripts/run-fleet-script.py supplies the SSH password from '
+              'ktp_hosts.', file=sys.stderr)
+        raise SystemExit(EXIT_NO_CREDENTIAL)
     return pw
 
 
@@ -87,8 +102,12 @@ def fleet_ssh_auth():
     if key:
         key = os.path.expanduser(key)
         if not os.path.isfile(key):
-            raise SystemExit(f'$KTP_FLEET_SSH_KEY names {key}, which does not exist — '
-                             'there is no password fallback when a key is configured')
+            print(f'$KTP_FLEET_SSH_KEY names {key}, which does not exist -- '
+                  'there is no password fallback when a key is configured',
+                  file=sys.stderr)
+            print(f'[deploy-to-fleet] exit {EXIT_NO_CREDENTIAL} -- nothing was staged on any '
+                  'instance.', file=sys.stderr)
+            raise SystemExit(EXIT_NO_CREDENTIAL)
         return {'key_filename': key, 'allow_agent': False, 'look_for_keys': False}
     return {'password': _fleet_ssh_password()}
 
@@ -312,6 +331,10 @@ def print_summary(outcomes: list[Outcome], artifacts: list[Artifact], dry_run: b
 def main():
     parser = argparse.ArgumentParser(
         description='Deploy artifacts as .new files to fleet instances (auto-swap activates at nightly restart).',
+        epilog=('exit codes:\n'
+                '  0  every requested (instance, artifact) pair was staged\n'
+                '  1  at least one push failed, or an Outcome went missing\n'
+                '  4  no credential was reachable, so NOTHING was contacted\n'),
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('-f', '--file', action='append', required=True, dest='files',
                         help='Local artifact path. Repeatable for multi-file pushes.')
@@ -432,7 +455,7 @@ def main():
     fails = sum(1 for o in outcomes
                 if o.status in ('md5_mismatch', 'ssh_fail', 'sftp_fail',
                                 'deploy_error', 'worker_crash'))
-    sys.exit(0 if (fails == 0 and not missing) else 1)
+    sys.exit(EXIT_OK if (fails == 0 and not missing) else EXIT_NOT_ALL_PUSHED)
 
 
 if __name__ == '__main__':
