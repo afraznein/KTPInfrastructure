@@ -446,6 +446,96 @@ jobs:
       - name: Pull runtime base image
         run: docker pull "$BASE_IMAGE"
 
+      # The image's two build-time downloads live on third-party hosts, and the
+      # Metamod-R release asset answered 504 for an entire retry budget one
+      # night -- failing PRs that touched nothing related to it, upstream of
+      # every harness test. Cache the archives instead: a retry survives a blip,
+      # not an outage.
+      #
+      # The checksums are READ OUT OF the Dockerfile rather than copied here, so
+      # bumping a pinned version is a cache miss by construction and the old
+      # archive can never be restored under the new pin.
+      - name: Resolve the pinned vendor checksums
+        id: vendor
+        run: |
+          set -euo pipefail
+          df=build/lane-b/Dockerfile
+          # `|| true` so a vanished ARG reaches the named error below rather
+          # than killing the step at the assignment with nothing printed.
+          bot_url=$(grep -m1 '^ARG NEW_BOT_URL=' "$df" | cut -d= -f2- || true)
+          bot_sha=$(grep -m1 '^ARG NEW_BOT_SHA256=' "$df" | cut -d= -f2- || true)
+          mm_url=$(grep -m1 '^ARG METAMOD_URL=' "$df" | cut -d= -f2- || true)
+          mm_sha=$(grep -m1 '^ARG METAMOD_SHA256=' "$df" | cut -d= -f2- || true)
+          # A key built from a checksum that failed to parse would be stable and
+          # wrong, which is worse than no cache at all.
+          for pair in "bot_url=$bot_url" "bot_sha=$bot_sha" "mm_url=$mm_url" "mm_sha=$mm_sha"; do
+            if [ "${pair#*=}" = "" ]; then
+              echo "::error::could not read ${pair%%=*} from $df; refusing to build a cache key from it"
+              exit 1
+            fi
+          done
+          case "${bot_sha}${mm_sha}" in
+            *[!0-9a-f]*) echo "::error::parsed a non-hex checksum from $df"; exit 1 ;;
+          esac
+          {
+            echo "bot_url=$bot_url"
+            echo "bot_sha=$bot_sha"
+            echo "mm_url=$mm_url"
+            echo "mm_sha=$mm_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      # No restore-keys on purpose: a prefix match is exactly how a bumped
+      # version would silently restore the archive it replaced.
+      - name: Restore the vendored build-time archives
+        id: vendor-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/lane-b/vendor
+          key: lane-b-vendor-${{ steps.vendor.outputs.bot_sha }}-${{ steps.vendor.outputs.mm_sha }}
+
+      # Verified here as well as inside the image. The in-image check is what
+      # makes a restored archive safe to trust at all; this one is what stops a
+      # bad archive reaching the save step and being handed to every later run.
+      - name: Fetch and verify whatever the cache did not supply
+        env:
+          BOT_URL: ${{ steps.vendor.outputs.bot_url }}
+          BOT_SHA: ${{ steps.vendor.outputs.bot_sha }}
+          MM_URL: ${{ steps.vendor.outputs.mm_url }}
+          MM_SHA: ${{ steps.vendor.outputs.mm_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/lane-b/vendor
+          supply() {
+            local name=$1 url=$2 sha=$3 dest
+            dest="build/lane-b/vendor/$name"
+            if [ -f "$dest" ]; then
+              echo "$name: restored from cache"
+            else
+              echo "$name: cache miss, fetching"
+              curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 \
+                --retry-max-time 120 "$url" -o "$dest"
+            fi
+            if ! echo "$sha  $dest" | sha256sum -c - >/dev/null 2>&1; then
+              # Leaving it on disk would offer the save step a poisoned entry.
+              rm -f "$dest"
+              echo "::error::$name does not match its sha256 pin; refusing to cache it"
+              exit 1
+            fi
+            echo "$name: sha256 pin verified"
+          }
+          supply new_bot.zip "$BOT_URL" "$BOT_SHA"
+          supply metamod.zip "$MM_URL" "$MM_SHA"
+
+      # success() is explicit rather than relied upon: this must not run after a
+      # failed verification, and saving is pointless on a hit because the entry
+      # already exists under this exact key.
+      - name: Save the vendored build-time archives
+        if: success() && steps.vendor-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/lane-b/vendor
+          key: lane-b-vendor-${{ steps.vendor.outputs.bot_sha }}-${{ steps.vendor.outputs.mm_sha }}
+
       - name: Build Lane B image
         run: |
           set -euo pipefail
