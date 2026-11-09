@@ -272,9 +272,14 @@ rule applied sometimes.
 Installed alone, a verifier that gave a wrong answer becomes one that gives none: it fails at import,
 before `main()` runs.
 
-Installed, the guard reads this manifest. A copy outside any checkout is current when its bytes have the
-md5 of its last row **and** equal the blob at the fetched `origin/main` for that row's `source_path`, in
-`KTP_FRESHNESS_REPO` (default `/opt/ktp-infra`). Install the script with `ktp-install`, never `cp`, or
+Installed, the guard reads this manifest. A copy outside any checkout runs when its bytes have the
+md5 of its last row **and** are *some* committed version of that row's `source_path` on the fetched
+`origin/main`, in `KTP_FRESHNESS_REPO` (default `/opt/ktp-infra`) — not necessarily the tip. ⚠️ **So the
+guard no longer refuses a copy that is merely behind**: cron has no checkout to refresh, and refusing one
+left the nightly soak with no verdict rather than a stale one. It says `is BEHIND … but unedited` on
+stderr and carries on; bytes that are no committed version of that path are refused as before, and a
+copy inside a checkout is unchanged. `ktp-install --report --against-ref` is what turns a behind copy
+back into an install. Install the script with `ktp-install`, never `cp`, or
 the verifier refuses every run with "no deploy manifest records it"; install the guard module beside it
 from the same commit, since an older guard has no installed-copy rule at all.
 

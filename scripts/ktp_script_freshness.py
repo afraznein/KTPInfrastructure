@@ -71,14 +71,40 @@ checkout the question is asked of that row, in two legs, and both must hold:
   1. its bytes still have the md5 of its LAST manifest row -- untouched since
      install. A hand-edit in place, or a copy nobody recorded, has no row it
      matches, and is refused the same way a file in a temp dir is.
-  2. those bytes are the blob at the FETCHED ref for the row's source_path, in
-     the checkout named by KTP_FRESHNESS_REPO (default /opt/ktp-infra). A row
-     that is honest about an old commit is still an old copy, and is refused.
+  2. those bytes are a COMMITTED version of the row's source_path on the
+     FETCHED ref, in the checkout named by KTP_FRESHNESS_REPO (default
+     /opt/ktp-infra). Not necessarily the tip: see below. Bytes that are no
+     committed version of that path were edited, or came from somewhere that
+     was never on the ref, and are refused.
 
-Leg 2 is the checkout rule again, compared by md5 rather than by `git diff`:
-`ktp-install` writes the blob's exact bytes, so there is no line-ending
-normalisation between them to get wrong. The fetch writes one remote-tracking
-ref and nothing else, because that checkout is never pulled.
+Leg 2 compares by git object id rather than by `git diff`: `ktp-install` writes
+the blob's exact bytes, so there is no line-ending normalisation between them to
+get wrong. The fetch writes one remote-tracking ref and nothing else, because
+that checkout is never pulled.
+
+BEHIND IS NOT EDITED, AND ONLY THE OBJECT GRAPH TELLS THEM APART
+----------------------------------------------------------------
+Leg 2 used to demand the tip blob, which made every installed copy stale the
+moment a merge moved its source path. The nightly post-restart soak shells out
+to an installed `ktp-verify-deploy`; when that happened the guard refused, the
+soak reached no verdict at all, and the gap was invisible until someone read the
+log. Cron has no checkout to refresh, so "refresh the checkout" is not advice
+that path can take, and a check that stops producing a verdict is the failure
+this module exists to prevent arriving one level up.
+
+So a copy that is BEHIND runs, and is named on stderr while it does -- staleness
+has to be read as staleness rather than as the check's own failure, and
+`ktp-install --report --against-ref` is what turns it back into an install.
+
+The discriminator is deliberately the object graph and not a date, a version
+string or the row's own commit: those are the copy's word for itself, and the
+one thing worth refusing is bytes nobody committed. Bounded by _HISTORY_WINDOW,
+so a long-lived path cannot make the guard the slow part of a deploy; a copy
+older than that window is refused rather than assumed.
+
+A copy running from a drifted CHECKOUT is untouched by any of this and still
+refuses. That is the shared-checkout hazard, where refreshing is exactly the
+available fix.
 
 INERT CONTEXTS
 --------------
@@ -247,6 +273,52 @@ def _describe_drift(repo, ref, rel):
     return lines
 
 
+def _committed_blob(repo, ref, rel, data):
+    """Where `data` sits in `rel`'s history on `ref`. ((sha, commits_back)|None, err|None).
+
+    A `None` result is the finding worth refusing: bytes that are no committed
+    version of this path were edited or came from somewhere that was never on
+    the ref. An error is not that answer and must not be reported as it.
+
+    Three git calls whatever the depth of history: the object id of the bytes,
+    the window of commits touching the path, and one batch for their blob ids.
+    A rev-parse per commit would put the cost of a long-lived path on every run.
+    """
+    try:
+        p = subprocess.run(["git", "-C", repo, "hash-object", "-t", "blob", "--stdin"],
+                           input=data, capture_output=True, timeout=_GIT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"git hash-object failed: {exc}"
+    if p.returncode != 0:
+        return None, f"git hash-object exited {p.returncode}"
+    want = p.stdout.decode("ascii", "replace").strip()
+
+    rc, out, err = _git(repo, "log", f"--max-count={_HISTORY_WINDOW}",
+                        "--format=%H", ref, "--", rel)
+    if rc != 0:
+        return None, f"git log {ref} -- {rel} exited {rc}: {err or '(no stderr)'}"
+    if not out:
+        return None, None
+    revs = out.splitlines()
+    try:
+        q = subprocess.run(["git", "-C", repo, "cat-file", "--batch-check"],
+                           input="".join(f"{sha}:{rel}\n" for sha in revs),
+                           capture_output=True, text=True, timeout=_GIT_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"git cat-file --batch-check failed: {exc}"
+    if q.returncode != 0:
+        return None, f"git cat-file --batch-check exited {q.returncode}"
+    lines = q.stdout.splitlines()
+    # Positional: the nth answer is the nth revision, including a `missing` one.
+    if len(lines) != len(revs):
+        return None, ("git cat-file --batch-check answered a different number of "
+                      "objects than it was asked about")
+    for depth, line in enumerate(lines):
+        if line.split(" ")[0] == want:
+            return (revs[depth], depth), None
+    return None, None
+
+
 def _manifest_row(path):
     """Return ((manifest, last row for `path`) or None, error or None)."""
     if os.environ.get("KTP_MANIFEST"):
@@ -348,8 +420,28 @@ def _check_installed(script_path, ref, also):
         if hashlib.md5(blob.stdout).hexdigest() == have:
             continue
 
-        block = [f"{path} is STALE: installed from {rel} at "
-                 f"{row['source_commit'][:12]}, and {ref} has moved past it."]
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            problems.append(f"Cannot verify {path}: {exc}.\n  Undetermined is not clean.")
+            continue
+        found, err = _committed_blob(top, ref, rel, data)
+        if err:
+            problems.append(f"Cannot verify {path}: {err}.\n  Undetermined is not clean.")
+            continue
+        if found:
+            sha, depth = found
+            print(f"[freshness] {path} is BEHIND {ref} but unedited: these bytes are "
+                  f"{rel} as committed at {sha[:12]}, {depth} commit(s) back on that "
+                  f"path -- accepted, because the cron that runs an installed copy has "
+                  f"no checkout to refresh; `ktp-install --report --against-ref {ref}` "
+                  f"is what turns this back into an install.", file=sys.stderr)
+            continue
+
+        block = [f"{path} is NOT ANY COMMITTED VERSION of {rel} on {ref}: it still has "
+                 f"the md5 its manifest row records, so nothing edited it since install, "
+                 f"but {ref} has never carried these bytes at that path."]
         with open(path, encoding="utf-8", errors="replace") as fh:
             running = fh.read()
         missing = sorted(_long_options(blob.stdout.decode("utf-8", "replace"))
@@ -362,6 +454,8 @@ def _check_installed(script_path, ref, also):
         if rc == 0 and out:
             block.append(f"    commits on {ref} since the installed one, on this path:")
             block.extend(out.splitlines())
+        block.append(f"    searched the last {_HISTORY_WINDOW} commit(s) of {rel} on "
+                     f"{ref}; a copy older than that window is refused, never assumed.")
         block.append(f"    reinstall: ktp-install --repo {top} --commit <{ref} sha> "
                      f"--src {rel} --dest {path} --expect-md5 {have}")
         problems.append("\n".join(block))
