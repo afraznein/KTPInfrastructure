@@ -166,6 +166,25 @@ through as green forever. The JSON report has everything needed:
 `report["carried"]`, `report["break_scenarios"]`, `report["failures"]`,
 `report["coverage_gaps"]`.
 
+**`--require-complete-coverage` makes a gap fail, and one code is exempt.** The
+nightly passes that flag, so bot luck that would merely warn becomes a red run —
+which is the right trade for release evidence. `voice_menu_slots` is the
+exception, ruled 2026-11-03: an all-bot lane has never produced a
+`#Voice_subtitle_*`, so that check can only ever answer `not_exercised` and the
+flag turned it into a nightly that was red on something unreachable. It is listed
+in `lane_b_e2e.UNEXERCISABLE_IN_ALL_BOT_LANE`, still reported in
+`report["coverage_gaps"]` and marked **waived** in the step summary, and absent
+from `report["coverage_gaps_gating"]` which is what the exit code reads.
+
+Two things that make this a ruling rather than a convenience, both worth keeping:
+a `pipeline` verdict on the same check still fails the job, because the waiver
+only ever covers `not_exercised`; and the obvious remedy — inject a subtitle
+ourselves — was declined because the slot table comes from `dod.so`'s string
+order, so checking the plugin against text we chose tests this harness and not the
+game. Why no subtitle arrives is still open; both candidates are in
+`tests/e2e_stats/voice_menu_scenario.py`, and one of them is a harness shape
+rather than a floor.
+
 ### 6. Artifacts
 
 | File | Why |

@@ -9,8 +9,8 @@ from tests.source_anchors import PYTHON, assert_in_order, code_text, pawn_source
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                  match_epoch_interval,
                                  persist_preflight_failure,
-                                replay_boot_flag_positions, run_match,
-                                wait_for_match_start_log,
+                                replay_boot_flag_positions, run_exit_code,
+                                run_match, wait_for_match_start_log,
                                 stage_objective_wire_witness, stage_tree)
 
 
@@ -124,7 +124,12 @@ def test_manual_lane_accepts_and_records_all_four_bundle_refs():
     assert 'ap.add_argument("--artifact-manifest"' in runner
     assert "--require-complete-coverage" in workflow
     assert 'ap.add_argument("--require-complete-coverage"' in runner
-    assert "args.require_complete_coverage and bool(gaps)" in runner
+    # Asked of the behaviour, not of the line: the old text assertion went
+    # stale the moment the gating set stopped being every gap.
+    assert run_exit_code(failures=[], gating_gaps=["cap_break: bot luck"],
+                         require_complete_coverage=True) == 1
+    assert run_exit_code(failures=[], gating_gaps=["cap_break: bot luck"],
+                         require_complete_coverage=False) == 0
 
 
 def test_both_lanes_apply_the_context_migrations_the_daemon_ref_carries():
@@ -196,7 +201,8 @@ def test_full_lane_carries_target_producer_clock_release_gates():
     ):
         assert check in runner
     assert "log_invariants.count_in_match" in runner
-    assert "args.require_complete_coverage and bool(gaps)" in runner
+    assert run_exit_code(failures=[], gating_gaps=["frag_producer_clocks: none"],
+                         require_complete_coverage=True) == 1
 
 
 def test_full_lane_strictly_accounts_for_breakdrive_frag_diagnostics():
