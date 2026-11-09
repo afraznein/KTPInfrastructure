@@ -53,6 +53,19 @@ CVAR_LIVE = "c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7c7"   # 7.37 -- live, but only in pro
 MH_LIVE = "70707070707070707070707070707070"     # 0.10.170 -- live, absent entirely
 ENGINE_LIVE = "e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0"  # matches its row
 
+# The shape the gate used to clear: stage-wave records the incoming md5 in the
+# row tail, so the row CARRIES the new hash while still CLAIMING the old one.
+STALE_TAIL = ("`ce6ce034bbbbbbbbbbbbbbbbbbbbbbbb` -- backup holds 7.35. "
+              f"Incoming `{CVAR_LIVE}` (7.37), staged and NOT YET FLIPPED.")
+# ...and the flip, which moves the new hash to the front and demotes the old one
+# to a rollback pin. Both hashes are present in both; only the ORDER differs.
+FLIPPED_TAIL = (f"`{CVAR_LIVE}` (7.37) -- rollback pin "
+                "`ce6ce034bbbbbbbbbbbbbbbbbbbbbbbb` (7.36).")
+
+CLAUDE_MD_STAGED_TAIL = CLAUDE_MD.replace(
+    "`ce6ce034bbbbbbbbbbbbbbbbbbbbbbbb` -- backup holds 7.35.", STALE_TAIL)
+assert CLAUDE_MD_STAGED_TAIL != CLAUDE_MD, "the staged-tail fixture did not substitute"
+
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch):
@@ -133,9 +146,12 @@ def test_absent_md5_fails_and_says_the_row_was_not_flipped():
     assert "0.10.170" in f.detail
 
 
-def test_a_prior_build_named_in_the_same_row_is_not_a_pass():
-    """Rows legitimately name superseded builds and backup paths. Only the
-    CURRENT md5 satisfies the check."""
+def test_a_prior_build_named_in_the_same_row_passes_the_presence_check():
+    """check_row asks only whether the row CARRIES an md5, and rows legitimately
+    name superseded builds and backup paths, so a prior build passes here. The
+    GATE is what rejects a row that carries an md5 without claiming it --
+    see test_an_incoming_md5_in_the_row_tail_does_not_clear_the_gate.
+    """
     prior = "1af52525aaaaaaaaaaaaaaaaaaaaaaaa"
     assert prior in CLAUDE_MD
     assert wl.check_row(CLAUDE_MD, "ktpamx_i386.so", prior).ok        # it is on the row
@@ -307,6 +323,50 @@ def test_an_empty_claude_md_blocks_rather_than_reading_as_missing(tmp_path):
     p.write_text("", encoding="utf-8")
     _stage(MH_LIVE, basename="KTPMatchHandler.amxx")
     assert wl.gate(str(p)).status == "blocked"
+
+
+def test_an_incoming_md5_in_the_row_tail_does_not_clear_the_gate(tmp_path):
+    """The gate cleared two activated-but-stale rows and marked the wave
+    reconciled, because the staging convention had already written the incoming
+    md5 into the row tail. Presence was satisfied; the row still named the
+    outgoing build, and `sweep` reported ROW_NOT_LIVE on the same text.
+    """
+    p = tmp_path / "CLAUDE.md"
+    p.write_text(CLAUDE_MD_STAGED_TAIL, encoding="utf-8")
+    _stage(CVAR_LIVE)
+    # The presence test on its own IS satisfied. That is not a bug in check_row,
+    # whose question is only whether the row carries the md5 -- it is why the
+    # gate cannot be built out of that question alone.
+    assert wl.check_row(CLAUDE_MD_STAGED_TAIL, "ktp_cvar.amxx", CVAR_LIVE).ok
+    assert wl.row_claim(CLAUDE_MD_STAGED_TAIL, "ktp_cvar.amxx") != CVAR_LIVE
+
+    res = wl.gate(str(p))
+    assert res.status == "blocked"
+    assert "CLAIMS" in " ".join(f.detail for _e, bad in res.blocked for f in bad)
+    assert len(wl.load_waves()) == 1          # and the wave was NOT consumed
+
+
+def test_the_flip_itself_clears_the_gate(tmp_path):
+    """Control for the case above, and the one that stops the fix overreaching:
+    the outgoing md5 stays on the row as the rollback pin, so a correctly
+    flipped row must clear even though it still carries the old hash.
+    """
+    flipped = CLAUDE_MD_STAGED_TAIL.replace(STALE_TAIL, FLIPPED_TAIL)
+    assert flipped != CLAUDE_MD_STAGED_TAIL
+    assert "ce6ce034bbbbbbbbbbbbbbbbbbbbbbbb" in flipped   # rollback pin survives
+    p = tmp_path / "CLAUDE.md"
+    p.write_text(flipped, encoding="utf-8")
+    _stage(CVAR_LIVE)
+    assert wl.gate(str(p)).status == "clear"
+    assert wl.load_waves() == []
+
+
+def test_an_unmapped_basename_still_takes_the_weak_file_check(claude_md):
+    """The claim leg applies only where a row exists. `hlds_linux` maps to no
+    component, so requiring a row claim would make it permanently unclearable.
+    """
+    _stage(ENGINE_LIVE, basename="hlds_linux")
+    assert wl.gate(claude_md).status == "clear"
 
 
 def test_no_clear_reports_without_consuming_the_wave(claude_md):
