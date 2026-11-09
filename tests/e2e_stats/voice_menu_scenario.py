@@ -12,6 +12,30 @@ Verdicts, same three-way shape as every carried check:
   pipeline        a pick was not logged, or a logged name disagrees with the subtitle
   not_exercised   the drive could not run (no bots) or the game sent no subtitles at all,
                   so the table was not tested -- never dressed up as a pass
+
+THE ALL-BOT LANE HAS NEVER SEEN A SUBTITLE, AND THE GAP IS WAIVED RATHER THAN CLOSED.
+Every run logs its 27 picks and the game sends no `#Voice_subtitle_*` at all, so this
+check has only ever reported `not_exercised`. Ruled 2026-11-03: that is the lane's
+coverage floor -- `lane_b_e2e.UNEXERCISABLE_IN_ALL_BOT_LANE` carries this code, so the
+gap is still reported and no longer fails the run. Before 2026-11-03 it failed every
+nightly under `--require-complete-coverage`, which is how a permanently-red lane
+teaches everyone to skim past its real failures.
+
+A synthetic TextMsg injection was DECLINED, and not on cost: the slot table comes from
+dod.so's string order, so injecting a subtitle we chose and then checking the plugin's
+logged name against our own text verifies this module's regex and comparison and NOT
+the thing the check exists to answer. It would read green while measuring nothing,
+which is worse than an honest gap.
+
+WHY NO SUBTITLE ARRIVES IS NOT SETTLED, and the two candidates have different fixes:
+  1. dod.so will not emit when the SPEAKER is a fake client. Then the check is
+     unexercisable here by construction and wants an explicit not-applicable verdict.
+  2. It emits only to NON-FAKE RECIPIENTS -- the subtitle is logged per recipient
+     (`diagnostics/KTPAssistDrive.sma` logs `SUB to=<id>` from inside a TextMsg hook)
+     and the game sends it to teammates, so an all-bot lane may simply hold no
+     eligible recipient. Then this is a harness shape to fix, not a floor to accept.
+Telling them apart needs the lane exercised with one non-fake spectator or teammate.
+2 is exactly why nobody should "fix" this by relaxing the check itself.
 """
 
 from __future__ import annotations
