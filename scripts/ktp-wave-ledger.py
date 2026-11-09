@@ -543,6 +543,29 @@ class GateResult:
     blocked: list[tuple[dict, list[RowFinding]]] = field(default_factory=list)
 
 
+def _gate_finding(text: str, artifact: dict) -> RowFinding:
+    """`check_row` answers whether a row CARRIES an md5. The gate needs the
+    stronger answer, because the staging convention writes the incoming md5 into
+    the row tail at stage time -- so presence is satisfied hours before
+    activation, by the very sentence saying the row is not flipped yet.
+
+    The claim leg applies only where there IS a row: an unmapped basename takes
+    the documented weak file-wide check, which `row_claim` cannot speak to.
+    """
+    md5 = artifact["md5"].lower()
+    f = check_row(text, artifact["basename"], md5, artifact.get("version"))
+    if not f.ok or f.scope != "row":
+        return f
+    claim = row_claim(text, artifact["basename"])
+    if claim == md5:
+        return f
+    return RowFinding(
+        artifact["basename"], md5, f.component, False, "row",
+        f"{f.component} row carries {md5} but CLAIMS {claim or 'no md5'} is the live build -- "
+        f"presence is not a flip. The incoming md5 is recorded in the row tail at stage time, so "
+        f"the row's FIRST md5 is what says which build activated.")
+
+
 def gate(claude_md: str | None = None, now: float | None = None,
          auto_clear: bool = True) -> GateResult:
     """Waves that have already activated but whose CLAUDE.md rows still disagree.
@@ -572,8 +595,7 @@ def gate(claude_md: str | None = None, now: float | None = None,
     path, text = got
     lines, blocked = [], []
     for p, entry in due:
-        findings = [check_row(text, a["basename"], a["md5"], a.get("version"))
-                    for a in entry["artifacts"]]
+        findings = [_gate_finding(text, a) for a in entry["artifacts"]]
         bad = [f for f in findings if not f.ok]
         if bad:
             blocked.append((entry, bad))
