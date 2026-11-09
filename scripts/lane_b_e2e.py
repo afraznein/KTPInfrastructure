@@ -75,6 +75,13 @@ from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 # command three times in one container; retried rather than explained.
 BOOT_ATTEMPTS = 3
 
+# Checks an all-bot lane cannot exercise AT ALL, so no amount of bot luck
+# reaches them: they still report their gap, they just stop gating the run.
+# Adding a code here is a ruling about the lane's coverage floor, never a way
+# to quiet a flake -- a flaky check still gates, which is the whole point of
+# --require-complete-coverage.
+UNEXERCISABLE_IN_ALL_BOT_LANE = frozenset({"voice_menu_slots"})
+
 _AMXX_GAMEDATA_DEST = "dod/addons/ktpamx/data/gamedata"
 _CLOCK_PREFLIGHT_RE = re.compile(
     r"KTP_BD_CLOCK_PREFLIGHT\s+gamerules=(?P<gamerules>-?\d+)\s+"
@@ -93,6 +100,27 @@ _SERVER_RESOLVER_WARNINGS = (
     'GameConfig CRC missing for library "server"',
     "Could not find g_pGameRules address",
 )
+
+
+def gating_coverage_gaps(report: dict) -> list[str]:
+    """The coverage gaps that may fail the run under --require-complete-coverage.
+
+    The waived text is rebuilt from `carried` with the same expression that put
+    it in `coverage_gaps`, so a formatting change re-arms the gate instead of
+    silently widening the waiver.
+    """
+    waived = {f"{c['code']}: {c['detail']}"
+              for c in report.get("carried") or []
+              if c.get("status") == "not_exercised"
+              and c.get("code") in UNEXERCISABLE_IN_ALL_BOT_LANE}
+    return [gap for gap in report.get("coverage_gaps") or []
+            if gap not in waived]
+
+
+def run_exit_code(*, failures: list[str], gating_gaps: list[str],
+                  require_complete_coverage: bool) -> int:
+    """Process exit status. Behavioural so it is not asserted by grepping text."""
+    return 1 if failures or (require_complete_coverage and gating_gaps) else 0
 
 
 def compile_sma(src: Path, out: Path, *, scripting: Path,
@@ -2230,19 +2258,25 @@ def main() -> int:
     print(f"  break positions:  {rows['break_positions']}")
 
     gaps = report.get("coverage_gaps") or []
+    gating_gaps = gating_coverage_gaps(report)
+    report["coverage_gaps_gating"] = gating_gaps
     if gaps:
         print(f"\n=== {len(gaps)} NOT EXERCISED ===")
         for g in gaps:
-            print("  - " + g.replace("\n", "\n    "))
+            suffix = "" if g in gating_gaps else "  [waived: not exercisable in an all-bot lane]"
+            print("  - " + g.replace("\n", "\n    ") + suffix)
     if failures:
         print(f"\n=== {len(failures)} FAILURE(S) ===")
         for f in failures:
             print("  - " + f.replace("\n", "\n    "))
-    elif gaps:
+    elif gating_gaps:
         # Not a pass. Nothing is broken, but the run did not test what it set
         # out to test, and recording that as green is how a lane stops meaning
         # anything.
         print("\nno defects found, but this run is INCOMPLETE — see above")
+    elif gaps:
+        print("\nno defects found; every gap above is waived coverage this "
+              "lane cannot reach — see above")
     else:
         print("\nall assertions passed")
 
@@ -2257,8 +2291,9 @@ def main() -> int:
     args.summary_out.write_text(summary, encoding="utf-8")
     print(f"wrote {args.out}")
     print(f"wrote {args.summary_out}")
-    incomplete_release_evidence = args.require_complete_coverage and bool(gaps)
-    return 1 if failures or incomplete_release_evidence else 0
+    return run_exit_code(
+        failures=failures, gating_gaps=gating_gaps,
+        require_complete_coverage=args.require_complete_coverage)
 
 
 if __name__ == "__main__":
