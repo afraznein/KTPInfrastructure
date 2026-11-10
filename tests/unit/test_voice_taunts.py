@@ -136,6 +136,13 @@ def test_hand_signals_are_taunts_too():
     assert "signal" in vt.presses_sql("2026-09-13")
 
 
+def test_untagged_presses_are_adopted_by_the_live_half_on_their_server():
+    # 2026-11-08: 419 in-half presses since 10-22 had match_id NULL (stealth's 4th neg among them).
+    sql = vt.presses_sql("2026-09-13")
+    assert "UNION ALL" in sql and "pa.match_id IS NULL" in sql
+    assert "h.server_id = pa.serverId AND pa.eventTime BETWEEN h.start_time AND h.end_time" in sql
+
+
 def test_spam_column_is_peak_presses_in_any_second_not_only_taunts():
     # Jonski, 2026-10-24: 13 presses with no kill behind them, 18 in the taunt second, 5 outside the window.
     rows = ([row(100 + i, "2026-10-24 15:44:34", code="voice_grenade") for i in range(13)]
