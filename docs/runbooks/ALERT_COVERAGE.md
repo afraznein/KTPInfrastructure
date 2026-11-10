@@ -265,7 +265,7 @@ Cron-scheduled work is outside both mechanisms entirely:
 
 | Job | Watched by |
 |---|---|
-| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing on the box — `KTPAdminBot`#21's stale-state field (merged, not deployed) covers it in minutes, the weekly audit gate (2026-09-18) in days |
+| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing on the box — `KTPAdminBot`#21's stale-state field (merged and deployed, see hole 4) covers it within two hours, the weekly audit gate (2026-09-18) in days |
 | `ktp-fleet-audit` (Monday 05:00 ET) | **nothing**; it does refuse to run against a non-git `/opt/ktp-infra` |
 | `ktp-tier2-heartbeat` | itself; deliberately a data-server cron so it does not share fate with the GH runner it watches. ⚠️ **Diagnose it with `ktp-tier2-heartbeat.sh --dry-run`.** It alerts on transitions, so a run that saved a verdict computed without the cron file's environment can mask the next real change — the state write is armed by the cron file (or a cron parent) and by `--write`, and by nothing else |
 | `ktp-backup-watchdog` | itself; exists because a run that never happens produces no output |
@@ -396,19 +396,24 @@ Ranked by what they would cost during Season 10.
    2026-09-16: all ten live timers bar the Monday reminder are listed.
 3. ~~**`ktp-admin-bot` and `ktp-frag-diag-tail` have no detection path at all**~~
    Ruled not critical, 2026-09-18. Not a hole; a decision.
-4. **Narrowed 2026-09-17, not closed: the hourly health check now reports its own
-   last run; the weekly fleet audit still reports nothing.** Both are watchers,
-   and a watcher that stops looks exactly like a quiet estate — which is why the
-   2026-08-31 abort ran for fifteen days before anyone asked why the channel had
-   gone calm. `ktp-data-server-health.sh` keeps a run ledger, and the next
-   completed run raises `health-check-aborted` (naming the line it died on) or
-   `health-check-missed-runs`. **A run that dies still cannot speak for itself** —
-   the following run speaks for it — so a check that stops for good is invisible
-   from the box. Two external detectors: `afraznein/KTPAdminBot`#21's stale-state
-   field (merged, **not deployed**, minutes), and since 2026-09-18 the weekly
-   audit's gate, which triages a state file older than 6h and any item open more
-   than 3 days — the latter being the ten-day identity-reconcile shape, which
-   presence-reporting alone never surfaced.
+4. ~~**The hourly health check and the weekly fleet audit cannot report their
+   own silence.**~~ Closed: both external detectors are live. The hourly check
+   keeps a run ledger, so the next completed run raises `health-check-aborted`
+   (naming the line it died on) or `health-check-missed-runs`; a check that
+   stops for good is caught by `afraznein/KTPAdminBot`#21's stale-state field,
+   which flags `/var/lib/ktp-data-server-health.json` once no run has completed
+   for two hours, and in days by the weekly audit gate (2026-09-18), which
+   triages a state file older than 6h and any item open more than 3 days — the
+   ten-day identity-reconcile shape that presence-reporting alone never surfaced.
+   ⚠️ **This entry said the #21 field was "merged, not deployed" for weeks after
+   it was deployed.** Measured 2026-11-10: `/opt/ktp-admin-bot/ops_alert_state.py`
+   on the data server is byte-identical to `KTPAdminBot` `origin/main` (md5
+   `e21c26fc9307dad44ba2a601c1611631`, installed 2026-10-14) and `ktp-admin-bot`
+   is active. Derive it the same way rather than trusting this sentence:
+   `md5sum /opt/ktp-admin-bot/ops_alert_state.py` against the blob on `main`.
+   ⛔ **Out of scope, not a residue of this hole:** both detectors run on the
+   data server, so a box that is down takes them with it. That is host liveness,
+   which no detector on the host can report.
 5. ~~**`ktp-restart-drift.py` runs on no schedule.**~~ The schedule half is
    false, and has been since the weekly audit became a workflow.
    `.github/workflows/fleet-audit.yml` runs it every Monday

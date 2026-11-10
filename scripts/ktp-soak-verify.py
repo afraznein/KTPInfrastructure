@@ -506,19 +506,21 @@ def suite_post_restart() -> SuiteResult:
     """
     result = SuiteResult(suite="post-restart")
     out_path = f"/tmp/verify_deploy_{int(datetime.now().timestamp())}.json"
-    rc, _, err = sh(
-        f"/usr/local/bin/ktp-verify-deploy --include-engine --out {out_path} 2>&1", timeout=300
+    # Read both streams: the refusal is the only thing that names why there is no report.
+    rc, out, err = sh(
+        f"/usr/local/bin/ktp-verify-deploy --include-engine --out {out_path}", timeout=300
     )
 
     try:
         with open(out_path) as f:
             report = json.load(f)
     except Exception as e:
+        said = "\n".join(s for s in (err, out) if s)
         result.checks.append(CheckResult(
             name="ktp-verify-deploy invocation",
             status=Status.RED,
-            summary=f"failed to read verify-deploy output: {e}",
-            detail=err[-500:] if err else None,
+            summary=f"failed to read verify-deploy output (exit {rc}): {e}",
+            detail=said[-500:] if said else None,
         ))
         return result
 
