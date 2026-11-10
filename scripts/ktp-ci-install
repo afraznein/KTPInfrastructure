@@ -91,6 +91,8 @@ def md5_file(path):
             return md5_bytes(f.read())
     except FileNotFoundError:
         return "-"
+    except PermissionError:
+        return "?"
 
 
 def parse_allowlist(text, bin_dir=BIN_DIR):
@@ -162,6 +164,8 @@ def assess(dest, src, row, blob):
     if row["source_path"] != src:
         return "SOURCE-MISMATCH", md5_file(dest)
     now = md5_file(dest)
+    if now == "?":
+        return "UNREADABLE", now
     if now == "-":
         return "MISSING", now
     if now != row["md5"]:
@@ -232,6 +236,10 @@ def check(entries, rows, show, scope):
                 findings += 1
                 print("FAIL     outside      STALE-OUTSIDE-LIST  %s  %s  (CI may not install it: a person "
                       "installs it, or a PR adds it to %s)" % (dest, now, ALLOWLIST_PATH))
+            elif state == "UNREADABLE":
+                findings += 1
+                print("FAIL     outside      UNREADABLE          %s  (this user cannot read it, so its "
+                      "freshness is unknown, not fine)" % dest)
             elif state == "SOURCE-GONE":
                 findings += 1
                 print("FAIL     outside      REMOVED-UPSTREAM    %s  %s  (main no longer holds %s; "
