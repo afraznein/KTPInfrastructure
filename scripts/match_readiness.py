@@ -50,12 +50,14 @@ WANTED_TABLES = {
     "hlstats_Events_PlayerPlayerActions",
     "hlstats_Events_Statsme",
     "hlstats_Events_Statsme2",
+    "ktp_assist_events",
     "ktp_damage_events",
     "ktp_flag_captures",
     "ktp_flag_state_events",
     "ktp_capture_health",
     "ktp_capture_manifests",
     "ktp_grenade_entity_events",
+    "ktp_life_events",
     "ktp_match_players",
     "ktp_matches",
     "ktp_objective_attempt_events",
@@ -92,6 +94,11 @@ METRIC_REQUIREMENTS = {
     "objective_control": (
         "closed_match", "valid_half_tags",
         "objective_attempt_lifecycle", "flag_ownership_coverage",
+    ),
+    # The check is emitted only once a link exists, so an archive from before
+    # the causal-link producer reads unavailable rather than partial.
+    "death_group": (
+        "closed_match", "valid_half_tags", "death_group_link_resolution",
     ),
 }
 
@@ -372,6 +379,46 @@ def grenade_rows_valid(
     return not errors, errors
 
 
+def death_group_links(
+    assists: list[dict[str, Any]],
+    frags: list[dict[str, Any]],
+    lives: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Count recorded causal links and those whose referent resolves.
+
+    Keys are typed -- server, match, half, stream, sequence -- because producer
+    sequences are per event type and restart each half. NULL is no parent.
+    """
+    life_ends = {
+        (integer(row.get("server_id")), row.get("match_id"), integer(row.get("half")),
+         integer(row.get("producer_sequence")))
+        for row in lives
+        if row.get("boundary_kind") == "end" and row.get("producer_sequence") is not None
+    }
+    frag_keys = {
+        (integer(row.get("serverId")), row.get("producer_match_id"),
+         integer(row.get("producer_half")), integer(row.get("producer_sequence")))
+        for row in frags if row.get("producer_sequence") is not None
+    }
+    linked = resolved = 0
+    for row in assists:
+        context = (integer(row.get("server_id")), row.get("match_id"), integer(row.get("half")))
+        for column, referents in (("causal_parent_life_sequence", life_ends),
+                                  ("causal_parent_frag_sequence", frag_keys)):
+            if row.get(column) is not None:
+                linked += 1
+                resolved += (*context, integer(row.get(column))) in referents
+    for row in frags:
+        if row.get("causal_parent_life_sequence") is not None:
+            linked += 1
+            resolved += (
+                integer(row.get("serverId")), row.get("producer_match_id"),
+                integer(row.get("producer_half")),
+                integer(row.get("causal_parent_life_sequence")),
+            ) in life_ends
+    return {"linked": linked, "resolved": resolved, "unresolved": linked - resolved}
+
+
 def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     path = path.resolve()
     if not path.is_file():
@@ -400,6 +447,12 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
     grenade_entities = rows_for(tables, "ktp_grenade_entity_events", match_id)
     manifests = rows_for(tables, "ktp_capture_manifests", match_id)
     health = rows_for(tables, "ktp_capture_health", match_id)
+    death_group = death_group_links(
+        rows_for(tables, "ktp_assist_events", match_id),
+        [row for row in tables.get("hlstats_Events_Frags", [])
+         if row.get("producer_match_id") == match_id],
+        rows_for(tables, "ktp_life_events", match_id),
+    )
     observed_halves = {
         integer(row.get("half")) for row in matches if integer(row.get("half")) > 0
     }
@@ -477,6 +530,8 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
         "grenade_incomplete": sum(kinds == {"tracked"} for kinds in grenade_lifecycles.values()),
         "capture_manifests": len(manifests),
         "capture_health_rows": len(health),
+        "death_group_links": death_group["linked"],
+        "death_group_unresolved_links": death_group["unresolved"],
     }
     checks: list[dict[str, Any]] = []
     checks.append(finding(
@@ -717,6 +772,15 @@ def validate_fixture(path: Path, match_id: str | None = None) -> dict[str, Any]:
             else f"Exact duplicate {label} rows were found.", duplicates=duplicates,
         ))
 
+    if death_group["linked"]:
+        checks.append(finding(
+            "PASS" if not death_group["unresolved"] else "FAIL",
+            "death_group_link_resolution",
+            "Every recorded death-group link resolves in its own producer context."
+            if not death_group["unresolved"] else
+            "A recorded death-group link names a life-end or frag that is not in this match half.",
+            **death_group,
+        ))
     checks.append(finding(
         "PASS" if assists else "WARN", "assist_coverage",
         "Assist rows are present." if assists else "No assist rows are present; distinguish zero from unavailable.",

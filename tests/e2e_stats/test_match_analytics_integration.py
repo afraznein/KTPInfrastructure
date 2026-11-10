@@ -296,6 +296,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "player_halves": True,
         "break_producer_half": False,
         "break_event_clock": False,
+        "causal_links": False,
         # Migrations 032-034 and the AC ledger are not in the phase-a fixture:
         # probed, absent, and every dependent box-score key is None.
         "wave1_fields": False,
@@ -348,7 +349,11 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 38
+    assert report["schema_version"] == 39
+    # Migration 054 is not in this fixture: the death-group block says the
+    # columns are absent and carries no numbers at all.
+    assert report["death_group"]["status"] == "unavailable"
+    assert report["death_group"]["halves"] == []
     # The contract fixture carries no net telemetry tables, so the block must
     # say so rather than publish zeros.
     assert report["connection"]["status"] == "unavailable"
