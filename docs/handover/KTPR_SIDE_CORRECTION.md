@@ -1,7 +1,8 @@
 # Spec: side-balance correction and a KTPR error bar
 
 **For:** an engineer implementing steps S1–S2 of `KTPR_SPATIAL_PLAN.md`.
-**Status:** planning only. Nothing agreed, nothing started.
+**Status:** S1a done (2026-11-06). S2b built on unadjusted values; S2a descoped by ruling
+2026-11-02. S1b not started.
 **Why it is first:** it needs **no new data capture**. Everything below runs against the
 existing tournament database. It is independent of the spike, the plugin work, and the
 phase backlog, and it produces the noise floor that every later tuning decision needs.
@@ -227,6 +228,13 @@ variation with measurement error**.
 
 Compute `r_halves` on the side-**adjusted** values from S2a, or the side effect inflates
 the apparent noise.
+
+**As built (`compute_reliability`, `reliability_report`):** S2a was descoped by ruling
+2026-11-02, so `r_halves` runs on UNADJUSTED values and the result says `side_adjusted:
+false`. The side effect is therefore counted as noise and the SEM is an upper bound, not a
+point estimate. A half row carries no half number, so the correlation is the double-entry
+(intraclass) form; player-matches with one half or with overtime halves are counted and
+skipped.
 
 ### Why this matters more than any single new term
 
