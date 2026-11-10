@@ -3,7 +3,7 @@
  "definition_version": 1,
  "generator": "make_golden.py",
  "source": "scripts/flag_swing.py",
- "source_sha256": "8ddb0ad735cfc46e84b91e05d245a5ccdb99d6889eb386c5d4425cd3b45c3497",
+ "source_sha256": "11c7ccb04012d7b18789b34569dcbf6ee397ad03a394c8d53f5d5eb307aa1472",
  "note": "p values produced by _HalfState.p_allies from the pipeline source.",
  "cases": [
   {
