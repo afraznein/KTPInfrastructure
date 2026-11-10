@@ -283,6 +283,16 @@ back into an install. Install the script with `ktp-install`, never `cp`, or
 the verifier refuses every run with "no deploy manifest records it"; install the guard module beside it
 from the same commit, since an older guard has no installed-copy rule at all.
 
+## Installing from CI: `ktp-ci-install`, allowlisted paths only
+
+The plan above still needs a person to run it. For the scripts named in
+`config/ci-install-allowlist.tsv`, `.github/workflows/ci-install.yml` runs the
+installs itself through `/usr/local/sbin/ktp-ci-install`, which calls `ktp-install`
+with both md5 pins and refuses anything off the list, unrecorded, or hand-edited.
+Its second job fails on every recorded script off the list that is stale or whose
+source left `main`. Scope, trust model and operator steps:
+`docs/runbooks/CI_INSTALL_ALLOWLIST.md`.
+
 ## Where a backup of an installed script goes
 
 **Not `/usr/local/bin`.** That directory is on `PATH` and is what every cron entry
