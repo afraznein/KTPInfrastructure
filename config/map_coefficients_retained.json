@@ -1,0 +1,45 @@
+{
+  "definition": "flag_swing_map_coefficients_retained_v1",
+  "maps": {
+    "dod_armory_b6": {
+      "alive_coefficient": 0.6527,
+      "flag_coefficient": 0.9476,
+      "official_halves": 0,
+      "retained_from_commit": "c39fa0489173053b61aa84f1e8985a6b4aeccb13",
+      "retained_from_corpus": "officials_plus_all_practice",
+      "retained_from_fitted_at": "2026-10-15T13:31:21Z",
+      "shrinkage_weight": 0.2308,
+      "training_halves": 6
+    },
+    "dod_halle": {
+      "alive_coefficient": 0.6772,
+      "flag_coefficient": 0.9433,
+      "official_halves": 0,
+      "retained_from_commit": "c39fa0489173053b61aa84f1e8985a6b4aeccb13",
+      "retained_from_corpus": "officials_plus_all_practice",
+      "retained_from_fitted_at": "2026-10-15T13:31:21Z",
+      "shrinkage_weight": 0.3333,
+      "training_halves": 10
+    },
+    "dod_saints2_b3e": {
+      "alive_coefficient": 0.8572,
+      "flag_coefficient": 1.7113,
+      "official_halves": 0,
+      "retained_from_commit": "c39fa0489173053b61aa84f1e8985a6b4aeccb13",
+      "retained_from_corpus": "officials_plus_all_practice",
+      "retained_from_fitted_at": "2026-10-15T13:31:21Z",
+      "shrinkage_weight": 0.4595,
+      "training_halves": 17
+    },
+    "dod_saints2_b4e": {
+      "alive_coefficient": 0.8289,
+      "flag_coefficient": 1.2191,
+      "official_halves": 0,
+      "retained_from_commit": "c39fa0489173053b61aa84f1e8985a6b4aeccb13",
+      "retained_from_corpus": "officials_plus_all_practice",
+      "retained_from_fitted_at": "2026-10-15T13:31:21Z",
+      "shrinkage_weight": 0.2308,
+      "training_halves": 6
+    }
+  }
+}
