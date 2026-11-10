@@ -1,0 +1,14 @@
+# KTP HUD observer archive retention -- /opt/hud-observer/matches, same windows as demo retention.
+# Install: sudo cp scripts/ktp-hud-archive-retention.cron /etc/cron.d/ktp-hud-archive-retention
+#
+# Run `DRY_RUN=1 /usr/local/bin/ktp-hud-archive-retention.sh delete` by hand first and
+# read the per-tier counts before this file goes in: the first real pass removes
+# every match already past its window, not one day's worth.
+#
+# Delete runs after demo retention (04:30) so the two never contend for the disk.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+MAILTO=''
+
+45 4 * * *   root  /usr/local/bin/ktp-hud-archive-retention.sh delete  >> /var/log/ktp-hud-archive-retention.log 2>&1
+15 9 * * 0   root  /usr/local/bin/ktp-hud-archive-retention.sh preview >> /var/log/ktp-hud-archive-retention.log 2>&1
