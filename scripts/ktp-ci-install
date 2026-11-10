@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""Install allowlisted KTPInfrastructure scripts at origin/main, for CI, and nothing else.
+
+    sudo -n /usr/local/sbin/ktp-ci-install --install DEST       root, through the sudoers fragment
+    ktp-ci-install --list   --repo DIR --ref REF                unprivileged
+    ktp-ci-install --check  --repo DIR --ref REF [--scope allowlisted|outside|all] [--manifest PATH]
+    ktp-ci-install --emit-sudoers --repo DIR --ref REF [--runner-user USER]
+
+The CI runner user may run exactly one privileged command, once per allowlisted
+destination, with that destination as its only argument. The sudoers fragment in
+config/sudoers.d/ is generated from config/ci-install-allowlist.tsv and is the
+ceiling; the allowlist at the verified tip of main is the tighter bound. The caller
+chooses NOTHING else: not the bytes, not the commit, not the allowlist, not the
+manifest. Every one of those is fixed in this file or read from a root-owned mirror
+that this program fetches itself and checks against the remote's tip. A job that
+runs this with any argument can at most install the blob that main already holds,
+for a path the allowlist already names, over a file nobody has edited since its
+last recorded install.
+
+--install refuses, and writes nothing, when:
+  the destination is not on the allowlist at main         NOT-ALLOWLISTED
+  the destination has no manifest row                     NOT-RECORDED (the first install is a person's)
+  the row names another repo or another source path       OTHER-REPO / SOURCE-MISMATCH
+  the file is a symlink or not a regular file             NOT-REGULAR
+  the file differs from its last row                      DRIFT (a hand edit is never clobbered)
+  main no longer holds the source                         SOURCE-GONE (removed upstream)
+  /etc/ktp/ci-install.disabled exists                     the operator's stop switch
+A CURRENT file exits 0 and writes nothing. A STALE one is handed to ktp-install,
+pinned to the bytes measured here on both sides.
+
+--check is the loud half. In scope `allowlisted` every allowlisted path must be
+CURRENT. In scope `outside` every KTPInfrastructure row OFF the allowlist must not
+be STALE or SOURCE-GONE: CI may not install it, so a stale one is owed by a person
+and must not wait in silence, and an allowlist alone is blind to a script deleted
+upstream. Exit 0 clean, 1 findings, 2 could not establish the baseline.
+"""
+
+import argparse
+import hashlib
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+
+REPO_URL = "https://github.com/afraznein/KTPInfrastructure.git"
+SOURCE_REPO = "KTPInfrastructure"
+ALLOWLIST_PATH = "config/ci-install-allowlist.tsv"
+WRAPPER = "/usr/local/sbin/ktp-ci-install"
+KTP_INSTALL = "/usr/local/bin/ktp-install"
+BIN_DIR = "/usr/local/bin"
+STATE_DIR = "/var/lib/ktp-ci-install"
+KILL_SWITCH = "/etc/ktp/ci-install.disabled"
+LOCK_FILE = "/run/lock/ktp-ci-install.lock"
+SYSTEM_MANIFEST = "/usr/local/share/ktp-infra/DEPLOYED.tsv"
+RUNNER_USER = "ktp-ci"
+SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Nothing that installs, watches the installer, or watches the runner may be installed by it.
+DENY = frozenset({
+    "ktp-install", "ktp-ci-install", "ktp-install-freshness.sh",
+    "ktp-tier2-heartbeat.sh", "ktp-tier2-stack-drift.py",
+})
+
+HEADER = ["installed_path", "md5", "source_repo", "source_commit", "source_path",
+          "deployed_at_iso", "previous_md5", "deployed_by"]
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+SRC = re.compile(r"scripts/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\Z")
+SHA = re.compile(r"[0-9a-f]{40}\Z")
+_NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
+
+EXIT_REFUSED = 3
+
+
+class Refused(Exception):
+    pass
+
+
+class Untrusted(Exception):
+    pass
+
+
+def md5_bytes(b):
+    return hashlib.md5(b).hexdigest()
+
+
+def md5_file(path):
+    try:
+        with open(path, "rb") as f:
+            return md5_bytes(f.read())
+    except FileNotFoundError:
+        return "-"
+    except PermissionError:
+        return "?"
+
+
+def parse_allowlist(text, bin_dir=BIN_DIR):
+    """[(dest, src)] or raise Untrusted. A list we cannot read in full grants nothing."""
+    entries, seen = [], set()
+    for n, line in enumerate(text.split("\n"), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        cols = line.split("\t")
+        if len(cols) != 2:
+            raise Untrusted("%s:%d: expected DEST<TAB>SRC, got %d field(s)" % (ALLOWLIST_PATH, n, len(cols)))
+        dest, src = cols
+        name = os.path.basename(dest)
+        if dest != bin_dir + "/" + name or not NAME.match(name):
+            raise Untrusted("%s:%d: %r is not a plain file name directly in %s" % (ALLOWLIST_PATH, n, dest, bin_dir))
+        if name in DENY:
+            raise Untrusted("%s:%d: %s may never be installed by CI" % (ALLOWLIST_PATH, n, name))
+        if not SRC.match(src) or ".." in src.split("/") or src.endswith(".example"):
+            raise Untrusted("%s:%d: %r is not a plain script path under scripts/" % (ALLOWLIST_PATH, n, src))
+        if dest in seen:
+            raise Untrusted("%s:%d: %s is listed twice" % (ALLOWLIST_PATH, n, dest))
+        seen.add(dest)
+        entries.append((dest, src))
+    return entries
+
+
+def load_allowlist(show, bin_dir=BIN_DIR):
+    raw = show(ALLOWLIST_PATH)
+    if raw is None:
+        raise Untrusted("%s is absent at the baseline; without it nothing is allowed" % ALLOWLIST_PATH)
+    return parse_allowlist(raw.decode("utf-8"), bin_dir)
+
+
+def last_rows(manifest):
+    """Each path's last manifest row. Raises Untrusted on anything we cannot parse."""
+    try:
+        with open(manifest, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError as e:
+        raise Untrusted("cannot read %s: %s" % (manifest, e))
+    if lines and lines[-1] == "":
+        lines.pop()
+    if not lines or lines[0].split("\t") != HEADER:
+        raise Untrusted("%s: missing or unexpected header" % manifest)
+    last = {}
+    for n, line in enumerate(lines[1:], start=2):
+        cols = line.split("\t")
+        if len(cols) != len(HEADER):
+            raise Untrusted("%s:%d: expected %d columns, got %d" % (manifest, n, len(HEADER), len(cols)))
+        row = dict(zip(HEADER, cols))
+        last[row["installed_path"]] = row
+    return last
+
+
+def repo_tail(name):
+    return name.rsplit("/", 1)[-1]
+
+
+def assess(dest, src, row, blob):
+    """(state, installed md5). blob is the source's bytes at the baseline, or None when absent."""
+    if os.path.islink(dest) or (os.path.lexists(dest) and not os.path.isfile(dest)):
+        return "NOT-REGULAR", "-"
+    if os.path.realpath(os.path.dirname(dest)) != os.path.dirname(dest):
+        return "NOT-REGULAR", "-"
+    if row is None:
+        return "NOT-RECORDED", md5_file(dest)
+    if repo_tail(row["source_repo"]) != SOURCE_REPO:
+        return "OTHER-REPO", md5_file(dest)
+    if row["source_path"] != src:
+        return "SOURCE-MISMATCH", md5_file(dest)
+    now = md5_file(dest)
+    if now == "?":
+        return "UNREADABLE", now
+    if now == "-":
+        return "MISSING", now
+    if now != row["md5"]:
+        return "DRIFT", now
+    if blob is None:
+        return "SOURCE-GONE", now
+    return ("CURRENT" if md5_bytes(blob) == now else "STALE"), now
+
+
+def install_one(dest, entries, commit, show, manifest, ktp_install_argv, env, stage_dir):
+    """Bring one allowlisted path up to `commit`, or refuse. Returns an exit status."""
+    src = dict(entries).get(dest)
+    if src is None:
+        print("REFUSED  NOT-ALLOWLISTED  %s  (not in %s at %s)" % (dest, ALLOWLIST_PATH, commit[:12]))
+        return EXIT_REFUSED
+    try:
+        row = last_rows(manifest).get(dest)
+    except Untrusted as e:
+        print("UNTRUSTED  %s" % e)
+        return 2
+    blob = show(src)
+    state, now = assess(dest, src, row, blob)
+    if state == "CURRENT":
+        print("CURRENT  %s  %s  is %s@%s:%s" % (dest, now, SOURCE_REPO, commit[:12], src))
+        return 0
+    if state != "STALE":
+        print("REFUSED  %-15s  %s  %s  (nothing written; this one is a person's install)"
+              % (state, dest, now))
+        return EXIT_REFUSED
+    os.makedirs(stage_dir, mode=0o700, exist_ok=True)
+    fd, staged = tempfile.mkstemp(dir=stage_dir, prefix=os.path.basename(dest) + ".")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(blob)
+        p = subprocess.run(ktp_install_argv + [
+            "--file", staged, "--source-repo", row["source_repo"], "--commit", commit,
+            "--src", src, "--dest", dest, "--expect-md5", now, "--blob-md5", md5_bytes(blob)],
+            env=env, capture_output=True, text=True)
+    finally:
+        os.unlink(staged)
+    sys.stdout.write(p.stdout)
+    sys.stdout.write(p.stderr)
+    if p.returncode != 0:
+        print("FAILED   %s  ktp-install exited %d" % (dest, p.returncode))
+        return 1
+    return 0
+
+
+def check(entries, rows, show, scope):
+    """Print a verdict per path in scope; return the number of findings."""
+    allowed = dict(entries)
+    findings = 0
+    if scope in ("allowlisted", "all"):
+        for dest, src in entries:
+            state, now = assess(dest, src, rows.get(dest), show(src))
+            bad = state != "CURRENT"
+            findings += bad
+            print("%-8s allowlisted  %-15s %s  %s  %s" % ("FAIL" if bad else "ok", state, dest, now, src))
+    if scope in ("outside", "all"):
+        for dest in sorted(rows):
+            row = rows[dest]
+            if dest in allowed or repo_tail(row["source_repo"]) != SOURCE_REPO:
+                continue
+            if row["source_path"].endswith(".example"):
+                continue
+            state, now = assess(dest, row["source_path"], row, show(row["source_path"]))
+            if state == "STALE":
+                findings += 1
+                print("FAIL     outside      STALE-OUTSIDE-LIST  %s  %s  (CI may not install it: a person "
+                      "installs it, or a PR adds it to %s)" % (dest, now, ALLOWLIST_PATH))
+            elif state == "UNREADABLE":
+                findings += 1
+                print("FAIL     outside      UNREADABLE          %s  (this user cannot read it, so its "
+                      "freshness is unknown, not fine)" % dest)
+            elif state == "SOURCE-GONE":
+                findings += 1
+                print("FAIL     outside      REMOVED-UPSTREAM    %s  %s  (main no longer holds %s; "
+                      "retire the file and its row by hand)" % (dest, now, row["source_path"]))
+    return findings
+
+
+def emit_sudoers(entries, runner_user=RUNNER_USER, wrapper=WRAPPER):
+    if not NAME.match(runner_user):
+        raise Untrusted("%r is not a plain user name" % runner_user)
+    out = [
+        "# /etc/sudoers.d/ktp-ci-install -- GENERATED by `scripts/ktp-ci-install --emit-sudoers`",
+        "# from %s. Do not hand-edit: regenerate, then install it as" % ALLOWLIST_PATH,
+        "# docs/runbooks/CI_INSTALL_ALLOWLIST.md says (visudo -cf before it goes live).",
+        "# One exact command per destination and no wildcard anywhere, so sudo itself",
+        "# refuses any destination or extra argument this file does not spell out.",
+        'Defaults:%s env_reset, secure_path="%s"' % (runner_user, SAFE_PATH),
+    ]
+    for dest, _ in entries:
+        out.append("%s ALL=(root) NOPASSWD: %s --install %s" % (runner_user, wrapper, dest))
+    return "\n".join(out) + "\n"
+
+
+def repo_show(repo, ref):
+    """(commit, show) reading blobs from a checkout at a resolved commit, never its work tree."""
+    p = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", ref + "^{commit}"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise Untrusted("%s does not resolve in %s" % (ref, repo))
+    commit = p.stdout.strip()
+
+    def show(path):
+        q = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (commit, path)], capture_output=True)
+        return q.stdout if q.returncode == 0 else None
+    return commit, show
+
+
+def fetch_verified(url, git_dir, ls_remote=None):
+    """Fetch main into a bare mirror only this program writes, and prove it is the remote's tip."""
+    env = dict(PATH=SAFE_PATH, HOME=os.path.dirname(git_dir), **_NO_PROMPT)
+    if not os.path.isdir(git_dir):
+        os.makedirs(os.path.dirname(git_dir), mode=0o700, exist_ok=True)
+        subprocess.run(["git", "init", "-q", "--bare", git_dir], check=True, env=env)
+    p = subprocess.run(["git", "--git-dir", git_dir, "fetch", "--quiet", "--no-tags", url,
+                        "+refs/heads/main:refs/heads/main"], capture_output=True, text=True, env=env, timeout=120)
+    if p.returncode != 0:
+        raise Untrusted("fetch from %s failed: %s" % (url, " ".join(p.stderr.split())[:200]))
+    local = subprocess.run(["git", "--git-dir", git_dir, "rev-parse", "refs/heads/main"],
+                           capture_output=True, text=True, env=env).stdout.strip()
+    if ls_remote is None:
+        q = subprocess.run(["git", "ls-remote", url, "refs/heads/main"],
+                           capture_output=True, text=True, env=env, timeout=30)
+        tip = q.stdout.split("\t")[0].strip() if q.returncode == 0 else ""
+    else:
+        tip = ls_remote()
+    if not SHA.match(local) or local != tip:
+        raise Untrusted("mirror main is %r but %s main is %r; refusing to install from a baseline "
+                        "that is not the tip" % (local, url, tip))
+
+    def show(path):
+        q = subprocess.run(["git", "--git-dir", git_dir, "show", "%s:%s" % (local, path)],
+                           capture_output=True, env=env)
+        return q.stdout if q.returncode == 0 else None
+    return local, show
+
+
+def root_owned_not_writable(path):
+    st = os.stat(path)
+    return st.st_uid == 0 and not st.st_mode & 0o022
+
+
+def run_install(dest):
+    if os.geteuid() != 0:
+        print("--install runs as root through sudo; as anyone else it could not write and would "
+              "record into the wrong manifest")
+        return 2
+    if os.path.exists(KILL_SWITCH):
+        print("REFUSED  %s exists: CI installs are switched off by the operator" % KILL_SWITCH)
+        return EXIT_REFUSED
+    for path in (KTP_INSTALL, os.path.realpath(__file__)):
+        if not root_owned_not_writable(path):
+            print("REFUSED  %s is not root-owned and closed to group/other writes" % path)
+            return EXIT_REFUSED
+    import fcntl
+    os.makedirs(os.path.dirname(LOCK_FILE), exist_ok=True)
+    with open(LOCK_FILE, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            commit, show = fetch_verified(REPO_URL, os.path.join(STATE_DIR, "mirror.git"))
+            entries = load_allowlist(show)
+        except Untrusted as e:
+            print("UNTRUSTED  %s" % e)
+            return 2
+        env = {"PATH": SAFE_PATH, "LANG": "C.UTF-8",
+               "KTP_DEPLOYED_BY": "ktp-ci-install(sudo:%s)@%s" % (os.environ.get("SUDO_USER", "root"),
+                                                                socket.gethostname())}
+        return install_one(dest, entries, commit, show, SYSTEM_MANIFEST, [KTP_INSTALL], env,
+                           os.path.join(STATE_DIR, "stage"))
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    mode = ap.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--install", metavar="DEST")
+    mode.add_argument("--list", action="store_true")
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--emit-sudoers", action="store_true")
+    ap.add_argument("--repo")
+    ap.add_argument("--ref")
+    ap.add_argument("--scope", choices=("allowlisted", "outside", "all"))
+    ap.add_argument("--manifest")
+    ap.add_argument("--runner-user")
+    a = ap.parse_args(argv)
+
+    if a.install is not None:
+        if any(v is not None for v in (a.repo, a.ref, a.scope, a.manifest, a.runner_user)):
+            ap.error("--install takes the destination and nothing else; everything it trusts is fixed")
+        return run_install(a.install)
+
+    if not (a.repo and a.ref):
+        ap.error("--list, --check and --emit-sudoers need --repo and --ref")
+    if a.scope and not a.check:
+        ap.error("--scope is a --check flag")
+    if a.manifest and not a.check:
+        ap.error("--manifest is a --check flag")
+    if a.runner_user and not a.emit_sudoers:
+        ap.error("--runner-user is an --emit-sudoers flag")
+    try:
+        commit, show = repo_show(a.repo, a.ref)
+        entries = load_allowlist(show)
+        if a.list:
+            for dest, _ in entries:
+                print(dest)
+            return 0
+        if a.emit_sudoers:
+            sys.stdout.flush()
+            sys.stdout.buffer.write(emit_sudoers(entries, a.runner_user or RUNNER_USER).encode("ascii"))
+            return 0
+        rows = last_rows(a.manifest or SYSTEM_MANIFEST)
+    except Untrusted as e:
+        print("UNTRUSTED  %s" % e)
+        return 2
+    print("baseline  %s  %s" % (a.ref, commit))
+    return 1 if check(entries, rows, show, a.scope or "all") else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
