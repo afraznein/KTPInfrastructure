@@ -367,7 +367,8 @@ def main(argv=None):
                 print(dest)
             return 0
         if a.emit_sudoers:
-            sys.stdout.write(emit_sudoers(entries, a.runner_user or RUNNER_USER))
+            sys.stdout.flush()
+            sys.stdout.buffer.write(emit_sudoers(entries, a.runner_user or RUNNER_USER).encode("ascii"))
             return 0
         rows = last_rows(a.manifest or SYSTEM_MANIFEST)
     except Untrusted as e:
