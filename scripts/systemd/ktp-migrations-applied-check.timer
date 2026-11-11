@@ -1,0 +1,13 @@
+# ⛔ NOT INSTALLED. See ktp-migrations-applied-check.service.
+[Unit]
+Description=Daily AC migrations-applied check
+
+[Timer]
+# Beside the other morning checks and clear of the 03:00 restarts.
+OnCalendar=*-*-* 06:40:00 America/New_York
+RandomizedDelaySec=120
+# Read-only, so a catch-up run after downtime costs nothing.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

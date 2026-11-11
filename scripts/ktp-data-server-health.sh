@@ -131,6 +131,12 @@ CORPUS_GUARD_STALE_SEC="${CORPUS_GUARD_STALE_SEC:-172800}"
 # observation from outside, and this log's mtime is the only thing that separates them.
 HLTV_DRIFT_LOG="${HLTV_DRIFT_LOG:-/var/log/ktp-hltv-api-drift.log}"
 HLTV_DRIFT_STALE_SEC="${HLTV_DRIFT_STALE_SEC:-172800}"
+# The AC migrations-applied check stamps a file only when it reached a verdict, so the
+# stamp's age is the work-done signal. Gated on the timer being installed: it ships
+# uninstalled, and an absent stamp must not page before anyone has turned it on.
+MIGRATIONS_CHECK_TIMER_FILE="${MIGRATIONS_CHECK_TIMER_FILE:-/etc/systemd/system/ktp-migrations-applied-check.timer}"
+MIGRATIONS_CHECK_STAMP="${MIGRATIONS_CHECK_STAMP:-/var/lib/ktp-migrations-applied-check/last-checked}"
+MIGRATIONS_CHECK_STALE_SEC="${MIGRATIONS_CHECK_STALE_SEC:-172800}"
 # Liveness is not reading. The poll loop can iterate while every SSH session
 # fails -- which rewrites state.json on schedule, so the mtime leg above, a
 # systemd watchdog and the cleanup interlock all read healthy while no match
@@ -600,6 +606,24 @@ else
     fi
 fi
 # <<< ktp-hltv-api-drift
+
+# >>> ktp-migrations-applied-check — extracted verbatim by tests/unit/test_health_migrations_applied_check.py
+# Keyed on the success stamp, never on the unit's state: a timer that stopped firing and a
+# run that died before checking both leave the unit looking fine. A finding alerts by
+# itself through OnFailure=; this leg is for the run that never happened.
+if [ -f "$MIGRATIONS_CHECK_TIMER_FILE" ]; then
+    if [ ! -f "$MIGRATIONS_CHECK_STAMP" ]; then
+        down+=("ktp-migrations-check-stamp=absent")
+    else
+        migrations_check_epoch=$(stat -c %Y "$MIGRATIONS_CHECK_STAMP" 2>/dev/null || echo 0)
+        if [ "$migrations_check_epoch" -eq 0 ] ||
+           [ $(( $(date +%s) - migrations_check_epoch )) -gt "$MIGRATIONS_CHECK_STALE_SEC" ]; then
+            # Fixed token, never the age: the report is a set-diff.
+            down+=("ktp-migrations-check=stale")
+        fi
+    fi
+fi
+# <<< ktp-migrations-applied-check
 
 # >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
 # An HLTV page that was detected and could not be delivered. Keyed on the latched
