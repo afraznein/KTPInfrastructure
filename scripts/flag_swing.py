@@ -57,12 +57,34 @@ def _load_map_coefficients() -> dict[str, tuple[float, float]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return {str(name): (float(row["flag_coefficient"]),
                             float(row["alive_coefficient"]))
-                for name, row in payload.get("maps", {}).items()}
-    except (OSError, ValueError, KeyError, TypeError):
+                for name, row in payload.get("maps", {}).items()
+                if not row.get(FLOOR_MARKER)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return {}
 
 
+def _load_floor_kept_map_coefficients() -> dict[str, tuple[float, float, str]]:
+    """Rows the refit kept from an earlier fit rather than measured this week.
+
+    They live in the live table, but they are not this week's fit, so they rank
+    with the retained rows rather than with the fresh ones.
+    """
+    path = Path(__file__).resolve().parents[1] / "config" / "map_coefficients.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): (float(row["flag_coefficient"]),
+                            float(row["alive_coefficient"]),
+                            str(row.get("kept_from_fitted_at")))
+                for name, row in payload.get("maps", {}).items()
+                if row.get(FLOOR_MARKER)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+FLOOR_MARKER = "kept_by_floor"  # written by scripts/fit_map_coefficients.apply_floor
 MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
+FLOOR_KEPT_MAP_COEFFICIENTS: dict[str, tuple[float, float, str]] = (
+    _load_floor_kept_map_coefficients())
 
 
 def _load_retained_map_coefficients() -> dict[str, tuple[float, float, str]]:
@@ -142,6 +164,10 @@ class FlagSwingConfig:
             inherited = MAP_COEFFICIENT_CARRY_FORWARD.get(name)
             fitted = MAP_COEFFICIENTS.get(inherited) if inherited else None
             calibration = f"carried_forward_from:{inherited}"
+        if fitted is None and name in FLOOR_KEPT_MAP_COEFFICIENTS:
+            flag, alive, kept_from = FLOOR_KEPT_MAP_COEFFICIENTS[name]
+            fitted = (flag, alive)
+            calibration = f"{RETAINED_CALIBRATION_PREFIX}{name}@{kept_from}"
         if fitted is None and name in RETAINED_MAP_COEFFICIENTS:
             # Behind the carry-forward: a predecessor's current fit is fresher
             # than this map's own superseded one.

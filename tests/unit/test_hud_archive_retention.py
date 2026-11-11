@@ -6,14 +6,14 @@ what this script may delete, and both are pinned here:
 
   * metadata.json says matchType 0 / half 0 for every match the recorder
     auto-started, and 0 is COMPETITIVE. Most of those are pickups, so a script
-    trusting metadata would keep them on the long tier. The type comes from the
+    trusting metadata would keep them forever on the official tier. The type comes from the
     first event's match_type instead.
   * metadata.json is rewritten on reap and on a count repair, so its mtime can
     be younger than the match. Age is read from events.jsonl.
 
-Everything the script is told not to touch -- .noprune, an open match, a match
-from a non-fleet server, an unknown type, a dir with a file it does not know --
-is exercised against a delete run, not only a dry run.
+Everything the script is told not to touch -- an official (ktp) match, .noprune,
+an open match, a match from a non-fleet server, an unknown type, a dir with a
+file it does not know -- is exercised against a delete run, not only a dry run.
 """
 from __future__ import annotations
 
@@ -82,15 +82,15 @@ def _names(root: Path) -> list[str]:
 def tree(tmp_path: Path) -> Path:
     root = tmp_path / "matches"
     root.mkdir()
-    _match(root, "official-old", age=200, match_type=COMPETITIVE)
-    _match(root, "official-mid", age=100, match_type=COMPETITIVE)
-    _match(root, "ot-old", age=200, match_type=KTP_OT)
+    _match(root, "draft-old", age=200, match_type=DRAFT)
+    _match(root, "draft-mid", age=100, match_type=DRAFT)
+    _match(root, "draftot-old", age=200, match_type=DRAFT_OT)
     _match(root, "draftot-mid", age=100, match_type=DRAFT_OT)
     _match(root, "twelve-old", age=100, match_type=TWELVE)
-    _match(root, "scrim-fresh", age=50, match_type=SCRIM)
+    _match(root, "scrim-fresh", age=20, match_type=SCRIM)
     # Auto-started placeholders: metadata says 0/0, the events say what it was.
     _match(root, "1.3-111-NY1", age=100, match_type=COMPETITIVE, half=0, event_type=TWELVE)
-    _match(root, "1.3-222-NY1", age=100, match_type=COMPETITIVE, half=0, event_type=COMPETITIVE)
+    _match(root, "1.3-222-NY1", age=100, match_type=COMPETITIVE, half=0, event_type=DRAFT)
     return root
 
 
@@ -98,15 +98,15 @@ def test_dry_run_counts_by_tier_and_deletes_nothing(tree: Path):
     before = _names(tree)
     r = _run(tree, DRY_RUN="1")
     assert r.returncode == 0, r.stderr
-    assert "ktp would delete 2 matches" in r.stdout
+    assert "draft would delete 2 matches" in r.stdout
     assert "12man would delete 2 matches" in r.stdout
-    assert "draft" not in r.stdout.split("delete: total")[0]
+    assert "ktp would delete" not in r.stdout
     assert "total 4 matches" in r.stdout
     assert _names(tree) == before
 
 
 def test_placeholder_is_typed_from_its_events_not_its_metadata(tree: Path):
-    """The 12man placeholder goes at 90 days; the competitive one waits for 180."""
+    """The 12man placeholder goes at 30 days; the draft one waits for 180."""
     r = _run(tree)
     assert r.returncode == 0, r.stderr
     assert not (tree / "1.3-111-NY1").exists()
@@ -118,7 +118,7 @@ def test_delete_removes_exactly_the_counted_set(tree: Path):
     assert "total 4 matches" in dry.stdout
     r = _run(tree)
     assert r.returncode == 0, r.stderr
-    assert _names(tree) == ["1.3-222-NY1", "draftot-mid", "official-mid", "scrim-fresh"]
+    assert _names(tree) == ["1.3-222-NY1", "draft-mid", "draftot-mid", "scrim-fresh"]
 
 
 def test_age_is_read_from_events_not_metadata(tmp_path: Path):
@@ -136,6 +136,8 @@ def test_age_is_read_from_events_not_metadata(tmp_path: Path):
     (dict(match_type=9), "untyped"),
     (dict(match_type=COMPETITIVE, half=0, event_type=None), "untyped"),
     (dict(match_type=SCRIM, event_type=COMPETITIVE), "conflict"),
+    (dict(match_type=COMPETITIVE), "kept"),
+    (dict(match_type=KTP_OT), "kept"),
 ])
 def test_ineligible_matches_survive_a_delete_run(tmp_path: Path, kwargs, reason):
     root = tmp_path / "matches"
@@ -170,10 +172,10 @@ def test_unknown_file_in_a_match_dir_blocks_its_removal(tmp_path: Path):
 
 def test_player_state_keeps_its_own_short_clock(tmp_path: Path):
     root = tmp_path / "matches"
-    old = _match(root, "with-old-ps", age=40, match_type=COMPETITIVE)
+    old = _match(root, "with-old-ps", age=40, match_type=DRAFT)
     (old / "player_state.jsonl").write_text("{}\n", encoding="utf-8")
     _age(old / "player_state.jsonl", 40)
-    new = _match(root, "with-new-ps", age=20, match_type=COMPETITIVE)
+    new = _match(root, "with-new-ps", age=20, match_type=DRAFT)
     (new / "player_state.jsonl").write_text("{}\n", encoding="utf-8")
     _age(new / "player_state.jsonl", 20)
     gone = _match(root, "whole-match-due", age=200, match_type=SCRIM)
@@ -191,12 +193,12 @@ def test_player_state_keeps_its_own_short_clock(tmp_path: Path):
 
 def test_preview_reports_what_falls_due_and_deletes_nothing(tmp_path: Path):
     root = tmp_path / "matches"
-    _match(root, "due-in-3d", age=87, match_type=TWELVE)
-    _match(root, "due-later", age=60, match_type=TWELVE)
-    _match(root, "already-due", age=100, match_type=TWELVE)
+    _match(root, "due-in-3d", age=27, match_type=TWELVE)
+    _match(root, "due-later", age=10, match_type=TWELVE)
+    _match(root, "already-due", age=40, match_type=TWELVE)
     r = _run(root, "preview")
     assert r.returncode == 0, r.stderr
-    assert "`12man` (90d) — 1 —" in r.stdout
+    assert "`12man` (30d) — 1 —" in r.stdout
     assert "<:KTP:1002382703020212245>" in r.stdout
     assert _names(root) == ["already-due", "due-in-3d", "due-later"]
 
@@ -220,3 +222,64 @@ def test_unknown_mode_is_a_usage_error(tmp_path: Path):
     root.mkdir()
     r = _run(root, "zqwbw1110mode")
     assert r.returncode == 2
+
+
+@pytest.fixture
+def official(tmp_path: Path) -> Path:
+    """Official matches far past every tier, beside a sweepable draft control."""
+    root = tmp_path / "matches"
+    _match(root, "official-ancient", age=900, match_type=COMPETITIVE)
+    _match(root, "ot-ancient", age=900, match_type=KTP_OT)
+    _match(root, "1.3-333-NY1", age=900, match_type=COMPETITIVE, half=0, event_type=COMPETITIVE)
+    _match(root, "draft-ancient", age=900, match_type=DRAFT)
+    return root
+
+
+def test_official_matches_are_never_deleted(official: Path):
+    r = _run(official)
+    assert r.returncode == 0, r.stderr
+    assert _names(official) == ["1.3-333-NY1", "official-ancient", "ot-ancient"]
+    assert "kept=3" in r.stdout
+    assert "untyped" not in r.stdout
+
+
+def test_official_matches_are_absent_from_dry_run_counts(official: Path):
+    r = _run(official, DRY_RUN="1")
+    assert r.returncode == 0, r.stderr
+    assert "ktp would delete" not in r.stdout
+    assert "draft would delete 1 matches" in r.stdout
+    assert "total 1 matches" in r.stdout
+
+
+def test_kept_match_still_loses_player_state_on_its_short_clock(tmp_path: Path):
+    root = tmp_path / "matches"
+    d = _match(root, "official-with-ps", age=900, match_type=COMPETITIVE)
+    (d / "player_state.jsonl").write_text("{}\n", encoding="utf-8")
+    _age(d / "player_state.jsonl", 40)
+    r = _run(root)
+    assert r.returncode == 0, r.stderr
+    assert not (d / "player_state.jsonl").exists()
+    assert (d / "events.jsonl").exists() and (d / "metadata.json").exists()
+    assert "player_state deleting 1 files" in r.stdout
+    assert "kept=1" in r.stdout
+
+
+def test_official_matches_are_absent_from_the_preview(tmp_path: Path):
+    root = tmp_path / "matches"
+    _match(root, "official-178d", age=178, match_type=COMPETITIVE)
+    _match(root, "draft-178d", age=178, match_type=DRAFT)
+    r = _run(root, "preview")
+    assert r.returncode == 0, r.stderr
+    assert "`draft` (180d) — 1 —" in r.stdout
+    assert "`ktp`" not in r.stdout
+    assert _names(root) == ["draft-178d", "official-178d"]
+
+
+@pytest.mark.parametrize("match_type", [TWELVE, SCRIM])
+def test_short_tiers_are_swept_at_thirty_days(tmp_path: Path, match_type: int):
+    root = tmp_path / "matches"
+    _match(root, "31d", age=31.5, match_type=match_type)
+    _match(root, "29d", age=29, match_type=match_type)
+    r = _run(root)
+    assert r.returncode == 0, r.stderr
+    assert _names(root) == ["29d"]

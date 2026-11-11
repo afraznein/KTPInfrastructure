@@ -215,10 +215,10 @@ def test_the_new_inventory_columns_are_coerced_to_integers():
 
 
 def test_a_ledger_row_tagged_for_another_match_warns_rather_than_failing():
-    """`player_match_fact.sql` filters on `match_id` alone, so a row whose
-    producer context names a different match is summed into this report and was
-    never in the daemon's accumulators. The totals then cannot settle either
-    way: FAILing would name the wrong cause, and silence would hide it."""
+    """A row whose producer context names a different match is in the ingest
+    total (which sums by `match_id`) and out of the box score (which defers to
+    the producer). The totals then cannot settle either way: FAILing would
+    name the wrong cause, and silence would hide it."""
     got = _check("damage_reconciliation",
                  _players(dealt=6000, taken=6000, team=0, own=0),
                  _inventory(cached_damage=12000, cross_tagged_damage_rows=1))
@@ -273,3 +273,24 @@ def test_the_fixture_insert_matches_its_own_column_count():
     assert len(tuples) == 12, len(tuples)
     widths = {t.count(",") + 1 for t in tuples}
     assert widths == {len(_match_stats_ddl())}, widths
+
+
+# --- a cross-tagged ledger row stays out of the box score --------------------
+
+def _damage_join() -> str:
+    sql = (REPO / "sql" / "analytics" / "player_match_fact.sql").read_text(
+        encoding="utf-8")
+    block = sql.split("LEFT JOIN ktp_damage_events d", 1)[1].split(
+        "LEFT JOIN roster attacker", 1)[0]
+    return re.sub(r"--[^\n]*", "", block)
+
+
+def test_the_box_score_defers_to_the_producer_match():
+    """`producer_match_id` is authoritative wherever it is set, so a ledger row
+    tagged for another match must not reach this match's damage columns. The
+    integration lane proves it against MySQL; this pins it in the cheap lane."""
+    join = " ".join(_damage_join().split())
+    assert ("d.producer_match_id IS NULL OR "
+            "BINARY d.producer_match_id = BINARY d.match_id") in join, join
+    # Control: the clause sits in the damage join, not merely somewhere in the file.
+    assert "d.match_id = r.match_id" in join
