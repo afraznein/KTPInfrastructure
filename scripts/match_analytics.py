@@ -1155,10 +1155,9 @@ def evaluate_quality(
         cached_damage_rows = inventory.get("cached_damage_rows", 0)
         cross_tagged = inventory.get("cross_tagged_damage_rows", 0)
         if cross_tagged:
-            # The row is in this match's ledger and in no accumulator the
-            # daemon kept, so the identity cannot settle either way. That it
-            # reaches damage_dealt at all is a separate defect, named here
-            # rather than absorbed into a FAIL about the totals.
+            # Ingest sums the ledger by match_id and counts the row; the report
+            # leaves it to its producer's match. The totals differ by design,
+            # so a FAIL here would name the wrong cause.
             checks.append(check(
                 "WARN", "damage_reconciliation",
                 "Some per-hit rows are tagged for a different match, so the "
