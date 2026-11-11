@@ -52,12 +52,25 @@ to <30s.
                --unattended
    ```
 
-3. **Install as a systemd service** so it survives reboots:
+3. **Install as a systemd service** so it survives reboots, as the
+   unprivileged `ktp-tier2` user, **never root**:
    ```bash
-   sudo ./svc.sh install $USER
+   sudo ./svc.sh install ktp-tier2
    sudo ./svc.sh start
    sudo ./svc.sh status   # should show 'active (running)'
+   systemctl show actions.runner.*ktp-tier2* -p User   # User=ktp-tier2
    ```
+   Pull-request code runs on this runner, so the workflow's first step
+   refuses to run as uid 0. `ktp-tier2` owns `actions-runner/` and
+   `serverfiles/`, reads two files in `/etc/ktp` (below) and has no sudo.
+   `toolchain/`, the stack manifests and the `stack-bak-*` directories stay
+   root-owned. The cutover from a root runner, and its rollback, are in
+   `docs/runbooks/TIER2_RUNNER_NONROOT_CUTOVER.md`.
+
+   `sync-runner-stack.py` and `stage-runner.py` SFTP in as root: an
+   overwritten file keeps its owner, but a **new** file or directory lands
+   root-owned and a root-owned directory blocks the runner's writes. After a
+   sync, `chown -R ktp-tier2:ktp-tier2 /opt/ktp-tier2-runner/serverfiles`.
 
 ## Stage the test serverfiles tree
 
@@ -80,7 +93,7 @@ The tree must contain:
 | `dod/addons/ktpamx/plugins/KTPPracticeMode.amxx` | **TEST-MODE build** (`KTP_TEST_MODE=1 bash compile.sh`, from `compiled/test/`) | required for `test_practice_mode_grenade_refill.py` (needs `amx_ktp_prac_test_enable` + entry diagnostic) |
 | `dod/addons/ktpamx/plugins.ini` | (test-mode config) | must list KTPMatchHandler + KTPWitness + KTPHudObserver + KTPPracticeMode |
 | `dod/addons/ktpamx/configs/dodserver.cfg` | (minimal test config) | rcon_password must equal `KTP_TEST_RCON_PASSWORD` |
-| `/etc/ktp/tier2-test-rcon.env` | runner box, root 600 | `KTP_TEST_RCON_PASSWORD=<value>`; the workflow masks it and exports it to pytest. Never commit the value |
+| `/etc/ktp/tier2-test-rcon.env` | runner box, `root:ktp-tier2` 640 (`discord-relay.conf` the same; never group-writable, the root heartbeat cron sources it) | `KTP_TEST_RCON_PASSWORD=<value>`; the workflow masks it and exports it to pytest. Never commit the value |
 
 **Critical: KTPMatchHandler MUST be the test-mode build** (compiled with
 `KTP_TEST_MODE=1 bash compile.sh`, output at `compiled/test/`) — production
