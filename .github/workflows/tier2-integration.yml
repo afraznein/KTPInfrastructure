@@ -98,7 +98,7 @@ jobs:
     # remain exactly `Tier 2 Integration / integration`.
     name: ${{ github.event_name == 'schedule' && format('integration ({0})', matrix.target_ref) || 'integration' }}
     runs-on: [self-hosted, ktp-tier2]
-    # This runner is root on the production data server; fork code must never reach it.
+    # This runner is on the production data server; fork code must never reach it.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
 
@@ -173,6 +173,16 @@ jobs:
       KTP_MATCHHANDLER_SHA: ae69b3c6e6941d8ade71f5f5b475c29d4d37f335
 
     steps:
+      # Pull-request code runs here. A root runner would hand it the whole data
+      # server, so stop before anything is checked out.
+      - name: Refuse to run as root
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::Tier 2 must not run as root. Re-install the runner as ktp-tier2 (docs/runbooks/TIER2_RUNNER_NONROOT_CUTOVER.md)."
+            exit 1
+          fi
+          echo "Running as $(id -un), uid $(id -u)."
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
