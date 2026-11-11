@@ -67,11 +67,12 @@ MARKER="${KTP_TIER2_MARKER:-/opt/ktp-tier2-runner/tier2-last-run.json}"
 WATCH_PREPROD="${KTP_TIER2_WATCH_PREPROD:-1}"
 MARKER_PREPROD="${KTP_TIER2_MARKER_PREPROD:-$(dirname "$MARKER")/tier2-last-run-preprod.json}"
 STATE="${KTP_TIER2_HEARTBEAT_STATE:-/var/lib/ktp-tier2-heartbeat.state}"
-# One registered runner on this box today. Raise this if a second is ever
-# registered — the assertion is "the number we expect", not "at most one".
+# Counts the tier-2 runner's own listener by its full path, so other runners
+# registered on this box (ops, install) are not read as duplicates of it. The
+# assertion is "the number we expect", not "at most one".
 WATCH_LISTENERS="${KTP_TIER2_WATCH_LISTENERS:-1}"
 EXPECTED_LISTENERS="${KTP_TIER2_EXPECTED_LISTENERS:-1}"
-LISTENER_PATTERN="${KTP_TIER2_LISTENER_PATTERN:-Runner.Listener}"
+LISTENER_PATTERN="${KTP_TIER2_LISTENER_PATTERN:-/opt/ktp-tier2-runner/actions-runner/bin/Runner.Listener}"
 # 36h: nightly cadence (24h) + a full skipped day of margin before we cry wolf.
 MAX_AGE_SECONDS="${KTP_TIER2_MAX_AGE:-129600}"
 MAX_AGE_SECONDS_PREPROD="${KTP_TIER2_MAX_AGE_PREPROD:-$MAX_AGE_SECONDS}"
@@ -130,6 +131,15 @@ CHANNEL="${TIER2_REPORT_CHANNEL:-$CHANNEL_DEFAULT}"
 
 now="$(date +%s)"
 
+# "0" or a decimal with no leading zero, short enough not to overflow.
+is_epoch() {
+    case "$1" in
+        0) return 0 ;;
+        ''|0*|*[!0-9]*) return 1 ;;
+    esac
+    [ "${#1}" -le 12 ]
+}
+
 # ── Determine one marker's health state — called once per leg ───────────────
 # Emits "<state>\x1f<detail>" on stdout; state is one of ok/stale/failed.
 check_marker() {
@@ -142,6 +152,15 @@ check_marker() {
         m_ts="$(jq -r '.ts // 0' "$path" 2>/dev/null || echo 0)"
         m_outcome="$(jq -r '.outcome // "unknown"' "$path" 2>/dev/null || echo unknown)"
         m_run_id="$(jq -r '.run_id // "?"' "$path" 2>/dev/null || echo '?')"
+        # Validate before any arithmetic: bash evaluates a string operand as an
+        # expression, so a subscript like x[$(cmd)] in the runner-writable marker
+        # runs cmd as root. A leading zero would also parse as octal.
+        if ! is_epoch "$m_ts"; then
+            m_state="stale"
+            m_detail="$label: run marker at \`$path\` has an invalid \`ts\` (not a plain integer) — treating the leg as not running."
+            printf '%s\x1f%s\n' "$m_state" "$m_detail"
+            return 0
+        fi
         m_age=$(( now - m_ts ))
         if [ "$m_ts" -eq 0 ] || [ "$m_age" -gt "$max_age" ]; then
             m_state="stale"
@@ -207,6 +226,7 @@ drifted=0
 # flags, so --dry-run cannot reach it: it writes its drift-age state file here
 # whatever this script was asked to do, including clearing it when nothing drifts.
 if [ -x "$AGG_PY" ] && [ -f "$DRIFT_CHECKER" ]; then
+    # shellcheck disable=SC1090
     drift_out="$(set -a; . "$AGG_ENV" 2>/dev/null; set +a; "$AGG_PY" "$DRIFT_CHECKER" 2>&1)" && drift_rc=0 || drift_rc=$?
     if [ "$drift_rc" -eq 1 ]; then
         drifted=1
@@ -235,6 +255,8 @@ listener_state="ok"
 listener_n="$EXPECTED_LISTENERS"
 listener_detail="listeners: not watched (KTP_TIER2_WATCH_LISTENERS=0)"
 if [ "$WATCH_LISTENERS" = "1" ]; then
+    # pgrep cannot print the PPID column that names an orphan.
+    # shellcheck disable=SC2009
     listener_ps="$(ps -eo pid,ppid,args 2>/dev/null | grep -F "$LISTENER_PATTERN" | grep -v grep || true)"
     if [ -z "$listener_ps" ]; then
         listener_n=0

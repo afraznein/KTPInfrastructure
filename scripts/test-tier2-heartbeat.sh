@@ -226,6 +226,7 @@ mk_marker failure 3600; mk_checker 0 "in sync"; rm -f "$T/state"
 echo 500 > "$T/http_code"
 out="$(run_hb)"; check "says it will retry" "NOT advanced" "$out"
 check "state file untouched" "" "$(cat "$T/state" 2>/dev/null || echo '')"
+# shellcheck disable=SC2015
 [ -s "$T/state" ] && { echo "  FAIL state file was written on a failed post"; fail=$((fail+1)); } \
                   || { echo "  ok   state file was not written on a failed post"; pass=$((pass+1)); }
 echo 200 > "$T/http_code"
@@ -426,6 +427,55 @@ echo "== 13f. an unknown flag is refused, not treated as a bare run =="
 mk_marker success 3600; mk_checker 0 "in sync"; rm -f "$T/state"
 out="$(run_hb_bare --dryrun || true)"
 check "usage, not a run" "usage:" "$out"
+
+echo "== 14. THE MARKER'S ts IS DATA, NEVER AN EXPRESSION =="
+# The runner writes the marker and root's cron reads it. Bash arithmetic
+# evaluates a string operand as an expression, array subscripts included, so a
+# ts of now[$(cmd)] ran cmd as root. It has to name a SET variable: under set -u
+# an unset one aborts before the subscript expands, which hides the bug from a
+# test that uses x[...]. The probe file proves whether it ran.
+mk_checker 0 "in sync"; mk_listeners 1
+probe="$T/zqwbw1110-ts-probe"
+rm -f "$probe" "$T/state"
+# shellcheck disable=SC2016  # the payload must reach the marker unexpanded
+printf '{"ts": "now[$(touch %s)]", "outcome": "success", "run_id": "R1"}' "$probe" > "$T/marker"
+_write_marker "$T/marker-preprod" success 3600
+out="$(run_hb)"
+if [ -e "$probe" ]; then echo "  FAIL a command in the marker's ts was executed"; fail=$((fail+1));
+else echo "  ok   no command in the marker's ts was executed"; pass=$((pass+1)); fi
+check "the leg is reported as not running" "main=stale" "$(cat "$T/state" 2>/dev/null || echo MISSING)"
+check "and the body says why"              "invalid \`ts\`" "$(cat "$T/last-payload.json")"
+# Not an injection, but each one either aborted the script under set -e
+# (octal 08) or slipped through arithmetic as a number it was not.
+for bad in '"08"' '"-5"' '"17e8"' '"1 + 1"' '{"a": 1}' '99999999999999999999'; do
+    rm -f "$T/state"
+    printf '{"ts": %s, "outcome": "success", "run_id": "R1"}' "$bad" > "$T/marker"
+    out="$(run_hb)"
+    check "ts $bad is rejected, not evaluated" "main=stale" "$(cat "$T/state" 2>/dev/null || echo MISSING)"
+done
+# Control: a real epoch, as the workflow writes it, is still accepted.
+mk_marker success 3600; rm -f "$T/state"
+out="$(run_hb)"; check "control: a plain epoch is still healthy" "main=ok" "$(cat "$T/state")"
+
+echo "== 15. other runners on the box are not this runner's duplicates =="
+# An ops runner and an install runner each run their own Runner.Listener. The
+# count is of THIS runner's listener; matching the bare name read three as DUPLICATE.
+mk_marker success 3600; mk_checker 0 "in sync"; rm -f "$T/state"
+{
+    echo "  PID  PPID COMMAND"
+    echo "1001 4242 /opt/ktp-tier2-runner/actions-runner/bin/Runner.Listener run --startuptype service"
+    echo "2001 5252 /opt/ktp-ops-runner/actions-runner/bin/Runner.Listener run --startuptype service"
+    echo "3001 6262 /opt/ktp-ci-runner/actions-runner/bin/Runner.Listener run --startuptype service"
+} > "$T/ps-out"
+out="$(run_hb)"
+check "only the tier-2 listener is counted" "listeners: 1 (expected 1)" "$(cat "$T/last-payload.json")"
+check "and the state key agrees"            "listeners=1"              "$(cat "$T/state")"
+# Control: the bare name over the same fixture sees all three, so the fixture
+# really does hold the other runners.
+rm -f "$T/state"
+out="$(KTP_TIER2_LISTENER_PATTERN=Runner.Listener run_hb)"
+check "control: a bare pattern sees all three" "DUPLICATE runner listener" "$(cat "$T/last-payload.json")"
+mk_listeners 1
 
 echo
 echo "passed $pass, failed $fail"
