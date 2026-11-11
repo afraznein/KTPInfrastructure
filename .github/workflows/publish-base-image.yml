@@ -58,6 +58,8 @@ jobs:
           repository: ${{ github.repository_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+          # The engine's build number is the commit count, so appversion refuses a shallow clone.
+          fetch-depth: 0
 
       - name: Checkout KTPAMXX (with submodules — public/amtl)
         uses: actions/checkout@v6
