@@ -5,6 +5,9 @@ wholesale, so a map whose halves fall out of the training window simply leaves i
 and flag_swing then prices that map on the hardcoded league prior. The retained
 table holds the LAST fitted row each such map had, with the commit it came from,
 and flag_swing reads it only for a map the live table (and its carry-forward) lacks.
+The refit now keeps a dropped map's committed row itself (fit_map_coefficients.
+apply_floor), so this file holds the maps dropped before that, and is the backstop
+if a table is ever written without it.
 
 The retained rows are derived from git history of the live table, never typed by
 hand, so the source of every number can be checked out and read.
