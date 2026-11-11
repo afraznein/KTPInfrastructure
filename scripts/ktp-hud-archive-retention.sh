@@ -3,11 +3,14 @@
 #
 # A HUD replay is only useful while the demo it overlays exists, so this keeps
 # the same windows as ktp-demo-retention.sh, tier for tier:
-#   ktp, ktpOT, draft, draftOT   180 days
-#   12man, scrim                  90 days
-#   player_state.jsonl            30 days, on its own clock, whatever the tier
+#   ktp, ktpOT                    kept permanently (official matches, by ruling)
+#   draft, draftOT               180 days
+#   12man, scrim                  30 days
+#   player_state.jsonl            30 days, on its own clock, whatever the tier --
+#                                 a kept match still loses its player_state
 #
-# Never touched: a match dir carrying .noprune, a match still open, a match that
+# Never touched: a match whose tier has no RETENTION entry (logged as kept),
+# a match dir carrying .noprune, a match still open, a match that
 # did not come from a fleet game server (LAN boxes included), a match whose type
 # cannot be resolved, and a dir holding any file this script does not know.
 #
@@ -42,7 +45,8 @@ MODE="${1:-delete}"
 
 # Keyed on the plugin's MatchType enum. A type not listed here is never swept.
 declare -A TIER_OF=( [0]=ktp [4]=ktp [3]=draft [5]=draft [2]=12man [1]=scrim )
-declare -A RETENTION=( [ktp]=180 [draft]=180 [12man]=90 [scrim]=90 )
+# A tier absent here is kept forever; ktp is absent because official matches are never retired.
+declare -A RETENTION=( [draft]=180 [12man]=30 [scrim]=30 )
 
 KNOWN_FILES_RE='^(events\.jsonl|metadata\.json|player_state\.jsonl)$'
 
@@ -171,15 +175,19 @@ scan() {
             printf 'skip\tuntyped\t-\t-\t-\t%s\n' "$dir"; continue
         fi
 
-        if [ -f "$events" ]; then
-            mtime=$(stat -c %Y "$events")
+        if [ -z "${RETENTION[$tier]+set}" ]; then
+            printf 'skip\tkept\t-\t-\t-\t%s\n' "$dir"
         else
-            mtime=$(stat -c %Y "$meta")
+            if [ -f "$events" ]; then
+                mtime=$(stat -c %Y "$events")
+            else
+                mtime=$(stat -c %Y "$meta")
+            fi
+            bytes=$(find "$dir" -mindepth 1 -maxdepth 1 -type f -printf '%s\n' \
+                    | awk '{s+=$1} END{print s+0}')
+            printf 'match\t%s\t%s\t%s\t%s\t%s\n' "$tier" "${RETENTION[$tier]}" \
+                "$(age_days "$now" "$mtime")" "$bytes" "$dir"
         fi
-        bytes=$(find "$dir" -mindepth 1 -maxdepth 1 -type f -printf '%s\n' \
-                | awk '{s+=$1} END{print s+0}')
-        printf 'match\t%s\t%s\t%s\t%s\t%s\n' "$tier" "${RETENTION[$tier]}" \
-            "$(age_days "$now" "$mtime")" "$bytes" "$dir"
 
         ps="$dir/player_state.jsonl"
         if [ -f "$ps" ]; then
@@ -225,7 +233,7 @@ run_delete() {
         $1=="pstate" && $4>$3 {p=$6; sub("/player_state\\.jsonl$","",p); if (!(p in gone)) print}')
 
     local tier count bytes total_n=0 total_b=0
-    for tier in ktp draft 12man scrim; do
+    for tier in draft 12man scrim; do
         count=$(printf '%s\n' "$due_matches" | awk -F'\t' -v t="$tier" 'NF && $2==t{n++} END{print n+0}')
         bytes=$(printf '%s\n' "$due_matches" | awk -F'\t' -v t="$tier" 'NF && $2==t{s+=$5} END{print s+0}')
         [ "$count" = "0" ] && continue
