@@ -87,22 +87,34 @@ def presses_sql(since: str) -> str:
     # One row per (press, candidate own kill in the lookback); Python keeps the nearest.
     # LEFT JOIN so a press with no kill behind it is still a press (the denominator for
     # "share of voice commands that are taunts").
+    # The daemon leaves ~9% of in-half presses with match_id NULL (scattered, often in bursts),
+    # so an untagged press is adopted by the live half running on its server at that moment.
+    # Two branches so each keeps an index: tagged via match_id, untagged via the voice action ids.
+    voice = "(a.code LIKE 'voice\\\\_%' OR a.code LIKE 'voicemenu\\\\_%' OR a.code LIKE 'signal\\\\_%')"
     return f"""
-SELECT pa.id, pa.eventTime, pa.match_id, m.match_type, a.code,
-       pa.playerId, sp.lastName,
+SELECT p.id, p.eventTime, p.match_id, m.match_type, p.code,
+       p.playerId, sp.lastName,
        IFNULL(f.victimId, ''), IFNULL(vp.lastName, ''), IFNULL(f.weapon, ''),
-       IFNULL(TIMESTAMPDIFF(SECOND, f.eventTime, pa.eventTime), '')
-FROM hlstats_Events_PlayerActions pa
-JOIN hlstats_Actions a ON a.id = pa.actionId AND (a.code LIKE 'voice\\\\_%' OR a.code LIKE 'voicemenu\\\\_%' OR a.code LIKE 'signal\\\\_%')
+       IFNULL(TIMESTAMPDIFF(SECOND, f.eventTime, p.eventTime), '')
+FROM (SELECT pa.id, pa.eventTime, pa.match_id, a.code, pa.playerId
+      FROM (SELECT DISTINCT match_id FROM ktp_matches WHERE start_time >= '{since}') t
+      JOIN hlstats_Events_PlayerActions pa ON pa.match_id = t.match_id
+      JOIN hlstats_Actions a ON a.id = pa.actionId AND {voice}
+      UNION ALL
+      SELECT pa.id, pa.eventTime, h.match_id, a.code, pa.playerId
+      FROM hlstats_Actions a
+      STRAIGHT_JOIN hlstats_Events_PlayerActions pa ON pa.actionId = a.id AND pa.match_id IS NULL
+      JOIN ktp_matches h ON h.server_id = pa.serverId AND pa.eventTime BETWEEN h.start_time AND h.end_time
+      WHERE {voice} AND h.start_time >= '{since}') p
 JOIN (SELECT match_id, MIN(match_type) AS match_type, MIN(start_time) AS start_time
-      FROM ktp_matches GROUP BY match_id) m ON m.match_id = pa.match_id
-JOIN hlstats_Players sp ON sp.playerId = pa.playerId
+      FROM ktp_matches GROUP BY match_id) m ON m.match_id = p.match_id
+JOIN hlstats_Players sp ON sp.playerId = p.playerId
 LEFT JOIN hlstats_Events_Frags f
-       ON f.killerId = pa.playerId
-      AND f.eventTime BETWEEN pa.eventTime - INTERVAL {LOOKBACK} SECOND AND pa.eventTime
+       ON f.killerId = p.playerId
+      AND f.eventTime BETWEEN p.eventTime - INTERVAL {LOOKBACK} SECOND AND p.eventTime
 LEFT JOIN hlstats_Players vp ON vp.playerId = f.victimId
 WHERE m.start_time >= '{since}' AND m.match_type IS NOT NULL
-ORDER BY pa.eventTime, pa.id"""
+ORDER BY p.eventTime, p.id"""
 
 
 def played_sql(since: str) -> str:
