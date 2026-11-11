@@ -324,6 +324,7 @@ Set them one lane at a time and watch a cycle.
 | `ktp-tier2-heartbeat` / `post-tier2-result` | `ops-weekly` | `1498813261263405097` |
 | `precache_audit` | `ops-weekly` | `1498813261263405097` |
 | `ktp-demo-retention` | `community` | `DEMO_CHANNEL_KTP` + `DEMO_CHANNEL_COMMUNITY` |
+| `ktp-hud-archive-retention` | `ops-weekly` (preview); failures `ops-daily` | `PREVIEW_CHANNEL` = `1498813261263405097`; failures `ALERT_CHANNEL` = `1497957091107668070` |
 
 ⚠️ **`ktp-fleet-health.sh` bypasses the relay entirely** — it posts to a raw
 `discord.com/api/webhooks/…` URL in `/etc/ktp/fleet-health.conf` on each game host. No

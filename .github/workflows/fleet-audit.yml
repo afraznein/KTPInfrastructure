@@ -17,9 +17,10 @@
 # running.
 #
 # THE CREDENTIAL SPLIT, WHICH IS THE POINT
-# The `collect` job runs on the self-hosted runner that already lives on the data
-# server. It reads /etc/ktp/audit-fleet.json, which is already there. No fleet
-# credential is stored in GitHub, and none needs to be.
+# The `collect` job runs on the `ktp-ops` self-hosted runner on the data
+# server, not the tier-2 runner that pull requests reach. It reads
+# /etc/ktp/audit-fleet.json, which is already there. No fleet credential is
+# stored in GitHub, and none needs to be.
 #
 # The `triage` job runs on a GitHub-hosted runner and has no fleet access at all.
 # Claude is given Read and Write and nothing else -- no Bash, no network, no
@@ -109,7 +110,7 @@ concurrency:
 jobs:
   collect:
     name: Collect fleet state
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 20
     permissions:
       contents: read
@@ -430,7 +431,7 @@ jobs:
     name: Discord notice
     needs: [collect, triage]
     if: needs.triage.outputs.issue_url != ''
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -468,7 +469,7 @@ jobs:
       && (github.event_name == 'schedule' || inputs.dry_run == false)
       && (needs.collect.outputs.needs_triage != 'true'
       || (needs.triage.result == 'success' && needs.notify.result == 'success'))
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 5
     permissions:
       contents: read

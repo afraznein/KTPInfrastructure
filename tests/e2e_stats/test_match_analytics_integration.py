@@ -296,6 +296,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "player_halves": True,
         "break_producer_half": False,
         "break_event_clock": False,
+        "causal_links": False,
         # Migrations 032-034 and the AC ledger are not in the phase-a fixture:
         # probed, absent, and every dependent box-score key is None.
         "wave1_fields": False,
@@ -348,7 +349,11 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 37
+    assert report["schema_version"] == 40
+    # Migration 054 is not in this fixture: the death-group block says the
+    # columns are absent and carries no numbers at all.
+    assert report["death_group"]["status"] == "unavailable"
+    assert report["death_group"]["halves"] == []
     # The contract fixture carries no net telemetry tables, so the block must
     # say so rather than publish zeros.
     assert report["connection"]["status"] == "unavailable"
@@ -430,6 +435,15 @@ VALUES
 
     assert len(selected_frags) == 13
     assert len(selected_damage) == 15
+    # The decoy damage row (5 HP, Allies 1 -> Axis 1) names another match as
+    # its producer, so it stays out of this box score: the baseline's 1080.
+    assert sum(p["damage_dealt"] for p in report["players"]) == 1080
+    assert sum(p["damage_taken"] for p in report["players"]) == 1080
+    reconciliation = [c for c in report["quality"]["checks"]
+                      if c["code"] == "damage_reconciliation"]
+    assert len(reconciliation) == 1, reconciliation
+    assert reconciliation[0]["level"] == "WARN", reconciliation
+    assert reconciliation[0]["evidence"]["cross_tagged_damage_rows"] == 1
     assert sum(row["half"] is None for row in selected_frags) == 1
     assert sum(row["half"] is None for row in selected_damage) == 1
     # Stock-event exploration never groups the NULL producer half. Timed

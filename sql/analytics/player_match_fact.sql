@@ -113,6 +113,10 @@ damage AS (
     FROM roster r
     LEFT JOIN ktp_damage_events d
       ON d.match_id = r.match_id
+     -- A non-NULL producer_match_id is authoritative; a row tagged for another
+     -- match belongs to that match's box score, not this one.
+     AND (d.producer_match_id IS NULL
+          OR BINARY d.producer_match_id = BINARY d.match_id)
      AND (d.attacker_id = r.player_id OR d.victim_id = r.player_id)
     LEFT JOIN roster attacker ON attacker.player_id = d.attacker_id
     LEFT JOIN roster victim ON victim.player_id = d.victim_id
