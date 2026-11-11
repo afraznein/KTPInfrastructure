@@ -171,6 +171,8 @@ jobs:
           repository: ${{ inputs.ktp_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.ktp_checkout_token || github.token }}
+          # The engine's build number is the commit count, so appversion refuses a shallow clone.
+          fetch-depth: 0
 
       - name: Checkout KTPAMXX (slow path, with submodules — public/amtl)
         if: ${{ !inputs.use_base_image && inputs.under_test_kind != 'cpp_module' }}
