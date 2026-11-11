@@ -254,8 +254,7 @@ def test_official_matches_are_absent_from_dry_run_counts(official: Path):
 def test_kept_match_still_loses_player_state_on_its_short_clock(tmp_path: Path):
     root = tmp_path / "matches"
     d = _match(root, "official-with-ps", age=900, match_type=COMPETITIVE)
-    (d / "player_state.jsonl").write_text("{}
-", encoding="utf-8")
+    (d / "player_state.jsonl").write_text("{}\n", encoding="utf-8")
     _age(d / "player_state.jsonl", 40)
     r = _run(root)
     assert r.returncode == 0, r.stderr
