@@ -179,6 +179,36 @@ logrotate stanza is `rotate 4` with `maxsize 1G`, and on this box the size trigg
 fires every couple of days, so that window is around a week and varies with load.
 Useful for a recovery, never something to design around.
 
+## A security update restarts services, and nothing schedules it
+
+Ubuntu 24.04's `needrestart` APT hook (`/etc/apt/apt.conf.d/99needrestart`, run as
+`-m u`) restarts every daemon still mapping a replaced library, automatically and
+without a prompt, including when `unattended-upgrades` is the caller. On 2026-11-04
+at 06:40 a `bind9-libs` + `libpcre2-8-0` upgrade bounced `ktp-ac-api`, `nginx` and
+all 24 `hltv@` proxies within eight seconds. That drops every AC login and every
+HLTV recording, at whatever hour the timer fires.
+
+**A grep for the unit name in timers and cron cannot find this.** needrestart picks
+services by library linkage, never by name, so "nothing schedules a restart of X"
+can be true of every scheduler and still wrong.
+
+It also means a binary staged over a live path goes live at the next library
+upgrade, not when someone ships it. Install-then-wait is not a deploy pattern here.
+
+`/etc/needrestart/conf.d/50-ktp-no-auto-restart.conf` (tracked copy:
+`ops/data-server/needrestart/conf.d/50-ktp-no-auto-restart.conf`) adds
+`override_rc => 0` entries for `ktp-ac-api.service`, `nginx.service` and
+`hltv@*.service`. The upgrade still installs; those services are listed as
+deferred and keep running the old library until restarted by hand, outside
+match time. See what is pending without changing anything:
+
+```bash
+needrestart -r l -m a -l      # list mode never restarts; deferred units are listed by name
+```
+
+The entries add to the stock hash rather than replace it, so dbus, getty and
+`systemd-logind` stay protected. Every other service still restarts automatically.
+
 ## Measuring disk through a symlink
 
 `/var/www/fastdl/demos` is a symlink. `du -sh` does not follow it and reports
