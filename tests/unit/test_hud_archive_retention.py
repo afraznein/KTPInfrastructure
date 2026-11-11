@@ -87,7 +87,7 @@ def tree(tmp_path: Path) -> Path:
     _match(root, "draftot-old", age=200, match_type=DRAFT_OT)
     _match(root, "draftot-mid", age=100, match_type=DRAFT_OT)
     _match(root, "twelve-old", age=100, match_type=TWELVE)
-    _match(root, "scrim-fresh", age=50, match_type=SCRIM)
+    _match(root, "scrim-fresh", age=20, match_type=SCRIM)
     # Auto-started placeholders: metadata says 0/0, the events say what it was.
     _match(root, "1.3-111-NY1", age=100, match_type=COMPETITIVE, half=0, event_type=TWELVE)
     _match(root, "1.3-222-NY1", age=100, match_type=COMPETITIVE, half=0, event_type=DRAFT)
@@ -106,7 +106,7 @@ def test_dry_run_counts_by_tier_and_deletes_nothing(tree: Path):
 
 
 def test_placeholder_is_typed_from_its_events_not_its_metadata(tree: Path):
-    """The 12man placeholder goes at 90 days; the draft one waits for 180."""
+    """The 12man placeholder goes at 30 days; the draft one waits for 180."""
     r = _run(tree)
     assert r.returncode == 0, r.stderr
     assert not (tree / "1.3-111-NY1").exists()
@@ -193,12 +193,12 @@ def test_player_state_keeps_its_own_short_clock(tmp_path: Path):
 
 def test_preview_reports_what_falls_due_and_deletes_nothing(tmp_path: Path):
     root = tmp_path / "matches"
-    _match(root, "due-in-3d", age=87, match_type=TWELVE)
-    _match(root, "due-later", age=60, match_type=TWELVE)
-    _match(root, "already-due", age=100, match_type=TWELVE)
+    _match(root, "due-in-3d", age=27, match_type=TWELVE)
+    _match(root, "due-later", age=10, match_type=TWELVE)
+    _match(root, "already-due", age=40, match_type=TWELVE)
     r = _run(root, "preview")
     assert r.returncode == 0, r.stderr
-    assert "`12man` (90d) — 1 —" in r.stdout
+    assert "`12man` (30d) — 1 —" in r.stdout
     assert "<:KTP:1002382703020212245>" in r.stdout
     assert _names(root) == ["already-due", "due-in-3d", "due-later"]
 
@@ -274,3 +274,13 @@ def test_official_matches_are_absent_from_the_preview(tmp_path: Path):
     assert "`draft` (180d) — 1 —" in r.stdout
     assert "`ktp`" not in r.stdout
     assert _names(root) == ["draft-178d", "official-178d"]
+
+
+@pytest.mark.parametrize("match_type", [TWELVE, SCRIM])
+def test_short_tiers_are_swept_at_thirty_days(tmp_path: Path, match_type: int):
+    root = tmp_path / "matches"
+    _match(root, "31d", age=31.5, match_type=match_type)
+    _match(root, "29d", age=29, match_type=match_type)
+    r = _run(root)
+    assert r.returncode == 0, r.stderr
+    assert _names(root) == ["29d"]

@@ -39,7 +39,7 @@ pytestmark = pytest.mark.skipif(
 DAY = 86400
 
 
-def _demo(path: Path, age_days: int, size: int = 1024) -> Path:
+def _demo(path: Path, age_days: float, size: int = 1024) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * size)
     stamp = time.time() - age_days * DAY
@@ -126,7 +126,7 @@ def test_preview_reports_the_tiers_and_does_not_delete(tree: Path):
     r = _run(tree, "preview", PREVIEW_WINDOW_DAYS="400")
     assert r.returncode == 0, r.stderr
     assert "`draft` (180d)" in r.stdout
-    assert "`12man` (90d)" in r.stdout
+    assert "`12man` (30d)" in r.stdout
     assert len(list(tree.rglob("*.dem"))) == 7
 
 
@@ -194,3 +194,14 @@ def test_official_ktp_demos_are_absent_from_the_preview(ktp_tree: Path):
     assert "`draft` (180d)" in r.stdout
     assert "`ktp`" not in r.stdout
     assert len(list(ktp_tree.rglob("*.dem"))) == 4
+
+
+@pytest.mark.parametrize("tier", ["12man", "scrim"])
+def test_short_tiers_are_swept_at_thirty_days(tmp_path: Path, tier: str):
+    root = tmp_path / "demos"
+    over = _demo(root / "ATL1" / tier / "31d.dem", 31.5)
+    under = _demo(root / "ATL1" / tier / "29d.dem", 29)
+    r = _run(root)
+    assert r.returncode == 0, r.stderr
+    assert not over.exists()
+    assert under.exists()

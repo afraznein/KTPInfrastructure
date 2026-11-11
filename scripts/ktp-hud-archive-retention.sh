@@ -5,7 +5,7 @@
 # the same windows as ktp-demo-retention.sh, tier for tier:
 #   ktp, ktpOT                    kept permanently (official matches, by ruling)
 #   draft, draftOT               180 days
-#   12man, scrim                  90 days
+#   12man, scrim                  30 days
 #   player_state.jsonl            30 days, on its own clock, whatever the tier --
 #                                 a kept match still loses its player_state
 #
@@ -46,7 +46,7 @@ MODE="${1:-delete}"
 # Keyed on the plugin's MatchType enum. A type not listed here is never swept.
 declare -A TIER_OF=( [0]=ktp [4]=ktp [3]=draft [5]=draft [2]=12man [1]=scrim )
 # A tier absent here is kept forever; ktp is absent because official matches are never retired.
-declare -A RETENTION=( [draft]=180 [12man]=90 [scrim]=90 )
+declare -A RETENTION=( [draft]=180 [12man]=30 [scrim]=30 )
 
 KNOWN_FILES_RE='^(events\.jsonl|metadata\.json|player_state\.jsonl)$'
 
