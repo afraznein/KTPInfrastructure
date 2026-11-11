@@ -222,6 +222,47 @@ def build(collect, since: str, *, prior_halves: float = PRIOR_HALVES,
     }
 
 
+FLOOR_MARKER = "kept_by_floor"
+
+
+def apply_floor(payload: dict[str, Any], previous: dict[str, Any],
+                min_official_halves: float) -> tuple[dict[str, Any], list[str]]:
+    """Keep the committed row of a map this fit dropped or measured on less.
+
+    A map leaves the fit when its halves stop reaching the corpus, and a thin
+    re-measurement is mostly the pooled value wearing the map's name; either way
+    flag_swing would trade a measurement for a weaker number. A previous row is
+    kept when the map is absent, or when it now has fewer than
+    `min_official_halves` official halves AND fewer than the row it replaces.
+    A thin map that is GAINING halves takes its new fit. A map with no previous
+    row is never touched, so a never-measured map still gets whatever the fit or
+    flag_swing's prior gives it.
+    """
+    maps = dict(payload.get("maps") or {})
+    kept: list[str] = []
+    for name, prev in sorted((previous.get("maps") or {}).items()):
+        new = maps.get(name)
+        new_halves = int(new.get("official_halves", 0)) if new else 0
+        prev_halves = int(prev.get("official_halves", 0))
+        if new is None:
+            reason = "absent_from_fit"
+        elif new_halves < min_official_halves and prev_halves > new_halves:
+            reason = "fewer_official_halves"
+        else:
+            continue
+        row = dict(prev)
+        row[FLOOR_MARKER] = reason
+        # A row kept twice still names the fit that measured it, not the last
+        # table that carried it.
+        row.setdefault("kept_from_fitted_at", previous.get("fitted_at"))
+        row["refit_official_halves"] = new_halves
+        maps[name] = row
+        kept.append(f"  = {name:<20} kept flag {row['flag_coefficient']:.4f}  "
+                    f"alive {row['alive_coefficient']:.4f}  ({reason}: "
+                    f"{prev_halves} official halves before, {new_halves} now)")
+    return {**payload, "maps": maps, "min_official_halves": min_official_halves}, kept
+
+
 def coefficients(payload: dict[str, Any]) -> dict[str, list[float]]:
     return {name: [row["flag_coefficient"], row["alive_coefficient"]]
             for name, row in sorted(payload.get("maps", {}).items())}
@@ -249,6 +290,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--since", default="2026-09-13", help="corpus floor (season start)")
     ap.add_argument("--out", type=Path, default=CONFIG)
     ap.add_argument("--prior-halves", type=float, default=PRIOR_HALVES)
+    ap.add_argument("--min-official-halves", type=float, default=None,
+                    help="below this a map that lost halves keeps its committed row "
+                         "(default: --prior-halves, where a row is half its own data)")
     ap.add_argument("--no-ledger-fallback", action="store_true",
                     help="engine labels only; drops halves before 2026-09-17, "
                          "when ktp_score_events began")
@@ -310,6 +354,9 @@ def main(argv: list[str] | None = None) -> int:
                     extra={"label_mix": mix})
     print("fit complete", flush=True)
     old = json.loads(args.out.read_text(encoding="utf-8")) if args.out.exists() else {}
+    floor = (args.prior_halves if args.min_official_halves is None
+             else args.min_official_halves)
+    payload, kept = apply_floor(payload, old, floor)
     changes = diff(old, payload)
 
     print(f"corpus chosen: {payload['corpus_selected']}")
@@ -319,6 +366,10 @@ def main(argv: list[str] | None = None) -> int:
     print("changes:" if changes else "changes: none")
     for line in changes:
         print(line)
+    if kept:
+        print(f"kept by the floor (under {floor:g} official halves, or not fitted):")
+        for line in kept:
+            print(line)
 
     if args.check:
         if changes:
