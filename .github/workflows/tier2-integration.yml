@@ -98,6 +98,8 @@ jobs:
     # remain exactly `Tier 2 Integration / integration`.
     name: ${{ github.event_name == 'schedule' && format('integration ({0})', matrix.target_ref) || 'integration' }}
     runs-on: [self-hosted, ktp-tier2]
+    # This runner is root on the production data server; fork code must never reach it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     timeout-minutes: 30
 
     strategy:
