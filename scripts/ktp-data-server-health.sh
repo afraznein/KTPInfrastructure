@@ -672,6 +672,69 @@ precache_freshness() {  # $1 = report glob, $2 = max age seconds, $3 = now epoch
 precache_item="$(precache_freshness "$PRECACHE_REPORT_GLOB" "$PRECACHE_STALE_SEC" "$(date +%s)")"
 if [ -n "$precache_item" ]; then down+=("$precache_item"); fi
 
+# >>> ktp-run-record-age — extracted verbatim by tests/unit/test_health_run_record_age.py
+# Units wrapped by ktp-run-record.sh write runs/<UTC>.txt, or runs/last-ok.txt, only
+# when a run ENDS, so the newest one's mtime is the work-done signal. A timer that
+# stops is the timer leg's; a run that never ends, or a unit that quietly stops
+# being run, leaves the unit looking fine and is only visible here.
+RUN_RECORD_ROOT="${RUN_RECORD_ROOT:-/var/lib}"
+RUN_RECORD_UNIT_DIR="${RUN_RECORD_UNIT_DIR:-/etc/systemd/system}"
+# unit, newest-record ceiling, unfinished-.part ceiling (seconds). The first is the
+# cadence plus room for one late run; the second is TimeoutStartSec plus the stop
+# window plus slack, since a .part past that means the wrapper never got to promote it.
+# Not listed, each with its own leg above: ktp-render-banlist (three-leg ban-list
+# check) and ktp-migrations-applied-check (its success stamp). One fault, one item.
+RUN_RECORD_UNITS=(
+    "ktp-weekly-outliers 691200 2700"
+    "ktp-voice-taunts 108000 1500"
+    "ktp-own-weapon-kills 108000 1500"
+    "ktp-install-freshness 108000 1800"
+    "ktp-hlstatsx-ingest-monitor 10800 1800"
+    "ktp-telemetry-export 10800 1500"
+    "ktp-stats-export 3600 1200"
+)
+run_record_age() {  # $1 = unit, $2 = record ceiling, $3 = .part ceiling, $4 = now epoch
+    local unit="$1" runs="$RUN_RECORD_ROOT/$1/runs" unit_file="$RUN_RECORD_UNIT_DIR/$1.service"
+    local newest=0 part=0 f e
+    # Keyed on the directive, not a mention: a comment naming the wrapper is not the wrapper.
+    # Not installed, or installed unwrapped, means nothing writes here yet -- not a fault.
+    grep -qE '^ExecStart=.*ktp-run-record' "$unit_file" 2>/dev/null || return 0
+    for f in "$runs"/*.txt; do
+        [ -f "$f" ] || continue
+        e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+        if [ "$e" -gt "$newest" ]; then newest="$e"; fi
+    done
+    for f in "$runs"/*.txt.part; do
+        [ -f "$f" ] || continue
+        e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+        if [ "$e" -gt "$part" ]; then part="$e"; fi
+    done
+    # An orphan .part is kept on disk as evidence, so only the LATEST run being one
+    # pages; once a later run ends, the old .part stops reporting and stays readable.
+    if [ "$part" -gt "$newest" ] && [ $(( $4 - part )) -gt "$3" ]; then
+        printf '%s-run-record=unfinished\t%s\n' "$unit" "latest run never finished; .part in $runs"
+    elif [ "$newest" -eq 0 ]; then
+        # A fresh install has written nothing yet; give it one ceiling before calling it.
+        e="$(stat -c %Y "$unit_file" 2>/dev/null || echo 0)"
+        if [ $(( $4 - e )) -gt "$2" ]; then
+            printf '%s-run-record=none\t%s\n' "$unit" "wrapped unit has never written to $runs"
+        fi
+    elif [ $(( $4 - newest )) -gt "$2" ]; then
+        # Fixed token, age only in the note: the report is a set-diff.
+        printf '%s-run-record=stale\t%s\n' "$unit" "newest record $(( ($4 - newest) / 3600 ))h old"
+    fi
+    return 0
+}
+# <<< ktp-run-record-age
+run_record_now="$(date +%s)"
+for _rr in "${RUN_RECORD_UNITS[@]}"; do
+    read -r _rr_unit _rr_max _rr_part <<< "$_rr"
+    while IFS=$'\t' read -r _key _note; do
+        if [ -z "${_key:-}" ]; then continue; fi
+        down+=("$_key"); detail[$_key]="$_note"
+    done <<< "$(run_record_age "$_rr_unit" "$_rr_max" "$_rr_part" "$run_record_now")"
+done
+
 # HLTV instance coverage — check each port in the expected set,
 # skipping intentionally-excluded ones.
 is_excluded() {
