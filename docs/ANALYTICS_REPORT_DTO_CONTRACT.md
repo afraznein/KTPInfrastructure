@@ -29,6 +29,7 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.16.0` | 35 | Private tier: each `connection.players[].halves[]` entry is now the sum of that half's 60 s slices (KTPCvarChecker 7.44) and gains `minutes[]` -- per slice `ts`, `span_s`, `pps`, `cmds_pkt`, `msec.{p50,p95,max}`, `arr_ms.{p95,max}`, `drops`, `stale_delta`; `null` when the half arrived as one row. Half `msec`/`arr_ms` p50/p95 become the weighted median of the minutes' percentiles; `max` and every count stay exact. Public block unchanged |
 | `analytics-report-dto-v1.17.0` | 36 | `halves[].minutes` renamed `halves[].slices`: KTPCvarChecker 7.45 flushes every 10 s, not 60, so each row is one 10 s slice aligned to the server's `net:` windows. Same fields per row. Renamed before any consumer read it -- v1.16.0 was merged but never served (the precedent is v1.14.0) |
 | `analytics-report-dto-v1.18.0` | 37 | Private tier: each `connection.players[]` row gains `league_alias` (the player's league alias, from SteamID through the website's `player_steam` -> `player`, status `current`) and `league_registered` (`true` / `false`, or `null` when the registry could not be read or the player has no SteamID). `connection.instruments.league` says which. Name players by `league_alias` where it is set, with `player_name_at_match` beside it; where `league_registered` is `false`, keep the in-game name and mark the player as not a league player (ruled 2026-10-25). The public block is unchanged: it carries no player rows |
+| `analytics-report-dto-v1.19.0` | 41 | Adds top-level `outnumbered_kills` (`outnumbered_kill_v1`) and `fight_clutches` (`fight_clutch_v1`), and `players[].outnumbered_kills` / `players[].fight_clutches` with glossary entries: the two clutch definitions ruled 2026-10-05, shown separately and never summed (see below). `fight_clutch_v1` stops censoring a whole half because one roster member was absent from it; an envelope from before schema 41 reads `unavailable` rather than publish that undercount |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a
@@ -552,6 +553,80 @@ player makes between two of their own life ends within one half.
 `lower_bound: true` means a frag of that player's could not be placed in time,
 so the published streak may be understated by it. `best_streak` is `null` only
 when the player has kills but no life boundary at all in that half.
+
+## `outnumbered_kills` and `fight_clutches` (v1.19.0)
+
+Two stats, ruled 2026-10-05. **Show them separately and never add them
+together**, and do not present either, or both, as one "clutches" total. The
+rare one is what players mean by the word; the common one is the one with
+enough volume to rank. Measured on 40 two-half matches (2026-10-20 onward):
+4,491 outnumbered kills out of 24,763 evaluated (18.1%), against 8 fight
+clutches in 1,489 evaluated windows.
+
+DoD respawns in waves, so a side is never eliminated and the Counter-Strike
+"last alive wins the round" has no direct analogue. Both stats read the life
+ledger (`ktp_life_events`) for who is alive; S9 and earlier have no ledger and
+read `unavailable`.
+
+### `outnumbered_kills`
+
+`definition: outnumbered_kill_v1` (`scripts/outnumbered_kills.py`). An enemy
+kill made while living enemies outnumbered the killer's side by 2 or more.
+
+- Counts the same frags as the box score and `kill_streaks`. Teamkills never
+  count.
+- The state is read just before the kill: a boundary at the kill's own
+  `game_time` has not happened yet, so the victim still counts as alive.
+- Sides are read from the ledger per half, so a halftime swap needs no
+  translation.
+- The killer always counts on their own side, alive or not. A grenade that
+  lands after its thrower died is judged as if they were still standing,
+  rather than as one more player down.
+- Outnumbered: living enemies minus (living teammates + the killer) is at
+  least `parameters.margin` (2).
+- A player with no boundary in the half, or whose first is a later spawn, is
+  not alive. A kill is censored only when a player who must have been alive
+  (first boundary that half is a later death) has no boundary yet, or when
+  the killer's side is unknown.
+
+| Key | Meaning |
+|---|---|
+| `status`, `flags` | `available` / `unavailable`. Flags: `source-not-captured`, `no-life-boundaries`, `no-frag-clock`, `not-in-report` (unavailable); `unordered-frags`, `censored-kills` (available) |
+| `parameters` | `clock`, `state`, `margin`, `killer_counted`, `unknown_liveness` |
+| `coverage` | `kills`, `evaluated`, `censored`, `unordered` (no producer clock and no recoverable victim death) |
+| `rows[]` | Per player per half: `name`, `team`, `half`, `side`, `kills`, `outnumbered_kills`, `lower_bound` |
+| `players[]` | Per player: `name`, `team`, `kills`, `outnumbered_kills` (sum of halves), `by_side`, `lower_bound` |
+
+`lower_bound: true` means a kill of that player's was censored or could not be
+placed in time, so the count may be understated by it. As a rate, divide by
+`kills`, not by matches.
+
+### `fight_clutches`
+
+`definition: fight_clutch_v1` (`scripts/flag_fights.py::build_clutch_shadow`).
+A flag fight (one objective-attempt window) that the player's side won with
+the player as its only living member at the window's close, against 2 or more
+living enemies. The winner is the capturing team on a capture and the
+defenders on a stop.
+
+- Liveness is read at the window's close, from the same ledger.
+- A roster member with no boundary in the half, or whose first is a later
+  spawn, is not alive. A window is censored only when a player who must have
+  been alive has no boundary yet.
+- Before schema 41 one absent roster member censored every window of the half
+  (104 of 1,493 windows on the measured set, against 4 now). A report built
+  before 41 therefore reads `status: unavailable`, flag `not-in-report`.
+
+| Key | Meaning |
+|---|---|
+| `status`, `flags` | `available` / `unavailable` / `timed_metrics_suppressed` (replay source). `flags` carries the producer's caveats |
+| `parameters` | `clock`, `winner`, `min_living_enemies`, `unknown_liveness`, `absent_from_half` |
+| `coverage` | `evaluated_windows`, `censored_windows` |
+| `events[]` | One per clutch: `half`, `flag_name`, `name`, `team`, `against` (living enemies at close), `kind` (`capture` / `stop`) |
+| `players[]` | Players with at least one: `name`, `fight_clutches` |
+
+`players[].fight_clutches` in the box score is `0` for a player the producer
+evaluated and did not credit, and `null` when it could not run.
 
 ## `weapon_sides`
 
