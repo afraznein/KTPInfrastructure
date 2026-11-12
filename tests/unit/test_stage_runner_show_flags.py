@@ -146,10 +146,17 @@ def test_absent_outranks_everything():
     assert "not on the runner" in stage_runner.disk_flag("Gamma.amxx", "ABSENT", "-", None)
 
 
-def test_unstaged_artifact_is_not_a_disagreement():
+def test_unstaged_artifact_is_not_called_a_disagreement():
     """No manifest md5 means nobody staged it, so there is nothing to disagree
-    with — printing a disagreement there is what made `--show` unreadable."""
-    assert stage_runner.disk_flag("Gamma.amxx", MD5_A, "-", set()) == ""
+    with — printing a disagreement there is what made `--show` unreadable. It is
+    still named, because "absent" and "deliberately absent" used to print the
+    same blank."""
+    flag = stage_runner.disk_flag("Gamma.amxx", MD5_A, "-", set())
+    assert "MANIFEST DISAGREES" not in flag
+    assert "no manifest record, and nothing else installs it" in flag
+    flag = stage_runner.disk_flag("Alpha.amxx", MD5_A, "-", {"Alpha.amxx"})
+    assert "MANIFEST DISAGREES" not in flag
+    assert "workflow installs it every run" in flag
 
 
 def test_disagreement_still_reports_for_an_artifact_in_neither_class():
@@ -188,3 +195,103 @@ def test_unreadable_drift_checker_keeps_the_warning_and_says_so():
     flag = stage_runner.disk_flag("Beta.amxx", MD5_A, MD5_B, {"Alpha.amxx"}, None)
     assert "MANIFEST DISAGREES WITH DISK" in flag
     assert "could not read the drift checker" in flag
+
+
+# ---------------------------------------------------------------------------
+# --check, and the suite's on-runner check: unexplained vs deliberate
+# ---------------------------------------------------------------------------
+
+import runner_manifest as rm  # noqa: E402  -- stage-runner put scripts/ on sys.path
+
+
+def test_deliberate_classes_are_not_unexplained():
+    for kind in (rm.AGREE, rm.WORKFLOW, rm.MIRROR, rm.UNRECORDED_REBUILT, rm.ABSENT_REBUILT):
+        assert kind not in rm.UNEXPLAINED
+
+
+def test_every_kind_has_flag_text():
+    kinds = {v for k, v in vars(rm).items() if k.isupper() and isinstance(v, str)
+             and v in rm._FLAG_TEXT}
+    assert kinds == set(rm._FLAG_TEXT)
+
+
+def test_check_verdict_quiet_on_nothing_unexplained():
+    status, line = stage_runner.check_verdict([])
+    assert status == 0 and "CHECK OK" in line
+
+
+def test_check_verdict_fails_and_names_each_row():
+    status, line = stage_runner.check_verdict([("Gamma.amxx", rm.DRIFT), ("Delta.amxx", rm.ABSENT)])
+    assert status == 1
+    assert "Gamma.amxx: drift" in line and "Delta.amxx: absent" in line
+
+
+def test_fleet_mirrored_needs_no_paramiko(tmp_path):
+    """The suite's venv has no paramiko and the drift checker exits at import
+    without it, so the list must be PARSED. A checker whose top level would
+    exit still yields its lists."""
+    checker = tmp_path / "drift.py"
+    checker.write_text(
+        "import sys\nsys.exit(2)\n"
+        "STACK_FILES = ['engine_i486.so', 'dod/addons/ktpamx/modules/dodx_ktp_i386.so']\n"
+        "PLUGINS_STRICT = ['dod/addons/ktpamx/plugins/ktp_cvar.amxx']\n",
+        encoding="utf-8",
+    )
+    assert rm.fleet_mirrored(checker) == {"engine_i486.so", "dodx_ktp_i386.so", "ktp_cvar.amxx"}
+
+
+def _runner(tmp_path, files):
+    tree = tmp_path / "serverfiles"
+    for name, body in files.items():
+        p = tree / rm.artifact_dir(name) / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(body)
+    return tree
+
+
+def _md5(b):
+    import hashlib
+    return hashlib.md5(b).hexdigest()
+
+
+def test_classify_local_quiet_on_the_two_deliberate_classes(tmp_path):
+    """Positive control: today's runner shape — a workflow-rebuilt plugin and a
+    fleet mirror both differ from the manifest, and one staged plugin agrees."""
+    tree = _runner(tmp_path, {
+        "Rebuilt.amxx": b"fresh build", "Mirror.so": b"fleet bytes", "Staged.amxx": b"staged",
+    })
+    manifest = {
+        "Rebuilt.amxx": {"md5": _md5(b"what was staged")},
+        "Mirror.so": {"md5": _md5(b"older fleet bytes")},
+        "Staged.amxx": {"md5": _md5(b"staged")},
+    }
+    rows = rm.classify_local(str(tree), manifest, {"Rebuilt.amxx"}, {"Mirror.so"})
+    kinds = {n: k for n, k, _, _ in rows}
+    assert kinds == {"Rebuilt.amxx": rm.WORKFLOW, "Mirror.so": rm.MIRROR, "Staged.amxx": rm.AGREE}
+    assert not [r for r in rows if r[1] in rm.UNEXPLAINED]
+
+
+def test_classify_local_fails_on_an_artifact_in_neither_class(tmp_path):
+    """Negative control: the same runner with the staged plugin overwritten
+    behind the manifest's back must fail."""
+    tree = _runner(tmp_path, {"Staged.amxx": b"something else wrote this"})
+    manifest = {"Staged.amxx": {"md5": _md5(b"staged")}, "Gone.amxx": {"md5": _md5(b"x")}}
+    rows = rm.classify_local(str(tree), manifest, {"Rebuilt.amxx"}, {"Mirror.so"})
+    kinds = {n: k for n, k, _, _ in rows}
+    assert kinds == {"Staged.amxx": rm.DRIFT, "Gone.amxx": rm.ABSENT}
+    assert all(k in rm.UNEXPLAINED for k in kinds.values())
+
+
+def test_classify_local_fails_closed_when_a_scope_is_unreadable(tmp_path):
+    tree = _runner(tmp_path, {"Mirror.so": b"fleet bytes"})
+    manifest = {"Mirror.so": {"md5": _md5(b"older")}}
+    assert rm.classify_local(str(tree), manifest, None, {"Mirror.so"})[0][1] == rm.UNKNOWN_WORKFLOW
+    assert rm.classify_local(str(tree), manifest, set(), None)[0][1] == rm.UNKNOWN_MIRROR
+
+
+def test_classify_local_derives_scopes_from_the_repo_by_default(tmp_path):
+    """Default call reads the committed workflow and drift checker, so a real
+    fleet-mirror basename is quiet without being passed in."""
+    tree = _runner(tmp_path, {"dodx_ktp_i386.so": b"new fleet pin"})
+    rows = rm.classify_local(str(tree), {"dodx_ktp_i386.so": {"md5": _md5(b"old")}})
+    assert rows[0][1] == rm.MIRROR
