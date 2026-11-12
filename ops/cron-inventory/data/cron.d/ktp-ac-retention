@@ -2,11 +2,20 @@ SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # UPLOAD SWEEP HELD 2026-08-16 (operator: retain all evidence bundles).
-# 36500 days ~= 100 years, so the cutoff date can never be reached.
-# DO NOT set this to 0 -- the sweep compares day-dirs against
-# `date -d "-N days"`, so 0 makes the cutoff TODAY and deletes the whole archive.
-# Weapon-row (30d), token (7d) and audit sweeps are deliberately still running.
+# 36500 days ~= 100 years, so the cutoff can never be reached.
+# The script treats 0 as RETAIN ALL, behind an explicit `-gt 0` guard, so 0 and
+# 36500 are equally inert today. An OLDER script had no such guard and 0 did
+# mean "cutoff = today"; that warning outlived the code it described, and it
+# steered operators away from what is now the safer of the two values.
+# The weapon-row, token and audit sweeps run on the script's own defaults.
+# Read those in the script, not here -- a value copied into a comment rots, and
+# the pair that used to sit on this line had both changed underneath it.
 # Restore: reinstall /root/ktp-ac-retention.cron.bak-pre-uploadhold-20260816
 UPLOAD_RETENTION_DAYS=36500
+
+# Weapons have no "off" value: 0 here resolves to NOW() and deletes every row.
+# The script refuses a non-positive horizon, which is the guard -- the block above
+# describes uploads and cannot refuse anything.
+WEAPON_RETENTION_DAYS=36500
 
 40 4 * * * root /usr/local/bin/ktp-ac-retention.sh >> /var/log/ktp-ac-retention.log 2>&1
