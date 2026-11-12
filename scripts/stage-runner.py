@@ -114,8 +114,6 @@ from runner_manifest import (  # noqa: E402,F401
     UNEXPLAINED, artifact_dir, classify, fleet_mirrored, flag_text, workflow_rebuilt,
 )
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-
 
 def disk_flag(name, disk, manifest_md5, rebuilt, mirrored=frozenset()):
     """What `--show` prints after one artifact's manifest-vs-disk comparison.
