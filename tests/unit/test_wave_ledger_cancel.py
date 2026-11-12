@@ -49,6 +49,9 @@ INSTS = [f"atlanta:{p}" for p in range(27015, 27020)]
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch):
     monkeypatch.setenv("KTP_WAVE_LEDGER_DIR", str(tmp_path / "waves"))
+    # The repo's real audit baseline would judge these fake md5s; it has its own tests.
+    (tmp_path / "expected-binaries.conf").write_text("", encoding="utf-8")
+    monkeypatch.setenv("KTP_EXPECTED_BINARIES", str(tmp_path / "expected-binaries.conf"))
 
 
 def _stage(md5=STAGED_MD5, *, days_ago=0.1):
