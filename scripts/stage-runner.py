@@ -44,7 +44,9 @@ the workflow rebuilds, a manifest/disk md5 disagreement is the steady state
 rather than a fault, because each run bakes a fresh per-minute BUILD_TIME. The
 same goes for a stack file `sync-runner-stack.py` mirrors from the fleet -- its
 record is the fleet, not this manifest -- so `--show` names both cases instead
-of calling either one drift.
+of calling either one drift. Anything outside those two is the manifest's alone,
+so `--check` exits 1 on it, and the Tier-2 suite asserts the same on every run
+(tests/integration/test_stage_manifest_vs_disk.py, via runner_manifest.py).
 
 Ordering, which matters: restage the runner only AFTER a wave has activated and
 post-activation verify passes, because the runner mirrors the LIVE fleet. The
@@ -65,6 +67,9 @@ Usage:
   # what does the runner hold right now?
   stage-runner.py --show
 
+  # same, but exit 1 on a disagreement neither deliberate class explains
+  stage-runner.py --check
+
   # inspect intent without connecting
   stage-runner.py -f x.amxx --as KTPMatchHandler.amxx --dry-run
 
@@ -78,7 +83,6 @@ than failing.
 import argparse
 import getpass
 import hashlib
-import importlib.util
 import json
 import os
 import posixpath
@@ -102,108 +106,28 @@ import amxx_version  # noqa: E402  -- sibling module, path fixed up just above
 HOST = os.environ.get("KTP_TIER2_SSH_HOST", "")
 USER = os.environ.get("KTP_TIER2_SSH_USER", "root")
 TREE = os.environ.get("KTP_TIER2_TREE", "/opt/ktp-tier2-runner/serverfiles")
-PLUGIN_DIR = "dod/addons/ktpamx/plugins"
-MODULE_DIR = "dod/addons/ktpamx/modules"
-DLLS_DIR = "dod/addons/ktpamx/dlls"
-
-# The KTPAMXX core ships here, not in MODULE_DIR -- same "everything .so is a
-# module" trap this file already hit once for dodx. ktp-tier2-stack-drift.py's
-# STACK_FILES confirms the split path.
-CORE_BASENAMES = {"ktpamx_i386.so"}
+# Classification lives in runner_manifest.py so the Tier-2 suite (no paramiko on
+# the runner's venv) can run the same check on every run. Re-exported here
+# because these names are this script's public surface and its tests use them.
+from runner_manifest import (  # noqa: E402,F401
+    CORE_BASENAMES, DLLS_DIR, DRIFT_CHECKER, MODULE_DIR, PLUGIN_DIR, TIER2_WORKFLOW,
+    UNEXPLAINED, artifact_dir, classify, fleet_mirrored, flag_text, workflow_rebuilt,
+)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TIER2_WORKFLOW = os.path.join(
-    os.path.dirname(HERE), ".github", "workflows", "tier2-integration.yml"
-)
-
-# Only the install destination, never a path the workflow merely checks for: a
-# pattern that also matched the `test -f` verify step would claim artifacts the
-# workflow leaves alone, and suppress the one disagreement worth printing.
-_WORKFLOW_INSTALL_RE = re.compile(
-    r"install\s+-D\s+\S+\s*(?:\\\s*)?\s*\"?[^\"\s]*/(?:plugins|modules|dlls)/([A-Za-z0-9_.+-]+)"
-)
-
-
-def workflow_rebuilt(path=TIER2_WORKFLOW):
-    """Artifacts the Tier-2 workflow compiles and installs itself, every run.
-
-    Derived from the workflow rather than listed here because this file already
-    carries one hand-kept mirror of a fact owned elsewhere, and says so.
-    Returns None when the workflow cannot be read -- which must stay distinct
-    from "it rebuilds nothing", or an unreadable file would silence the flag.
-    """
-    try:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-    except OSError:
-        return None
-    return {m.group(1) for m in _WORKFLOW_INSTALL_RE.finditer(text)}
-
-
-DRIFT_CHECKER = os.path.join(HERE, "ktp-tier2-stack-drift.py")
-
-
-def fleet_mirrored(path=DRIFT_CHECKER):
-    """Artifacts `sync-runner-stack.py` mirrors from the fleet, by basename.
-
-    Their record is the fleet, not this manifest, so a difference here says
-    nothing -- and saying it anyway is how a healthy runner got written up as a
-    three-artifact defect. Read from the drift checker the sync tool reads, for
-    the same reason: one list, not a fourth copy.
-    """
-    try:
-        spec = importlib.util.spec_from_file_location("ktp_tier2_stack_drift", path)
-        if spec is None or spec.loader is None:
-            return None
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        paths = list(mod.STACK_FILES) + list(mod.PLUGINS_STRICT)
-    # Its top level exits when paramiko is absent, and an unreadable sibling
-    # must not take `--show` down with it.
-    except (OSError, SystemExit, AttributeError):
-        return None
-    return {posixpath.basename(p) for p in paths}
 
 
 def disk_flag(name, disk, manifest_md5, rebuilt, mirrored=frozenset()):
-    """What to say about one artifact's manifest-vs-disk comparison.
+    """What `--show` prints after one artifact's manifest-vs-disk comparison.
 
     The disagreement line used to be unscoped, so it fired on everything whose
     record is deliberately somewhere else -- the plugins the workflow rebuilds
-    per run (each baking a fresh BUILD_TIME, so they can never match what was
-    staged) and the stack files mirrored from the fleet. A reader chasing either
+    per run and the stack files mirrored from the fleet. A reader chasing either
     finds nothing wrong.
     """
-    if disk == "ABSENT":
-        return "  <-- not on the runner"
-    if manifest_md5 == "-" or disk == manifest_md5:
-        return ""
-    if rebuilt is None:
-        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the Tier-2 workflow)"
-    # Workflow first: when a file is both, its bytes are whatever the last run
-    # installed, so that is the honest thing to say about it.
-    if name in rebuilt:
-        return "  <-- rebuilt per run by the Tier-2 workflow; not the build the gate tests"
-    if mirrored is None:
-        return "  <-- MANIFEST DISAGREES WITH DISK (could not read the drift checker)"
-    if name in mirrored:
-        return "  <-- fleet mirror, synced by sync-runner-stack.py; this manifest is not its record"
-    return "  <-- MANIFEST DISAGREES WITH DISK"
+    return flag_text(classify(name, disk, manifest_md5, rebuilt, mirrored))
 
 
-def artifact_dir(name: str) -> str:
-    """Where an artifact lives, by kind.
-
-    The manifest has always tracked modules alongside plugins -- dodx was
-    restaged by hand and its entry says so -- but every path here was built
-    from PLUGIN_DIR, so `--show` looked for a .so among the plugins, found
-    nothing, and printed ABSENT for a file that was present and correct.
-    A tool that reports a missing artifact when the artifact is fine is worse
-    than one that reports nothing.
-    """
-    if name in CORE_BASENAMES:
-        return DLLS_DIR
-    return MODULE_DIR if name.endswith(".so") else PLUGIN_DIR
 MANIFEST = os.environ.get(
     "KTP_TIER2_MANIFEST", posixpath.join(posixpath.dirname(TREE), "stage-manifest.json")
 )
@@ -267,13 +191,30 @@ def show(ssh):
     rebuilt = workflow_rebuilt()
     mirrored = fleet_mirrored()
     print(f"{'artifact':<26} {'version':<12} {'manifest md5':<34} on-disk")
+    unexplained = []
     for n in names:
         e = man.get(n, {})
         disk = on_disk.get(n, "ABSENT")
         mmd5 = e.get("md5", "-")
-        flag = disk_flag(n, disk, mmd5, rebuilt, mirrored)
-        print(f"{n:<26} {e.get('version','-'):<12} {mmd5:<34} {disk}{flag}")
-    return man
+        kind = classify(n, disk, mmd5, rebuilt, mirrored)
+        if kind in UNEXPLAINED:
+            unexplained.append((n, kind))
+        print(f"{n:<26} {e.get('version','-'):<12} {mmd5:<34} {disk}{flag_text(kind)}")
+    return man, unexplained
+
+
+def check_verdict(unexplained):
+    """Exit status and closing line for `--check`.
+
+    Only the two deliberate classes stay quiet. Anything the classifier could
+    not place -- including an unreadable workflow or drift checker -- fails,
+    because "could not tell" is not "nothing wrong".
+    """
+    if not unexplained:
+        return 0, "\nCHECK OK: every manifest/disk difference is workflow-rebuilt or a fleet mirror."
+    lines = [f"\nCHECK FAILED: {len(unexplained)} unexplained manifest/disk disagreement(s):"]
+    lines += [f"  {n}: {kind}" for n, kind in unexplained]
+    return 1, "\n".join(lines)
 
 
 def resolve_version(path, basename, claimed):
@@ -315,19 +256,26 @@ def main():
                          "think you are staging, and staging aborts if the two disagree.")
     ap.add_argument("--expect", metavar="MD5", help="Pin the local md5 to the reviewed build.")
     ap.add_argument("--show", action="store_true", help="Print what the runner holds and exit.")
+    ap.add_argument("--check", action="store_true",
+                    help="As --show, but exit 1 on any manifest/disk disagreement that is neither "
+                         "workflow-rebuilt nor a fleet mirror.")
     ap.add_argument("--dry-run", action="store_true", help="Print intent, do not connect.")
     ap.add_argument("--allow-untracked", action="store_true",
                     help="Stage a plugin that is not a known test-mode plugin.")
     args = ap.parse_args()
-    require_current(__file__,
+    require_current(__file__, also=["runner_manifest.py"],
                     purpose="stage artifacts onto the Tier-2 runner")
 
-    if args.show:
+    if args.show or args.check:
         ssh = connect()
         try:
-            show(ssh)
+            _, unexplained = show(ssh)
         finally:
             ssh.close()
+        if args.check:
+            status, line = check_verdict(unexplained)
+            print(line)
+            sys.exit(status)
         return
 
     if not (args.file and args.as_name):
