@@ -14,11 +14,21 @@ DROPIN = (
     / "ops" / "data-server" / "needrestart" / "conf.d" / "50-ktp-no-auto-restart.conf"
 )
 
-PINNED = ["ktp-ac-api.service", "nginx.service", "hltv@27020.service", "hltv@27043.service"]
+PINNED = [
+    "ktp-ac-api.service",
+    "nginx.service",
+    "hltv@27020.service",
+    "hltv@27043.service",
+    # The stats daemon is one process for the whole fleet; a restart mid-match drops log lines.
+    "hlstatsx.service",
+    "ktp-admin-bot.service",
+]
 # Neighbours that share a prefix with a pinned unit and must still restart normally.
 NOT_PINNED = [
     "hltv-api.service",
     "hltv-demo-renamer.service",
+    "hlstatsx-ingest-monitor.service",
+    "ktp-admin-bot-old.service",
     "nginx-debug.service",
     "ktp-ac-api-old.service",
     "ssh.service",
@@ -48,7 +58,7 @@ def test_file_is_lf_only() -> None:
 
 def test_every_statement_is_an_override_to_zero() -> None:
     code = [l for l in DROPIN.read_text(encoding="utf-8").splitlines() if l and not l.startswith("#")]
-    assert len(code) == len(_patterns()) == 3
+    assert len(code) == len(_patterns()) == 5
 
 
 def test_adds_to_override_rc_instead_of_replacing_it() -> None:
