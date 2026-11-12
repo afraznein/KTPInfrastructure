@@ -141,7 +141,10 @@ def performance_scores(key: str, bindings) -> dict:
     if not wanted:
         return {}
     quoted = ",".join(f'"{m}"' for m in sorted(wanted))
-    reports = fetch(key, "match_report", "match_id,revision,payload",
+    # Only the ratings block, not the whole payload: 80+ full reports in one request is
+    # several hundred KB each and PostgREST cancels it on statement timeout (measured
+    # 2026-11-03, HTTP 500 57014), which is why --use-performance never split a match.
+    reports = fetch(key, "match_report", "match_id,revision,ratings:payload->ratings",
                     f"&match_id=in.({quoted})&order=revision")
     latest = {r["match_id"]: r for r in reports}   # ordered by revision, last wins
     out = {}
@@ -149,7 +152,7 @@ def performance_scores(key: str, bindings) -> dict:
         report = latest.get(binding.get("game_match_id"))
         if not report:
             continue
-        by_alias = PF.components_by_alias(report.get("payload"))
+        by_alias = PF.components_by_alias({"ratings": report.get("ratings")})
         scores = PF.player_scores(by_alias)
         by_id = {alias_to_id[a]: z for a, z in scores.items()
                  if alias_to_id.get(a) is not None}
