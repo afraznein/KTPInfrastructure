@@ -15,10 +15,11 @@ assertion. Driving the real refusal needs a client in the Queue-ID input state,
 and there is no way to get one from this repo: the state is entered only through
 an AMXX menu selection, the interception requires `id == g_13CaptainId`, and
 KTPMatchHandler's own `match_start_with_args` comment records that fake-client
-`engclient_cmd("say")` does not traverse the registered chat handler. A
-behavioural test needs a `KTP_TEST_MODE` rcon in KTPMatchHandler that calls
-`handle_13_queue_id_input` directly; none exists, so that gap is named here
-rather than papered over with a weaker test that reads like a strong one.
+`engclient_cmd("say")` does not traverse the registered chat handler. The
+behavioural half lives in `test_queue_id_refusal_behaviour.py`, which drives
+`amx_ktp_test_13_queue_id_input` (KTPMatchHandler#64), a test-mode rcon that
+calls `handle_13_queue_id_input` directly. It runs once the pinned source
+registers that rcon; these ordering assertions hold either way.
 
 The assertions are ordering facts, which is what the incident actually turned
 on: the guard has to sit ahead of the sanitizer (or a `.`-prefixed token still
@@ -187,10 +188,14 @@ def test_both_chat_command_prefixes_are_refused(body):
 def test_guard_precedes_the_sanitizer(body):
     """Order is the whole fix. The sanitizer strips `.` from the input, so a
     guard placed after it can never see a command prefix."""
+    # The sanitizer is the loop that walks `input`; 0.10.184 added a second loop
+    # (the reserved-word check), which walks the word list instead.
     loops = [m.start() for m in re.finditer(r"\bfor\s*\(", body)]
-    assert len(loops) == 1, f"expected one loop (the sanitizer), found {len(loops)}"
+    assert loops, "no loop at all in the function"
+    sanitizers = [at for at in loops if re.match(r"for\s*\([^;]*;\s*input\[", body[at:])]
+    assert len(sanitizers) == 1, f"expected one loop over input (the sanitizer), found {len(sanitizers)}"
     guard_at, _ = _guard(body)
-    assert guard_at < loops[0]
+    assert guard_at < sanitizers[0]
 
 
 def test_guard_precedes_both_input_state_branches(body):
