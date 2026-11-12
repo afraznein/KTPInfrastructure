@@ -254,6 +254,13 @@ failing run from a stopped timer:** the hourly health sweep's generic `failed-un
 reports any unit left in `failed` state (`FAILED_UNIT_IGNORE` is empty by default and is
 empty on the box). It catches a oneshot whose failure PERSISTS — so it covers the weekly
 sweep and not a 60-second one.
+✅ **A fourth, since 2026-11-12: run-record age.** Units wrapped by
+`ktp-run-record.sh` are aged by the same sweep on their newest `runs/*` file
+(`<unit>-run-record=stale` / `unfinished` / `none`; table and thresholds in
+[`UNIT_RUN_RECORDS.md`](UNIT_RUN_RECORDS.md) § Who reads the records). It sees what
+the other three cannot: a run SIGKILLed past its timeout, and a unit that stopped
+being run while its timer is outside `CRITICAL_TIMERS` — `ktp-telemetry-export` is
+one, so for that unit this is the only stopped-running leg.
 
 ⛔ **`ktp-monday-reminder.timer` is the only one deliberately left out** — a reminder that
 fails to arrive is noticed by the people expecting it. 🔻 **That sentence used to read
