@@ -61,7 +61,10 @@
 #      2026-10-28: the commonest cause is a path in the distributor's watch
 #      patterns that NO target accepts, which parses fine and is not fixed by a
 #      reader. Those are counted out separately so the issue title stops naming
-#      a malformed file that does not exist.
+#      a malformed file that does not exist. A path every target names in
+#      `excludePatterns` is not counted at all (ruled 2026-11-12): that entry is
+#      the declared exception. It stays in the transition baseline, so a path
+#      entering or leaving that set is still news once.
 #
 # Inputs (cwd):  audit-stdout.txt  audit-report.md  restart-drift.txt
 #                distribute-drift.txt  config-key-drift.txt  health-state.json
@@ -147,10 +150,10 @@ fi
 #        path never ran. `instances compared:` is the completion marker.
 #      * a path that could not be COMPARED. That is a question left open, not
 #        drift, and it stays open until someone gives the file a reader or the
-#        exclusion that silenced it is reconciled. ⛔ Taking it out of scope in
-#        servers.json does NOT retire it -- the key check never intersects scope
-#        with accepts, which is how `listip.cfg` became a permanent nag by
-#        following the runbook. Finite and actionable, so it nags.
+#        exclusion that silenced it is reconciled. Finite and actionable, so it
+#        nags. The one exception is a path every target names in
+#        `excludePatterns`: the key check keeps it in scope and prints it, and
+#        the count it reports as `ruled-excluded:` is not counted here.
 if ! grep -q 'instances compared:' config-key-drift.txt 2>/dev/null; then
     reasons="${reasons}Config-key-drift check did not complete. "
 else
@@ -181,10 +184,20 @@ else
     # which is why it defaults to 0 rather than failing the leg.
     key_excluded="$(sed -n 's/.*excluded-everywhere: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
     key_excluded="${key_excluded:-0}"
-    if [ "$key_uncompared" -gt 0 ]; then
-        reasons="${reasons}${key_uncompared} config path(s) could not be compared, so nothing was checked for them. "
-        if [ "$key_excluded" -gt 0 ]; then
-            reasons="${reasons}${key_excluded} of those parse fine and are accepted by no target. "
+    # A subset of THAT: paths servers.json excludes by name on every target, the
+    # declared exception (ruled 2026-11-12). The only count subtracted. A value
+    # that is not a subset is ignored, so a malformed headline fires rather than
+    # silencing the leg.
+    key_ruled="$(sed -n 's/.*ruled-excluded: \([0-9]\+\).*/\1/p' config-key-drift.txt | tail -1)"
+    key_ruled="${key_ruled:-0}"
+    if [ "$key_ruled" -gt "$key_excluded" ]; then
+        key_ruled=0
+    fi
+    key_open=$((key_uncompared - key_ruled))
+    if [ "$key_open" -gt 0 ]; then
+        reasons="${reasons}${key_open} config path(s) could not be compared, so nothing was checked for them. "
+        if [ $((key_excluded - key_ruled)) -gt 0 ]; then
+            reasons="${reasons}$((key_excluded - key_ruled)) of those parse fine and are accepted by no target. "
         fi
     fi
 fi

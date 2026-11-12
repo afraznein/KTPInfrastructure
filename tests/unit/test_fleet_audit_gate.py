@@ -514,3 +514,76 @@ def test_a_missing_config_key_report_is_news_not_silence(tmp_path):
     work, state = tmp_path / "w", tmp_path / "s"
     _lay(work, config_key=None)
     assert "Config-key-drift check did not complete" in _run(work, state)["reason"]
+
+
+# A path every target names in `excludePatterns` is the declared exception
+# (ruled 2026-11-12), so it alone must not keep the weekly issue open. Anything
+# else that could not be compared still fires, alone or beside one.
+LISTIP_LINE = ("KEYDRIFT-INCONCLUSIVE: listip.cfg in the distributor's watch "
+               "patterns but accepted by no target\n")
+
+
+def _key(inconclusive, excluded, ruled, lines=""):
+    return lines + (CLEAN_CONFIG_KEY
+                    .replace("inconclusive: 0", "inconclusive: %d" % inconclusive)
+                    .replace("excluded-everywhere: 0",
+                             "excluded-everywhere: %d  ruled-excluded: %d"
+                             % (excluded, ruled)))
+
+
+def test_a_ruled_excluded_path_alone_is_not_news(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    for _ in range(2):
+        _lay(work, config_key=_key(1, 1, 1, LISTIP_LINE))
+        out = _run(work, state)
+        assert out["needs_triage"] == "false", out
+        assert out["reason"] == "Nothing new."
+
+
+def test_an_unruled_uncompared_path_still_fires(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=_key(1, 0, 0))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "1 config path(s) could not be compared" in out["reason"]
+
+
+def test_an_excluded_but_unruled_path_still_fires(tmp_path):
+    """Accepted by no target through `includePatterns` alone: never declared."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=_key(1, 1, 0))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "1 config path(s) could not be compared" in out["reason"]
+    assert "1 of those parse fine and are accepted by no target" in out["reason"]
+
+
+def test_a_ruled_path_beside_an_unruled_one_still_fires_for_the_unruled(tmp_path):
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=_key(2, 1, 1, LISTIP_LINE))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "1 config path(s) could not be compared" in out["reason"]
+    assert "accepted by no target" not in out["reason"]
+
+
+def test_a_ruled_count_that_is_not_a_subset_is_ignored(tmp_path):
+    """A malformed headline must fire, not silence the leg."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work, config_key=_key(2, 0, 2))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "2 config path(s) could not be compared" in out["reason"]
+
+
+def test_a_path_becoming_ruled_is_news_once(tmp_path):
+    """It stays in the transition baseline: a new exclusion is seen once."""
+    work, state = tmp_path / "w", tmp_path / "s"
+    _lay(work)
+    assert _run(work, state)["needs_triage"] == "false"
+    _lay(work, config_key=_key(1, 1, 1, LISTIP_LINE))
+    out = _run(work, state)
+    assert out["needs_triage"] == "true"
+    assert "Config key drift changed since last run" in out["reason"]
+    _lay(work, config_key=_key(1, 1, 1, LISTIP_LINE))
+    assert _run(work, state)["needs_triage"] == "false"

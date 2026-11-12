@@ -379,3 +379,56 @@ def test_a_bracketed_cvar_value_is_not_a_section_header():
     flavour, keys = pt('hostname "[KTP] Dallas 1"\nmp_timelimit 30\n', "c")
     assert flavour == CVAR
     assert keys == {"hostname": "[KTP] Dallas 1", "mp_timelimit": "30"}
+
+
+# ------------------------------- ruled-excluded: the one count the gate drops
+# Ruled 2026-11-12. Only a path every target names in `excludePatterns` is
+# declared off the fleet; one that falls out through `includePatterns`, or is
+# excluded on fewer than all targets, or is absent from the source, is not.
+def _targets(n=24, include=None, exclude=("listip.cfg",)):
+    t = {"excludePatterns": list(exclude)}
+    if include is not None:
+        t["includePatterns"] = list(include)
+    return [dict(t, name="dod-%d" % i) for i in range(n)]
+
+
+def test_a_path_excluded_by_name_on_every_target_is_ruled(check):
+    inc = {"listip.cfg": check.reason_excluded_everywhere()}
+    assert check.ruled_excluded(inc, _targets()) == ["listip.cfg"]
+
+
+def test_a_path_that_only_falls_out_of_include_patterns_is_not_ruled(check):
+    inc = {"other.cfg": check.reason_excluded_everywhere()}
+    assert check.ruled_excluded(inc, _targets(include=["*.ini"])) == []
+
+
+def test_a_path_excluded_on_fewer_than_every_target_is_not_ruled(check):
+    inc = {"listip.cfg": check.reason_excluded_everywhere()}
+    targets = _targets() + _targets(n=1, exclude=())
+    assert check.ruled_excluded(inc, targets) == []
+
+
+def test_an_excluded_path_that_is_absent_or_unparsable_is_not_ruled(check):
+    from ktp_config_kv import MIXED  # noqa: PLC0415
+
+    inc = {"listip.cfg": "absent from the source tree"}
+    assert check.ruled_excluded(inc, _targets()) == []
+    inc = {"listip.cfg": check.reason_source_unparsable(MIXED, True)}
+    assert check.ruled_excluded(inc, _targets()) == []
+
+
+def test_no_targets_rules_nothing(check):
+    inc = {"listip.cfg": check.reason_excluded_everywhere()}
+    assert check.ruled_excluded(inc, []) == []
+
+
+def test_the_headline_carries_the_ruled_count(check):
+    _, _, headline = check.build_report(
+        {}, {"source_root": "/x", "instances_expected": 24,
+             "instances_compared": 24, "paths_in_scope": 1,
+             "paths_compared": 0, "keys_compared": 0,
+             "paths_with_nothing_to_compare": 0,
+             "paths_excluded_everywhere": 1, "paths_ruled_excluded": 1},
+        {"listip.cfg": check.reason_excluded_everywhere()}, [], {}, False)
+    assert "inconclusive: 1" in headline
+    assert "excluded-everywhere: 1  ruled-excluded: 1" in headline
