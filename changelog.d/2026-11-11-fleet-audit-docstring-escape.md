@@ -12,7 +12,7 @@ SyntaxErrors, and then the script would not start at all.
 
 ### `ci`: the fleet-audit triage gets a turn cap it can finish inside (2026-11-11)
 
-The triage step's `--max-turns 45` failed run 42955296706 after Claude had already
+The triage step's `--max-turns 45` failed run 42955296706 after the triage had already
 finished, at 47 turns, so the publish step was skipped and nothing was posted. This
 is the second time; run 34990174564 failed the same way. The cap is 100 now. That
 run averaged about 11 seconds a turn, so 100 turns still fits inside the job's
