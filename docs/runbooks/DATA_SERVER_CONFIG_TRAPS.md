@@ -197,8 +197,9 @@ upgrade, not when someone ships it. Install-then-wait is not a deploy pattern he
 
 `/etc/needrestart/conf.d/50-ktp-no-auto-restart.conf` (tracked copy:
 `ops/data-server/needrestart/conf.d/50-ktp-no-auto-restart.conf`) adds
-`override_rc => 0` entries for `ktp-ac-api.service`, `nginx.service` and
-`hltv@*.service`. The upgrade still installs; those services are listed as
+`override_rc => 0` entries for `ktp-ac-api.service`, `nginx.service`,
+`hltv@*.service`, `hlstatsx.service` and `ktp-admin-bot.service`. The upgrade
+still installs; those services are listed as
 deferred and keep running the old library until restarted by hand, outside
 match time. See what is pending without changing anything:
 
@@ -208,6 +209,11 @@ needrestart -r l -m a -l      # list mode never restarts; deferred units are lis
 
 The entries add to the stock hash rather than replace it, so dbus, getty and
 `systemd-logind` stay protected. Every other service still restarts automatically.
+
+The last two were added after a `perl` upgrade at 06:07 ET on 2026-11-11 restarted
+both. The HLStatsX daemon is a single Perl process that ingests logs for the whole
+fleet, so any perl or libmysqlclient upgrade bounces it, and log lines sent during the
+restart are lost. `hlstatsx-ingest-monitor.service` is deliberately not pinned.
 
 ## Measuring disk through a symlink
 

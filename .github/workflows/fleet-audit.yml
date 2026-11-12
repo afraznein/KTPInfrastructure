@@ -292,11 +292,12 @@ jobs:
           # Overrunning --max-turns FAILS the job even when the triage was
           # written, and the publish step is skipped behind it: run
           # 34990174564 finished in 27 turns with is_error false and posted
-          # nothing. The real ceiling is this job's 20-minute timeout, and
-          # those 27 turns cost under five.
+          # nothing. Run 42955296706 did it again at 47 against a cap of 45.
+          # The real ceiling is this job's 20-minute timeout, so size the cap
+          # from that: that run spent about 11 seconds a turn.
           claude_args: |
             --model claude-opus-5
-            --max-turns 45
+            --max-turns 100
             --allowedTools "Read,Write"
           # Read and Write only. Claude cannot run a command, reach the network,
           # or touch GitHub -- it reads a report and writes a file. The step after

@@ -34,19 +34,12 @@ Design notes:
   `expected-*.conf` in the same change, not trusting that a clean report means
   nothing changed.
 
-Deployment (as weekly audit):
-- Target host: data server (<DATA_SERVER_IP>) — always up, already runs other
-  fleet ops, has Python + SSH keys for dodserver.
-- Clone KTPInfrastructure to /opt/ktp-infra (or wherever).
-- Install paramiko: `pip3 install paramiko` (or apt).
-- Add crontab entry on data server, e.g.:
-    0 5 * * MON cd /opt/ktp-infra && python3 scripts/audit-fleet-drift.py \\
-        --out /var/log/ktp-audit-$(date +\%Y\%m\%d).md \\
-        --state /var/lib/ktp-audit-state.json \\
-        --alert-discord 2>&1 | tail -20 | mail -s 'KTP fleet drift' admin@ktp
-- State file persists repo-drift items between runs; --alert-discord posts
-  only the NEW items vs last run (not the full report) to the KTP Discord
-  channel so silent drift creeping in triggers a notification.
+Deployment:
+- .github/workflows/fleet-audit.yml runs this weekly on the data server's
+  self-hosted runner from a fresh checkout of the reviewed commit. The old
+  /opt/ktp-infra cron is retired; docs/runbooks/FLEET_AUDIT_ACCESS.md has why.
+- --state persists repo-drift items between runs so the gate and
+  --alert-discord see only what is NEW since the last run.
 """
 from __future__ import annotations
 
