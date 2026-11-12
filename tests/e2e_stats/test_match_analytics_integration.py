@@ -349,7 +349,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 40
+    assert report["schema_version"] == 41
     # Migration 054 is not in this fixture: the death-group block says the
     # columns are absent and carries no numbers at all.
     assert report["death_group"]["status"] == "unavailable"

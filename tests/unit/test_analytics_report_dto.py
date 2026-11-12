@@ -477,7 +477,7 @@ class Sanitize(unittest.TestCase):
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
     def test_contract_is_v1_14_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.18.0")
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.19.0")
 
     def test_connection_block_publishes_the_box_and_never_a_player(self):
         rep = internal_report()
@@ -598,6 +598,79 @@ class Sanitize(unittest.TestCase):
         for bad in ("player_id", "steam_id", "0:123"):
             self.assertNotIn(bad, body)
 
+    def test_outnumbered_kills_whitelisted(self):
+        rep = internal_report()
+        rep["players"][0]["outnumbered_kills"] = 3
+        rep["outnumbered_kills"] = {
+            "definition": "outnumbered_kill_v1", "definition_version": 1,
+            "parameters": {"margin": 2, "killer_counted": "always"},
+            "status": "available", "flags": ["censored-kills"],
+            "coverage": {"kills": 9, "evaluated": 8, "censored": 1, "unordered": 0,
+                         "event_ids": [1]},
+            "margin_histogram": {"2": 3},
+            "rows": [{"player_id": 7, "steam_id": "0:123", "player_name_at_match": "A",
+                      "team": 1, "half": 1, "side": "Allies", "kills": 9,
+                      "outnumbered_kills": 3, "lower_bound": True}],
+            "players": [{"player_id": 7, "player_name_at_match": "A", "team": 1,
+                         "kills": 9, "outnumbered_kills": 3,
+                         "by_side": {"Allies": 3, "Axis": None}, "lower_bound": True}]}
+        dto = sanitize_report(rep)
+        ok = dto["outnumbered_kills"]
+        self.assertEqual(dto["players"][0]["outnumbered_kills"], 3)
+        self.assertEqual(ok["rows"][0], {"name": "A", "team": 1, "half": 1,
+                                         "side": "Allies", "kills": 9,
+                                         "outnumbered_kills": 3, "lower_bound": True})
+        self.assertEqual(ok["players"][0]["by_side"], {"Allies": 3, "Axis": None})
+        self.assertEqual(ok["parameters"], {"margin": 2, "killer_counted": "always"})
+        self.assertNotIn("margin_histogram", ok)
+        self.assertNotIn("event_ids", ok["coverage"])
+        body = json.dumps(ok)
+        for bad in ("player_id", "steam_id", "0:123"):
+            self.assertNotIn(bad, body)
+
+    def test_fight_clutches_whitelisted(self):
+        rep = internal_report()
+        rep["players"][0]["fight_clutches"] = 1
+        rep["shadow_explorations"]["fight_clutches"] = {
+            "definition": "fight_clutch_v1", "definition_version": 1,
+            "parameters": {"min_living_enemies": 2, "absent_from_half": "not_alive"},
+            "status": "available", "visibility": "public_dto", "caveats": [],
+            "evaluated_windows": 30, "censored_windows": 1,
+            "clutches": [{"half": 2, "attempt_id": 44, "flag_name": "Church",
+                          "player_id": 7, "team": 1, "against": 3, "kind": "capture"}],
+            "players": [{"player_id": 7, "clutches": 1}]}
+        dto = sanitize_report(rep)
+        fc = dto["fight_clutches"]
+        self.assertEqual(dto["players"][0]["fight_clutches"], 1)
+        self.assertEqual(fc["coverage"], {"evaluated_windows": 30, "censored_windows": 1})
+        self.assertEqual(fc["events"], [{"half": 2, "flag_name": "Church", "name": "A",
+                                         "team": 1, "against": 3, "kind": "capture"}])
+        self.assertEqual(fc["players"], [{"name": "A", "fight_clutches": 1}])
+        body = json.dumps(fc)
+        for bad in ("player_id", "attempt_id", "visibility"):
+            self.assertNotIn(bad, body)
+
+    def test_the_two_clutch_stats_stay_separate(self):
+        """Ruled 2026-10-05: two keys, never one summed "clutches" total."""
+        dto = sanitize_report(internal_report())
+        self.assertIn("outnumbered_kills", dto)
+        self.assertIn("fight_clutches", dto)
+        self.assertNotIn("clutches", dto)
+        self.assertFalse([k for k in dto["players"][0] if k == "clutches"])
+
+    def test_a_fight_clutch_envelope_from_before_schema_41_reads_unavailable(self):
+        """The old envelope censored a whole half for one absent player."""
+        rep = internal_report()
+        rep["shadow_explorations"]["fight_clutches"] = {
+            "definition": "fight_clutch_v1", "definition_version": 1,
+            "parameters": {"min_living_enemies": 2}, "status": "available",
+            "evaluated_windows": 3, "censored_windows": 27, "clutches": [],
+            "players": []}
+        fc = sanitize_report(rep)["fight_clutches"]
+        self.assertEqual((fc["status"], fc["flags"], fc["events"]),
+                         ("unavailable", ["not-in-report"], []))
+        self.assertIsNone(fc["coverage"]["evaluated_windows"])
+
     def test_side_splits_whitelisted(self):
         rep = internal_report()
         rep["weapon_sides"] = {"status": "available", "flags": [], "reconciled": True,
@@ -638,6 +711,10 @@ class Sanitize(unittest.TestCase):
                              ("unavailable", ["not-in-report"], []), block)
         self.assertIsNone(dto["players"][0]["best_streak"])
         self.assertIsNone(dto["kill_streaks"]["coverage"]["ordered_frags"])
+        self.assertEqual(dto["outnumbered_kills"]["status"], "unavailable")
+        self.assertIsNone(dto["outnumbered_kills"]["coverage"]["kills"])
+        self.assertIsNone(dto["players"][0]["outnumbered_kills"])
+        self.assertIsNone(dto["players"][0]["fight_clutches"])
 
     def test_duels_cross_team_only(self):
         d = sanitize_report(internal_report())["duels"]
