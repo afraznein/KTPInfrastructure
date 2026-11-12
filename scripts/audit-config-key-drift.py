@@ -408,6 +408,21 @@ def reason_excluded_everywhere():
             "so no instance was compared -- the file itself parsed")
 
 
+def ruled_excluded(inconclusive, targets):
+    """Uncompared paths that every target names in `excludePatterns`.
+
+    That entry is the declared per-instance exception, so these were taken off
+    the fleet on purpose and the gate stops counting them. A path that falls out
+    only through `includePatterns` was never declared and stays counted, and so
+    does one that is absent from the source or does not parse.
+    """
+    reason = reason_excluded_everywhere()
+    return sorted(
+        rel for rel, why in inconclusive.items()
+        if why == reason and targets
+        and all(DIST.matches_any(rel, t.get("excludePatterns") or []) for t in targets))
+
+
 def reason_unreadable_on_accepting(accepting):
     return ("absent or unparsable on all %d instance(s) that accept it"
             % accepting)
@@ -506,12 +521,14 @@ def build_report(findings, stats, inconclusive, unreachable, previous, verbose):
     # path never prints its name.
     headline = ("instances compared: %d/%d  paths compared: %d/%d  "
                 "keys compared: %d  findings: %d  inconclusive: %d  "
-                "nothing-to-compare: %d  excluded-everywhere: %d"
+                "nothing-to-compare: %d  excluded-everywhere: %d  "
+                "ruled-excluded: %d"
                 % (stats["instances_compared"], stats["instances_expected"],
                    stats["paths_compared"], stats["paths_in_scope"],
                    stats["keys_compared"], len(findings), len(inconclusive),
                    stats["paths_with_nothing_to_compare"],
-                   stats.get("paths_excluded_everywhere", 0)))
+                   stats.get("paths_excluded_everywhere", 0),
+                   stats.get("paths_ruled_excluded", 0)))
     lines.append(headline)
     return "\n".join(lines) + "\n", stable, headline
 
@@ -811,6 +828,9 @@ def run(args):
         # A subset of `inconclusive`, surfaced so the gate can stop calling an
         # excluded path a parse failure. Not subtracted from it.
         "paths_excluded_everywhere": len(excluded_everywhere),
+        # A subset of that again: the ones servers.json excludes by name on
+        # every target. The only count the gate subtracts.
+        "paths_ruled_excluded": len(ruled_excluded(inconclusive, targets)),
     }
 
     # --- state: the durable timeline. Its mtime is the proof the check ran, and
@@ -863,6 +883,7 @@ def run(args):
             # from "servers.json took it off every target", which the path name
             # alone cannot say.
             "excluded_everywhere": sorted(excluded_everywhere),
+            "ruled_excluded": ruled_excluded(inconclusive, targets),
             "unreachable": sorted(unreachable),
             "findings": current,
         }
