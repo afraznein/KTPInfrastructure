@@ -6,8 +6,8 @@ correlated `EXISTS` into `hlstats_Events_Frags` that made every assist row scan
 the frag table by `serverId`: about 58 million rows and five minutes per report.
 `hlstats_Events_Frags` is MyISAM, so for the whole query the stats daemon's frag
 `UPDATE` waited on the table lock, stopped reading its UDP socket and dropped
-log lines. Every daemon lock wait over a minute since 2026-11-10 ends at the same
-instant as one of these queries, including the 2026-11-11 18:05–18:10 ET stall
+log lines. All 17 daemon lock waits over a minute since 2026-11-10 18:07 ET end at
+the same instant as one of these queries, including the 2026-11-11 18:05–18:10 ET stall
 (314 s wait, 623 datagrams dropped mid-match).
 
 - Each BINARY match-id test now sits beside a plain equality, so the subqueries
