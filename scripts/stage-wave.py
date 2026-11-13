@@ -615,6 +615,24 @@ def stage(host_keys, artifacts, parallel, port_filter=None):
     return outcomes, missing
 
 
+# Printed through the wrapper because a bare ktp-verify-deploy.py on a workstation
+# has neither credential and refuses (exit 4), so the copy-pasteable command has to
+# be the one that reaches the rcon leg. --include-engine always: an out-of-band
+# engine push is exactly what a plugin wave's sign-off would otherwise not look at.
+SIGNOFF_WRAPPER = "python scripts/run-fleet-script.py"
+
+
+def morning_after_commands() -> list:
+    return [
+        f"  {SIGNOFF_WRAPPER} ktp-verify-deploy.py --scope all --include-engine --check-runtime",
+        "    <- every instance against the reference, on disk AND loaded (rcon).",
+        f"  {SIGNOFF_WRAPPER} ktp-wave-ledger.py reconcile",
+        "    <- re-reads the fleet, then FAILS if the version row still disagrees.",
+        "    Not optional in practice: until that row agrees, the next stage-wave is blocked.",
+        "  From a worktree, set KTP_HOSTS_DIR to the project root first.",
+    ]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-f", "--file", action="append", default=[], dest="files",
@@ -1031,13 +1049,8 @@ def main():
     print("Activates at the next 03:00 ET nightly swap. No restart performed.")
     print("\nMorning-after (AFTER activation + this verify passes -- the runner mirrors the")
     print("LIVE fleet, so update it only once the fleet is confirmed on the new build):")
-    vc = "  ktp-verify-deploy.py --check-runtime"
-    if is_engine:
-        vc += " --include-engine"
-    print(vc)
-    print("  ktp-wave-ledger.py reconcile   <- re-reads the fleet, then FAILS if the")
-    print("                                    CLAUDE.md version row still disagrees.")
-    print("    Not optional in practice: until that row agrees, the next stage-wave is blocked.")
+    for line in morning_after_commands():
+        print(line)
     if is_module or is_engine:
         print("  + re-sync the tier-2 runner STACK (module/engine changed) -- see the runner note in CLAUDE.md.")
     if is_plugin:
