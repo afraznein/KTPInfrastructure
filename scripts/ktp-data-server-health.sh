@@ -684,6 +684,9 @@ RUN_RECORD_UNIT_DIR="${RUN_RECORD_UNIT_DIR:-/etc/systemd/system}"
 # window plus slack, since a .part past that means the wrapper never got to promote it.
 # Not listed, each with its own leg above: ktp-render-banlist (three-leg ban-list
 # check) and ktp-migrations-applied-check (its success stamp). One fault, one item.
+# Optional 4th/5th fields: the records subdirectory (default runs) and the ExecStart=
+# pattern that opts the unit in (default ktp-run-record), for a unit that keeps the
+# same dated-file-plus-.part shape with a runner of its own.
 RUN_RECORD_UNITS=(
     "ktp-weekly-outliers 691200 2700"
     "ktp-voice-taunts 108000 1500"
@@ -692,15 +695,19 @@ RUN_RECORD_UNITS=(
     "ktp-hlstatsx-ingest-monitor 10800 1800"
     "ktp-telemetry-export 10800 1500"
     "ktp-stats-export 3600 1200"
+    # keep-the-prac's unit; its runner writes reports/<UTC>.txt via a .part itself.
+    "ktp-identity-reconcile 691200 1800 reports reconcile-identities-run"
 )
-run_record_age() {  # $1 = unit, $2 = record ceiling, $3 = .part ceiling, $4 = now epoch
-    local unit="$1" runs="$RUN_RECORD_ROOT/$1/runs" unit_file="$RUN_RECORD_UNIT_DIR/$1.service"
-    local newest=0 part=0 f e
+run_record_age() {  # $1 = unit, $2 = record ceiling, $3 = .part ceiling, $4 = now epoch,
+                    # [$5 = records subdir, $6 = ExecStart= pattern]
+    local unit="$1" runs="$RUN_RECORD_ROOT/$1/${5:-runs}" unit_file="$RUN_RECORD_UNIT_DIR/$1.service"
+    local runner="${6:-ktp-run-record}" newest=0 part=0 f e
     # Keyed on the directive, not a mention: a comment naming the wrapper is not the wrapper.
     # Not installed, or installed unwrapped, means nothing writes here yet -- not a fault.
-    grep -qE '^ExecStart=.*ktp-run-record' "$unit_file" 2>/dev/null || return 0
+    grep -qE "^ExecStart=.*${runner}" "$unit_file" 2>/dev/null || return 0
     for f in "$runs"/*.txt; do
-        [ -f "$f" ] || continue
+        # A latest.txt symlink is a pointer, not a run; only the dated files are judged.
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
         e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
         if [ "$e" -gt "$newest" ]; then newest="$e"; fi
     done
@@ -728,11 +735,11 @@ run_record_age() {  # $1 = unit, $2 = record ceiling, $3 = .part ceiling, $4 = n
 # <<< ktp-run-record-age
 run_record_now="$(date +%s)"
 for _rr in "${RUN_RECORD_UNITS[@]}"; do
-    read -r _rr_unit _rr_max _rr_part <<< "$_rr"
+    read -r _rr_unit _rr_max _rr_part _rr_dir _rr_exec <<< "$_rr"
     while IFS=$'\t' read -r _key _note; do
         if [ -z "${_key:-}" ]; then continue; fi
         down+=("$_key"); detail[$_key]="$_note"
-    done <<< "$(run_record_age "$_rr_unit" "$_rr_max" "$_rr_part" "$run_record_now")"
+    done <<< "$(run_record_age "$_rr_unit" "$_rr_max" "$_rr_part" "$run_record_now"                  "${_rr_dir:-runs}" "${_rr_exec:-ktp-run-record}")"
 done
 
 # HLTV instance coverage — check each port in the expected set,
