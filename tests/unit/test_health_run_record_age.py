@@ -28,6 +28,13 @@ HOUR = 3600
 DAY = 86400
 # Units that use the wrapper but are aged by a dedicated leg elsewhere in the script.
 OWN_LEG = {"ktp-render-banlist", "ktp-migrations-applied-check"}
+# Aged units whose unit files live in another repo, so the cadence and timeout checks
+# below cannot read them here. Copied from keep-the-prac
+# scripts/systemd/ktp-identity-reconcile.{timer,service}; a change there must land here.
+FOREIGN = {
+    "ktp-identity-reconcile": {"OnCalendar": "Tue 09:00 America/New_York",
+                               "TimeoutStartSec": "15min"},
+}
 
 pytestmark = pytest.mark.skipif(shutil.which(BASH) is None, reason="needs bash")
 
@@ -39,14 +46,19 @@ def block(name):
     return text.split(begin, 1)[1].split("\n", 1)[1].split(end, 1)[0]
 
 
-def table():
-    """unit -> (record ceiling, .part ceiling), as the shipped script has it."""
+def rows():
+    """unit -> (record ceiling, .part ceiling, subdir, runner), as the shipped script has it."""
     body = block("ktp-run-record-age")
     arr = re.search(r"^RUN_RECORD_UNITS=\((.*?)^\)", body, re.M | re.S)
     assert arr, "RUN_RECORD_UNITS is gone from the shipped leg"
-    rows = re.findall(r'^\s*"(\S+) (\d+) (\d+)"', arr.group(1), re.M)
-    assert rows, "RUN_RECORD_UNITS parsed to nothing"
-    return {u: (int(a), int(b)) for u, a, b in rows}
+    found = re.findall(r'^\s*"(\S+) (\d+) (\d+)(?: (\S+))?(?: (\S+))?"', arr.group(1), re.M)
+    assert found, "RUN_RECORD_UNITS parsed to nothing"
+    return {u: (int(a), int(b), d or "runs", x or "ktp-run-record") for u, a, b, d, x in found}
+
+
+def table():
+    """unit -> (record ceiling, .part ceiling)."""
+    return {u: r[:2] for u, r in rows().items()}
 
 
 def wrapped_units():
@@ -68,11 +80,14 @@ def span(value):
 
 def cadence(unit):
     """Seconds between fires, from the unit's timer. Unknown forms fail loudly."""
-    text = (UNITS / ("%s.timer" % unit)).read_text(encoding="utf-8")
-    m = re.search(r"^OnUnitActiveSec=(\S+)", text, re.M)
-    if m:
-        return span(m.group(1))
-    cal = re.search(r"^OnCalendar=(.+)$", text, re.M).group(1).strip()
+    if unit in FOREIGN:
+        cal = FOREIGN[unit]["OnCalendar"]
+    else:
+        text = (UNITS / ("%s.timer" % unit)).read_text(encoding="utf-8")
+        m = re.search(r"^OnUnitActiveSec=(\S+)", text, re.M)
+        if m:
+            return span(m.group(1))
+        cal = re.search(r"^OnCalendar=(.+)$", text, re.M).group(1).strip()
     if cal == "hourly" or re.fullmatch(r"\*:\d\d", cal):
         return HOUR
     m = re.fullmatch(r"\*:0/(\d+)", cal)
@@ -86,30 +101,42 @@ def cadence(unit):
 
 
 def run(tmp_path, unit="ktp-voice-taunts", records=(), parts=(), unit_age=30 * DAY,
-        installed=True, wrapped=True, ceiling=None, part_ceiling=None):
-    """Lay down a unit file and record fixtures `age` seconds old; ask the shipped leg."""
+        installed=True, wrapped=True, ceiling=None, part_ceiling=None, exec_line=None,
+        subdir=None, symlinks=()):
+    """Lay down a unit file and record fixtures `age` seconds old; ask the shipped leg.
+
+    The records subdir and runner pattern are the shipped row's, passed the way the
+    sweep's own loop passes them; `subdir` only moves where the fixtures are written.
+    """
     now = int(time.time())
     lib, sysd = tmp_path / "lib", tmp_path / "systemd"
-    runs = lib / unit / "runs"
+    shipped = rows().get(unit, (108000, 1500, "runs", "ktp-run-record"))
+    runs = lib / unit / (subdir or shipped[2])
     runs.mkdir(parents=True, exist_ok=True)
     sysd.mkdir(exist_ok=True)
     if installed:
         uf = sysd / ("%s.service" % unit)
-        exec_line = ("ExecStart=/usr/local/bin/ktp-run-record.sh /bin/true" if wrapped
-                     else "# ExecStart=/usr/local/bin/ktp-run-record.sh, someday\n"
-                          "ExecStart=/bin/true")
+        if exec_line is None:
+            exec_line = ("ExecStart=/usr/local/bin/ktp-run-record.sh /bin/true" if wrapped
+                         else "# ExecStart=/usr/local/bin/ktp-run-record.sh, someday\n"
+                              "ExecStart=/bin/true")
         uf.write_text("[Service]\n%s\n" % exec_line, encoding="utf-8", newline="\n")
         os.utime(uf, (now - unit_age, now - unit_age))
     for name, age in list(records) + list(parts):
         f = runs / name
         f.write_text("fixture\n", encoding="utf-8")
         os.utime(f, (now - age, now - age))
-    shipped = table().get(unit, (108000, 1500))
+    for name, target in symlinks:
+        try:
+            os.symlink(target, runs / name)
+        except (OSError, NotImplementedError):
+            pytest.skip("this platform cannot create a symlink fixture")
     body = "set -Eeuo pipefail\nRUN_RECORD_ROOT='%s'\nRUN_RECORD_UNIT_DIR='%s'\n%s\n" \
-           "run_record_age %s %d %d %d\n" % (
+           "run_record_age %s %d %d %d %s %s\n" % (
                lib.as_posix(), sysd.as_posix(), block("ktp-run-record-age"), unit,
                ceiling if ceiling is not None else shipped[0],
-               part_ceiling if part_ceiling is not None else shipped[1], now)
+               part_ceiling if part_ceiling is not None else shipped[1], now,
+               shipped[2], shipped[3])
     probe = tmp_path / "probe.sh"
     probe.write_text(body, encoding="utf-8", newline="\n")
     r = subprocess.run([BASH, probe.as_posix()], capture_output=True, text=True)
@@ -190,13 +217,66 @@ def test_the_token_carries_no_age(tmp_path):
     assert a == b == ["ktp-voice-taunts-run-record=stale"]
 
 
+# ---- a unit with a runner of its own: ktp-identity-reconcile ----
+
+RECONCILE = "ktp-identity-reconcile"
+RECONCILE_EXEC = "ExecStart=/opt/keep-the-prac/scripts/reconcile-identities-run.sh"
+
+
+def test_reconcile_is_aged_on_its_own_reports_dir():
+    assert rows()[RECONCILE][2:] == ("reports", "reconcile-identities-run")
+
+
+def test_reconcile_both_directions(tmp_path):
+    assert run(tmp_path, unit=RECONCILE, exec_line=RECONCILE_EXEC,
+               records=[("2026-11-10T140102Z.txt", 2 * DAY)]) == []
+    assert run(tmp_path / "old", unit=RECONCILE, exec_line=RECONCILE_EXEC,
+               records=[("2026-11-03T140438Z.txt", 9 * DAY)]) \
+        == ["ktp-identity-reconcile-run-record=stale"]
+
+
+def test_reconcile_unfinished_part_fires(tmp_path):
+    out = run(tmp_path, unit=RECONCILE, exec_line=RECONCILE_EXEC,
+              records=[("2026-11-03T140438Z.txt", 7 * DAY)],
+              parts=[("2026-11-10T140102Z.txt.part", 2 * HOUR)])
+    assert out == ["ktp-identity-reconcile-run-record=unfinished"]
+
+
+def test_reconcile_reads_reports_not_runs(tmp_path):
+    """A fresh file in runs/ must not vouch for a unit whose records live in reports/."""
+    run(tmp_path, unit=RECONCILE, exec_line=RECONCILE_EXEC, subdir="runs",
+        records=[("fresh.txt", HOUR)])
+    assert run(tmp_path, unit=RECONCILE, exec_line=RECONCILE_EXEC,
+               records=[("old.txt", 9 * DAY)]) == ["ktp-identity-reconcile-run-record=stale"]
+
+
+def test_reconcile_gate_is_its_own_runner(tmp_path):
+    """Negative controls: a mention is not the directive, and the default runner is not it."""
+    assert run(tmp_path, unit=RECONCILE, records=[("old.txt", 9 * DAY)],
+               exec_line="# " + RECONCILE_EXEC + "\nExecStart=/bin/true") == []
+    assert run(tmp_path / "w", unit=RECONCILE, records=[("old.txt", 9 * DAY)],
+               exec_line="ExecStart=/usr/local/bin/ktp-run-record.sh /bin/true") == []
+
+
+def test_a_fresh_latest_symlink_does_not_hide_a_stale_report(tmp_path):
+    """The runner keeps reports/latest.txt; the pointer is not a run."""
+    out = run(tmp_path, unit=RECONCILE, exec_line=RECONCILE_EXEC,
+              records=[("2026-11-03T140438Z.txt", 9 * DAY)],
+              symlinks=[("latest.txt", "2026-11-03T140438Z.txt")])
+    assert out == ["ktp-identity-reconcile-run-record=stale"]
+
+
 # ---- the table cannot drift from the units ----
 
 def test_every_wrapped_unit_is_aged_or_has_its_own_leg():
     wrapped, aged = set(wrapped_units()), set(table())
     assert wrapped, "found no wrapped units -- the glob is blind, not the repo empty"
     assert wrapped - aged - OWN_LEG == set(), "wrapped but never aged"
-    assert aged - wrapped == set(), "aged but not wrapped in this repo"
+    assert aged - wrapped - set(FOREIGN) == set(), "aged but not wrapped in this repo"
+    for unit in FOREIGN:
+        assert not (UNITS / ("%s.service" % unit)).exists(), \
+            "%s is in this repo now: drop it from FOREIGN and read its unit file" % unit
+        assert rows()[unit][2] != "runs", "%s: a foreign runner names its own subdir" % unit
     assert aged & OWN_LEG == set(), "aged twice: one fault would be two items"
     text = SCRIPT.read_text(encoding="utf-8")
     assert "BANLIST_UNIT=" in text and "MIGRATIONS_CHECK_STAMP=" in text, \
@@ -217,6 +297,10 @@ def test_each_ceiling_sits_between_one_late_run_and_two_missed():
 def test_each_part_ceiling_outlasts_the_timeout_and_the_stop_window():
     units = wrapped_units()
     for unit, (_, part) in table().items():
-        m = re.search(r"^TimeoutStartSec=(\S+)", units[unit], re.M)
-        assert m, "%s sets no TimeoutStartSec -- a .part could legitimately live forever" % unit
-        assert part > span(m.group(1)) + 90, unit
+        if unit in FOREIGN:
+            timeout = FOREIGN[unit]["TimeoutStartSec"]
+        else:
+            m = re.search(r"^TimeoutStartSec=(\S+)", units[unit], re.M)
+            assert m, "%s sets no TimeoutStartSec -- a .part could legitimately live forever" % unit
+            timeout = m.group(1)
+        assert part > span(timeout) + 90, unit
