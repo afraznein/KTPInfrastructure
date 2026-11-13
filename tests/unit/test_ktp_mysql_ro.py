@@ -7,6 +7,7 @@ below that expects a refusal feeds output that is plausible and wrong; PROOF_OK 
 real output captured from MySQL 8.0.46 for a ktp_ro login made by the staged migration.
 """
 import io
+import re
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -118,6 +119,15 @@ class RunTests(unittest.TestCase):
     def test_proof_runs_as_ktp_ro_not_the_ssh_user(self):
         self.assertTrue(ro.PROOF_CMD.startswith("runuser -u ktp_ro -- mysql"))
         self.assertTrue(ro.QUERY_CMD.startswith("runuser -u ktp_ro -- mysql"))
+
+    def test_mysql_login_is_named_and_matches_the_run_as_user(self):
+        for cmd in (ro.PROOF_CMD, ro.QUERY_CMD):
+            run_as = re.search(r"runuser -u (\S+) --", cmd)
+            login = re.search(r"\bmysql\b.*?--user=(\S+)", cmd)
+            self.assertIsNotNone(run_as, cmd)
+            self.assertIsNotNone(login, cmd)
+            self.assertEqual(login.group(1), run_as.group(1))
+            self.assertEqual(login.group(1), ro.RO_USER)
 
 
 if __name__ == "__main__":

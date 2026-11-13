@@ -26,7 +26,7 @@ Any answer missing or different is exit 2 and the query is never sent.
 
 ktp_ro authenticates with auth_socket, so there is no password anywhere: the helper
 SSHes in as the data server's admin user (credentials from ktp_hosts.py at the
-project root) and runs `runuser -u ktp_ro -- mysql`.
+project root) and runs `runuser -u ktp_ro -- mysql --user=ktp_ro`.
 
 Exit codes: 0 = query ran. 1 = query ran and MySQL reported an error. 2 = the
 read-only proof failed or the host could not be reached; nothing was queried.
@@ -48,11 +48,12 @@ PROOF_SQL = (
     "SELECT CONCAT('IDENTITY=', CURRENT_USER()); SHOW GRANTS; "
     f"SELECT @@session.{DISCRIMINATOR}"
 )
+# Without an explicit --user the client connected as root under runuser (measured), and auth_socket refused it.
 PROOF_CMD = (
-    f"runuser -u {RO_USER} -- mysql --batch --skip-column-names "
+    f"runuser -u {RO_USER} -- mysql --user={RO_USER} --batch --skip-column-names "
     f"-e \"{PROOF_SQL}\" 2>&1"
 )
-QUERY_CMD = f"runuser -u {RO_USER} -- mysql --batch {DB}"
+QUERY_CMD = f"runuser -u {RO_USER} -- mysql --user={RO_USER} --batch {DB}"
 
 _GRANT = re.compile(
     r"^GRANT (?P<privs>.+?) ON (?P<obj>\S+) TO `" + RO_USER + r"`@`localhost`$")
