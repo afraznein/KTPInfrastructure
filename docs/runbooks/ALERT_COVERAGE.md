@@ -255,7 +255,8 @@ reports any unit left in `failed` state (`FAILED_UNIT_IGNORE` is empty by defaul
 empty on the box). It catches a oneshot whose failure PERSISTS — so it covers the weekly
 sweep and not a 60-second one.
 ✅ **A fourth, since 2026-11-12: run-record age.** Units wrapped by
-`ktp-run-record.sh` are aged by the same sweep on their newest `runs/*` file
+`ktp-run-record.sh` are aged by the same sweep on their newest `runs/*` file, and
+`ktp-identity-reconcile` on its own runner's `reports/*`
 (`<unit>-run-record=stale` / `unfinished` / `none`; table and thresholds in
 [`UNIT_RUN_RECORDS.md`](UNIT_RUN_RECORDS.md) § Who reads the records). It sees what
 the other three cannot: a run SIGKILLed past its timeout, and a unit that stopped
