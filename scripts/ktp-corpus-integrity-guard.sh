@@ -39,12 +39,12 @@
 #
 # READ-ONLY, AND PROVED SO BEFORE THE FIRST READ. Every statement is a SELECT and the
 # session asks for READ ONLY -- but ⛔ the directive is a request, not a proof. It binds
-# the credential it is given and no other, so against a write-capable login it is
-# silently ineffective, and a write that SUCCEEDS prints nothing on this transport while
-# a write that is REFUSED prints an error. An estate probe read that silence as a refusal
-# and created a table in production. So the session is asked what it IS (and the asking
-# harness is shown to report an error at all) before anything is counted; either answer
-# missing is exit 2, never a pass.
+# only a session that sends it, and that session can take it back (START TRANSACTION
+# READ WRITE), so it never makes a write-capable login safe. A write that SUCCEEDS prints
+# nothing on this transport while a write that is REFUSED prints an error. An estate
+# probe read that silence as a refusal and created a table in production. So the session
+# is asked what it IS (and the asking harness is shown to report an error at all) before
+# anything is counted; either answer missing is exit 2, never a pass.
 #
 # Exit codes: 0 = read, no accrual. 1 = read, accrual found. 2 = could not look.
 set -uo pipefail
