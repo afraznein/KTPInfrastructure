@@ -37,8 +37,13 @@ it authenticates with `auth_socket`, so only the OS account `ktp_ro` can log in 
 over the local socket. A root shell reaches it with:
 
 ```bash
-runuser -u ktp_ro -- mysql --batch hlstatsx
+runuser -u ktp_ro -- mysql --user=ktp_ro --batch hlstatsx
 ```
+
+**`--user=ktp_ro` is required.** Measured on the data server: without it the client
+connects as `root` even under `runuser -u ktp_ro` and fails
+`ERROR 1698 (28000): Access denied for user 'root'@'localhost'`. Clearing `HOME` or
+using `runuser -l` did not change that; only the explicit `--user` did.
 
 It is created by an operator-applied migration plus one `useradd`; the SQL, the apply
 steps and a VERIFY file that requires each refusal's error text to be present live in
