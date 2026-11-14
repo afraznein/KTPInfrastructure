@@ -6,12 +6,17 @@ decides metric eligibility after collection.
 
 ## Version and ordering
 
-- Producer schema **23** is the complete current contract. Schema 22 remains
+- Producer schema **23** is the complete contract this document covers; the
+  producer's current value is `KSC_SCHEMA_CONTRACT` in KTPAMXX
+  `plugins/dod/ktp_stats_capture.inc`. Schema 22 remains
   valid for its objective/grenade/team-transition facts but cannot authorize
   position provenance; schema 21 is membership-only and must be marked partial.
-- Every captured marker has a producer-global monotonic sequence, a producer
-  event_epoch, game_time, matchid, and half. Together, matchid, half, and
-  sequence form its stable private source-event key. The daemon validates the
+- Every captured marker has a producer sequence, a producer event_epoch,
+  game_time, matchid, and half. ⚠️ The sequence is per EVENT TYPE (one counter
+  per stream, `ksc_next_type_sequence`) and resets each half; it is not
+  producer-global, so two unrelated markers of different types share integers.
+  The stable private source-event key is `(server_id, matchid, half,
+  event_type, sequence)`. The daemon validates the
   match-half context before persistence; a replay is idempotent and a conflict
   is rejected.
 - Private analysis normalizes event order to match_id, half, game_time, and

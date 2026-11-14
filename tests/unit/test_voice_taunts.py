@@ -219,3 +219,65 @@ def test_website_snapshot_is_the_report_as_data_and_upserts_by_day(monkeypatch):
     assert sent["url"] == "https://x.supabase.co/rest/v1/voice_taunt_snapshot?on_conflict=snapshot_date"
     assert sent["body"]["snapshot_date"] == "2026-10-30" and sent["body"]["payload"]["taunts"] == 2
     assert "merge-duplicates" in sent["prefer"] and sent["profile"] == "ktp"
+
+
+# --- kill pairing in Python (the per-press frag join is gone) ----------------------
+
+
+def press(pid, t, spk=1, mid="M1", mtype=0, code="voice_negative", spk_name="meu"):
+    return [str(pid), t, mid, str(mtype), code, str(spk), spk_name]
+
+
+def frag(fid, killer, victim, t, weapon="garand"):
+    return [str(fid), str(killer), str(victim), weapon, t]
+
+
+def test_kill_rows_reproduce_the_old_left_join_bounds():
+    # BETWEEN press - LOOKBACK AND press: both ends inclusive, a later kill never counts.
+    presses = [press(1, "2026-10-22 18:00:10")]
+    frags = [frag(50, 1, 7, "2026-10-22 18:00:00"),   # exactly LOOKBACK before
+             frag(51, 1, 8, "2026-10-22 18:00:10"),   # same second
+             frag(49, 1, 9, "2026-10-22 17:59:59"),   # one second too early
+             frag(52, 1, 6, "2026-10-22 18:00:11"),   # after the press
+             frag(53, 2, 7, "2026-10-22 18:00:05")]   # somebody else's kill
+    rows = vt.kill_rows(presses, frags, {"7": "j3", "8": "RaiveN"})
+    assert [(r[7], r[8], r[10]) for r in rows] == [("7", "j3", "10"), ("8", "RaiveN", "0")]
+    (p,) = vt.nearest(rows)
+    assert (p["victim"], p["secs"]) == ("RaiveN", 0)
+
+
+def test_kill_rows_keep_a_press_with_no_kill_and_blank_an_unknown_victim():
+    presses = [press(1, "2026-10-22 18:00:10"), press(2, "2026-10-22 19:00:00")]
+    rows = vt.kill_rows(presses, [frag(50, 1, 99, "2026-10-22 18:00:08")], {})
+    assert rows == [press(1, "2026-10-22 18:00:10") + ["99", "", "garand", "2"],
+                    press(2, "2026-10-22 19:00:00") + ["", "", "", ""]]
+
+
+def test_frag_floor_is_the_first_press_minus_the_lookback():
+    presses = [press(2, "2026-10-22 18:00:00"), press(1, "2026-10-22 17:00:05")]
+    assert vt.frag_floor(presses) == "2026-10-22 16:59:55"
+    assert vt.frag_floor([]) is None
+
+
+def test_fetch_presses_runs_three_bounded_queries_and_none_per_press(monkeypatch):
+    seen = []
+
+    def fake_q(sql, db):
+        seen.append(sql)
+        if "hlstats_Events_PlayerActions" in sql:
+            return [press(1, "2026-10-22 18:00:10", spk=3), press(2, "2026-10-22 18:05:00", spk=4)]
+        if "hlstats_Events_Frags" in sql:
+            return [frag(50, 3, 7, "2026-10-22 18:00:08")]
+        return [["7", "j3"]]
+    monkeypatch.setattr(vt, "q", fake_q)
+    rows = vt.fetch_presses("2026-09-13", "hlstatsx")
+    assert len(seen) == 3
+    assert "hlstats_Events_Frags" not in seen[0]
+    assert "IGNORE INDEX (killerId)" in seen[1] and "killerId IN (3,4)" in seen[1]
+    assert "eventTime >= '2026-10-22 18:00:00'" in seen[1]
+    assert [r[8] for r in rows] == ["j3", ""]
+
+
+def test_untagged_branch_is_pinned_to_the_action_index():
+    # Unforced, MySQL walked every NULL-match row once per voice action type.
+    assert "pa FORCE INDEX (actionId)" in vt.presses_sql("2026-09-13")
