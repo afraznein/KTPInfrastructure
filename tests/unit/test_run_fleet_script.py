@@ -384,3 +384,46 @@ def test_known_unsatisfied_entries_carry_a_reason(mod):
     # A bare name here would be an exemption with no argument behind it.
     for name, why in mod.KNOWN_UNSATISFIED.items():
         assert name.isupper() and len(why.split()) >= 6, name
+
+
+# --- left out on purpose ------------------------------------------------------
+# Each NOT_RUNNABLE reason is a claim about the script's source. These hold each
+# claim true, so a script that grows a reason to belong fails here instead of
+# staying refused on an argument that no longer applies.
+
+def _source(name):
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(SCRIPT)), "scripts")
+    return open(os.path.join(scripts_dir, name), encoding="utf-8").read()
+
+
+def test_not_runnable_is_disjoint_from_runnable_and_reasoned(mod):
+    assert not set(mod.NOT_RUNNABLE) & set(mod.RUNNABLE)
+    for name, why in mod.NOT_RUNNABLE.items():
+        assert len(why.split()) >= 8, name
+
+
+def test_a_not_runnable_script_is_refused_with_its_reason():
+    out = subprocess.run([sys.executable, SCRIPT, "stage-runner.py"],
+                         capture_output=True, text=True)
+    assert out.returncode != 0
+    combined = out.stdout + out.stderr
+    assert "deliberately not" in combined
+    assert "KTP_TIER2_SSH_HOST" in combined
+
+
+def test_stage_runner_still_needs_nothing_this_wrapper_supplies(mod):
+    body = _source("stage-runner.py")
+    assert "KTP_TIER2_SSH_HOST" in body    # positive control: the scan reads the file
+    for supplied in ("KTP_FLEET_SSH_PASSWORD", "KTP_FLEET_SSH_KEY", "KTP_CLAUDE_MD",
+                     "KTP_RCON_PASSWORD", "GAME_SSH_PASSWORD"):
+        assert supplied not in body, (
+            "stage-runner.py now reads %s -- it may belong in RUNNABLE" % supplied)
+
+
+def test_freshness_reporting_reads_the_overrides_this_wrapper_strips(mod):
+    body = _source("ktp_script_freshness.py")
+    assert any(k in body for k in mod.GUARD_OVERRIDES)
+
+
+def test_ktp_install_still_cannot_run_on_windows():
+    assert "import fcntl" in _source("ktp-install")
