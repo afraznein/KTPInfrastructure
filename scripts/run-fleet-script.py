@@ -87,6 +87,24 @@ RUNNABLE = (
     "sync-runner-stack.py",
 )
 
+# Left out on purpose, with the reason the refusal prints. The unit tests check
+# each reason against the script's own source, so a stale one fails.
+NOT_RUNNABLE = {
+    "stage-runner.py":
+        "it reads neither the fleet credential nor the version rows, so this "
+        "wrapper would only hand it a live password it never uses. Run it "
+        "directly from the worktree with KTP_TIER2_SSH_HOST set; the data "
+        "server is keys-only and paramiko finds the key itself",
+    "ktp_script_freshness.py":
+        "its reporting mode reads the KTP_FRESHNESS_* variables this wrapper "
+        "strips, and it needs no credential. Run it directly: "
+        "python scripts/ktp_script_freshness.py <path>",
+    "ktp-install":
+        "it imports fcntl, which is POSIX-only, so it cannot run on a Windows "
+        "workstation at all. The real one is /usr/local/bin/ktp-install on the "
+        "host it installs to",
+}
+
 # Who gets the rcon credential: the one script that issues rcon, and nothing else.
 # A wrapper that holds a live value hands out as little of it as the job needs, and
 # the four others have no reference to it at all. Narrower than RUNNABLE on purpose.
@@ -268,6 +286,9 @@ def main(argv: list) -> int:
         return 0
 
     name = os.path.basename(argv[0])
+    if name in NOT_RUNNABLE:
+        raise SystemExit("%s is deliberately not in this script's allowlist: %s."
+                         % (name, NOT_RUNNABLE[name]))
     if name not in RUNNABLE:
         raise SystemExit("%s is not in this script's allowlist. It runs with a live "
                          "fleet credential in its environment, so the list is "
