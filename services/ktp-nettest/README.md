@@ -21,6 +21,8 @@ coordination repo.
 |---|---|---|
 | `GET /busy` | no | `{"region", "busy"}`, for the page's region list |
 | `GET /client.js` | no | the browser client, so the site always runs the build this node speaks |
+| `GET /frame` | no | the page the website embeds in a sandboxed iframe; loads `client.js` and `frame.js` in this node's origin |
+| `GET /frame.js` | no | the `postMessage` bridge between that page and the website |
 | `GET /ping` | yes | 204 |
 | `GET /down?mb=N` | yes | N MB (1–25) of random bytes |
 | `POST /up` | yes | `{"bytes"}`, body discarded, refused past 25 MB |
@@ -62,17 +64,35 @@ most logs on this fleet are pub and warmup logs that carry no match markers at a
 
 ## Using the client
 
+The website never loads `client.js` into its own origin. It embeds `GET /frame` in a sandboxed
+iframe, so the measuring code runs in this node's origin and a wrong or compromised node can reach
+nothing of the site's (its cookies, storage, DOM, or server actions):
+
 ```html
-<script src="https://<node>:8790/client.js"></script>
-<script>
-  const r = await KtpNettest.runTest({ base: 'https://<node>:8790', ticket, onProgress: (p) => … });
-  // r: stall_seconds, stall_sent, stall_loss_pct, stall_rtt_ms, stall_jitter_ms, stall_gaps_250,
-  //    stall_worst_gap_ms, ping_ms, jitter_ms, down_mbps, up_mbps, busy_skipped, client_version
-</script>
+<iframe sandbox="allow-scripts allow-same-origin" src="https://<node>/frame"></iframe>
 ```
 
-The page adds the player's picks (`said_connection`, `said_routing`, `said_where`, `said_note`)
-and posts the row to the website.
+`allow-same-origin` keeps the frame in the node's own origin, which is what lets its requests to
+the node stay same-origin; it does not give it the site's. The frame and the site talk only by
+`postMessage`, each side checking the other's exact origin (`KTP_NETTEST_ORIGIN` here, the node's
+origin on the site):
+
+| Direction | Message |
+|---|---|
+| node → site | `{type: "ktp-nettest:ready", version}` once loaded |
+| site → node | `{type: "ktp-nettest:run", ticket}` |
+| node → site | `{type: "ktp-nettest:progress", phase, done}` |
+| node → site | `{type: "ktp-nettest:result", result}` — result as below |
+| node → site | `{type: "ktp-nettest:error", busy, message}` — `busy` when a match went live |
+
+`/frame` answers with its own CSP: only this node's scripts, requests only to this node, and
+`frame-ancestors` set to `KTP_NETTEST_ORIGIN`, so no other site can embed it.
+
+The result carries `stall_seconds, stall_sent, stall_loss_pct, stall_rtt_ms, stall_jitter_ms,
+stall_gaps_250, stall_worst_gap_ms, ping_ms, jitter_ms, down_mbps, up_mbps, busy_skipped,
+client_version`. The page adds the player's picks (`said_connection`, `said_routing`,
+`said_where`, `said_note`) and posts the row to the website. `client.js` can still be
+`require()`d in Node, which is how the tests drive it.
 
 ## Running it
 
@@ -90,7 +110,7 @@ KTP_NETTEST_UDP_PORTS=40000-40100 node server.js
 | `KTP_NETTEST_LOG_DIRS` | empty → always busy | `:`-separated `dod/logs` dirs on this host |
 | `KTP_NETTEST_UDP_PORTS` | OS-chosen | `min-max` range for WebRTC; open it in the host firewall |
 | `KTP_NETTEST_PORT` / `_BIND` | `8790` / `0.0.0.0` | HTTP; put TLS in front (the site is https, so the browser refuses a plain-http node) |
-| `KTP_NETTEST_ORIGIN` | `https://ktpleague.gg` | CORS origin |
+| `KTP_NETTEST_ORIGIN` | `https://ktpleague.gg` | CORS origin, and the only site that may embed `/frame` |
 | `KTP_NETTEST_MAX_STALLS` / `_MAX_TRANSFERS` | `4` / `2` | |
 
 `deploy/ktp-nettest.service` is the systemd unit. Load on a game host: a stall session is

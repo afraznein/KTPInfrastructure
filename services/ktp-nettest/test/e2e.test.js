@@ -79,3 +79,18 @@ test('region turning busy after the stall test skips the rest, keeps the stall r
     assert.strictEqual(r.down_mbps, undefined);
   });
 });
+
+test('frame: served for the site to embed, names the site as its only parent and embedder', () => withServer({ isBusy: () => false }, async (base) => {
+  const r = await fetch(`${base}/frame`);
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers.get('content-type'), /^text\/html/);
+  const csp = r.headers.get('content-security-policy');
+  assert.match(csp, /frame-ancestors https:\/\/ktpleague\.gg$/);
+  assert.match(csp, /script-src 'self'/);
+  const html = await r.text();
+  assert.match(html, /<meta name="ktp-parent-origin" content="https:\/\/ktpleague\.gg">/);
+  assert.match(html, /<script src="\/client\.js"><\/script><script src="\/frame\.js"><\/script>/);
+  const js = await fetch(`${base}/frame.js`);
+  assert.strictEqual(js.status, 200);
+  assert.match(await js.text(), /e\.origin !== parentOrigin/);
+}));

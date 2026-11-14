@@ -145,3 +145,54 @@ test('busy: a half whose log outgrew the window still blocks', () => {
   assert.strictEqual(makeBusy([dir])(), true);
   fs.rmSync(dir, { recursive: true });
 });
+
+test('frame page escapes the configured origin', () => {
+  const { framePage } = require('../server');
+  const html = framePage('https://a.example"><script>x</script>');
+  assert.ok(!html.includes('"><script>x'), html);
+  assert.ok(html.includes('&#34;&#62;&#60;script&#62;'), html);
+});
+
+// frame.js against a fake window: only the site's own parent window may start a run.
+function loadFrame(runTest) {
+  const vm = require('node:vm');
+  const sent = [], listeners = [];
+  // JSON round trip: objects built inside the vm context have that realm's prototypes.
+  const parent = { postMessage: (msg, origin) => sent.push({ msg: JSON.parse(JSON.stringify(msg)), origin }) };
+  class Busy extends Error {}
+  const window = {
+    parent,
+    addEventListener: (ev, fn) => ev === 'message' && listeners.push(fn),
+    KtpNettest: { runTest, Busy, VERSION: 'v-test' },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'frame.js'), 'utf8'), {
+    window,
+    location: { origin: 'https://ny.node.test' },
+    document: { querySelector: () => ({ content: 'https://ktpleague.gg' }) },
+  });
+  const post = (data, { origin = 'https://ktpleague.gg', source = parent } = {}) =>
+    Promise.all(listeners.map((fn) => fn({ data, origin, source })));
+  return { sent, post, Busy };
+}
+
+test('frame: announces ready, runs only for the site parent, reports result and busy', async () => {
+  const calls = [];
+  const f = loadFrame(async (o) => { calls.push(o); o.onProgress({ phase: 'stall', done: 0.5 }); return { busy_skipped: false }; });
+  assert.deepStrictEqual(f.sent[0], { msg: { type: 'ktp-nettest:ready', version: 'v-test' }, origin: 'https://ktpleague.gg' });
+
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' }, { origin: 'https://evil.test' });
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' }, { source: {} });
+  await f.post({ type: 'ktp-nettest:run', ticket: 7 });
+  assert.strictEqual(calls.length, 0, 'wrong origin, wrong source and a non-string ticket start nothing');
+
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].base, 'https://ny.node.test');
+  assert.strictEqual(calls[0].ticket, 't1');
+  assert.ok(f.sent.every((s) => s.origin === 'https://ktpleague.gg'), 'every reply targets the site origin only');
+  assert.deepStrictEqual(f.sent.slice(1).map((s) => s.msg.type), ['ktp-nettest:progress', 'ktp-nettest:result']);
+
+  const b = loadFrame(async () => { throw new b.Busy('match in progress'); });
+  await b.post({ type: 'ktp-nettest:run', ticket: 't2' });
+  assert.deepStrictEqual(b.sent.at(-1).msg, { type: 'ktp-nettest:error', busy: true, message: 'match in progress' });
+});
