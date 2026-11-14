@@ -24,6 +24,12 @@ it carries the AC weapon-context sidecars as a second source since 2026-10-05, s
 The first two read `KTP_OFFSITE_HOSTS`, and that variable names **two** provider-diverse hosts we
 already own. The most recent run reports every file present on every target.
 
+> ⚠️ **A missing `/etc/ktp/offsite.conf` leaves no trace in `/var/log/ktp-offsite.log`.** Each line is
+> `. /etc/ktp/offsite.conf && <script>`, so the failed `.` skips the script and its error goes to cron
+> mail, not the log. Read an ABSENT Sunday line as a failure, never as "no run yet". The cron file's
+> own header ("a missing conf fails loudly", captured in `ops/cron-inventory/data/cron.d/ktp-offsite`)
+> holds only once a script runs with the variables unset; correct it on the box at the next cron change.
+
 > 🔑 **The corpus leg is the one that cannot verify its own backup, and that is deliberate.** It
 > encrypts every bundle to public `age` recipients before it leaves and holds no private half, so
 > it proves the bytes ARRIVED and can never prove they decrypt. `ktp-corpus-drill.sh` is the other
