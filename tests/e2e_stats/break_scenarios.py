@@ -202,7 +202,10 @@ _MATCH_START_RE = re.compile(
     + r'KTP_MATCH_START \(matchid "(?P<match_id>[^"\r\n]+)"\) '
     + r'\(map "(?P<map>[^"\r\n]+)"\) '
     + r'\(half "(?P<half>[^"\r\n]+)"\) '
-    + r'\(type "(?P<match_type>-?\d+)"\)\r?$',
+    + r'\(type "(?P<match_type>-?\d+)"\)'
+    # KTPMatchHandler 0.10.185 appends the producer's clock. Optional because
+    # this lane also runs older matchhandler refs.
+    + r'(?: \(event_epoch "(?P<event_epoch>\d+)"\))?\r?$',
     re.MULTILINE,
 )
 _LIFECYCLE_BOUNDARIES = (

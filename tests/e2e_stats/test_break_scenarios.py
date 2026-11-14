@@ -434,6 +434,31 @@ def test_begin_series_binds_the_manifest_the_fleet_actually_emits():
     assert driver.series_manifest == ("1791377046-TEST", 1, 1791377061)
 
 
+def test_begin_series_binds_a_match_start_carrying_event_epoch():
+    # Verbatim shape off nightly run 43564773586. The epoch suffix made the
+    # anchored parser miss every start, so no diagnostic scenario staged.
+    text = ('L 11/14/2026 - 06:24:08: KTP_MATCH_START '
+            '(matchid "1794637433-TEST") (map "dod_anzio") '
+            '(half "1st half") (type "0") (event_epoch "1794637448")\n'
+            + _manifest("1794637433-TEST", epoch=1794637448, schema=26))
+    handle = _FakeHandle([])
+    driver = bs.BreakDriver(handle, _FakeLog([text]))
+
+    assert driver.begin_series() is True
+    assert driver.series_manifest == ("1794637433-TEST", 1, 1794637448)
+    assert handle.fired == ["ktp_bd_begin_series"]
+
+
+def test_match_start_parser_rejects_a_malformed_event_epoch_suffix():
+    base = ('L 11/14/2026 - 06:24:08: KTP_MATCH_START '
+            '(matchid "x-TEST") (map "dod_anzio") '
+            '(half "1st half") (type "0")')
+    for suffix in (' (event_epoch "")', ' (event_epoch "12a")',
+                   ' (event_epoch "1") (extra "1")'):
+        assert bs._MATCH_START_RE.search(base + suffix + "\n") is None
+    assert bs._MATCH_START_RE.search(base + "\n") is not None
+
+
 def test_begin_series_binds_through_the_manifest_heartbeat_repeat():
     # ksc_manifest_repeat re-logs the SAME bytes every KSC_MANIFEST_REPEAT_TICKS
     # while the half stays confirmed, so an identical line is a heartbeat, not a
