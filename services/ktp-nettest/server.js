@@ -27,6 +27,18 @@ function config(env = process.env) {
   };
 }
 
+const escAttr = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// The page the website frames. Its CSP is the second wall: only this node's own scripts run, they
+// talk only to this node, and only the website may embed it.
+function framePage(origin) {
+  return '<!doctype html><html><head><meta charset="utf-8">' +
+    `<meta name="ktp-parent-origin" content="${escAttr(origin)}">` +
+    '<script src="/client.js"></script><script src="/frame.js"></script></head><body></body></html>';
+}
+const frameCsp = (origin) =>
+  `default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors ${origin}`;
+
 function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection = null } = {}) {
   const spent = new Map();
   let stalls = 0, transfers = 0;
@@ -84,6 +96,11 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
       res.setHeader('access-control-allow-origin', '*');
       return send(res, 200, fs.readFileSync(path.join(__dirname, 'client.js')), 'text/javascript');
     }
+    if (route === 'GET /frame') {
+      res.setHeader('content-security-policy', frameCsp(cfg.origin));
+      return send(res, 200, framePage(cfg.origin), 'text/html; charset=utf-8');
+    }
+    if (route === 'GET /frame.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'frame.js')), 'text/javascript');
     if (route === 'GET /busy') return send(res, 200, { region: cfg.region, busy: isBusy() });
     if (!['GET /ping', 'GET /down', 'POST /up', 'POST /stall/offer'].includes(route)) return send(res, 404, { error: 'not found' });
 
@@ -126,4 +143,4 @@ if (require.main === module) {
   createServer(cfg).listen(cfg.port, cfg.host, () => console.log(`ktp-nettest ${cfg.region} on ${cfg.host}:${cfg.port}`));
 }
 
-module.exports = { createServer, config };
+module.exports = { createServer, config, framePage, frameCsp };
