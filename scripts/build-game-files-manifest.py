@@ -15,7 +15,8 @@ Three sources combined:
      + grenade viewmodels at severity "review")
 
 Excluded buckets (allowed modification): overviews/*, flag models
-(w_aflag/gflag/wflag), and maps/*.res -- a self-referencing .res reaches clients over
+(w_aflag/gflag/wflag), maps/*.bsp (a stated gap on hashing cost, not a ruling -- see
+excluded_buckets), and maps/*.res -- a self-referencing .res reaches clients over
 FastDL, so enforcing a list the server itself sends only re-scored whoever held the
 previous copy.
 
@@ -106,7 +107,10 @@ EXCLUDED_PATH_PREFIXES = ("overviews/",)
 # player's local copy changes nothing they render and enforcing its hash buys no
 # detection -- while it is rewritten on every map redeploy, which re-scores everyone
 # still holding the copy FastDL gave them.
-EXCLUDED_EXTENSIONS = (".res",)
+# maps/*.bsp is out of scope on hashing cost (see excluded_buckets). Without it here a
+# .res that names its own map pulls that one .bsp back in, so which maps were enforced
+# depended on how each .res was written, not on any ruling.
+EXCLUDED_EXTENSIONS = (".res", ".bsp")
 
 # Report-only scope. In the manifest, captured and shown to an admin, but the
 # client's IsReview branch keeps it out of modified_game_files -- so it never
