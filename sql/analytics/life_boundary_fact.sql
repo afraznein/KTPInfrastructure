@@ -20,9 +20,11 @@ SELECT
     le.reason
 FROM ktp_life_events le
 LEFT JOIN ktp_match_players roster
-  ON BINARY roster.match_id = BINARY le.match_id
+  ON roster.match_id = le.match_id
+ AND BINARY roster.match_id = BINARY le.match_id
  AND roster.player_id = le.player_id
-WHERE BINARY le.match_id = BINARY {{MATCH_ID}}
+WHERE le.match_id = {{MATCH_ID}}
+  AND BINARY le.match_id = BINARY {{MATCH_ID}}
   AND le.half > 0
   AND le.game_time >= 0
   AND le.event_epoch > 0

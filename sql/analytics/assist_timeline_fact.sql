@@ -18,12 +18,15 @@ SELECT
     victim.team AS victim_team
 FROM ktp_assist_events ae
 LEFT JOIN ktp_match_players assister
-  ON BINARY assister.match_id = BINARY ae.match_id
+  ON assister.match_id = ae.match_id
+ AND BINARY assister.match_id = BINARY ae.match_id
  AND assister.player_id = ae.assister_id
 LEFT JOIN ktp_match_players victim
-  ON BINARY victim.match_id = BINARY ae.match_id
+  ON victim.match_id = ae.match_id
+ AND BINARY victim.match_id = BINARY ae.match_id
  AND victim.player_id = ae.victim_id
-WHERE BINARY ae.match_id = BINARY {{MATCH_ID}}
+WHERE ae.match_id = {{MATCH_ID}}
+  AND BINARY ae.match_id = BINARY {{MATCH_ID}}
   AND ae.half > 0
   AND ae.game_time >= 0
   AND ae.event_epoch > 0
