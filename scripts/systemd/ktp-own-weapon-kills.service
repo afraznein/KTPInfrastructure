@@ -13,6 +13,8 @@ EnvironmentFile=-/etc/ktp/reports.env
 # PUBLIC stat (drew, 2026-10-31): --website upserts into ktp.own_weapon_kill_snapshot, which anon
 # may read, for keep-the-prac's public page. Exit 3 = only that upsert failed: the dated copy is
 # still written, then the unit fails so the on-failure alert fires.
+# Without --website the script never tries the upsert and exits 0, so a script installed with an
+# older unit writes no snapshot and alerts nothing. Install both; verify by the `website: ... upserted` line.
 ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-own-weapon-kills; /usr/local/bin/own_weapon_kills.py --out latest.md --website; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 3 ] || exit $$rc; cp latest.md "own-weapon-kills-$(date +%%F).md" || exit 1; exit $$rc'
 TimeoutStartSec=10min
 

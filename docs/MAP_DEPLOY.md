@@ -70,7 +70,9 @@ scripts/build_resgen.sh              # clones + builds at the pinned 2.0.3 tag
 export KTP_RESGEN=~/.cache/ktp/resgen/bin/resgen
 ```
 
-Then, per map:
+Then, per map, from a clone at current `origin/main`. ⛔ Never build from `/opt/ktp-infra` on the data
+server: it is not auto-pulled and lags by hundreds of commits, so its builder predates #735 and emits a
+`.res` without the map's custom HUD icons.
 
 ```bash
 python scripts/build_map_bundle.py /path/to/dod_newmap_b1.bsp \

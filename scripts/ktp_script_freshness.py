@@ -39,6 +39,12 @@ checkouts set `core.autocrlf=input` and carry a `.gitattributes`, so raw bytes
 and the stored blob legitimately differ and a hand-rolled comparison reports
 drift on files that are identical.
 
+THE GUARD NEVER CHECKS ITSELF
+-----------------------------
+No caller lists this module in `also`, and `ktp-install` does not run
+`require_current`, so a stale installed copy of this file is never reported.
+Re-install it whenever it changes; it vouches for everything but itself.
+
 FAIL-CLOSED, AND WHERE THE EDGE IS
 ----------------------------------
 Every answer that is not "identical to the ref" refuses: drift, no checkout, the
@@ -610,10 +616,12 @@ def require_current(script_path, also=(), purpose=None):
 
 
 if __name__ == "__main__":
-    # Reporting mode: name the drift for a path without running anything.
+    # Reporting mode: name the drift for a path without running anything. It
+    # checks only the named files, not the siblings each one loads; name those too.
     import argparse
 
-    ap = argparse.ArgumentParser(description="Report whether a script is current.")
+    ap = argparse.ArgumentParser(description="Report whether a script is current. Checks only the "
+                                             "files named, not the siblings they load: name those too.")
     ap.add_argument("path", nargs="+", help="Script(s) to check.")
     args = ap.parse_args()
     bad = 0
