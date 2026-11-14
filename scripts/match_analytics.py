@@ -238,14 +238,17 @@ def sql_literal(value: str) -> str:
 # the columns named by the capability.
 _HALF_TOKENS = {
     "FRAG_HALF": ("frag_event_clock", "f.half",
-                  "CASE WHEN BINARY f.producer_match_id = BINARY {{MATCH_ID}} "
+                  "CASE WHEN f.producer_match_id = {{MATCH_ID}} "
+                  "AND BINARY f.producer_match_id = BINARY {{MATCH_ID}} "
                   "AND f.producer_half > 0 THEN f.producer_half ELSE f.half END"),
     "DAMAGE_HALF": ("damage_event_clock", "de.half",
-                    "CASE WHEN BINARY de.producer_match_id = BINARY {{MATCH_ID}} "
+                    "CASE WHEN de.producer_match_id = {{MATCH_ID}} "
+                    "AND BINARY de.producer_match_id = BINARY {{MATCH_ID}} "
                     "AND de.producer_half > 0 THEN de.producer_half ELSE de.half END"),
     "BREAK_HALF": ("break_producer_half",
                    "(SELECT MAX(h.half) FROM halves h WHERE h.start_time <= e.eventTime)",
-                   "COALESCE(CASE WHEN BINARY e.producer_match_id = BINARY {{MATCH_ID}} "
+                   "COALESCE(CASE WHEN e.producer_match_id = {{MATCH_ID}} "
+                   "AND BINARY e.producer_match_id = BINARY {{MATCH_ID}} "
                    "AND e.producer_half > 0 THEN e.producer_half END, "
                    "(SELECT MAX(h.half) FROM halves h WHERE h.start_time <= e.eventTime))"),
 }
@@ -915,8 +918,8 @@ SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m
-  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
-WHERE BINARY cm.match_id=BINARY {literal}
+  ON m.match_id=cm.match_id AND BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE cm.match_id={literal} AND BINARY cm.match_id=BINARY {literal}
 ORDER BY cm.half, cm.id
 """))
     health = tsv_rows(db.sql(f"""
@@ -924,7 +927,8 @@ SELECT half, event_type, attempted, enqueued, dropped, emitted,
        daemon_received, daemon_accepted, daemon_rejected,
        correlation_failure_count, sequence_gap_count,
        duplicate_or_reordered_count
-FROM ktp_capture_health WHERE BINARY match_id=BINARY {literal}
+FROM ktp_capture_health
+WHERE match_id={literal} AND BINARY match_id=BINARY {literal}
 ORDER BY half, event_type
 """))
     return evaluate_capture_authorization(

@@ -796,7 +796,8 @@ SET @ktp_team_score_context_mismatch := (
   SELECT COUNT(*) FROM `ktp_team_score_manifest_stage` s
   WHERE NOT EXISTS (
     SELECT 1 FROM ktp_matches km
-    WHERE BINARY km.match_id=BINARY s.match_id
+    WHERE km.match_id=s.match_id COLLATE utf8mb4_unicode_ci
+      AND BINARY km.match_id=BINARY s.match_id
     GROUP BY km.match_id
     HAVING COUNT(DISTINCT BINARY km.map_name)=1
        AND MIN(BINARY km.map_name)=BINARY s.map_name
@@ -1111,7 +1112,9 @@ SELECT 'KTP_SCORE_AUDIT',COUNT(*) FROM ktp_team_score_ingest_audits
 WHERE match_id={match} AND @ktp_team_score_lock=1;
 SELECT 'KTP_SCORE_CONTEXT',HEX(match_id),HEX(map_name),half,
        COALESCE(CAST(match_type AS CHAR),'NULL'),(end_time IS NOT NULL)
-FROM ktp_matches WHERE BINARY match_id=BINARY {match} AND @ktp_team_score_lock=1
+FROM ktp_matches
+WHERE match_id={match} COLLATE utf8mb4_unicode_ci
+  AND BINARY match_id=BINARY {match} AND @ktp_team_score_lock=1
 ORDER BY half;
 COMMIT;
 SELECT 'KTP_SCORE_RELEASE',IF(@ktp_team_score_lock=1,

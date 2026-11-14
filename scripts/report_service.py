@@ -158,12 +158,12 @@ def _pending_corpus_sql(schema_version: int, since: str | None,
         "ON done.match_id = m.match_id "
         "WHERE m.match_id IS NOT NULL "
         "AND EXISTS (SELECT 1 FROM ktp_flag_state_events f "
-        "WHERE BINARY f.match_id = BINARY m.match_id) "
+        "WHERE f.match_id = m.match_id AND BINARY f.match_id = BINARY m.match_id) "
         # A report older than the last half's close is partial and gets a new
         # revision. persist_report writes generated_at in the session zone,
         # which is the zone the daemon's NOW() writes end_time in.
         "AND NOT EXISTS (SELECT 1 FROM ktp_match_reports r "
-        "WHERE BINARY r.match_id = BINARY m.match_id "
+        "WHERE r.match_id = m.match_id AND BINARY r.match_id = BINARY m.match_id "
         f"AND r.schema_version = {schema_version} "
         "AND r.generated_at > done.last_end) "
         f"{since_clause}{tail}"

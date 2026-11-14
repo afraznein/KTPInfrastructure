@@ -613,7 +613,8 @@ def check_match_players_for_match(db, *, match_id: str, expected: int) -> dict:
     """Require the report match's roster without counting the diagnostic one."""
     rows = db.count(
         "SELECT COUNT(*) FROM ktp_match_players "
-        f"WHERE BINARY match_id=BINARY {sql_literal(match_id)}"
+        f"WHERE match_id={sql_literal(match_id)} "
+        f"AND BINARY match_id=BINARY {sql_literal(match_id)}"
     )
     ok = rows == expected
     return {
@@ -636,7 +637,8 @@ SELECT attempted, enqueued, dropped, emitted, daemon_received,
        daemon_accepted, daemon_rejected, correlation_failure_count,
        sequence_gap_count, duplicate_or_reordered_count
 FROM ktp_capture_health
-WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+WHERE match_id={sql_literal(match_id)}
+  AND BINARY match_id=BINARY {sql_literal(match_id)}
   AND half={int(half)} AND event_type={sql_literal(event_type)}
 """))
     if len(rows) != 1:
@@ -658,8 +660,9 @@ SELECT UNIX_TIMESTAMP(m.start_time) AS start_epoch,
        UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch
 FROM ktp_matches m
 JOIN ktp_capture_manifests cm
-  ON BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
-WHERE BINARY m.match_id=BINARY {sql_literal(match_id)}
+  ON cm.match_id=m.match_id AND BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
+WHERE m.match_id={sql_literal(match_id)}
+  AND BINARY m.match_id=BINARY {sql_literal(match_id)}
   AND m.half={int(half)}
 """))
     if len(rows) != 1:
@@ -856,7 +859,9 @@ SELECT MAX(map_name) AS map_name, COUNT(DISTINCT map_name) AS maps,
        MAX(half) AS terminal_half, COUNT(*) AS match_rows,
        MIN(match_type) AS match_type, COUNT(DISTINCT match_type) AS match_types,
        SUM(end_time IS NULL) AS open_rows
-FROM ktp_matches WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+FROM ktp_matches
+WHERE match_id={sql_literal(match_id)}
+  AND BINARY match_id=BINARY {sql_literal(match_id)}
 GROUP BY match_id
 """))
     if len(context) != 1:
