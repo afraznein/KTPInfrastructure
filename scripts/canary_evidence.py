@@ -146,15 +146,17 @@ def collect_capture_activation(
     literal = analytics.sql_literal(match_id)
     frags = _count_row(db, f"""
 SELECT COUNT(*) AS rows_total,
-       SUM(BINARY producer_match_id = BINARY {literal}
+       SUM(producer_match_id = {literal}
+           AND BINARY producer_match_id = BINARY {literal}
            AND producer_half > 0 AND game_time IS NOT NULL
            AND event_epoch IS NOT NULL) AS rows_producer_timed,
        SUM(frag_context_recorded = 1) AS rows_contextual,
        SUM(LEFT(map, 4) <> 'dod_') AS rows_invalid_map,
        SUM(is_last_flag_defense = 1) AS rows_last_flag_defense
 FROM hlstats_Events_Frags
-WHERE BINARY match_id = BINARY {literal}
-   OR BINARY producer_match_id = BINARY {literal}
+WHERE (match_id = {literal} AND BINARY match_id = BINARY {literal})
+   OR (producer_match_id = {literal}
+       AND BINARY producer_match_id = BINARY {literal})
 """) if sources.get("frag_event_clock") else {
         "rows_total": 0, "rows_producer_timed": None,
         "rows_contextual": None, "rows_invalid_map": None,
@@ -162,12 +164,14 @@ WHERE BINARY match_id = BINARY {literal}
     }
     damage = _count_row(db, f"""
 SELECT COUNT(*) AS rows_total,
-       SUM(BINARY producer_match_id = BINARY {literal}
+       SUM(producer_match_id = {literal}
+           AND BINARY producer_match_id = BINARY {literal}
            AND producer_half > 0 AND game_time IS NOT NULL
            AND event_epoch IS NOT NULL) AS rows_producer_timed
 FROM ktp_damage_events
-WHERE BINARY match_id = BINARY {literal}
-   OR BINARY producer_match_id = BINARY {literal}
+WHERE (match_id = {literal} AND BINARY match_id = BINARY {literal})
+   OR (producer_match_id = {literal}
+       AND BINARY producer_match_id = BINARY {literal})
 """) if sources.get("damage_event_clock") else {
         "rows_total": 0, "rows_producer_timed": None,
     }
@@ -175,13 +179,15 @@ WHERE BINARY match_id = BINARY {literal}
 SELECT COUNT(*) AS rows_total,
        SUM(boundary_kind='start') AS starts,
        SUM(boundary_kind='end') AS ends
-FROM ktp_life_events WHERE BINARY match_id = BINARY {literal}
+FROM ktp_life_events
+WHERE match_id = {literal} AND BINARY match_id = BINARY {literal}
 """) if sources.get("life_boundaries") else {
         "rows_total": None, "starts": None, "ends": None,
     }
     assists = _count_row(db, f"""
 SELECT COUNT(*) AS rows_total
-FROM ktp_assist_events WHERE BINARY match_id = BINARY {literal}
+FROM ktp_assist_events
+WHERE match_id = {literal} AND BINARY match_id = BINARY {literal}
 """) if sources.get("assist_context") else {"rows_total": None}
     return {"frags": frags, "damage": damage, "life_events": life,
             "canonical_assists": assists}
@@ -196,7 +202,7 @@ def collect_position_cadence(
     return analytics.tsv_rows(db.sql(f"""
 SELECT half, ROUND(game_time, 1) AS sample_time, COUNT(*) AS player_samples
 FROM ktp_position_samples
-WHERE BINARY match_id=BINARY {literal}
+WHERE match_id={literal} AND BINARY match_id=BINARY {literal}
 GROUP BY half, ROUND(game_time, 1) ORDER BY half, sample_time
 """))
 
@@ -244,7 +250,7 @@ SELECT DISTINCT fp.flag_index, fp.flag_name, fp.origin_x, fp.origin_y
 FROM ktp_flag_positions fp
 JOIN ktp_matches m
   ON m.server_id=fp.server_id AND m.map_name=fp.map_name
-WHERE BINARY m.match_id = BINARY {literal}
+WHERE m.match_id = {literal} AND BINARY m.match_id = BINARY {literal}
 ORDER BY fp.flag_index
 """))
 
@@ -268,8 +274,8 @@ SELECT cm.half, cm.map_name, cm.producer, cm.producer_version,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m
-  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
-WHERE BINARY cm.match_id=BINARY {literal}
+  ON m.match_id=cm.match_id AND BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE cm.match_id={literal} AND BINARY cm.match_id=BINARY {literal}
 ORDER BY cm.half, cm.producer
 """))
     health = analytics.tsv_rows(db.sql(f"""
@@ -278,7 +284,8 @@ SELECT half, event_type, attempted, enqueued, dropped, emitted,
        correlation_failure_count, sequence_first, sequence_last,
        daemon_sequence_first, daemon_sequence_last, sequence_gap_count,
        duplicate_or_reordered_count, producer_sequence, event_epoch
-FROM ktp_capture_health WHERE BINARY match_id=BINARY {literal}
+FROM ktp_capture_health
+WHERE match_id={literal} AND BINARY match_id=BINARY {literal}
 ORDER BY half, event_type
 """))
     return {"manifests": manifests, "health": health}
@@ -428,7 +435,7 @@ def collect_cap_breaks(db: EphemeralMysql, match_id: str) -> list[dict[str, Any]
 SELECT {select}
 FROM hlstats_Events_PlayerActions pa
 JOIN hlstats_Actions a ON a.id=pa.actionId
-WHERE BINARY pa.match_id = BINARY {literal}
+WHERE pa.match_id = {literal} AND BINARY pa.match_id = BINARY {literal}
   AND a.game='dod' AND a.code='cap_break'
 """))
 

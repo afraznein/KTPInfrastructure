@@ -108,7 +108,8 @@ SELECT cm.match_id, cm.half, cm.schema_version, cm.capabilities,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m
-  ON BINARY m.match_id = BINARY cm.match_id AND m.half = cm.half
+  ON m.match_id = cm.match_id AND BINARY m.match_id = BINARY cm.match_id
+ AND m.half = cm.half
 WHERE cm.match_id IN ({scope})
 ORDER BY cm.match_id, cm.half, cm.id
 """)

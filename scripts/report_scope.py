@@ -57,7 +57,10 @@ def match_scope_columns(alias: str) -> str:
     for "no type" by a truthiness test.
     """
     types = ", ".join(str(t) for t in OFFICIAL_MATCH_TYPES)
-    same = f"BINARY m.match_id = BINARY {alias}.match_id"
+    # ktp_match_reports.match_id is utf8mb4_bin; without the COLLATE the
+    # plain twin compares in _bin and cannot use ktp_matches' _ci index.
+    same = (f"m.match_id = {alias}.match_id COLLATE utf8mb4_unicode_ci "
+            f"AND BINARY m.match_id = BINARY {alias}.match_id")
     return (
         f"(SELECT MAX(m.start_time) FROM ktp_matches m WHERE {same}) "
         "AS match_start, "
