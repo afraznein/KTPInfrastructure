@@ -19,6 +19,8 @@ EnvironmentFile=-/etc/ktp/reports.env
 # --website also upserts the same numbers into ktp.voice_taunt_snapshot for the admin-only page
 # (keep-the-prac /admin/voice-taunts). Exit 3 = only that upsert failed: the files still publish,
 # then the unit fails so the on-failure alert fires. Any other non-zero stops before publishing.
+# Without --website the script never tries the upsert and exits 0, so a script installed with an
+# older unit writes no snapshot and alerts nothing. Install both; verify by the `website: ... upserted` line.
 ExecStart=/usr/local/bin/ktp-run-record.sh /bin/sh -c 'cd /var/lib/ktp-voice-taunts; /usr/local/bin/voice_taunts.py --out latest.md --tsv latest.tsv --website; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 3 ] || exit $$rc; cp latest.md "voice-taunts-$(date +%%F).md" && /usr/local/bin/ktp-coord-publish.sh research/infra-voice-taunts-report latest.md latest.tsv "voice-taunts-$(date +%%F).md" || exit 1; exit $$rc'
 TimeoutStartSec=10min
 
