@@ -73,6 +73,8 @@ python3 scripts/sync-runner-stack.py --apply   # do it
 
 Without `--apply` the tool only reports. With it, it backs up each drifted file on the runner before overwriting, and re-reads the md5 after the pull *and* after the push. It refuses while a Tier-2 run is live, and refuses while the reference instance is holding staged `.new` files, because a sync into a pending wave is stale again at the next 03:00 — `--ignore-running` and `--ack-pending-wave` override each, and say so in the output.
 
+⚠️ **A KTPInfrastructure merge to `main` starts a Tier-2 run within seconds** (`push:` on `main` in `tier2-integration.yml`), so a sync right after a merge is refused as in flight. Wait for that run to finish; never reach for `--ignore-running` to get past it.
+
 **What it deliberately does not cover.** Each of these needs its own look on every wave:
 
 - **Test-mode plugins.** KTPMatchHandler and KTPPracticeMode are `KTP_TEST_MODE` builds; byte-equality with the fleet would be *wrong*, so md5 says nothing about them. Check with `stage-runner.py --show`.

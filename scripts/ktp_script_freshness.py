@@ -39,6 +39,12 @@ checkouts set `core.autocrlf=input` and carry a `.gitattributes`, so raw bytes
 and the stored blob legitimately differ and a hand-rolled comparison reports
 drift on files that are identical.
 
+THE GUARD NEVER CHECKS ITSELF
+-----------------------------
+No caller lists this module in `also`, and `ktp-install` does not run
+`require_current`, so a stale installed copy of this file is never reported.
+Re-install it whenever it changes; it vouches for everything but itself.
+
 FAIL-CLOSED, AND WHERE THE EDGE IS
 ----------------------------------
 Every answer that is not "identical to the ref" refuses: drift, no checkout, the
