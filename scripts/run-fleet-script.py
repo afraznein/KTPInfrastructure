@@ -20,7 +20,8 @@ the tool; it was that the documented way to invoke it was undocumented.
 This is that shim, once, in the repo.
 
 WHAT IT DOES NOT DO. It adds no deploy logic and makes no connection of its own.
-It resolves a credential pair and the version rows, and execs a sibling. Every gate -- the
+It resolves a credential pair, the version rows and -- for the two scripts that talk
+to the tier-2 runner -- the hosts they need, and execs a sibling. Every gate -- the
 attribution check, the md5 pins, --pull-live, the row-flip gate, the activation-day
 gate -- belongs to the script being run and is untouched.
 
@@ -66,6 +67,23 @@ ENVIRONMENT
                            project root above it -- the default then resolves to
                            a directory holding neither the rows nor ktp_hosts.py.
                            Same variable the KTPDoDServerConfig shim uses
+  KTP_TIER2_SSH_HOST       the tier-2 runner, which is the data server. Honoured
+                           if already set; else ktp_hosts.SERVERS["data"]["host"].
+                           Given to stage-wave.py (its --expect-runner gate) and
+                           sync-runner-stack.py, and to nothing else
+  KTP_TIER2_SSH_KEY        key PATH for that host, which is keys-only. Honoured if
+                           set; else ktp_hosts.SERVERS["data"]["key"], and the file
+                           must exist. sync-runner-stack.py only: stage-wave.py
+                           does not read it (paramiko finds the key itself)
+  KTP_DRIFT_REF_HOST       the game host the runner is synced FROM. Honoured if
+                           set; else ktp_hosts.SERVERS["atlanta"]["host"], the
+                           reference ktp-tier2-stack-drift.py documents (tree
+                           dod-27015). sync-runner-stack.py only
+  None of the three has a default here, and none is hardcoded: the children refuse
+  defaults on purpose, because a runner synced from a guessed host is worse than a
+  run that fails. If one cannot be resolved, sync-runner-stack.py is not started
+  and the message names the variable and where to set it; stage-wave.py is
+  started with a note, since only its --expect-runner gate needs the host.
 
 Exit code is the child's, unchanged. 2 means this script would not start it.
 """
@@ -136,6 +154,29 @@ KNOWN_UNSATISFIED = {
         "the data server is keys-only, so KTP_TIER2_SSH_KEY carries a key PATH "
         "instead; a password there would fail even if it were supplied",
 }
+
+# Host inputs, by the child that reads them. Least privilege again: a staging tool
+# has no business being handed the game host the runner sync diffs against. The
+# unit tests derive each child's set from its source, so a child that starts
+# reading one of these names fails until it is added here.
+HOST_VARS = {
+    "stage-wave.py": ("KTP_TIER2_SSH_HOST",),
+    "sync-runner-stack.py": ("KTP_TIER2_SSH_HOST", "KTP_TIER2_SSH_KEY",
+                             "KTP_DRIFT_REF_HOST"),
+}
+
+# Where each comes from in ktp_hosts.SERVERS. Names, never addresses: this repo is
+# public, and ktp_hosts is already the single source of truth for every host.
+HOST_SOURCES = {
+    "KTP_TIER2_SSH_HOST": ("data", "host"),   # the tier-2 runner lives on the data server
+    "KTP_TIER2_SSH_KEY": ("data", "key"),     # keys-only host; a path, not a secret
+    "KTP_DRIFT_REF_HOST": ("atlanta", "host"),  # ktp-tier2-stack-drift.py's reference
+}
+
+# Children that cannot do anything useful without their hosts. For these an
+# unresolvable one stops the run here, with the cause; the child's own FATAL names
+# the variable but not why the wrapper did not supply it.
+HOSTS_REQUIRED = ("sync-runner-stack.py",)
 
 # Credential-shaped env names, read out of a child's source rather than listed.
 CREDENTIAL_NAME = re.compile(
@@ -216,13 +257,12 @@ def child_env(name: str) -> dict:
     want_rcon = name in NEEDS_RCON and not env.get("KTP_RCON_PASSWORD")
     if not (want_ssh or want_rcon):
         propagate_ssh_aliases(env, aliases)
+        resolve_hosts(env, name)
         return env
 
     root = project_root()
-    if root not in sys.path:
-        sys.path.insert(0, root)
     try:
-        import ktp_hosts                      # the single source of truth
+        ktp_hosts = import_ktp_hosts()
     except ImportError as exc:
         raise SystemExit(
             "cannot import ktp_hosts from %s for the fleet credential (%s).\n"
@@ -249,7 +289,64 @@ def child_env(name: str) -> dict:
                   % name, file=sys.stderr)
 
     propagate_ssh_aliases(env, aliases)
+    resolve_hosts(env, name)
     return env
+
+
+def import_ktp_hosts():
+    root = project_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import ktp_hosts                          # the single source of truth
+    return ktp_hosts
+
+
+def resolve_hosts(env: dict, name: str) -> None:
+    """Fill the host inputs this child reads and nothing else.
+
+    An already-set value wins and triggers no import. A value that cannot be
+    resolved is never guessed: the children refuse defaults on purpose.
+    """
+    wanted = [v for v in HOST_VARS.get(name, ()) if not env.get(v, "").strip()]
+    if not wanted:
+        return
+    root = project_root()
+    problems = []
+    try:
+        ktp_hosts = import_ktp_hosts()
+    except ImportError as exc:
+        problems = [(v, "cannot import ktp_hosts from %s (%s)" % (root, exc))
+                    for v in wanted]
+    else:
+        servers = getattr(ktp_hosts, "SERVERS", None)
+        for var in wanted:
+            server, field = HOST_SOURCES[var]
+            entry = servers.get(server) if isinstance(servers, dict) else None
+            value = entry.get(field) if isinstance(entry, dict) else None
+            if not value:
+                problems.append((var, "ktp_hosts.SERVERS[%r][%r] is missing or empty"
+                                 % (server, field)))
+                continue
+            if field == "key":
+                value = os.path.expanduser(value)
+                if not os.path.isfile(value):
+                    # A missing key surfaces as an auth failure on a keys-only host,
+                    # which reads as a wrong credential rather than a missing file.
+                    problems.append((var, "the key ktp_hosts names does not exist at %s"
+                                     % value))
+                    continue
+            env[var] = value
+    if not problems:
+        return
+    lines = ["%s is unset and could not be resolved: %s. Set it in the environment, "
+             "or fix that entry in %s" % (var, why, os.path.join(root, "ktp_hosts.py"))
+             for var, why in problems]
+    if name in HOSTS_REQUIRED:
+        raise SystemExit("\n".join(lines) + "\n%s refuses to run without it, so it was "
+                         "not started. Do not pass a guessed host." % name)
+    for line in lines:
+        print("note:   %s -- %s is started anyway; only a step that needs the host "
+              "refuses (stage-wave.py: --expect-runner)" % (line, name), file=sys.stderr)
 
 
 def unsatisfied_credentials(target: str, env: dict) -> list:
@@ -309,6 +406,9 @@ def main(argv: list) -> int:
         if env.get(alias):
             supplied.append(alias)
     print("creds:  %s set in child env, value not shown" % ", ".join(supplied))
+    hosts = [v for v in HOST_VARS.get(name, ()) if env.get(v)]
+    if hosts:
+        print("hosts:  %s set in child env" % ", ".join(hosts))
     for missing in unsatisfied_credentials(target, env):
         why = KNOWN_UNSATISFIED.get(missing)
         if why:
