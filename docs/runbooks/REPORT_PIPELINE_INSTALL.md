@@ -293,6 +293,7 @@ gone and the match listed.
 | Reports but 0 aggregates | `aggregate` failed; read the second ExecStart in the journal |
 | Both built, site empty | `report_sync` did not push. Almost always the secret |
 | A rating renders negative | Checkout is behind `main`; the display floor is 50 |
+| Journal says only `code=killed` | A timeout. In `/var/log/ktp-report-service.log` the last `ktp-reports step=<name> start` with no matching `end` is the step it killed |
 
 ```bash
 journalctl -u ktp-reports.service -n 50 --no-pager

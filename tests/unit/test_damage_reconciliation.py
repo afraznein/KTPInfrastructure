@@ -290,7 +290,7 @@ def test_the_box_score_defers_to_the_producer_match():
     tagged for another match must not reach this match's damage columns. The
     integration lane proves it against MySQL; this pins it in the cheap lane."""
     join = " ".join(_damage_join().split())
-    assert ("d.producer_match_id IS NULL OR "
-            "BINARY d.producer_match_id = BINARY d.match_id") in join, join
+    assert ("d.producer_match_id IS NULL OR (d.producer_match_id = d.match_id "
+            "AND BINARY d.producer_match_id = BINARY d.match_id)") in join, join
     # Control: the clause sits in the damage join, not merely somewhere in the file.
     assert "d.match_id = r.match_id" in join

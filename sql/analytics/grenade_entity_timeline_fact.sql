@@ -18,5 +18,6 @@ SELECT
   producer_sequence,
   event_time
 FROM ktp_grenade_entity_events
-WHERE BINARY match_id = BINARY {{MATCH_ID}}
+WHERE match_id = {{MATCH_ID}}
+  AND BINARY match_id = BINARY {{MATCH_ID}}
 ORDER BY half, event_epoch, producer_sequence, id;

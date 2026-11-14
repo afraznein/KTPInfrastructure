@@ -8,7 +8,8 @@ SELECT
     d.game_time,
     d.event_epoch,
     CASE
-      WHEN BINARY d.producer_match_id = BINARY {{MATCH_ID}}
+      WHEN d.producer_match_id = {{MATCH_ID}}
+       AND BINARY d.producer_match_id = BINARY {{MATCH_ID}}
        AND d.producer_half > 0
       THEN d.producer_half
       ELSE NULL
@@ -29,13 +30,15 @@ SELECT
     d.hitplace
 FROM ktp_damage_events d
 LEFT JOIN ktp_match_players attacker
-  ON BINARY attacker.match_id = BINARY d.producer_match_id
+  ON attacker.match_id = d.producer_match_id
+ AND BINARY attacker.match_id = BINARY d.producer_match_id
  AND attacker.player_id = d.attacker_id
 LEFT JOIN ktp_match_players victim
-  ON BINARY victim.match_id = BINARY d.producer_match_id
+  ON victim.match_id = d.producer_match_id
+ AND BINARY victim.match_id = BINARY d.producer_match_id
  AND victim.player_id = d.victim_id
-WHERE (BINARY d.match_id = BINARY {{MATCH_ID}}
-       OR BINARY d.producer_match_id = BINARY {{MATCH_ID}})
+WHERE ((d.match_id = {{MATCH_ID}} AND BINARY d.match_id = BINARY {{MATCH_ID}})
+       OR (d.producer_match_id = {{MATCH_ID}} AND BINARY d.producer_match_id = BINARY {{MATCH_ID}}))
   -- Stored context keeps contract-violating/legacy rows visible to the pure
   -- analyzer. The CASE above nulls their half, so they are counted and fail
   -- closed instead of being mistaken for target-match evidence.
