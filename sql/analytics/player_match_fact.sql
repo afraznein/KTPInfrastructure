@@ -19,20 +19,22 @@ match_context AS (
 ),
 producer_coverage AS (
     -- A producer that had not fired anywhere by the time this match ended did
-    -- not exist for it: its count is unknown, not zero.
+    -- not exist for it: its count is unknown, not zero. An open match compares
+    -- against the DATETIME maximum, not the row's own time, so the bound stays
+    -- a range an event_time index can seek.
     SELECT
         EXISTS(SELECT 1 FROM hlstats_Events_PlayerPlayerActions e
                JOIN hlstats_Actions a ON a.id = e.actionId
                WHERE a.game = 'dod' AND a.code = 'assist'
-                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+                 AND e.eventTime <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS assists_covered,
         EXISTS(SELECT 1 FROM hlstats_Events_PlayerActions e
                JOIN hlstats_Actions a ON a.id = e.actionId
                WHERE a.game = 'dod' AND a.code = 'cap_break'
-                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+                 AND e.eventTime <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS breaks_covered,
         EXISTS(SELECT 1 FROM ktp_flag_captures c
-               WHERE c.event_time <= COALESCE(mc.ended_at, c.event_time))
+               WHERE c.event_time <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS captures_covered
     FROM match_context mc
 ),
@@ -69,8 +71,11 @@ suicides AS (
     GROUP BY playerId
 ),
 assists AS (
+    -- No match_id index here either, and nearly every row is an assist, so the
+    -- actionId index reads the whole table; the roster's playerId lookups don't.
     SELECT e.playerId AS player_id, COUNT(*) AS assists
-    FROM hlstats_Events_PlayerPlayerActions e
+    FROM roster r
+    JOIN hlstats_Events_PlayerPlayerActions e ON e.playerId = r.player_id
     JOIN hlstats_Actions a ON a.id = e.actionId
     WHERE e.match_id = {{MATCH_ID}} AND a.game = 'dod' AND a.code = 'assist'
     GROUP BY e.playerId
@@ -145,10 +150,14 @@ captures AS (
     GROUP BY c.player_id
 ),
 weapon_totals AS (
-    SELECT playerId AS player_id, SUM(shots) AS shots, SUM(hits) AS hits
-    FROM hlstats_Events_Statsme
-    WHERE match_id = {{MATCH_ID}}
-    GROUP BY playerId
+    -- Statsme has no match_id index, so reach it through the roster's playerId
+    -- lookups rather than scanning the whole MyISAM table under its read lock.
+    -- Only roster players are joined below, so the result is the same.
+    SELECT st.playerId AS player_id, SUM(st.shots) AS shots, SUM(st.hits) AS hits
+    FROM roster r
+    JOIN hlstats_Events_Statsme st ON st.playerId = r.player_id
+    WHERE st.match_id = {{MATCH_ID}}
+    GROUP BY st.playerId
 ),
 position_coverage AS (
     SELECT player_id, COUNT(*) AS position_samples
