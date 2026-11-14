@@ -107,7 +107,10 @@ on:
 jobs:
   smoke:
     name: ${{ inputs.under_test_label }}
-    runs-on: ubuntu-latest
+    # Slow path only: its steamcmd build step is i386, and docker 29.4.2 on ubuntu-latest refuses
+    # socketcall(2) inside a build. The fast path's first 32-bit socket is the boot, under
+    # ci/seccomp/lane-b-i386.json, so it stays on latest.
+    runs-on: ${{ inputs.use_base_image && 'ubuntu-latest' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -385,6 +388,18 @@ jobs:
       # ============================================================
       # SLOW PATH: full make build + runtime image build
       # ============================================================
+      # Same guard as publish-base-image.yml: name the cause up front instead of
+      # letting steamcmd report "needs to be online to update" minutes later.
+      - name: Check the runner's docker can run 32-bit network code (slow path)
+        if: ${{ !inputs.use_base_image }}
+        run: |
+          v="$(docker version -f '{{.Server.Version}}')"
+          echo "runner docker server: $v, kernel $(uname -r)"
+          if [ "$v" = "29.4.2" ]; then
+            echo "::error::docker $v blocks socketcall(2) for i386; steamcmd cannot reach Steam inside the build. Use a runner with docker <29.4.2 or >=29.4.3."
+            exit 1
+          fi
+
       - name: Build all KTP components (slow path)
         if: ${{ !inputs.use_base_image }}
         working-directory: KTPInfrastructure
