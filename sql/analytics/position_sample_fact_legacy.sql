@@ -14,8 +14,10 @@ SELECT
     ps.event_time
 FROM ktp_position_samples ps
 LEFT JOIN ktp_match_players roster
-  ON BINARY roster.match_id = BINARY ps.match_id
+  ON roster.match_id = ps.match_id
+ AND BINARY roster.match_id = BINARY ps.match_id
  AND roster.player_id = ps.player_id
-WHERE BINARY ps.match_id = BINARY {{MATCH_ID}}
+WHERE ps.match_id = {{MATCH_ID}}
+  AND BINARY ps.match_id = BINARY {{MATCH_ID}}
   AND ps.half > 0
 ORDER BY ps.half, ps.game_time, ps.id;

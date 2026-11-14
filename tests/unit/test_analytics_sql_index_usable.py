@@ -38,6 +38,22 @@ def unpaired_binary_equalities(text: str) -> list[str]:
     return missing
 
 
+def unadjacent_binary_equalities(text: str) -> list[str]:
+    """BINARY tests not immediately preceded by `a = b AND` on the same operands.
+
+    A twin anywhere else in the statement does not help: inside an OR, or in
+    another clause, the optimizer cannot use it to narrow this test's range.
+    """
+    missing = []
+    for m in BINARY_EQ.finditer(text):
+        a, b = m.group(1), m.group(2)
+        twin = re.compile(
+            rf"(?<![\w.]){re.escape(a)}\s*=\s*{re.escape(b)}\s+AND\s+$", re.IGNORECASE)
+        if not twin.search(text[:m.start()]):
+            missing.append(f"{a} = {b}")
+    return missing
+
+
 def strip_comments(sql: str) -> str:
     return re.sub(r"--[^\n]*", "", sql)
 
@@ -62,6 +78,30 @@ def test_death_group_query_pairs_every_binary_match_test():
     sql = strip_comments((ANALYTICS / "death_group_link_fact.sql").read_text(encoding="utf-8"))
     assert len(BINARY_EQ.findall(sql)) == 5
     assert unpaired_binary_equalities(sql) == []
+
+
+def analytics_sql():
+    return [(path.name, strip_comments(path.read_text(encoding="utf-8")))
+            for path in sorted(ANALYTICS.glob("*.sql"))]
+
+
+def test_the_scan_reads_binary_tests_outside_exists_blocks():
+    assert sum(len(BINARY_EQ.findall(sql)) for _, sql in analytics_sql()) > 5
+
+
+@pytest.mark.parametrize("name", [name for name, _ in analytics_sql()])
+def test_every_binary_match_test_has_an_adjacent_plain_twin(name):
+    sql = strip_comments((ANALYTICS / name).read_text(encoding="utf-8"))
+    assert unadjacent_binary_equalities(sql) == []
+
+
+def test_a_binary_test_with_a_distant_twin_is_reported():
+    assert unadjacent_binary_equalities(
+        "WHERE (f.m = x OR BINARY f.m = BINARY x)") == ["f.m = x"]
+    assert unadjacent_binary_equalities(
+        "WHERE (f.m = x AND BINARY f.m = BINARY x)") == []
+    assert unadjacent_binary_equalities(
+        "ON r.m = ps.m\n AND BINARY r.m = BINARY ps.m") == []
 
 
 def test_an_unpaired_binary_test_is_reported():

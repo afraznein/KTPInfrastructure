@@ -6,7 +6,8 @@ SELECT
     f.event_epoch AS event_unix,
     FROM_UNIXTIME(f.event_epoch) AS event_time,
     CASE
-      WHEN BINARY f.producer_match_id = BINARY {{MATCH_ID}}
+      WHEN f.producer_match_id = {{MATCH_ID}}
+       AND BINARY f.producer_match_id = BINARY {{MATCH_ID}}
        AND f.producer_half > 0
       THEN f.producer_half
       ELSE NULL
@@ -44,13 +45,15 @@ SELECT
     f.frag_context_recorded
 FROM hlstats_Events_Frags f
 LEFT JOIN ktp_match_players killer
-  ON BINARY killer.match_id = BINARY f.producer_match_id
+  ON killer.match_id = f.producer_match_id
+ AND BINARY killer.match_id = BINARY f.producer_match_id
  AND killer.player_id = f.killerId
 LEFT JOIN ktp_match_players victim
-  ON BINARY victim.match_id = BINARY f.producer_match_id
+  ON victim.match_id = f.producer_match_id
+ AND BINARY victim.match_id = BINARY f.producer_match_id
  AND victim.player_id = f.victimId
-WHERE (BINARY f.match_id = BINARY {{MATCH_ID}}
-       OR BINARY f.producer_match_id = BINARY {{MATCH_ID}})
+WHERE ((f.match_id = {{MATCH_ID}} AND BINARY f.match_id = BINARY {{MATCH_ID}})
+       OR (f.producer_match_id = {{MATCH_ID}} AND BINARY f.producer_match_id = BINARY {{MATCH_ID}}))
   -- Keep legacy/mismatched stored rows visible as invalid coverage. `half` is
   -- NULL unless producer context names this exact match and a positive half.
 ORDER BY COALESCE(f.producer_half, f.half),
