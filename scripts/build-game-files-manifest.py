@@ -90,7 +90,7 @@ import json
 import os
 import re
 import sys
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, namedtuple
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -101,16 +101,63 @@ import paramiko
 # Policy — edit here to change manifest scope
 # --------------------------------------------------------------------------
 
-EXCLUDED_PATH_PREFIXES = ("overviews/",)
+# Each bucket is the label _meta.excluded_buckets carries AND the rule that enforces it,
+# so a bucket cannot be declared without being applied. is_excluded() runs on every route.
+ExcludedBucket = namedtuple("ExcludedBucket", "label rule values")  # rule: exact | prefix | suffix
 
-# A map's own resource list. The server builds and sends the authoritative list, so a
-# player's local copy changes nothing they render and enforcing its hash buys no
-# detection -- while it is rewritten on every map redeploy, which re-scores everyone
-# still holding the copy FastDL gave them.
-# maps/*.bsp is out of scope on hashing cost (see excluded_buckets). Without it here a
-# .res that names its own map pulls that one .bsp back in, so which maps were enforced
-# depended on how each .res was written, not on any ruling.
-EXCLUDED_EXTENSIONS = (".res", ".bsp")
+EXCLUDED_BUCKETS = (
+    ExcludedBucket(
+        "models/{w_aflag,w_gflag,w_wflag}.mdl (flag — cosmetic, allowed)",
+        "exact", ("models/w_aflag.mdl", "models/w_gflag.mdl", "models/w_wflag.mdl")),
+    ExcludedBucket(
+        "overviews/* (top-down map BMPs — cosmetic, allowed)",
+        "prefix", ("overviews/",)),
+    # A map's own resource list. The server builds and sends the authoritative list, so a
+    # player's local copy changes nothing they render and enforcing its hash buys no
+    # detection -- while it is rewritten on every map redeploy, which re-scores everyone
+    # still holding the copy FastDL gave them.
+    ExcludedBucket(
+        "maps/*.res (a map's resource list — the server sends the authoritative "
+        "one; enforcing the client's copy detects nothing and re-scores on every "
+        "map redeploy)",
+        "suffix", (".res",)),
+    # maps/*.bsp: NOT cosmetic, and this is a stated gap rather than a ruling.
+    # A client-side BSP edit that removes cover is a real wallhack — the server
+    # stays authoritative for collision, so the player is still blocked, but
+    # they SEE through what they deleted. The reason maps are out of scope is
+    # cost, not harmlessness: the current 213-entry set hashes ~147MB, and the
+    # competitive rotation would add roughly 10-15 files at 10-50MB each, on
+    # every scan, twice a session. Revisit with a cheaper design (hash only the
+    # loaded map, or sample) rather than by silently bolting the rotation on.
+    # Unenforced, a .res that names its own map pulled that one .bsp back in.
+    ExcludedBucket(
+        "maps/*.bsp (NOT cosmetic — real wallhack vector; excluded on hashing cost, see comment)",
+        "suffix", (".bsp",)),
+)
+
+_RULES = {
+    "exact": lambda p, vs: p in vs,
+    "prefix": lambda p, vs: p.startswith(vs),
+    "suffix": lambda p, vs: p.endswith(vs),
+}
+
+
+def _bucket_values(rule):
+    return tuple(v for b in EXCLUDED_BUCKETS if b.rule == rule for v in b.values)
+
+
+# Views of EXCLUDED_BUCKETS, never edited on their own.
+EXCLUDED_PATH_PREFIXES = _bucket_values("prefix")
+EXCLUDED_EXTENSIONS = _bucket_values("suffix")
+EXCLUDED_EXACT = frozenset(_bucket_values("exact"))
+
+
+def is_excluded(path):
+    """True if any declared excluded bucket covers this path. Case-insensitive: the
+    client hashes whatever the filesystem holds, and ktp_file.ini is not lowercased."""
+    p = path.lower()
+    return any(_RULES[b.rule](p, b.values) for b in EXCLUDED_BUCKETS)
+
 
 # Report-only scope. In the manifest, captured and shown to an admin, but the
 # client's IsReview branch keeps it out of modified_game_files -- so it never
@@ -123,13 +170,13 @@ GRENADE_VIEWMODELS = ("models/v_grenade.mdl", "models/v_mills.mdl", "models/v_st
 # prefix -- "models/" cannot be a prefix rule without releasing the weapon kit.
 REVIEW_EXACT = frozenset(GRENADE_VIEWMODELS)
 
-# Applied at every source, so a map .res or a future ktp_file.ini line cannot
-# pull one of these back in.
-EXCLUDED_EXACT = {
-    "models/w_aflag.mdl",
-    "models/w_gflag.mdl",
-    "models/w_wflag.mdl",
-}
+# Equipment, ammo and the base player model: no .res or ktp_file.ini line carries them.
+EXPLICIT_SINGLETONS = (
+    "models/allied_ammo.mdl", "models/axis_ammo.mdl",
+    "models/hat_axis.mdl", "models/helmet_axis.mdl", "models/helmet_us.mdl",
+    "models/player.mdl",
+)
+
 # (pl_snow* exclusion removed 2026-07-07 — snow footsteps are back in
 # ktp_file.ini enforcement, so the manifest must cover them again.)
 EXCLUDED_FILELIST_PATTERNS = []
@@ -294,7 +341,20 @@ def _check_weapon_families():
         raise ValueError(f"WEAPON_FAMILIES names a model in more than one family: {dup}")
 
 
+def explicit_paths():
+    """Every path a hard-coded route emits, whatever the source server holds."""
+    kit = [f"models/{b}.mdl" for _, p_bases, w_bases in WEAPON_FAMILIES for b in (*p_bases, *w_bases)]
+    return [*EXPLICIT_SINGLETONS, *GRENADE_VIEWMODELS, *kit]
+
+
+def _check_explicit_scope():
+    named = sorted(p for p in explicit_paths() if is_excluded(p))
+    if named:
+        raise ValueError(f"explicit manifest routes name excluded-bucket paths: {named}")
+
+
 _check_weapon_families()
+_check_explicit_scope()
 
 
 # --------------------------------------------------------------------------
@@ -381,7 +441,7 @@ def parse_filelist_ini(filelist_path):
             # `player/...` entries are sound paths (sound/ prefix implicit in HL)
             if line.startswith("player/"):
                 line = "sound/" + line
-            if line in EXCLUDED_EXACT or any(p.match(line) for p in EXCLUDED_FILELIST_PATTERNS):
+            if is_excluded(line) or any(p.match(line) for p in EXCLUDED_FILELIST_PATTERNS):
                 continue
             paths.append(line)
     return paths
@@ -461,9 +521,7 @@ def build_manifest(ssh, dod_path, filelist_path):
     res_excluded = 0
     res_missing = []
     for path, ref_maps in sorted(references.items()):
-        if (any(path.startswith(p) for p in EXCLUDED_PATH_PREFIXES)
-                or path.lower().endswith(EXCLUDED_EXTENSIONS)
-                or path in EXCLUDED_EXACT):
+        if is_excluded(path):
             res_excluded += 1
             continue
         result = hash_remote_file(ssh, f"{dod_path}/{path}")
@@ -520,13 +578,8 @@ def build_manifest(ssh, dod_path, filelist_path):
     print(f"[build]   filelist.ini added: {fl_added} (dedup'd against .res: {fl_dedup})", file=sys.stderr)
 
     # 3. Explicit additions: equipment models + ammo + player.mdl
-    explicit_singletons = [
-        "models/allied_ammo.mdl", "models/axis_ammo.mdl",
-        "models/hat_axis.mdl", "models/helmet_axis.mdl", "models/helmet_us.mdl",
-        "models/player.mdl",
-    ]
     print(f"[build] Explicit equipment/ammo/player.mdl additions...", file=sys.stderr)
-    for path in explicit_singletons:
+    for path in EXPLICIT_SINGLETONS:
         if path in seen:
             continue
         result = hash_remote_file(ssh, f"{dod_path}/{path}")
@@ -601,6 +654,10 @@ def build_manifest(ssh, dod_path, filelist_path):
         print(f"[build]   ⚠ weapon-kit paths not found on server: {weapon_missing}", file=sys.stderr)
     print(f"[build]   weapon-kit added: {weapon_added}", file=sys.stderr)
 
+    # Backstop for any route added later without the filter: refuse, never drop quietly.
+    leaked = sorted(e["path"] for e in entries if is_excluded(e["path"]))
+    if leaked:
+        raise ValueError(f"excluded-bucket paths reached the manifest: {leaked}")
     return entries
 
 
@@ -690,22 +747,7 @@ def assemble_manifest(entries, source_server_label, dod_path, stock_paths_file=N
                 "gfx/env/* (skyboxes) IN scope at severity 'review' since 2026-08-27 (was an excluded bucket). Reported and captured for admin review; never counts toward a verdict. Only skyboxes a map .res references enter scope -- stock skies are unreferenced and stay out.",
                 "Kept out by name (EXCLUDED_WEAPON_MODELS): the no-underscore l-suffix names (p_garandl, p_tommyl, ...) are community files, not stock; w_colt/w_luger/w_spade are stock but loaded by nothing (pistols and melee cannot be dropped); the mortar models are stock but no 1.3 class can spawn the weapon.",
             ],
-            "excluded_buckets": [
-                "models/{w_aflag,w_gflag,w_wflag}.mdl (flag — cosmetic, allowed)",
-                "overviews/* (top-down map BMPs — cosmetic, allowed)",
-                "maps/*.res (a map's resource list — the server sends the authoritative "
-                "one; enforcing the client's copy detects nothing and re-scores on every "
-                "map redeploy)",
-                # maps/*.bsp: NOT cosmetic, and this is a stated gap rather than a ruling.
-                # A client-side BSP edit that removes cover is a real wallhack — the server
-                # stays authoritative for collision, so the player is still blocked, but
-                # they SEE through what they deleted. The reason maps are out of scope is
-                # cost, not harmlessness: the current 213-entry set hashes ~147MB, and the
-                # competitive rotation would add roughly 10-15 files at 10-50MB each, on
-                # every scan, twice a session. Revisit with a cheaper design (hash only the
-                # loaded map, or sample) rather than by silently bolting the rotation on.
-                "maps/*.bsp (NOT cosmetic — real wallhack vector; excluded on hashing cost, see comment)",
-            ],
+            "excluded_buckets": [b.label for b in EXCLUDED_BUCKETS],
         },
         "files": entries,
     }
