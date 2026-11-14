@@ -1,9 +1,8 @@
 """`maps/*.bsp` stays out of manifest scope even when a map's `.res` names it.
 
-The generator documents maps as an excluded bucket -- a stated gap on hashing cost, not a
-ruling that a BSP edit is harmless -- but nothing enforced it. The `.res` route accepts any
-listed `.bsp`, so a map whose resource list names itself put its own world file in scope at
-severity `violation`. Coverage of the largest wallhack surface was then decided by how each
+The generator documents maps as an excluded bucket, but nothing enforced it. The `.res`
+route accepts any listed `.bsp`, so a map whose resource list names itself put its own world
+file in scope at severity `violation`. Whether a map was hashed was then decided by how each
 `.res` happened to be written, and a widely shared older build of one such map scored as
 `modified_game_files` on unrelated players.
 

@@ -14,9 +14,9 @@ Three sources combined:
      weapon model the game binaries load, the lowered/sprint _l set included,
      + grenade viewmodels at severity "review")
 
-Excluded buckets (allowed modification): overviews/*, flag models
-(w_aflag/gflag/wflag), maps/*.bsp (a stated gap on hashing cost, not a ruling -- see
-excluded_buckets), and maps/*.res -- a self-referencing .res reaches clients over
+Excluded buckets: overviews/* and flag models (w_aflag/gflag/wflag), both cosmetic
+and allowed; maps/*.bsp, not hashed by this list (see EXCLUDED_BUCKETS); and
+maps/*.res -- a self-referencing .res reaches clients over
 FastDL, so enforcing a list the server itself sends only re-scored whoever held the
 previous copy.
 
@@ -121,17 +121,11 @@ EXCLUDED_BUCKETS = (
         "one; enforcing the client's copy detects nothing and re-scores on every "
         "map redeploy)",
         "suffix", (".res",)),
-    # maps/*.bsp: NOT cosmetic, and this is a stated gap rather than a ruling.
-    # A client-side BSP edit that removes cover is a real wallhack — the server
-    # stays authoritative for collision, so the player is still blocked, but
-    # they SEE through what they deleted. The reason maps are out of scope is
-    # cost, not harmlessness: the current 213-entry set hashes ~147MB, and the
-    # competitive rotation would add roughly 10-15 files at 10-50MB each, on
-    # every scan, twice a session. Revisit with a cheaper design (hash only the
-    # loaded map, or sample) rather than by silently bolting the rotation on.
+    # Out on scan cost (10-50MB per rotation map, every scan), not a ruling on map edits.
     # Unenforced, a .res that names its own map pulled that one .bsp back in.
+    # Served to every client; the AC API's ManifestScopeRules matches it byte for byte.
     ExcludedBucket(
-        "maps/*.bsp (NOT cosmetic — real wallhack vector; excluded on hashing cost, see comment)",
+        "maps/*.bsp (map files, not hashed by this list)",
         "suffix", (".bsp",)),
 )
 
