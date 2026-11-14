@@ -117,7 +117,11 @@ never assume it:
 ```bash
 ip -o route show default | awk '{print $5}'      # the device this host actually routes over
 netplan get ethernets                            # the merged authority, not a grep of one file
+dpkg-query -W netplan.io                         # the version; `netplan --version` prints none
 ```
+
+⚠️ `netplan --version` answers *You need to specify a command* on 24.04's netplan 1.1.x, so a version
+probe built on it comes back empty rather than confirmed.
 
 ⛔ **Chicago is excluded and must not get this file.** It is not a netplan host at all: its
 `01-netcfg.yaml` is the stock comment stub with zero configuration lines, `netplan get` returns nothing,
