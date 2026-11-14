@@ -610,10 +610,12 @@ def require_current(script_path, also=(), purpose=None):
 
 
 if __name__ == "__main__":
-    # Reporting mode: name the drift for a path without running anything.
+    # Reporting mode: name the drift for a path without running anything. It
+    # checks only the named files, not the siblings each one loads; name those too.
     import argparse
 
-    ap = argparse.ArgumentParser(description="Report whether a script is current.")
+    ap = argparse.ArgumentParser(description="Report whether a script is current. Checks only the "
+                                             "files named, not the siblings they load: name those too.")
     ap.add_argument("path", nargs="+", help="Script(s) to check.")
     args = ap.parse_args()
     bad = 0

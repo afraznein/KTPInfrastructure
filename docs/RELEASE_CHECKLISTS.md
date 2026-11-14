@@ -82,8 +82,12 @@ Without `--apply` the tool only reports. With it, it backs up each drifted file 
 **Confirm it landed** by making the tripwire agree, not by re-reading the tool's own output:
 
 ```bash
-ssh <data server> /usr/local/bin/ktp-tier2-heartbeat.sh
+ssh <data server> 'KTP_TIER2_DRIFT_STATE=$(mktemp -u) /usr/local/bin/ktp-tier2-heartbeat.sh'
 ```
+
+⚠️ A hand run is not read-only. Its own state stays untouched without `--write`, but the drift leg
+(`ktp-tier2-stack-drift.py`) saves its drift-age state on drift and clears it on a clean run. Point
+`KTP_TIER2_DRIFT_STATE` at a throwaway path, as above, or the hand run rewrites what cron reads next.
 
 ### KTPAntiCheat Release Checklist (Desktop + API)
 
