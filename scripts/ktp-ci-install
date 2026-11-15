@@ -33,9 +33,17 @@ CURRENT. In scope `outside` every KTPInfrastructure row OFF the allowlist must n
 be STALE or SOURCE-GONE: CI may not install it, so a stale one is owed by a person
 and must not wait in silence, and an allowlist alone is blind to a script deleted
 upstream. Exit 0 clean, 1 findings, 2 could not establish the baseline.
+
+A STALE-OUTSIDE-LIST file may be held, for at most HOLD_MAX_DAYS, by a row in
+config/ci-install-held.tsv at the baseline: DEST<TAB>NOT_AFTER<TAB>HELD_ON<TAB>REASON.
+Before NOT_AFTER it prints HELD and is not a finding; on or after it, it fails again by
+itself. A row that does not parse, or that holds for longer than the cap, grants
+nothing and is a finding. A hold on a file that is not stale prints a NOTE. Holds only
+change what --check reports; --install never reads the file.
 """
 
 import argparse
+import datetime
 import hashlib
 import os
 import re
@@ -47,6 +55,8 @@ import tempfile
 REPO_URL = "https://github.com/afraznein/KTPInfrastructure.git"
 SOURCE_REPO = "KTPInfrastructure"
 ALLOWLIST_PATH = "config/ci-install-allowlist.tsv"
+HOLD_PATH = "config/ci-install-held.tsv"
+HOLD_MAX_DAYS = 30
 WRAPPER = "/usr/local/sbin/ktp-ci-install"
 KTP_INSTALL = "/usr/local/bin/ktp-install"
 BIN_DIR = "/usr/local/bin"
@@ -68,6 +78,7 @@ HEADER = ["installed_path", "md5", "source_repo", "source_commit", "source_path"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 SRC = re.compile(r"scripts/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\Z")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 _NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "SSH_ASKPASS": ""}
 
 EXIT_REFUSED = 3
@@ -124,6 +135,65 @@ def load_allowlist(show, bin_dir=BIN_DIR):
     if raw is None:
         raise Untrusted("%s is absent at the baseline; without it nothing is allowed" % ALLOWLIST_PATH)
     return parse_allowlist(raw.decode("utf-8"), bin_dir)
+
+
+def _date(text):
+    if not DATE.match(text):
+        return None
+    try:
+        return datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def parse_holds(text, today):
+    """({dest: (not_after, reason)}, [problem lines]). A row with any problem grants nothing."""
+    holds, problems, seen = {}, [], set()
+    for n, line in enumerate(text.split("\n"), start=1):
+        if not line.strip() or line.startswith("#"):
+            continue
+        where = "%s:%d" % (HOLD_PATH, n)
+        cols = line.split("\t")
+        if "\r" in line or len(cols) != 4:
+            problems.append("MALFORMED  %s  (expected DEST<TAB>NOT_AFTER<TAB>HELD_ON<TAB>REASON, LF only; "
+                            "got %d field(s))" % (where, len(cols)))
+            continue
+        dest, not_after_s, held_on_s, reason = cols
+        not_after, held_on = _date(not_after_s), _date(held_on_s)
+        if dest in seen:
+            holds.pop(dest, None)
+            problems.append("MALFORMED  %s  (%s is held twice; neither row counts)" % (where, dest))
+            continue
+        seen.add(dest)
+        if not dest or dest != dest.strip() or not os.path.isabs(dest):
+            problems.append("MALFORMED  %s  (%r is not an absolute path)" % (where, dest))
+        elif not_after is None or held_on is None:
+            problems.append("MALFORMED  %s  (dates must be real YYYY-MM-DD dates: %r, %r)"
+                            % (where, not_after_s, held_on_s))
+        elif not reason.strip():
+            problems.append("MALFORMED  %s  (a hold needs its reason or ruling)" % where)
+        elif held_on > today:
+            problems.append("REFUSED    %s  (held_on %s is in the future; a hold starts when it is added)"
+                            % (where, held_on))
+        elif not_after <= held_on:
+            problems.append("MALFORMED  %s  (not_after %s is not after held_on %s)"
+                            % (where, not_after, held_on))
+        elif (not_after - held_on).days > HOLD_MAX_DAYS:
+            problems.append("OVER-CAP   %s  (%s held %d days, from %s to %s; the cap is %d)"
+                            % (where, dest, (not_after - held_on).days, held_on, not_after, HOLD_MAX_DAYS))
+        else:
+            holds[dest] = (not_after, reason.strip())
+    return holds, problems
+
+
+def load_holds(show, today):
+    raw = show(HOLD_PATH)
+    if raw is None:
+        return {}, []
+    try:
+        return parse_holds(raw.decode("utf-8"), today)
+    except UnicodeDecodeError:
+        return {}, ["MALFORMED  %s  (not UTF-8; no hold in it counts)" % HOLD_PATH]
 
 
 def last_rows(manifest):
@@ -214,10 +284,13 @@ def install_one(dest, entries, commit, show, manifest, ktp_install_argv, env, st
     return 0
 
 
-def check(entries, rows, show, scope):
-    """Print a verdict per path in scope; return the number of findings."""
+def check(entries, rows, show, scope, holds=None, hold_problems=(), today=None):
+    """Print a verdict per path in scope; return the number of findings. Holds apply to `outside` only."""
     allowed = dict(entries)
     findings = 0
+    holds = dict(holds or {})
+    today = today or datetime.date.today()
+    used = set()
     if scope in ("allowlisted", "all"):
         for dest, src in entries:
             state, now = assess(dest, src, rows.get(dest), show(src))
@@ -232,7 +305,17 @@ def check(entries, rows, show, scope):
             if row["source_path"].endswith(".example"):
                 continue
             state, now = assess(dest, row["source_path"], row, show(row["source_path"]))
-            if state == "STALE":
+            hold = holds.get(dest) if state == "STALE" else None
+            if hold is not None:
+                used.add(dest)
+                until, reason = hold
+            if hold is not None and today < until:
+                print("HELD     outside      STALE-OUTSIDE-LIST  %s  %s  until %s (%s)" % (dest, now, until, reason))
+            elif hold is not None:
+                findings += 1
+                print("FAIL     outside      STALE-OUTSIDE-LIST  %s  %s  (its hold ran out on %s: %s; a person "
+                      "installs it now, or a PR adds it to %s)" % (dest, now, until, reason, ALLOWLIST_PATH))
+            elif state == "STALE":
                 findings += 1
                 print("FAIL     outside      STALE-OUTSIDE-LIST  %s  %s  (CI may not install it: a person "
                       "installs it, or a PR adds it to %s)" % (dest, now, ALLOWLIST_PATH))
@@ -244,6 +327,12 @@ def check(entries, rows, show, scope):
                 findings += 1
                 print("FAIL     outside      REMOVED-UPSTREAM    %s  %s  (main no longer holds %s; "
                       "retire the file and its row by hand)" % (dest, now, row["source_path"]))
+        for problem in hold_problems:
+            findings += 1
+            print("FAIL     held-file    %s" % problem)
+        for dest in sorted(set(holds) - used):
+            print("NOTE     held-file    UNUSED-HOLD         %s  (not a stale off-allowlist file; delete its "
+                  "row from %s)" % (dest, HOLD_PATH))
     return findings
 
 
@@ -382,8 +471,11 @@ def main(argv=None):
     except Untrusted as e:
         print("UNTRUSTED  %s" % e)
         return 2
+    scope = a.scope or "all"
+    today = datetime.date.today()
+    holds, problems = load_holds(show, today) if scope != "allowlisted" else ({}, [])
     print("baseline  %s  %s" % (a.ref, commit))
-    return 1 if check(entries, rows, show, a.scope or "all") else 0
+    return 1 if check(entries, rows, show, scope, holds, problems, today) else 0
 
 
 if __name__ == "__main__":

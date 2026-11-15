@@ -1,0 +1,12 @@
+# STALE-OUTSIDE-LIST files a person has ruled may wait, each for at most 30 days.
+# DEST<TAB>NOT_AFTER<TAB>HELD_ON<TAB>REASON, LF only. Read from main by
+# `scripts/ktp-ci-install --check`; it changes what the outside-list job REPORTS and
+# nothing about what gets installed.
+#
+#   NOT_AFTER  the hold stops counting ON this date (YYYY-MM-DD) and the job fails again
+#   HELD_ON    the day the row was added; NOT_AFTER - HELD_ON may not exceed 30 days
+#   REASON     the ruling, so the next reader knows who decided and why
+#
+# A row that does not parse, or holds for longer, fails the job. A hold on a file that
+# is no longer stale prints a NOTE: delete the row once its install has happened.
+/usr/local/bin/ktp-demo-retention.sh	2026-11-30	2026-11-14	ruled: install 11-30 after preview (CONFIRM=1)

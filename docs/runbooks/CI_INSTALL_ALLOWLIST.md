@@ -79,6 +79,37 @@ It is a separate job so that "a person owes an install" never reads as "the inst
 broke". Expect it to be red until the existing stale rows are installed by hand: that red
 is the backlog, stated.
 
+### Holding a stale file: `config/ci-install-held.tsv`
+
+When the operator has ruled that a STALE-OUTSIDE-LIST file waits (a preview first, a
+date already agreed), a row in `config/ci-install-held.tsv` on `main` says so, and the
+job stays green while the hold runs:
+
+```
+DEST<TAB>NOT_AFTER<TAB>HELD_ON<TAB>REASON
+/usr/local/bin/ktp-demo-retention.sh	2026-11-30	2026-11-14	ruled: install 11-30 after preview (CONFIRM=1)
+```
+
+- Before `NOT_AFTER` the file prints `HELD ... until <date> (<reason>)` and is not a
+  finding. **On** `NOT_AFTER` it fails again by itself; nobody has to remember to remove
+  anything for the red to come back.
+- `HELD_ON` is the day the row was added. A hold longer than **30 days** (`NOT_AFTER -
+  HELD_ON`) is refused as `OVER-CAP`, and a `HELD_ON` in the future is refused too, so the
+  window cannot be stretched by post-dating it. Renewing a hold is a new row in a new PR,
+  with a new ruling in its reason.
+- A row that does not parse (wrong column count, a date that is not a real `YYYY-MM-DD`,
+  no reason, a relative path, a CR byte, a destination listed twice) fails the job as
+  `FAIL held-file` and holds nothing. It is never skipped.
+- A destination that is not in the file fails exactly as before. A hold only covers
+  STALE-OUTSIDE-LIST; REMOVED-UPSTREAM and UNREADABLE still fail.
+- A hold on a file that is no longer stale (it was installed, or allowlisted) prints
+  `NOTE held-file UNUSED-HOLD`. Delete the row.
+
+The file is read from the same verified commit as the allowlist, never a runner's tree.
+It changes only what `--check --scope outside` reports. `--install` never reads it, and
+the installer's own `--scope allowlisted` check ignores it, so a typo there cannot turn
+the install job red or change what gets installed.
+
 ## Triggers
 
 Push to `main`, and manual dispatch to re-run after a refusal is cleared. Not
