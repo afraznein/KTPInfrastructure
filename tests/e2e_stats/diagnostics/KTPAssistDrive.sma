@@ -272,9 +272,15 @@ public ow_drop() {
 		log_amx("[OW] ABORT a or b left")
 		return
 	}
+	new cls[32]
+	get_weaponname(ow_primary(g_owB), cls, charsmax(cls))
 	g_owBits = ow_bits(g_owB)
-	log_amx("[OW] DROP b=%d bits_before=%d", g_owB, g_owBits)
-	amxclient_cmd(g_owB, "drop")
+	log_amx("[OW] DROP b=%d bits_before=%d cls=%s", g_owB, g_owBits, cls)
+	// Extension mode has no Cmd_Argv override, so dod.so reads the engine's last tokenized line,
+	// not amxclient_cmd's arguments: tokenize the same line first or the game sees another command.
+	server_cmd("drop %s", cls)
+	server_exec()
+	amxclient_cmd(g_owB, "drop", cls)
 	set_task(0.5, "ow_touch", 77302)
 }
 
