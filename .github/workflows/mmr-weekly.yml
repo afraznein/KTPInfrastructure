@@ -75,7 +75,7 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.KTP_SUPABASE_PUBLISHABLE_KEY }}
         working-directory: scripts/mmr
-        run: python run_weekly.py --holdout "${{ github.event.inputs.holdout || '10' }}"
+        run: python run_weekly.py --use-performance --holdout "${{ github.event.inputs.holdout || '10' }}"
 
       - name: Upload digest and summary
         uses: actions/upload-artifact@v4
