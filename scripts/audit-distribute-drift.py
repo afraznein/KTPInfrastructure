@@ -2,7 +2,7 @@
 """Does every game instance still hold what /home/dod/distribute would send it?
 
 WHY THIS EXISTS. ktp-file-distributor.service pushes a created or changed file
-under /home/dod/distribute to all 24 instances within ~15s, and it is purely
+under /home/dod/distribute to all 24 instances within a minute, and it is purely
 event-driven: there is no startup sync and no reconciliation, ever. So a config
 set directly on the instances and never mirrored into the source survives until
 the next time anyone touches that file at the source -- and is then silently

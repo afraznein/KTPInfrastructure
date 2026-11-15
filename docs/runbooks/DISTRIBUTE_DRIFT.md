@@ -1,7 +1,9 @@
 # Runbook: drift between `/home/dod/distribute` and the 24 instances
 
 `ktp-file-distributor.service` watches `/home/dod/distribute` on the data server
-and pushes any created or changed file to all 24 game instances within ~15s. It
+and pushes any created or changed file to all 24 game instances in about 25 s (a
+5 s debounce, then ~18-21 s of fan-out for one small file; a seven-file map batch
+took 82 s, per the service's own `Distribution complete` log line). It
 is **purely event-driven**: `FileWatcherWorker` wires a `FileSystemWatcher` and
 nothing else. There is no startup sync, no periodic reconcile, and no
 after-the-fact comparison anywhere in the service.
@@ -112,7 +114,7 @@ Everything below is why the remediation half of this runbook is short and the
 diagnosis half is long.
 
 - **Any file created or changed under `/home/dod/distribute` deploys to all 24
-  within ~15s.** Diff against a live instance first, and edit in place
+  in about 25 s.** Diff against a live instance first, and edit in place
   (`cat new > file`) rather than `rm`/`mv`.
 - **Removing a file from the tree DELETES it on all 24**, because deletions sync
   too. The two hazards pull in opposite directions and neither ordering is safe
@@ -150,7 +152,7 @@ hint that attribution exists — which is how an estate sweep concluded the depl
 path had no attribution at all while the installer sat in `provision/`.
 
 ⛔ **Installing it is not self-testing.** Any write under the watched directory —
-a probe file included — reaches all 24 instances in ~15s, so there is no harmless
+a probe file included — reaches all 24 instances in about 25 s, so there is no harmless
 way to fire the rule. The next real deploy is the test, and the installer says so.
 
 ## Standing findings as of 2026-09-28

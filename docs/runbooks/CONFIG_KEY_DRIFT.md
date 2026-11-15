@@ -1,7 +1,8 @@
 # Runbook: config KEYS on the fleet that are not in the distributed source
 
 `ktp-file-distributor.service` watches `/home/dod/distribute` and pushes any
-created or changed file to all 24 game instances within ~15s. It is purely
+created or changed file to all 24 game instances in about 25 s (5 s debounce plus
+~20 s of fan-out for one small file; a map batch takes over a minute). It is purely
 event-driven: no startup sync, no periodic reconcile, no comparison anywhere.
 `docs/runbooks/DISTRIBUTE_DRIFT.md` covers the file-level consequence. This file
 covers the key-level one, which is the same invariant and a different finding.
@@ -218,7 +219,7 @@ The remediation half of this runbook is short for the same reason it is in
 `DISTRIBUTE_DRIFT.md`, and that file is the authority on it:
 
 - **Any file created or changed under `/home/dod/distribute` deploys to all 24
-  within ~15s.** Diff against a live instance first, and edit in place
+  in about 25 s.** Diff against a live instance first, and edit in place
   (`cat new > file`) rather than `rm`/`mv`.
 - **Removing a file from the tree DELETES it on all 24.** Fix the instances
   first, then remove the source — two passes, verifying after each.

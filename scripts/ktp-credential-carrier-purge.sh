@@ -53,7 +53,7 @@ CARRIER_PATTERNS=(
 # that matches the patterns above. Order does not matter; all are pruned.
 EXCLUDE_PATHS=(
     "$PROTECTED_DIR"                                  # only DB copies that exist; own 28d prune
-    /home/dod/distribute                              # LIVE deploy path; deletions sync fleet-wide in ~15s
+    /home/dod/distribute                              # LIVE deploy path; deletions sync fleet-wide within a minute
     /home/hltvserver/hlds/dod/demos                   # demo archive; ktp-demo-retention.sh owns it
     /home/hltvserver/hlds/configs                     # the 24 live proxy configs
     /opt/ktp-ac-api/uploads                           # evidence bundles; retention deliberately HELD
