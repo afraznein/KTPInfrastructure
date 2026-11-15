@@ -7,6 +7,7 @@ condition under test is lifted -- a refusal that fires for any reason proves not
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -380,3 +381,114 @@ def test_fetch_verified_pins_the_mirror_to_the_remotes_tip(box, tmp_path):
 def test_fetch_verified_refuses_a_mirror_that_is_not_the_tip(box, tmp_path):
     with pytest.raises(ci.Untrusted):
         ci.fetch_verified(str(box["repo"]), str(tmp_path / "state" / "mirror.git"), ls_remote=lambda: box["c1"])
+
+
+# --- holds on the outside list ----------------------------------------------
+# No git and no ktp-install: the manifest rows and the baseline are built by hand, so
+# these run on any platform and test only what --check reports.
+
+HELD = os.path.join(_ROOT, "config", "ci-install-held.tsv")
+TODAY = datetime.date(2026, 11, 14)
+
+
+@pytest.fixture
+def outside(tmp_path):
+    """One off-allowlist file, installed at V1 and recorded, while the baseline holds V2."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    dest = str(bindir / "late.sh")
+    (bindir / "late.sh").write_bytes(V1)
+    rows = {dest: dict(zip(ci.HEADER, [dest, md5(V1), "afraznein/KTPInfrastructure", "a" * 40,
+                                       "scripts/late.sh", "2026-11-01T00:00:00+0000", "-", "t"]))}
+    return dict(dest=dest, rows=rows, blobs={"scripts/late.sh": V2}, bin=bindir)
+
+
+def check_held(o, held_text, today=TODAY):
+    blobs = dict(o["blobs"])
+    if held_text is not None:
+        blobs[ci.HOLD_PATH] = held_text.encode("utf-8")
+    holds, problems = ci.load_holds(blobs.get, today)
+    # As main() maps it: the job's exit status, not the finding count.
+    return 1 if ci.check([], o["rows"], blobs.get, "outside", holds, problems, today) else 0
+
+
+def hold_row(dest, not_after="2026-11-30", held_on="2026-11-14", reason="ruled: wait for the preview"):
+    return "\t".join([dest, not_after, held_on, reason]) + "\n"
+
+
+def test_committed_hold_file_parses_cleanly():
+    holds, problems = ci.parse_holds(read(HELD).decode("utf-8"), TODAY)
+    assert problems == [] and b"\r" not in read(HELD)
+    assert "/usr/local/bin/ktp-demo-retention.sh" in holds
+
+
+def test_control_an_unheld_stale_outside_file_fails(outside, capsys):
+    assert check_held(outside, None) == 1
+    assert "FAIL     outside      STALE-OUTSIDE-LIST" in capsys.readouterr().out
+
+
+def test_a_held_stale_outside_file_prints_held_and_passes(outside, capsys):
+    assert check_held(outside, hold_row(outside["dest"])) == 0
+    out = capsys.readouterr().out
+    assert "HELD" in out and "until 2026-11-30 (ruled: wait for the preview)" in out and "FAIL" not in out
+
+
+def test_a_hold_fails_again_on_its_date_by_itself(outside, capsys):
+    assert check_held(outside, hold_row(outside["dest"]), today=datetime.date(2026, 11, 29)) == 0
+    capsys.readouterr()
+    assert check_held(outside, hold_row(outside["dest"]), today=datetime.date(2026, 11, 30)) == 1
+    out = capsys.readouterr().out
+    assert "FAIL" in out and "ran out on 2026-11-30" in out and "HELD" not in out
+
+
+def test_a_hold_for_another_file_does_not_cover_this_one(outside, capsys):
+    assert check_held(outside, hold_row(str(outside["bin"] / "someone-else.sh"))) == 1
+    out = capsys.readouterr().out
+    assert "FAIL     outside      STALE-OUTSIDE-LIST" in out and "UNUSED-HOLD" in out
+
+
+def test_a_hold_longer_than_the_cap_is_refused_and_grants_nothing(outside, capsys):
+    assert check_held(outside, hold_row(outside["dest"], not_after="2026-12-15")) == 1
+    out = capsys.readouterr().out
+    assert "OVER-CAP" in out and "STALE-OUTSIDE-LIST" in out and "HELD" not in out
+    # Control: exactly the cap is allowed.
+    assert check_held(outside, hold_row(outside["dest"], not_after="2026-12-14")) == 0
+
+
+def test_a_hold_dated_in_the_future_cannot_stretch_the_cap(outside, capsys):
+    assert check_held(outside, hold_row(outside["dest"], not_after="2026-12-20", held_on="2026-11-25")) == 1
+    assert "in the future" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("bad", [
+    "{dest}\t2026-11-30\truled\n",                  # missing a column
+    "{dest}\t2026-11-31\t2026-11-14\truled\n",      # not a real date
+    "{dest}\t30/11/2026\t2026-11-14\truled\n",      # not ISO
+    "{dest}\t2026-11-30\t2026-11-14\t  \n",         # no reason
+    "late.sh\t2026-11-30\t2026-11-14\truled\n",     # not absolute
+    "{dest}\t2026-11-30\t2026-11-14\truled\r\n",    # CRLF
+    "{dest}\t2026-11-14\t2026-11-14\truled\n",      # ends the day it starts
+])
+def test_a_malformed_hold_row_fails_loudly_and_grants_nothing(outside, capsys, bad):
+    assert check_held(outside, bad.format(dest=outside["dest"])) == 1
+    out = capsys.readouterr().out
+    assert "FAIL     held-file" in out and "HELD " not in out
+
+
+def test_a_destination_held_twice_counts_neither_row(outside, capsys):
+    row = hold_row(outside["dest"])
+    assert check_held(outside, row + row) == 1
+    assert "held twice" in capsys.readouterr().out
+
+
+def test_a_hold_on_a_file_that_is_not_stale_prints_a_note(outside, capsys):
+    outside["blobs"]["scripts/late.sh"] = V1
+    assert check_held(outside, hold_row(outside["dest"])) == 0
+    out = capsys.readouterr().out
+    assert "NOTE" in out and "UNUSED-HOLD" in out and outside["dest"] in out
+
+
+def test_holds_do_not_reach_the_allowlisted_scope(outside):
+    # The installer's own job must not go red over a typo in the hold file.
+    show = dict(outside["blobs"], **{ci.HOLD_PATH: b"garbage\n"}).get
+    assert ci.check([], outside["rows"], show, "allowlisted", today=TODAY) == 0
