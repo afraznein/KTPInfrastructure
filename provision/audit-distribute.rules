@@ -1,7 +1,7 @@
 ## KTP: write attribution for the live fleet deploy path.
 ##
 ## ktp-file-distributor.service watches /home/dod/distribute and pushes any
-## created or changed file to all 24 game instances within ~15s. A write here is
+## created or changed file to all 24 game instances within a minute. A write here is
 ## a production deploy, not a template edit. Before these rules the only record
 ## was the file's own mtime, so the *next* write was unattributable after the
 ## fact -- which is the property that matters, since attribution cannot be

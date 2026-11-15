@@ -125,7 +125,9 @@ BSP strings and reports assets that are not on disk. Exit 1 means at least one
 
 `/home/dod/distribute/` on the data server is a **live deploy path**.
 `ktp-file-distributor.service` pushes anything created or changed there to all 24
-instances within about 15 seconds.
+instances in about 25 seconds for one small file (a 5 s debounce, then ~18-21 s of
+SFTP fan-out; a seven-file map batch took 82 s). Poll every instance's md5 until it
+converges; one early sweep reports a half-deployed fleet.
 
 - ⛔ **It syncs deletions.** An `rm` in `distribute/` removes the file from all 24.
   Never `rm` or `mv` there; write with `cat new > file`, and keep backups outside

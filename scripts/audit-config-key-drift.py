@@ -89,7 +89,7 @@ whole report then goes through audit_redact.redact_diagnostic as a backstop.
 READ-ONLY, AND SPECIFICALLY READ-ONLY IN THE DEPLOY TREE
 
 /home/dod/distribute is a live deploy path: the distributor pushes any created
-or changed file to all 24 instances within ~15s and syncs deletions, so a
+or changed file to all 24 instances within a minute and syncs deletions, so a
 scratch file written there would be a fleet-wide deploy and a `*.bak-*` would
 reach FastDL. This script opens the tree for reading and nothing else. On the
 instance side it runs one `cat` loop under ionice/nice, writes no scratch file,

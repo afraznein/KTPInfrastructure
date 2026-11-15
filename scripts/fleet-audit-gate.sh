@@ -44,7 +44,7 @@
 #   8. Any per-instance hazard, on every run -- a level, not a transition, and
 #      the only one here. A path carrying per-instance data that no
 #      excludePatterns declares is armed: one touch of the source overwrites
-#      every instance's copy with a single one, within ~15s, with nothing
+#      every instance's copy with a single one, within a minute, with nothing
 #      reporting it. That does not depend on state, the same argument leg 2
 #      makes for the monitor patch, and it nags weekly exactly as leg 5 does --
 #      deliberately, because one line in servers.json retires it for good.
