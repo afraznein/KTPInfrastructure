@@ -394,6 +394,17 @@ Inputs:
 There is no date-range scope: `generate --since` only floors discovery, and the
 season floor is read from the installed unit, never typed in.
 
+⚠️ **A corpus-wide regeneration after a schema bump does not fit inside the
+service's `TimeoutStartSec`.** Each tick gets through about ten reports before it is
+killed, every kill posts a `ktp-systemd-alert` embed, and `generate` has no
+batch-size option, so `scope = pending` and the timer only grind through it noisily.
+Work is persisted per report, so nothing is lost; it is just slow and loud. To
+finish it: stop `ktp-reports.timer`, run `generate --since <floor>` once as a
+transient unit (`systemd-run` as `ktpreports`, the same `EnvironmentFile`, working
+directory and `Nice`, no start timeout), then re-enable the timer and start one
+normal tick so `aggregate` and `report_sync` publish the result. Pick a window with
+no live match.
+
 What the job refuses, before running anything:
 
 - `/opt/ktp-reports/KTPInfrastructure` dirty (any modified or untracked path).

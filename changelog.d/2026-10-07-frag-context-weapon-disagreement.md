@@ -15,8 +15,8 @@
   `report["frag_context_weapon_disagreements"]` and prints a one-line summary.
 
 ### Notes
-- This is diagnosis, not the fix. The producer is the only correct home for the attribution itself,
-  and the dodx/`stats_logging` half is frozen behind the schema-26 queue (`afraznein/KTPAMXX`#160).
+- This is diagnosis, not the fix. The producer is the only correct home for the attribution itself:
+  the producer half (fixed in part by `afraznein/KTPAMXX`#176).
   A daemon-side alias cannot cover it: `%fc_stock_weapon_alias` in `hlstats.pl` already maps the
   documented one-way variants (`garandbutt` -> `garand` among them) and there is no alias relation
   between `mp44` and `kar`; the broad weapon fallback that would cover it is refused in that file's

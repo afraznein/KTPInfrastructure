@@ -486,6 +486,8 @@ jobs:
 
       # No restore-keys on purpose: a prefix match is exactly how a bumped
       # version would silently restore the archive it replaced.
+      # A PR run's saved entry is visible only to that branch and its base, so a
+      # new branch still fetches upstream until a `main` run has saved this key.
       - name: Restore the vendored build-time archives
         id: vendor-cache
         uses: actions/cache/restore@v4

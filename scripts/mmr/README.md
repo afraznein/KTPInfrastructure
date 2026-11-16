@@ -111,6 +111,20 @@ that) and the scoring fit is per map. `momentum_report.py` writes
 `momentum_params.json` — the current values, sample sizes and fit quality
 per map — which is versioned and refit weekly as matches land.
 
+## Open question: Elo orders the league better than OpenSkill
+
+On a one-season walk-forward backtest, Elo picked the winner more often than every
+OpenSkill arm (65.6% against 59.4%), and the OpenSkill figure was identical across
+damping k=2, 6, 12 and off — as `damped_probability` says it must be, since shrinking
+toward 0.5 cannot change which side is favoured. So this is an ordering difference,
+and ordering is what seeding consumes. It is not a reason to switch: Elo would lose
+`seed_from_divisions`, the damping, the performance-weighting plumbing, and the
+OpenSkill-unit `ratings_current.json` / `division_offsets.json`. The question is why.
+
+Already tested and refuted, so do not re-run them: `tau` (0.2–1.6 shifts the
+score by under 0.001) and `beta` (about 0.002). One season is underpowered;
+Elo's log-loss edge was just under 2 SE.
+
 ## Known weakness: `min_halves` (ruled — see below)
 
 Before the condition-number gate, the only gate on a per-map scoring fit was
