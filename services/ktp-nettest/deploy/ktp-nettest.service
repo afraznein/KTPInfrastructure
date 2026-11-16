@@ -28,7 +28,8 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK: werift lists host interfaces via getifaddrs, which fails EAFNOSUPPORT without it.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 # Game servers come first: the node yields CPU and memory to them.
 Nice=10
 MemoryMax=256M

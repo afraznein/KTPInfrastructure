@@ -138,6 +138,18 @@ the rcon password in every `dodserver.cfg` are out of reach. The drop-in mounts 
 instance's `dod/logs`, read-only, and nothing else. Keep it in step with `KTP_NETTEST_LOG_DIRS`.
 A dir in the env but not in the drop-in is unreadable, and unreadable logs count as busy.
 
+`RestrictAddressFamilies` must include `AF_NETLINK`. werift gathers its host candidates with
+`os.networkInterfaces()`, which is `getifaddrs` over a netlink socket; without it every
+`POST /stall/offer` fails with `uv_interface_addresses returned Unknown system error 97`
+(EAFNOSUPPORT). `systemd-analyze verify` cannot catch this, because the unit is valid either way;
+only a real offer exercises it. To check the sandbox as the service user:
+
+```
+systemd-run --wait --pipe -p User=ktpnettest \
+  -p RestrictAddressFamilies="AF_INET AF_INET6 AF_UNIX AF_NETLINK" \
+  /usr/bin/node -e 'console.log(Object.keys(require("os").networkInterfaces()).join())'
+```
+
 ### Order
 
 Each step is checked before the next one starts.
@@ -178,6 +190,17 @@ Each step is checked before the next one starts.
    `frame-ancestors https://ktpleague.gg`. The vhost turns off proxy buffering in both directions
    (otherwise the bandwidth test measures nginx, not the player's line) and allows 26 MB bodies so
    that the node, not nginx, refuses an upload past 25 MB.
+
+   A webroot renewal does not reload nginx, so nginx keeps serving the old certificate until it
+   expires. Install a deploy hook, `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`
+   (mode 755):
+
+   ```
+   #!/bin/sh
+   systemctl reload nginx
+   ```
+
+   A plain `certbot renew --dry-run` skips deploy hooks, so a green dry run does not prove the hook.
 7. **Only now, the site.** Add the node to `KTP_NETTEST_NODES` in Vercel Production, e.g.
    `{"NY":"https://<host>"}`, with the key equal to `KTP_NETTEST_REGION`, and deploy production.
    TLS comes first because the site accepts only `https://` node URLs and drops any other, and
@@ -207,4 +230,6 @@ so delete the `CPUAffinity` line there.
 ## Tests
 
 `npm test` — ticket and busy-gate units, stall arithmetic, and an end-to-end run against a real
-server with werift standing in for the browser's WebRTC (about 15 s).
+server with werift standing in for the browser's WebRTC (about 15 s). `test/mdns.test.js` drives
+an offer whose candidates are all mDNS `.local` names, as a real browser sends, and one with the
+interface lookup refused.
