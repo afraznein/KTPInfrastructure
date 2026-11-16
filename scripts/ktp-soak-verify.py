@@ -17,6 +17,13 @@ Aggregation rules:
   - Any YELLOW    → orange embed, post (unless --quiet-yellow)
   - All GREEN/SKIP → silent exit (--always-post overrides for testing)
 
+post-restart runs `ktp-verify-deploy --check-runtime`. The rcon password comes
+from $KTP_RCON_PASSWORD if set, else is read at run time from the distributor's
+dodserver.cfg ($KTP_RCON_CFG, default /home/dod/distribute/dodserver.cfg) and
+handed to the verify child's environment only. If it cannot be read (no file,
+not exactly one rcon_password line, empty value) the disk checks still run, the
+suite posts RED, and the exit code is 5.
+
 Usage:
   ktp-soak-verify --suite post-matchday
   ktp-soak-verify --suite post-matchday --dry-run    # print embed, don't POST
@@ -62,6 +69,7 @@ class SuiteResult:
     suite: str
     checks: List[CheckResult] = field(default_factory=list)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    exit_code: int = 0  # non-zero: main() returns it even after a successful post
 
     @property
     def overall(self) -> str:
@@ -72,15 +80,86 @@ class SuiteResult:
         return Status.GREEN
 
 
-def sh(cmd: str, timeout: int = 30) -> tuple[int, str, str]:
+def sh(cmd: str, timeout: int = 30, env: Optional[dict] = None) -> tuple[int, str, str]:
     """Run a shell command; return (returncode, stdout, stderr)."""
     try:
         p = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+            cmd, shell=True, capture_output=True, text=True, timeout=timeout, env=env
         )
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except subprocess.TimeoutExpired:
         return -1, "", f"timeout after {timeout}s"
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Game rcon password, read at run time for `ktp-verify-deploy --check-runtime`
+# ──────────────────────────────────────────────────────────────────────────
+
+# The distributor's copy is what every instance's dodserver.cfg is pushed from,
+# so reading it here adds no new copy of the secret anywhere.
+RCON_ENV = "KTP_RCON_PASSWORD"
+RCON_CFG_ENV = "KTP_RCON_CFG"
+RCON_CFG_DEFAULT = "/home/dod/distribute/dodserver.cfg"
+
+# The suite still runs the disk checks without it, posts RED, and main() exits
+# with this, so a missing credential can never read as a quiet night.
+EXIT_RCON_SOURCE_REFUSED = 5
+
+VERIFY_OUT_DIR = "/tmp"
+
+
+class RconSourceError(Exception):
+    """The rcon password could not be read unambiguously. The message never
+    carries the value."""
+
+
+def _cfg_value(rest: str) -> str:
+    rest = rest.strip()
+    if rest.startswith('"'):
+        end = rest.find('"', 1)
+        return rest[1:] if end < 0 else rest[1:end]
+    head = rest.split("//", 1)[0].split()
+    return head[0] if head else ""
+
+
+def read_rcon_password(path: str) -> str:
+    """Return the single `rcon_password` value in a GoldSrc cfg, or raise."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as e:
+        raise RconSourceError(f"cannot read {path}: {e.strerror or type(e).__name__}") from None
+    text = raw.decode("utf-8", errors="replace").lstrip("\ufeff")
+    values = []
+    for line in text.splitlines():
+        parts = line.strip().split(None, 1)
+        if parts and parts[0].lower() == "rcon_password":
+            values.append(_cfg_value(parts[1] if len(parts) > 1 else ""))
+    if len(values) != 1:
+        raise RconSourceError(
+            f"{path} has {len(values)} rcon_password lines; exactly 1 is required")
+    if not values[0]:
+        raise RconSourceError(f"{path} sets rcon_password to an empty value")
+    return values[0]
+
+
+def verify_child_env() -> tuple[Optional[dict], Optional[str]]:
+    """Environment for the verify child, or (None, why) when the password is
+    unavailable. An already-set env var wins; otherwise the cfg is read. The
+    value goes into the copy only, never into this process's environment."""
+    if os.environ.get(RCON_ENV):
+        return dict(os.environ), None
+    path = os.environ.get(RCON_CFG_ENV) or RCON_CFG_DEFAULT
+    try:
+        password = read_rcon_password(path)
+    except RconSourceError as e:
+        return None, str(e)
+    env = dict(os.environ)
+    env[RCON_ENV] = password
+    return env, None
+
+
+def _redact(text: str, secret: Optional[str]) -> str:
+    return text.replace(secret, "<redacted>") if secret and text else text
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -505,11 +584,32 @@ def suite_post_restart() -> SuiteResult:
     and rolls the per-instance status into the suite's check rows.
     """
     result = SuiteResult(suite="post-restart")
-    out_path = f"/tmp/verify_deploy_{int(datetime.now().timestamp())}.json"
+    out_path = f"{VERIFY_OUT_DIR}/verify_deploy_{int(datetime.now().timestamp())}.json"
+
+    env, why = verify_child_env()
+    if env is None:
+        # Run the disk checks anyway: a missing credential must not also cost
+        # the hash verdict.
+        result.exit_code = EXIT_RCON_SOURCE_REFUSED
+        result.checks.append(CheckResult(
+            name="Runtime check credential",
+            status=Status.RED,
+            summary=f"--check-runtime NOT run: {why}",
+            detail=(f"${RCON_ENV} is unset and the rcon password is read from "
+                    f"${RCON_CFG_ENV} (default {RCON_CFG_DEFAULT}). Only the on-disk "
+                    "checks ran; no instance's loaded build was compared."),
+        ))
+        runtime_flag = ""
+    else:
+        runtime_flag = " --check-runtime"
+    secret = env.get(RCON_ENV) if env else None
+
     # Read both streams: the refusal is the only thing that names why there is no report.
     rc, out, err = sh(
-        f"/usr/local/bin/ktp-verify-deploy --include-engine --out {out_path}", timeout=300
+        f"/usr/local/bin/ktp-verify-deploy --include-engine{runtime_flag} --out {out_path}",
+        timeout=600, env=env,
     )
+    out, err = _redact(out, secret), _redact(err, secret)
 
     try:
         with open(out_path) as f:
@@ -556,6 +656,9 @@ def suite_post_restart() -> SuiteResult:
             summary="0 unswapped .new files at reference",
         ))
 
+    if runtime_flag:
+        result.checks.append(runtime_coverage(report))
+
     # Per-status rollup across all instances
     counts = report.get("counts", {})
     overall = report.get("overall", "?")
@@ -578,12 +681,17 @@ def suite_post_restart() -> SuiteResult:
         from collections import Counter
         missing_paths = Counter()
         drift_paths = Counter()
+        runtime_paths = Counter()
         new_file_count = 0
         for label, d in red_instances:
             for p in d.get("missing", []):
                 missing_paths[p] += 1
             for x in d.get("drift", []):
                 drift_paths[x.get("path")] += 1
+            for name in d.get("runtime_missing") or []:
+                runtime_paths[f"{name} (not loaded)"] += 1
+            for x in d.get("runtime_drift") or []:
+                runtime_paths[f"{x.get('plugin')} (loaded build differs)"] += 1
             new_file_count += len(d.get("new_files", []))
 
         detail_lines = [f"{len(red_instances)} instances RED:"]
@@ -594,6 +702,10 @@ def suite_post_restart() -> SuiteResult:
         if drift_paths:
             detail_lines.append("\nDrift (path → instance count):")
             for p, n in drift_paths.most_common(5):
+                detail_lines.append(f"  {p}: {n}")
+        if runtime_paths:
+            detail_lines.append("\nRuntime vs reference (plugin → instance count):")
+            for p, n in runtime_paths.most_common(5):
                 detail_lines.append(f"  {p}: {n}")
         if new_file_count:
             detail_lines.append(f"\n.new files lingering across RED instances: {new_file_count}")
@@ -633,6 +745,35 @@ def suite_post_restart() -> SuiteResult:
         ))
 
     return result
+
+
+def runtime_coverage(report: dict) -> CheckResult:
+    """How many instances actually answered `amx_ktp_versions`.
+
+    The gate skips the runtime leg for the WHOLE fleet when the reference's own
+    rcon fails, and calls a per-instance rcon failure yellow, which
+    --quiet-yellow then silences. A wrong password would read GREEN on both
+    counts, so coverage is reported here rather than inferred.
+    """
+    name = "Runtime check (amx_ktp_versions)"
+    if not report.get("check_runtime"):
+        return CheckResult(name, Status.RED,
+                           "requested, but the report says the runtime leg did not run")
+    ref_err = report.get("reference", {}).get("runtime_error")
+    if ref_err:
+        return CheckResult(name, Status.RED,
+                           "reference rcon failed, so NO instance was compared",
+                           detail=str(ref_err)[:500])
+    instances = report.get("instances", {})
+    answered = [l for l, d in instances.items()
+                if d.get("runtime_count") and not d.get("runtime_error")]
+    failed = sorted(l for l, d in instances.items() if d.get("runtime_error"))
+    total = len(instances)
+    summary = f"runtime checked {len(answered)}/{total} instances"
+    if total and len(answered) == total:
+        return CheckResult(name, Status.GREEN, summary)
+    return CheckResult(name, Status.YELLOW if answered else Status.RED, summary,
+                       detail=("rcon failed: " + ", ".join(failed)) if failed else None)
 
 
 SUITES: dict[str, Callable[[], SuiteResult]] = {
@@ -676,14 +817,14 @@ def main() -> int:
 
     if not should_post:
         print(f"All checks {result.overall.upper()} — no Discord post needed (use --always-post to override).")
-        return 0
+        return result.exit_code
 
     embed = build_embed(result)
 
     if args.dry_run:
         print("=== Embed (dry-run, would POST) ===")
         print(json.dumps(embed, indent=2))
-        return 0
+        return result.exit_code
 
     conf = load_relay_conf()
     relay_url = conf.get("RELAY_URL", "")
@@ -695,7 +836,7 @@ def main() -> int:
     ok, resp = post_to_discord(embed, args.channel, relay_url, auth_secret)
     if ok:
         print(f"Posted to Discord ({result.overall.upper()}).")
-        return 0
+        return result.exit_code
     else:
         print(f"Discord POST failed: {resp}", file=sys.stderr)
         return 3

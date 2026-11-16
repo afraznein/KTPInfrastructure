@@ -23,6 +23,8 @@ GATE = "/usr/local/bin/ktp-verify-deploy"
 
 @pytest.fixture
 def soak(monkeypatch):
+    # A set credential keeps the rcon source out of these tests; its own file covers it.
+    monkeypatch.setenv("KTP_RCON_PASSWORD", "zqwbw-fake-rcon")
     spec = importlib.util.spec_from_file_location("_ktp_soak_verify", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     # dataclasses resolves annotations through sys.modules while the module executes.
@@ -40,9 +42,9 @@ def _fake_gate(tmp_path, body):
 def _route_gate(monkeypatch, soak, fake):
     real_sh = soak.sh
 
-    def sh(cmd, timeout=30):
+    def sh(cmd, timeout=30, env=None):
         assert GATE in cmd, cmd
-        return real_sh(cmd.replace(GATE, f'"{sys.executable}" "{fake}"'), timeout=timeout)
+        return real_sh(cmd.replace(GATE, f'"{sys.executable}" "{fake}"'), timeout=timeout, env=env)
 
     monkeypatch.setattr(soak, "sh", sh)
 
