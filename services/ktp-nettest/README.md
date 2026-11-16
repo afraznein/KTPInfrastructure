@@ -89,8 +89,18 @@ origin on the site):
 `frame-ancestors` set to `KTP_NETTEST_ORIGIN`, so no other site can embed it.
 
 The result carries `stall_seconds, stall_sent, stall_loss_pct, stall_rtt_ms, stall_jitter_ms,
-stall_gaps_250, stall_worst_gap_ms, ping_ms, jitter_ms, down_mbps, up_mbps, busy_skipped,
-client_version`. The page adds the player's picks (`said_connection`, `said_routing`,
+stall_gaps_250, stall_worst_gap_ms, stall_recv_gaps_250, stall_recv_worst_gap_ms,
+stall_send_gaps_250, stall_send_worst_gap_ms, ping_ms, jitter_ms, down_mbps, up_mbps,
+busy_skipped, client_version`.
+
+**Telling a line stall from a paused browser.** Chrome clamps page timers to one wake-up a second
+in a hidden tab and in a `display:none` cross-origin frame (how the site embeds `/frame`). A
+sender paced by such a timer sends 100 packets a second in one burst, and the gap between bursts
+looks exactly like a stall: client v1 reported 60 stalls in every 60 s run this way. v2 paces
+sending from a worker (`GET /tick.js`) and records when each packet left. `stall_gaps_250` and
+`stall_worst_gap_ms` count only the part of a receive gap that the sender was not itself paused
+for. `stall_send_*` is the browser's own pauses; any send gap means the run was paced by the
+browser. `stall_recv_*` is the raw inter-arrival measure that v1 reported. The page adds the player's picks (`said_connection`, `said_routing`,
 `said_where`, `said_note`) and posts the row to the website. `client.js` can still be
 `require()`d in Node, which is how the tests drive it.
 
