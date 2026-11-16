@@ -27,7 +27,12 @@ logged name against our own text verifies this module's regex and comparison and
 the thing the check exists to answer. It would read green while measuring nothing,
 which is worse than an honest gap.
 
-WHY NO SUBTITLE ARRIVES IS NOT SETTLED, and the two candidates have different fixes:
+WHY NO SUBTITLE ARRIVES IS NOT SETTLED. Until 2026-11-16 the drive never reached the game:
+under extension mode KTPAMXX has no Cmd_Argv override, so dod.so read the engine's last
+tokenized line instead of `voice_menuN` / `menuselect K` while the plugin forward (which logs
+the pick) saw the right arguments. The drive now tokenizes each line first, as the own-weapon
+drop does (KTPInfrastructure#892). If subtitles still never arrive after that, the two remaining
+candidates have different fixes:
   1. dod.so will not emit when the SPEAKER is a fake client. Then the check is
      unexercisable here by construction and wants an explicit not-applicable verdict.
   2. It emits only to NON-FAKE RECIPIENTS -- the subtitle is logged per recipient

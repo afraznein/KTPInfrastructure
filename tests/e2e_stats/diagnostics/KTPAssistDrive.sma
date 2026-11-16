@@ -181,8 +181,13 @@ public vm_next() {
 	g_vmPick++
 	log_amx("[VM] PICK n=%d bot=%d bname=%s menu=%d slot=%d", g_vmPick, bot, name, menu, slot)
 	formatex(cmd, charsmax(cmd), "voice_menu%d", menu)
-	amxclient_cmd(bot, cmd)
 	num_to_str(slot, arg, charsmax(arg))
+	// Same as ow_drop: dod.so reads the engine's last tokenized line, so tokenize each one first.
+	server_cmd("%s", cmd)
+	server_exec()
+	amxclient_cmd(bot, cmd)
+	server_cmd("menuselect %s", arg)
+	server_exec()
 	amxclient_cmd(bot, "menuselect", arg)
 	ad_flush_stats_capture()
 	set_task(1.5, "vm_next", 77301)
