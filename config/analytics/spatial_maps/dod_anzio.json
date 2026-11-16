@@ -2,9 +2,9 @@
   "schema_version": 1,
   "map_name": "dod_anzio",
   "overview": {
-    "origin_x": 307.06,
-    "origin_y": 372.72,
-    "zoom": 1.11,
+    "origin_x": 402.0,
+    "origin_y": -14.0,
+    "zoom": 1.01,
     "rotated": false,
     "width": 1024,
     "height": 768
