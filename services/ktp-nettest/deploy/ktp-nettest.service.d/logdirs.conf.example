@@ -1,0 +1,17 @@
+# Per-host drop-in for ktp-nettest. Install as
+#   /etc/systemd/system/ktp-nettest.service.d/logdirs.conf
+# and keep it in step with KTP_NETTEST_LOG_DIRS in /etc/ktp/nettest.env: a dir listed there but
+# not bound here is unreadable inside the sandbox, which the node treats as BUSY forever.
+# A path below that does not exist on the host stops the unit from starting, on purpose.
+#
+# This example is a five-instance baremetal (27015-27019). Chicago runs four: drop 27019.
+[Service]
+BindReadOnlyPaths=/home/dodserver/dod-27015/serverfiles/dod/logs
+BindReadOnlyPaths=/home/dodserver/dod-27016/serverfiles/dod/logs
+BindReadOnlyPaths=/home/dodserver/dod-27017/serverfiles/dod/logs
+BindReadOnlyPaths=/home/dodserver/dod-27018/serverfiles/dod/logs
+BindReadOnlyPaths=/home/dodserver/dod-27019/serverfiles/dod/logs
+
+# Baremetals only: cpu0 and cpu1 are the housekeeping cores; game instances pin to 2-7.
+# Chicago has no isolcpus and pins a game instance to cpu0, so delete this line there.
+CPUAffinity=0 1

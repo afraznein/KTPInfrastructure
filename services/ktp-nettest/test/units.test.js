@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -195,4 +196,28 @@ test('frame: announces ready, runs only for the site parent, reports result and 
   const b = loadFrame(async () => { throw new b.Busy('match in progress'); });
   await b.post({ type: 'ktp-nettest:run', ticket: 't2' });
   assert.deepStrictEqual(b.sent.at(-1).msg, { type: 'ktp-nettest:error', busy: true, message: 'match in progress' });
+});
+
+test('startup: refuses a missing secret, the shipped example placeholder, and a short secret', () => {
+  const { startupProblem } = require('../server');
+  const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'nettest.env.example'), 'utf8');
+  const shipped = /^KTP_NETTEST_TICKET_SECRET=(.*)$/m.exec(env);
+  assert.ok(shipped && shipped[1], 'the example must carry a secret line for this test to mean anything');
+  assert.match(startupProblem({ region: 'NY', secret: shipped[1] }), /placeholder/);
+  assert.match(startupProblem({ region: 'NY', secret: '' }), /required/);
+  assert.match(startupProblem({ region: '', secret: 'a'.repeat(64) }), /required/);
+  assert.match(startupProblem({ region: 'NY', secret: 'a'.repeat(31) }), /shorter than 32/);
+  assert.strictEqual(startupProblem({ region: 'NY', secret: crypto.randomBytes(32).toString('hex') }), null, 'a generated secret starts');
+});
+
+test('deploy kit: install.sh never enables or starts the service; the env example binds loopback', () => {
+  const deploy = path.join(__dirname, '..', 'deploy');
+  const sh = fs.readFileSync(path.join(deploy, 'install.sh'), 'utf8')
+    .split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.match(sh, /systemctl daemon-reload/, 'positive control: the scan sees systemctl calls');
+  assert.doesNotMatch(sh, /systemctl\s+(--now\s+)?(enable|start|restart|reload-or-restart|try-restart)\b/);
+  const env = fs.readFileSync(path.join(deploy, 'nettest.env.example'), 'utf8');
+  assert.match(env, /^KTP_NETTEST_BIND=127\.0\.0\.1$/m);
+  const unit = fs.readFileSync(path.join(deploy, 'ktp-nettest.service'), 'utf8');
+  assert.match(unit, /^ProtectHome=tmpfs$/m);
 });

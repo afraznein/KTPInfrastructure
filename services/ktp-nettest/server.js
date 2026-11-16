@@ -27,6 +27,16 @@ function config(env = process.env) {
   };
 }
 
+// The shipped example secret, and anything too short to be a generated one, must not start a
+// node: a node signing with a guessable secret accepts tickets anyone can mint.
+const SECRET_MIN_LEN = 32;
+function startupProblem(cfg) {
+  if (!cfg.region || !cfg.secret) return 'KTP_NETTEST_REGION and KTP_NETTEST_TICKET_SECRET are required';
+  if (/placeholder|replace|changeme/i.test(cfg.secret)) return 'KTP_NETTEST_TICKET_SECRET is still the example placeholder';
+  if (cfg.secret.length < SECRET_MIN_LEN) return `KTP_NETTEST_TICKET_SECRET is shorter than ${SECRET_MIN_LEN} characters`;
+  return null;
+}
+
 const escAttr = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // The page the website frames. Its CSP is the second wall: only this node's own scripts run, they
@@ -138,9 +148,10 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
 
 if (require.main === module) {
   const cfg = config();
-  if (!cfg.region || !cfg.secret) { console.error('KTP_NETTEST_REGION and KTP_NETTEST_TICKET_SECRET are required'); process.exit(2); }
+  const problem = startupProblem(cfg);
+  if (problem) { console.error(problem); process.exit(2); }
   if (!cfg.logDirs.length) console.error('warning: KTP_NETTEST_LOG_DIRS empty, node reports busy (never loads an unknown box)');
   createServer(cfg).listen(cfg.port, cfg.host, () => console.log(`ktp-nettest ${cfg.region} on ${cfg.host}:${cfg.port}`));
 }
 
-module.exports = { createServer, config, framePage, frameCsp };
+module.exports = { createServer, config, framePage, frameCsp, startupProblem };
