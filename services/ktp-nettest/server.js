@@ -10,6 +10,7 @@ const { makeBusy } = require('./lib/busy');
 
 const MAX_MB = 25;
 const STALL_MAX_S = 90;          // a stall session is torn down after this, whatever the browser does
+const GATHER_MAX_MS = 5000;      // host candidates only, so gathering is near-instant when it works
 const CHUNK = crypto.randomBytes(64 * 1024);  // incompressible; reused for every download
 
 function config(env = process.env) {
@@ -49,6 +50,16 @@ function framePage(origin) {
 const frameCsp = (origin) =>
   `default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors ${origin}`;
 
+// Browsers hide host candidates behind mDNS .local names that resolve only on the player's LAN.
+// werift starts a multicast-dns responder for them, which throws outside any request and kills the node.
+const isMdnsCandidate = (l) => l.startsWith('a=candidate:') && (l.split(' ')[4] || '').includes('.local');
+function dropMdnsCandidates(sdp) {
+  const lines = sdp.split('\n');
+  if (!lines.some(isMdnsCandidate)) return sdp;
+  // Without end-of-candidates werift waits for the browser's checks and pairs it as peer-reflexive.
+  return lines.filter((l) => !isMdnsCandidate(l) && !l.startsWith('a=end-of-candidates')).join('\n');
+}
+
 function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection = null } = {}) {
   const spent = new Map();
   let stalls = 0, transfers = 0;
@@ -78,11 +89,15 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
     });
     pc.connectionStateChange.subscribe((s) => { if (s === 'failed' || s === 'closed') close(); });
     try {
-      await pc.setRemoteDescription({ type: 'offer', sdp });
+      await pc.setRemoteDescription({ type: 'offer', sdp: dropMdnsCandidates(sdp) });
       await pc.setLocalDescription(await pc.createAnswer());
       // Non-trickle: answer once host candidates are in. Public game hosts need no STUN.
+      // werift swallows a gathering failure and never reaches 'complete', so the wait needs a bound.
       if (pc.iceGatheringState !== 'complete') {
-        await new Promise((ok) => pc.iceGatheringStateChange.subscribe((s) => { if (s === 'complete') ok(); }));
+        await new Promise((ok, no) => {
+          const t = setTimeout(() => no(new Error('ICE gathering did not complete')), GATHER_MAX_MS);
+          pc.iceGatheringStateChange.subscribe((s) => { if (s === 'complete') { clearTimeout(t); ok(); } });
+        });
       }
       return pc.localDescription.sdp;
     } catch (e) { close(); throw e; }
@@ -154,4 +169,4 @@ if (require.main === module) {
   createServer(cfg).listen(cfg.port, cfg.host, () => console.log(`ktp-nettest ${cfg.region} on ${cfg.host}:${cfg.port}`));
 }
 
-module.exports = { createServer, config, framePage, frameCsp, startupProblem };
+module.exports = { createServer, config, framePage, frameCsp, startupProblem, dropMdnsCandidates };

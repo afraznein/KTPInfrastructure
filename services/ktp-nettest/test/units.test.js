@@ -220,4 +220,18 @@ test('deploy kit: install.sh never enables or starts the service; the env exampl
   assert.match(env, /^KTP_NETTEST_BIND=127\.0\.0\.1$/m);
   const unit = fs.readFileSync(path.join(deploy, 'ktp-nettest.service'), 'utf8');
   assert.match(unit, /^ProtectHome=tmpfs$/m);
+  // werift's host-candidate gathering needs getifaddrs, which is a netlink socket.
+  const families = unit.match(/^RestrictAddressFamilies=(.*)$/m);
+  assert.ok(families, 'unit restricts address families');
+  assert.ok(families[1].split(/\s+/).includes('AF_NETLINK'), families[1]);
+});
+
+test('offer filter: drops .local candidates and end-of-candidates, keeps every other line', () => {
+  const { dropMdnsCandidates } = require('../server');
+  const host = 'a=candidate:2 1 udp 2113937151 192.0.2.7 51235 typ host';
+  const sdp = ['v=0', 'a=candidate:1 1 udp 2113937151 3f1c-9a.local 51234 typ host', host,
+    'a=end-of-candidates', 'a=ice-ufrag:ab', ''].join('\r\n');
+  assert.strictEqual(dropMdnsCandidates(sdp), ['v=0', host, 'a=ice-ufrag:ab', ''].join('\r\n'));
+  const plain = ['v=0', host, 'a=end-of-candidates', ''].join('\r\n');
+  assert.strictEqual(dropMdnsCandidates(plain), plain, 'an offer with no .local candidate is untouched');
 });
