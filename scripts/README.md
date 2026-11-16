@@ -283,6 +283,14 @@ via `git diff`, and refuses with a report naming which flags and functions this 
 commits added them. It fails closed: drift, no checkout, the path absent from the ref, a failed git call
 and an unfetchable ref all refuse. It is inert under pytest and GitHub Actions, and says so.
 
+**The soak runs it with `--check-runtime`.** `ktp-soak-verify --suite post-restart` reads the rcon
+password at run time from the distributor's `/home/dod/distribute/dodserver.cfg` (or `$KTP_RCON_PASSWORD`
+if set; `$KTP_RCON_CFG` moves the path) and hands it to the verify child's environment only. It refuses
+unless there is exactly one non-empty `rcon_password` line, and then still runs the disk checks, posts RED
+and exits 5. Its `Runtime check (amx_ktp_versions)` row prints `runtime checked N/M instances`; that line
+in `/var/log/ktp-soak-verify-post-restart.log` is how to confirm a night's run compared loaded builds,
+because the gate silently skips the runtime leg when the reference's rcon fails.
+
 **An installed copy** (`/usr/local/bin/ktp-verify-deploy`, run by the soak cron) is in no checkout, so it is
 checked through the deploy manifest instead: its bytes must match the md5 of its last `DEPLOYED.tsv` row
 (untouched since `ktp-install`), and that must equal the blob at the fetched `origin/main` for the row's
