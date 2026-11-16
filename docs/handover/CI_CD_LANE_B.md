@@ -189,8 +189,9 @@ rather than a floor.
 
 | File | Why |
 |---|---|
-| `lane-b-e2e.json` | every verdict and count |
-| `lane-b-e2e.log` | **the important one** — every diagnosis in this project started here, and `replay_daemon.py` can re-run the daemon leg from it without bots, so a nightly failure is reproducible from its own artifact |
+| `lane-b-e2e.json` | **start a diagnosis here** — the harness summary and every verdict, count and named row (e.g. `frag_context_weapon_disagreements`) |
+| `lane-b-summary.md` | the same verdicts rendered for the job summary |
+| `lane-b-e2e.log` | the raw game log, for daemon replay: `replay_daemon.py` re-runs the daemon leg from it without bots. It carries no verdicts, so a grep of it for `weapon disagreement` returns 0 even on a run that had one |
 | `hlstats-e2e.out` | the daemon's own `(IGNORED) <reason>` output |
 | `daemon/PROVENANCE` | which daemon libs were used |
 
@@ -207,6 +208,12 @@ will bite a CI author specifically:
   second with identical arguments succeeds. `lane_b_e2e.py` retries three times
   and reports the attempt count. Do not treat attempt 1 failing as a lane
   failure.
+- **An attempt that dies `rc=-11` (SIGSEGV) is not a seccomp refusal.** It
+  reproduces identically under `unconfined` and under the narrow profile, and
+  the harness retry absorbs it.
+- **`full` may be non-deterministic in its assertions, not in its boot.**
+  `server never booted in N attempts` means zero tests ran. Treat it as an
+  environment outage, never as flake.
 - **Two concurrent runs share the game log** and produce nonsense scenario
   verdicts. The `concurrency:` group already prevents this; keep it, and keep
   `cancel-in-progress: false`.

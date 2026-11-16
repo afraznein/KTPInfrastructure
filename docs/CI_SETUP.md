@@ -190,6 +190,15 @@ when `ubuntu-latest` moved from 24.04 to 26.04: `/bin/sleep` became a coreutils
 multicall binary that dispatches on `argv[0]`, and a test that copied it under
 another name failed on unchanged code.)
 
+The same holds for a commit that landed just before a break: it is not the cause
+if everything it changes runs after the failing step. Confirm `git diff A B --
+<workflow>` is empty across the boundary, then compare the runner environment.
+**Compare the kernel too, not just the image string.** The hosted image version
+can stay the same while the host kernel under it changes: `20261021.618` held
+across a kernel roll that broke 32-bit `socketcall` under docker's default
+seccomp profile, so every image-level comparison came back identical. Lane B
+prints `boot-env: kernel=…` for exactly this reason.
+
 ---
 
 ## 4. Per-repo: workflow files

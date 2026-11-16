@@ -8,3 +8,11 @@
 - `docs/runbooks/CI_INSTALL_ALLOWLIST.md`: a change to `ktp-ci-install` always owes a person
   install, and `outside-list` stays red until it happens.
 - `scripts/mmr/README.md`: Elo out-orders OpenSkill; `tau` and `beta` are already refuted as causes.
+- `docs/handover/CI_CD_LANE_B.md`: start a Lane B diagnosis from `lane-b-e2e.json`, not the
+  `.log`; an `rc=-11` boot attempt is not a seccomp refusal; `server never booted` is an outage,
+  not flake.
+- `docs/CI_SETUP.md`: rule out a just-landed commit with an empty workflow diff, and compare the
+  runner kernel as well as the image string.
+- `lane-b-stats-e2e.yml`: comment on why a new branch's first run misses the vendor cache.
+- `changelog.d/2026-10-07-frag-context-weapon-disagreement.md`: the producer fix is
+  `afraznein/KTPAMXX`#176, not #160.
