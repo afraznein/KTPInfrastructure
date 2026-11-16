@@ -133,30 +133,121 @@ def test_partial_query_reads_the_window_and_the_reason():
 
 # --- sequence gaps -------------------------------------------------------------
 
+def _gaps(rows, **kw):
+    mod = _load()
+    captured = {}
+
+    def fake_q(db, sql):
+        captured["sql"] = sql
+        return [[str(c) for c in r] for r in rows]
+
+    mod.q = fake_q
+    findings: list[str] = []
+    warnings: list[str] = []
+    mod.check_capture_sequence_gaps("hlstatsx", 90, findings, warnings, **kw)
+    return findings, warnings, captured["sql"]
+
+
+def _gap_row(gaps, stream="damage"):
+    return [11, "1794365828-NY1", 1, stream, gaps, 640, 640 - gaps]
+
+
 def test_any_open_frag_or_damage_gap_reports():
-    findings, _ = _run("check_capture_sequence_gaps",
-                       [[11, "1794365828-NY1", 1, "frag_context", 27, 332, 305]])
-    assert len(findings) == 1
+    """The measured 2026-11-10 backlog half still pages: the positive control."""
+    findings, warnings, _ = _gaps([[11, "1794365828-NY1", 1, "frag_context", 27, 332, 305]])
+    assert len(findings) == 1 and warnings == []
     f = findings[0]
     assert "frag_context still has 27 open gap(s)" in f
     assert "332 emitted / 305 received" in f
 
 
-def test_a_zero_gap_row_does_not_report():
-    findings, _ = _run("check_capture_sequence_gaps",
-                       [[11, "M", 1, "damage", 0, 100, 100]])
+def test_a_one_event_gap_warns_and_does_not_page():
+    findings, warnings, _ = _gaps([_gap_row(1)])
     assert findings == []
+    assert len(warnings) == 1
+    assert "damage has 1 open gap(s), 640 emitted / 639 received" in warnings[0]
+
+
+def test_a_two_event_gap_warns_and_does_not_page():
+    findings, warnings, _ = _gaps([_gap_row(2)])
+    assert findings == [] and len(warnings) == 1
+
+
+def test_a_three_event_gap_pages():
+    """Partner to the two above: the ceiling is 2, so 3 is a finding."""
+    findings, warnings, _ = _gaps([_gap_row(3)])
+    assert warnings == [] and len(findings) == 1
+    assert "damage still has 3 open gap(s)" in findings[0]
+
+
+def test_frag_gaps_take_the_same_threshold():
+    findings, warnings, _ = _gaps([_gap_row(2, "frag_context"), _gap_row(3, "frag_context")])
+    assert len(warnings) == 1 and len(findings) == 1
+    assert "frag_context" in findings[0]
+
+
+def test_the_threshold_is_per_half_and_stream_not_summed():
+    rows = [_gap_row(2, "damage"), _gap_row(2, "frag_context")]
+    findings, warnings, _ = _gaps(rows)
+    assert findings == [] and len(warnings) == 2
+
+
+def test_the_warn_ceiling_is_overridable():
+    findings, warnings, _ = _gaps([_gap_row(2)], warn_max=0)
+    assert len(findings) == 1 and warnings == []
+    findings, warnings, _ = _gaps([_gap_row(5)], warn_max=5)
+    assert findings == [] and len(warnings) == 1
+
+
+def test_a_zero_gap_row_does_not_report():
+    findings, warnings, _ = _gaps([[11, "M", 1, "damage", 0, 100, 100]])
+    assert findings == [] and warnings == []
 
 
 def test_the_gap_query_is_scoped_to_frag_and_damage():
-    _, sql = _run("check_capture_sequence_gaps", [])
+    _, _, sql = _gaps([])
     assert "event_type IN ('frag_context', 'damage')" in sql
     assert "sequence_gap_count > 0" in sql
     assert "INTERVAL 90 MINUTE" in sql
+
+
+def _main(monkeypatch, capsys, gap_rows, argv=()):
+    mod = _load()
+
+    def fake_q(db, sql):
+        if "sequence_gap_count" in sql:
+            return [[str(c) for c in r] for r in gap_rows]
+        return []
+
+    mod.q = fake_q
+    mod.check_udp_drops = lambda findings, info: None
+    mod.check_unresolved_actions = lambda findings, info: None
+    monkeypatch.setattr(sys, "argv", ["hlstatsx-ingest-monitor.py", *argv])
+    rc = mod.main()
+    return rc, capsys.readouterr().out
+
+
+def test_main_exits_zero_on_a_small_gap_and_prints_it(monkeypatch, capsys):
+    rc, out = _main(monkeypatch, capsys, [_gap_row(2)], ["--quiet"])
+    assert rc == 0
+    assert "?? capture sequence gap" in out, "a warning survives --quiet"
+    assert "!!" not in out
+
+
+def test_main_exits_one_on_a_large_gap(monkeypatch, capsys):
+    rc, out = _main(monkeypatch, capsys, [_gap_row(3)])
+    assert rc == 1
+    assert "!! capture SEQUENCE GAP" in out
+
+
+def test_main_flag_moves_the_ceiling(monkeypatch, capsys):
+    rc, _ = _main(monkeypatch, capsys, [_gap_row(2)], ["--gap-warn-max", "1"])
+    assert rc == 1
 
 
 def test_both_checks_run_from_main():
     src = SCRIPT.read_text(encoding="utf-8")
     main = src[src.index("def main()"):]
     assert "check_capture_partial_rejection(args.db, args.since, findings)" in main
-    assert "check_capture_sequence_gaps(args.db, args.since, findings)" in main
+    assert ("check_capture_sequence_gaps(args.db, args.since, findings, warnings, "
+            "args.gap_warn_max)") in main

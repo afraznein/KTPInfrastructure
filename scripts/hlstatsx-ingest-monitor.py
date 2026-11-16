@@ -21,6 +21,7 @@ file carries no credentials (the repository is public).
 
     hlstatsx-ingest-monitor.py [--db hlstatsx] [--since 90]
                                [--logs /path/to/dod/logs] [--quiet]
+                               [--gap-warn-max 2]
 """
 from __future__ import annotations
 
@@ -109,6 +110,8 @@ FOUND0_MAX_STREAMS = 3
 # frag_context and damage are the streams a lost UDP line cannot be re-derived for;
 # sequence_gap_count is the gaps still open when the health row was written.
 GAP_STREAMS = ("frag_context", "damage")
+# A stray event or two per half is ordinary UDP intake loss; a backlog loses dozens.
+GAP_WARN_MAX = 2
 # A match is finished when every half has an end_time and the last one has
 # settled -- and, if only one half exists, when that longer settle has passed.
 FINISHED = """
@@ -392,8 +395,12 @@ def check_capture_partial_rejection(db: str, since: int, findings: list[str]) ->
                                  FOUND0_MAX_ROWS, FOUND0_MAX_STREAMS))
 
 
-def check_capture_sequence_gaps(db: str, since: int, findings: list[str]) -> None:
-    """frag_context or damage events the producer emitted and the daemon never got."""
+def check_capture_sequence_gaps(db: str, since: int, findings: list[str],
+                                warnings: list[str], warn_max: int = GAP_WARN_MAX) -> None:
+    """frag_context or damage events the producer emitted and the daemon never got.
+
+    A gap of at most warn_max events on a (half, stream) is a warning; more pages.
+    """
     rows = q(db, """
         SELECT server_id, match_id, half, event_type, sequence_gap_count,
                emitted, daemon_received
@@ -405,6 +412,12 @@ def check_capture_sequence_gaps(db: str, since: int, findings: list[str]) -> Non
     """ % (int(since), ", ".join("'%s'" % t for t in GAP_STREAMS)))
     for sid, mid, half, etype, gaps, emitted, received in rows:
         if int(gaps) <= 0:
+            continue
+        if int(gaps) <= warn_max:
+            warnings.append(
+                "capture sequence gap (small, not paged): %s h%s on server %s -- %s has "
+                "%s open gap(s), %s emitted / %s received" % (mid, half, sid, etype, gaps,
+                                                             emitted, received))
             continue
         findings.append(
             "capture SEQUENCE GAP: %s h%s on server %s -- %s still has %s open "
@@ -530,11 +543,15 @@ def main() -> int:
     ap.add_argument("--since", type=int, default=90, help="minutes to look back (default 90)")
     ap.add_argument("--logs", help="game log directory; enables log-vs-database checking "
                                    "(LAN deploys, where servers and daemon share a host)")
-    ap.add_argument("--quiet", action="store_true", help="print only findings")
+    ap.add_argument("--quiet", action="store_true", help="print only findings and warnings")
+    ap.add_argument("--gap-warn-max", type=int, default=GAP_WARN_MAX,
+                    help="largest per-half sequence gap that warns instead of paging "
+                         "(default %d)" % GAP_WARN_MAX)
     args = ap.parse_args()
 
     findings: list[str] = []
     info: list[str] = []
+    warnings: list[str] = []
 
     check_udp_drops(findings, info)
     check_missing_halves(args.db, args.since, findings)
@@ -542,7 +559,7 @@ def main() -> int:
     check_half_ratio(args.db, args.since, findings)
     check_capture_total_loss(args.db, args.since, findings)
     check_capture_partial_rejection(args.db, args.since, findings)
-    check_capture_sequence_gaps(args.db, args.since, findings)
+    check_capture_sequence_gaps(args.db, args.since, findings, warnings, args.gap_warn_max)
     check_unresolved_actions(findings, info)
     if args.logs:
         check_logs_against_db(args.db, args.logs, args.since, findings)
@@ -550,13 +567,17 @@ def main() -> int:
     if not args.quiet:
         for line in info:
             print("  %s" % line)
+    # Printed even under --quiet: a warning is worth seeing, just not worth a page.
+    for w in warnings:
+        print("  ?? %s" % w)
     if findings:
         print("HLStatsX ingest: %d finding(s) in the last %d minutes" % (len(findings), args.since))
         for f in findings:
             print("  !! %s" % f)
         return 1
     if not args.quiet:
-        print("HLStatsX ingest: clean over the last %d minutes" % args.since)
+        print("HLStatsX ingest: clean over the last %d minutes%s"
+              % (args.since, " (%d warning(s))" % len(warnings) if warnings else ""))
     return 0
 
 

@@ -50,6 +50,16 @@ Each check below is one of those, turned into something that fires on the day.
 - **Second halves far below their own first half** — partial ingest loss leaves
   plausible-looking rows rather than an obvious gap. The LAN's defective halves
   came in at 44%, 59% and 63%; every healthy one sat at 83% or above.
+- **Sequence gaps on `frag_context` and `damage`** — events the producer numbered
+  and the daemon never received, read from `ktp_capture_health.sequence_gap_count`.
+  This leg **warns or pages depending on size**, per `(half, stream)`:
+  a gap of **1–2 events** is a warning (printed with a `??` prefix, exit code
+  unchanged, no alert); **3 or more** is a finding and pages. One or two events out
+  of the 500–700 a half sends is ordinary UDP intake loss — in its first days this
+  leg paged on 7 of 58 runs, every one a `damage` gap of 1–2 — while an ingest
+  backlog loses dozens at once (27 frag and 47 damage lines on 2026-11-10), which
+  still pages. Gaps are not summed across streams or halves. Move the ceiling with
+  `--gap-warn-max N` (default 2; `0` pages on any gap, as before).
 - **The daemon's own health line** (`KTP_HEALTH`), which reports unresolved
   actions and failed SQL writes. Requires KTPHLStatsX ≥ 0.3.5.
   Both counters are process-lifetime and are read as deltas against saved state:
@@ -113,8 +123,10 @@ HLStatsX ingest: 1 finding(s) in the last 90 minutes
   !! summary is SHORT of its events: 1785715972-KTP1 h2 -- 276 frags but only 0 kills recorded
 ```
 
-Findings are prefixed `!!` and set exit 1. Lines without the prefix are context
-and never fail the unit.
+Findings are prefixed `!!` and set exit 1. Warnings are prefixed `??`: they are
+printed even under `--quiet` and land in the journal and run record, but they never
+fail the unit, so they do not page. Lines with neither prefix are context and never
+fail the unit either.
 
 ⚠️ A half that ended in the last 10 minutes is deliberately not checked. Without
 that settle window every live match reports as broken the instant a half ends.
