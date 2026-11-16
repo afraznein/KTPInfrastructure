@@ -1,0 +1,49 @@
+# nginx vhost for one ktp-nettest node. Replace __NODE_HOSTNAME__ with the region's node
+# hostname once its DNS A record exists.
+#
+# Order matters (README, Deploy): install the port-80 server alone, issue the certificate with
+#   certbot certonly --webroot -w /var/www/letsencrypt -d __NODE_HOSTNAME__
+# then add the 443 server, run nginx -t, and reload. The 443 server fails nginx -t until the
+# certificate exists.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __NODE_HOSTNAME__;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name __NODE_HOSTNAME__;
+
+    ssl_certificate     /etc/letsencrypt/live/__NODE_HOSTNAME__/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/__NODE_HOSTNAME__/privkey.pem;
+
+    # The node refuses POST /up past 25 MB; one MB of slack lets the node be the one that refuses.
+    client_max_body_size 26m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8790;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+
+        # The bandwidth test times bytes as they move; a buffering proxy would measure nginx
+        # instead of the player's line, in both directions.
+        proxy_buffering off;
+        proxy_request_buffering off;
+
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+    # No add_header: the node sets its own CORS headers and the /frame CSP, and a second copy
+    # from nginx would be a conflicting duplicate.
+}
