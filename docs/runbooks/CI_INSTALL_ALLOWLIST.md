@@ -79,6 +79,12 @@ It is a separate job so that "a person owes an install" never reads as "the inst
 broke". Expect it to be red until the existing stale rows are installed by hand: that red
 is the backlog, stated.
 
+⚠️ **A merged change to `scripts/ktp-ci-install` itself always creates a person
+install.** CI is refused in code from installing the installer, so `outside-list` goes
+red on the next push to `main` and stays red until someone reinstalls it with
+`ktp-install` (step 3 below). Plan the reinstall with the merge; if the allowlist did not
+change, diff the sudoers fragment to confirm it needs no reinstall too.
+
 ### Holding a stale file: `config/ci-install-held.tsv`
 
 When the operator has ruled that a STALE-OUTSIDE-LIST file waits (a preview first, a

@@ -137,6 +137,12 @@ there is no remote), so the deploy checkout cannot record a row whose source is 
 different repo. Pass `--source-repo` only to spell the existing row's name, never
 to relabel the repo the blob came from.
 
+⚠️ **A clone made from a git bundle names the bundle FILE as its origin**, so the
+name derived from it is the bundle's filename (`KTPInfrastructure.bundle`), not the
+repo. `--record-only` from such a clone needs `--source-repo` spelling the existing
+row's name, and `--report` does not catch the mislabel: a row with the wrong name
+still reads `OK`, and under `--against-ref` it reads `OTHER-REPO`, which exits 0.
+
 ⚠️ **A clean report covers only what has been recorded.** A script installed by
 hand, without `ktp-install`, is in no manifest and is invisible to `--report`.
 `docs/LIVE_SCRIPT_INVENTORY.md` lists what is live and not yet recorded.
