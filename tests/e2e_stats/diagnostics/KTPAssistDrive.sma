@@ -9,6 +9,7 @@
 
 #include <amxmodx>
 #include <dodx>
+#include <reapi>
 
 #define PLUGIN  "KTP Assist Drive"
 #define VERSION "0.1"
@@ -201,13 +202,14 @@ public on_textmsg(id) {
 
 // Own-weapon kill drive (stats_logging 1.35.0). Two live teammates A and B carrying different
 // primaries. A dies for real (user_kill), so the game drops A's gun; B presses the drop key and is
-// put on A's body, so the game's own touch hands B that gun. Every dod_client_weaponpickup the
+// put on that dropped gun (not A's body, which it can land well away from), so the game's own touch
+// hands B that gun. Every dod_client_weaponpickup the
 // DODX poll fires for B is logged as [OW] FWD -- the game-side claim this scenario exists to
-// observe. If no real pickup arrives in 5 s, stats_logging's handler is called directly instead
+// observe. If no real pickup arrives in 8 s, stats_logging's handler is called directly instead
 // ([OW] SYNTHETIC) so the ledger is still tested, and the verdict says the engine half was not.
 // The kill itself is a dispatched TEAMKILL: no frag_context marker, so no expected no-row diagnostic.
 new g_owA, g_owB, g_owWpn, g_owPolls, g_owBits, bool:g_owActive, bool:g_owPicked
-new Float:g_owAOrigin[3]
+new Float:g_owAOrigin[3], g_owBox, g_owBoxCls[40]
 
 stock bool:ow_is_primary(w) {
 	switch (w) {
@@ -230,6 +232,63 @@ stock ow_primary(id) {
 		if ((bits & (1 << w)) && ow_is_primary(w))
 			return w
 	return 0
+}
+
+stock bool:ow_is_player_held(e) {
+	new owner = get_entvar(e, var_owner)
+	return owner >= 1 && owner <= get_maxplayers() && owner != g_owA
+}
+
+// Prefer the weaponbox: a gun packed inside one keeps a stale origin.
+stock ow_find_box() {
+	new logname[32], wcls[40], best = 0, bool:bestBox = false
+	new Float:bestDist = 512.0
+	xmod_get_wpnlogname(g_owWpn, logname, charsmax(logname))
+	formatex(wcls, charsmax(wcls), "weapon_%s", logname)
+	for (new e = get_maxplayers() + 1; e < 900; e++) {
+		new ec[40]
+		ec[0] = 0
+		get_entvar(e, var_classname, ec, charsmax(ec))
+		new bool:box = bool:equal(ec, "weaponbox")
+		if (!box && !equal(ec, wcls))
+			continue
+		if (ow_is_player_held(e) || (bestBox && !box))
+			continue
+		new Float:o[3]
+		get_entvar(e, var_origin, o)
+		new Float:d = get_distance_f(o, g_owAOrigin)
+		if ((box && !bestBox) || d < bestDist) {
+			best = e
+			bestBox = box
+			bestDist = d
+			copy(g_owBoxCls, charsmax(g_owBoxCls), ec)
+		}
+	}
+	if (best) {
+		new model[64]
+		get_entvar(best, var_model, model, charsmax(model))
+		log_amx("[OW] GUN ent=%d cls=%s model=%s owner=%d dist=%.0f", best, g_owBoxCls, model,
+			get_entvar(best, var_owner), bestDist)
+	} else {
+		log_amx("[OW] GUN none near a, using a's body")
+	}
+	return best
+}
+
+// The gun can still be sliding when B arrives, so every move re-reads where it is.
+stock ow_put_b_on_gun() {
+	new Float:o[3]
+	if (g_owBox) {
+		new ec[40]
+		ec[0] = 0
+		get_entvar(g_owBox, var_classname, ec, charsmax(ec))
+		if (equal(ec, g_owBoxCls)) {
+			get_entvar(g_owBox, var_origin, o)
+			dodx_set_user_origin(g_owB, o)
+			return
+		}
+	}
+	dodx_set_user_origin(g_owB, g_owAOrigin)
 }
 
 public cmd_own_weapon() {
@@ -276,6 +335,8 @@ public ow_drop() {
 	new cls[40], logname[32]
 	xmod_get_wpnlogname(ow_primary(g_owB), logname, charsmax(logname))
 	formatex(cls, charsmax(cls), "weapon_%s", logname)
+	// Before B's drop, so B's own gun cannot be the one found.
+	g_owBox = ow_find_box()
 	g_owBits = ow_bits(g_owB)
 	log_amx("[OW] DROP b=%d bits_before=%d cls=%s", g_owB, g_owBits, cls)
 	// Extension mode has no Cmd_Argv override, so dod.so reads the engine's last tokenized line,
@@ -288,28 +349,30 @@ public ow_drop() {
 
 public ow_touch() {
 	log_amx("[OW] DROPPED b=%d bits_after=%d", g_owB, ow_bits(g_owB))
-	dodx_set_user_origin(g_owB, g_owAOrigin)
-	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, g_owAOrigin[0], g_owAOrigin[1], g_owAOrigin[2])
+	ow_put_b_on_gun()
+	new Float:at[3]
+	dodx_get_user_origin(g_owB, at)
+	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, at[0], at[1], at[2])
 	g_owPolls = 0
 	set_task(0.25, "ow_poll", 77302)
 }
 
 public ow_poll() {
-	// Bot AI walks B off the gun; keep it standing on A's body for the whole window.
+	// Bot AI walks B off the gun; keep it standing on the gun for the whole window.
 	new bits = ow_bits(g_owB)
 	if (bits != g_owBits) {
 		log_amx("[OW] BITS b=%d bits=%d", g_owB, bits)
 		g_owBits = bits
 	}
-	if (!g_owPicked && ++g_owPolls < 20) {
-		dodx_set_user_origin(g_owB, g_owAOrigin)
+	if (!g_owPicked && ++g_owPolls < 32) {
+		ow_put_b_on_gun()
 		set_task(0.25, "ow_poll", 77302)
 		return
 	}
 	if (!g_owPicked) {
-		log_amx("[OW] SYNTHETIC no real pickup in 5 s")
+		log_amx("[OW] SYNTHETIC no real pickup in 8 s")
 		// The ledger claims by distance, so the claim must happen on the gun.
-		dodx_set_user_origin(g_owB, g_owAOrigin)
+		ow_put_b_on_gun()
 		if (callfunc_begin("dod_client_weaponpickup", "stats_logging.amxx") == 1) {
 			callfunc_push_int(g_owB)
 			callfunc_push_int(g_owWpn)
