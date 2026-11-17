@@ -43,20 +43,47 @@ roster AS (
     FROM ktp_match_players
     WHERE match_id = {{MATCH_ID}}
 ),
+frags AS (
+    -- A kill inside the cap-out freeze (KTP_ROUND_FREEZE .. KTP_ROUND_LIVE)
+    -- is written with match_id NULL but producer_match_id set, and the
+    -- scoreboard counted it. Two seeks, not one OR: the OR plans as
+    -- ref_or_null over every untagged row (0.9 s), the union seeks
+    -- idx_frag_producer_context for the second half (0.02 s).
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id = {{MATCH_ID}}
+    UNION ALL
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}
+),
 kills AS (
     SELECT killerId AS player_id, COUNT(*) AS kills,
            COALESCE(SUM(headshot), 0) AS headshots,
            SUM(CASE WHEN weapon IN ('grenade', 'grenade2', 'mills_bomb')
                     THEN 1 ELSE 0 END) AS grenade_kills
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
+    FROM frags
     GROUP BY killerId
 ),
-deaths AS (
-    SELECT victimId AS player_id, COUNT(*) AS deaths
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
+enemy_deaths AS (
+    SELECT victimId AS player_id, COUNT(*) AS enemy_deaths
+    FROM frags
     GROUP BY victimId
+),
+deaths AS (
+    -- The scoreboard's deaths column: DoD adds one for any death, so a
+    -- teamkill victim and a suicide count beside a frag victim. The three
+    -- sources are disjoint rows, so they add. Enemy-only is enemy_deaths.
+    SELECT player_id, COUNT(*) AS deaths
+    FROM (
+        SELECT victimId AS player_id
+        FROM frags
+        UNION ALL
+        SELECT victimId FROM hlstats_Events_Teamkills WHERE match_id = {{MATCH_ID}}
+        UNION ALL
+        SELECT playerId FROM hlstats_Events_Suicides WHERE match_id = {{MATCH_ID}}
+    ) every_death
+    GROUP BY player_id
 ),
 teamkills AS (
     SELECT killerId AS player_id, COUNT(*) AS team_kills
@@ -180,6 +207,7 @@ SELECT
     CASE WHEN r.match_id LIKE '%-TEST' THEN 1 ELSE 0 END AS is_test_match,
     COALESCE(k.kills, 0) AS kills,
     COALESCE(dth.deaths, 0) AS deaths,
+    COALESCE(ed.enemy_deaths, 0) AS enemy_deaths,
     CASE WHEN pc.assists_covered THEN COALESCE(a.assists, 0) END AS assists,
     COALESCE(k.headshots, 0) AS headshots,
     COALESCE(k.grenade_kills, 0) AS grenade_kills,
@@ -226,6 +254,7 @@ JOIN match_context mc ON mc.match_id = r.match_id
 CROSS JOIN producer_coverage pc
 LEFT JOIN kills k ON k.player_id = r.player_id
 LEFT JOIN deaths dth ON dth.player_id = r.player_id
+LEFT JOIN enemy_deaths ed ON ed.player_id = r.player_id
 LEFT JOIN teamkills tk ON tk.player_id = r.player_id
 LEFT JOIN suicides s ON s.player_id = r.player_id
 LEFT JOIN assists a ON a.player_id = r.player_id

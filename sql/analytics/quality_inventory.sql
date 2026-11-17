@@ -45,6 +45,10 @@ SELECT
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_kills,
   (SELECT COALESCE(SUM(deaths), 0) FROM ktp_match_stats
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_deaths,
+  -- Kills inside the cap-out freeze: match_id NULL, producer_match_id set.
+  -- The facts count them (the scoreboard did); the daemon's cache does not.
+  (SELECT COUNT(*) FROM hlstats_Events_Frags
+    WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}) AS untagged_frags,
   -- Every hit the attacker landed: the ingest query groups ktp_damage_events
   -- by attacker_id with no victim join and no team predicate. So the report
   -- side comparable with it is damage_dealt + team_damage + self_damage.

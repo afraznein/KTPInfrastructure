@@ -67,3 +67,29 @@ def test_producer_coverage_bounds_are_sargable():
     # Control: the three producers are all still checked.
     for code in ("a.code = 'assist'", "a.code = 'cap_break'", "FROM ktp_flag_captures c"):
         assert code in body, code
+
+
+def test_deaths_are_the_scoreboards_and_enemy_deaths_stay_apart():
+    """DoD adds one death for any death. A player who summed the map pages of
+    the S10 finals read 150 where the fixture page read 158: the 8 were 6
+    suicides and 2 teamkill deaths, all on his scoreboard."""
+    body = _cte("deaths")
+    for source in ("FROM frags", "hlstats_Events_Teamkills", "hlstats_Events_Suicides"):
+        assert source in body, source
+    assert body.count("UNION ALL") == 2, body
+    enemy = _cte("enemy_deaths")
+    assert "FROM frags" in enemy and "Teamkills" not in enemy
+    assert "COALESCE(ed.enemy_deaths, 0) AS enemy_deaths" in _code()
+
+
+def test_frags_inside_the_capout_freeze_still_count():
+    """A grenade already in the air that kills after KTP_ROUND_FREEZE lands
+    with match_id NULL and producer_match_id set; the scoreboard credited it.
+    Two such kills on 1794773028-NY2 were on neither page."""
+    frags = _cte("frags")
+    assert "WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}" in frags
+    assert frags.count("UNION ALL") == 1, frags  # two index seeks, never an OR
+    for name in ("kills", "enemy_deaths", "deaths"):
+        assert "FROM frags" in _cte(name) and "hlstats_Events_Frags" not in _cte(name), name
+    # Teamkill and suicide rows carry no producer_match_id, so no fallback there.
+    assert _cte("teamkills").count("producer_match_id") == 0

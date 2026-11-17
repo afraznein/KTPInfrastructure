@@ -262,28 +262,44 @@ def fetch_scoreboard_totals(db: Db, mid: str) -> dict[int, dict]:
     ⚠️ NULL-safe on the window. Some frag rows carry no game_time (2 of 535 on
     the worked match) and `NULL >= x` is NULL, so a naive predicate discards
     them silently; those fall back to the wall clock.
+
+    ⚠️ A kill inside the cap-out freeze (KTP_ROUND_FREEZE .. KTP_ROUND_LIVE,
+    a grenade already in the air) is written with match_id NULL and
+    producer_match_id set. The scoreboard credits it, so the frag branches
+    fall back to producer_match_id. Two such kills on harrington of the S10
+    finals (1794773028-NY2) were on both captains' scoreboards and on neither
+    page; 2,054 rows since 2026-08-31 league-wide.
     """
     return {
         r.pop("playerId"): r
         for r in db.json_rows(
             window_cte(mid)
-            + "select json_arrayagg(json_object("
+            # A kill inside the cap-out freeze is written with match_id NULL
+            # and producer_match_id set; the scoreboard counted it. Two seeks,
+            # not an OR: the OR plans as ref_or_null over every untagged row.
+            + ", frags as ("
+            "  select killerId, victimId, half, game_time, eventTime"
+            "  from hlstats_Events_Frags"
+            f" where match_id {COLL} = {sql_str(mid)}"
+            "  union all"
+            "  select killerId, victimId, half, game_time, eventTime"
+            "  from hlstats_Events_Frags"
+            f" where match_id is null and producer_match_id {COLL} = {sql_str(mid)}) "
+            "select json_arrayagg(json_object("
             "  'playerId', pid, 'kills', k, 'deaths', d)) from ("
             "  select pid,"
             "         sum(case when role = 'killer' then 1 else 0 end) k,"
             "         sum(case when role = 'victim' then 1 else 0 end) d"
             "  from ("
-            "    select f.killerId pid, 'killer' role from hlstats_Events_Frags f"
+            "    select f.killerId pid, 'killer' role from frags f"
             "    left join live w on w.half = f.half"
-            f"   where f.match_id {COLL} = {sql_str(mid)}"
-            "      and (w.gt is null"
+            "    where (w.gt is null"
             "           or (f.game_time is not null and f.game_time >= w.gt)"
             "           or (f.game_time is null and f.eventTime >= w.et))"
             "    union all"
-            "    select f.victimId, 'victim' from hlstats_Events_Frags f"
+            "    select f.victimId, 'victim' from frags f"
             "    left join live w on w.half = f.half"
-            f"   where f.match_id {COLL} = {sql_str(mid)}"
-            "      and (w.gt is null"
+            "    where (w.gt is null"
             "           or (f.game_time is not null and f.game_time >= w.gt)"
             "           or (f.game_time is null and f.eventTime >= w.et))"
             "    union all"
