@@ -35,20 +35,40 @@ roster AS (
     FROM ktp_match_players
     WHERE match_id = {{MATCH_ID}}
 ),
+frags AS (
+    -- A kill inside the cap-out freeze (KTP_ROUND_FREEZE .. KTP_ROUND_LIVE)
+    -- is written with match_id NULL but producer_match_id set, and the
+    -- scoreboard counted it. Two seeks, not one OR: the OR plans as
+    -- ref_or_null over every untagged row (0.9 s), the union seeks
+    -- idx_frag_producer_context for the second half (0.02 s).
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id = {{MATCH_ID}}
+    UNION ALL
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}
+),
 kills AS (
     SELECT killerId AS player_id, half, COUNT(*) AS kills,
            COALESCE(SUM(headshot), 0) AS headshots,
            SUM(CASE WHEN weapon IN ('grenade', 'grenade2', 'mills_bomb')
                     THEN 1 ELSE 0 END) AS grenade_kills
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
+    FROM frags
     GROUP BY killerId, half
 ),
 deaths AS (
-    SELECT victimId AS player_id, half, COUNT(*) AS deaths
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
-    GROUP BY victimId, half
+    -- Scoreboard deaths, same definition as player_match_fact.sql.
+    SELECT player_id, half, COUNT(*) AS deaths
+    FROM (
+        SELECT victimId AS player_id, half
+        FROM frags
+        UNION ALL
+        SELECT victimId, half FROM hlstats_Events_Teamkills WHERE match_id = {{MATCH_ID}}
+        UNION ALL
+        SELECT playerId, half FROM hlstats_Events_Suicides WHERE match_id = {{MATCH_ID}}
+    ) every_death
+    GROUP BY player_id, half
 ),
 teamkills AS (
     SELECT killerId AS player_id, half, COUNT(*) AS team_kills

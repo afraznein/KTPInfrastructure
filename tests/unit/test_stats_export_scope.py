@@ -267,3 +267,17 @@ def test_every_counted_event_is_scoped_to_the_restart(mod):
     # NULL-safe: `NULL >= x` is NULL, and a naive predicate drops those rows
     # without a word -- it cost two real mid-round kills the first time.
     assert "f.game_time is null and f.eventTime >= w.et" in kills_deaths
+
+
+def test_frags_inside_the_capout_freeze_still_count(mod):
+    """KTP_ROUND_FREEZE pauses the daemon's match_id tagging until the
+    restart, so a grenade kill in that gap is a frag row with match_id NULL
+    and producer_match_id set. The scoreboard counted it (both captains'
+    boards on 1794773028-NY2 had two), so the frag branches fall back."""
+    db = _ScriptedDb(roster=[], box=[], events=[], points=[])
+    mod.fetch_scoreboard_totals(db, "m-1")
+    sql = db.sql[0]
+    assert sql.count("match_id is null and producer_match_id") == 1, sql
+    assert sql.count("from frags f") == 2, sql
+    # Teamkill and suicide tables carry no producer_match_id: no fallback.
+    assert "t.producer_match_id" not in sql and "u.producer_match_id" not in sql

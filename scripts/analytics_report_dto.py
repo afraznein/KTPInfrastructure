@@ -33,7 +33,7 @@ from scripts.outnumbered_kills import COVERAGE_KEYS as OUTNUMBERED_COVERAGE
 from scripts.outnumbered_kills import DEFINITION as OUTNUMBERED_DEFINITION
 from scripts.outnumbered_kills import DEFINITION_VERSION as OUTNUMBERED_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.19.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.20.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -454,7 +454,7 @@ def _unknown_team_totals(teams: list[dict], players: list[dict]) -> None:
 
 
 PLAYER_FIELDS = (
-    "kills", "deaths", "assists", "headshots", "team_kills",
+    "kills", "deaths", "enemy_deaths", "assists", "headshots", "team_kills",
     "suicides", "damage_dealt", "damage_taken",
     "damage_differential", "capture_credits", "cap_breaks",
     "shots", "hits", "raw_accuracy", "kd_ratio",
@@ -470,7 +470,8 @@ PLAYER_FIELDS = (
 # goes to the minimum, and a consumer that renders a full bar as an
 # achievement here has it backwards -- hence the flag travels in the DTO.
 LOWER_IS_BETTER = frozenset({
-    "deaths", "damage_taken", "team_kills", "suicides", "grenade_damage_taken",
+    "deaths", "enemy_deaths", "damage_taken", "team_kills", "suicides",
+    "grenade_damage_taken",
 })
 
 
@@ -496,7 +497,10 @@ NULL_NOTE = "null, not 0, for a match that predates the source that measures it.
 
 FIELD_GLOSSARY = {
     "kills": {"unit": "count", "what": "Frags credited to the player."},
-    "deaths": {"unit": "count", "what": "Times the player was killed."},
+    "deaths": {"unit": "count",
+               "what": "Times the player died, as the scoreboard counts it: "
+                       "killed by an enemy, killed by a teammate, or suicide."},
+    "enemy_deaths": {"unit": "count", "what": "Times an enemy killed the player."},
     "assists": {"unit": "count",
                 "what": "Kills the player contributed to without the "
                         "finishing blow, as DoD itself credits them.",
