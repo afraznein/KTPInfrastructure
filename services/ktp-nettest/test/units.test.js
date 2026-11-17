@@ -91,6 +91,41 @@ test('stall summary: loss, gaps over 250 ms, duplicates ignored', () => {
   assert.deepStrictEqual(summarizePing([20, 30, 20]), { ping_ms: 20, jitter_ms: 10 });
 });
 
+test('stall summary: a sender paused by timer throttling is not a line stall', () => {
+  // The 60/60 shape: a 1 Hz clamped timer sends 100 packets per wake-up, and every echo arrives
+  // within a few ms of being sent. The old meter counted each second between bursts as a stall.
+  const sendAt = [], echoes = [];
+  for (let s = 0; s < 60; s++) {
+    for (let j = 0; j < 100; j++) {
+      const seq = s * 100 + j, sent = 1000 * s + j * 0.01;
+      sendAt.push(sent);
+      echoes.push({ seq, rtt: 30, at: sent + 30 });
+    }
+  }
+  const s = summarizeStall(6000, echoes, 60, sendAt);
+  assert.strictEqual(s.stall_recv_gaps_250, 59, 'raw receive gaps: what the old meter reported');
+  assert.strictEqual(s.stall_send_gaps_250, 59);
+  assert.ok(s.stall_send_worst_gap_ms >= 999, String(s.stall_send_worst_gap_ms));
+  assert.strictEqual(s.stall_gaps_250, 0);
+  assert.ok(s.stall_worst_gap_ms < 5, String(s.stall_worst_gap_ms));
+  assert.strictEqual(s.stall_loss_pct, 0);
+});
+
+test('stall summary: a hole while the sender kept pace is still a line stall', () => {
+  const sendAt = [], echoes = [];
+  for (let i = 0; i < 300; i++) {
+    sendAt.push(i * 10);
+    if (i >= 100 && i < 160) continue;  // 600 ms of echoes lost while sending stayed at 100/s
+    echoes.push({ seq: i, rtt: 30, at: i * 10 + 30 });
+  }
+  const s = summarizeStall(300, echoes, 3, sendAt);
+  assert.strictEqual(s.stall_send_gaps_250, 0);
+  assert.strictEqual(s.stall_gaps_250, 1);
+  assert.strictEqual(s.stall_recv_gaps_250, 1);
+  assert.strictEqual(s.stall_worst_gap_ms, 600);
+  assert.strictEqual(s.stall_loss_pct, 20);
+});
+
 test('busy: first half START in previous log keeps the box busy through the map change', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nettest-'));
   const t0 = new Date();

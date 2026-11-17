@@ -12,6 +12,8 @@ const MAX_MB = 25;
 const STALL_MAX_S = 90;          // a stall session is torn down after this, whatever the browser does
 const GATHER_MAX_MS = 5000;      // host candidates only, so gathering is near-instant when it works
 const CHUNK = crypto.randomBytes(64 * 1024);  // incompressible; reused for every download
+// The stall test's pacing clock; client.js says why it runs in a worker.
+const TICK_WORKER = 'setInterval(() => postMessage(0), 10);';
 
 function config(env = process.env) {
   const ports = (env.KTP_NETTEST_UDP_PORTS || '').split('-').map(Number);
@@ -126,6 +128,7 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
       return send(res, 200, framePage(cfg.origin), 'text/html; charset=utf-8');
     }
     if (route === 'GET /frame.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'frame.js')), 'text/javascript');
+    if (route === 'GET /tick.js') return send(res, 200, TICK_WORKER, 'text/javascript');
     if (route === 'GET /busy') return send(res, 200, { region: cfg.region, busy: isBusy() });
     if (!['GET /ping', 'GET /down', 'POST /up', 'POST /stall/offer'].includes(route)) return send(res, 404, { error: 'not found' });
 
