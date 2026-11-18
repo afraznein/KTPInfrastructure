@@ -231,6 +231,15 @@ on:
         required: false
         type: string
         default: '360'
+      door_scenario:
+        description: >-
+          'true' runs the rotating-door hold scenario last: changes to dod_thunder2
+          and judges push: blocked_ms with ktp_door_reversal_guard off and on. Needs
+          engine_ref (engine telemetry) and the map in the image, or it reports
+          not_exercised. 'full' lane only.
+        required: false
+        type: string
+        default: 'false'
   schedule:
     # Requested after publish-base-image (04:30 UTC) so a run usually pulls a
     # fresh base, but GitHub starts scheduled runs hours late, so neither that
@@ -293,6 +302,7 @@ jobs:
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
       SHOT_DETAIL: ${{ inputs.shot_detail || '1' }}
       SHOT_DETAIL_TYPES: ${{ inputs.shot_detail_types || '-1' }}
+      DOOR_SCENARIO: ${{ inputs.door_scenario || 'false' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
@@ -686,6 +696,10 @@ jobs:
             test -f build/lane-b-artifacts/engine/engine_i486.so
             ENGINE_ARGS="--engine-so /work/build/engine/engine_i486.so --engine-provenance /work/build/engine/provenance.json"
           fi
+          DOOR_ARGS=""
+          if [ "$DOOR_SCENARIO" = "true" ]; then
+            DOOR_ARGS="--door-scenario"
+          fi
           # Written by the builder as paths under this same /work/build mount, holding only what the daemon ref carries.
           mapfile -t schema_migrations < build/lane-b-artifacts/artifacts/schema-migrations.txt
           test "${#schema_migrations[@]}" -gt 0
@@ -709,7 +723,7 @@ jobs:
             -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
             -w /work ktp-lane-b:ci \
             python3 -u scripts/lane_b_e2e.py \
-              ${ENGINE_ARGS} \
+              ${ENGINE_ARGS} ${DOOR_ARGS} \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
               --amxx-gamedata /work/build/artifacts/gamedata \

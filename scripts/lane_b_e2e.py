@@ -52,6 +52,7 @@ from scripts.match_analytics import (  # noqa: E402
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import own_weapon_scenario, voice_menu_scenario  # noqa: E402
 from tests.e2e_stats import untracked_after_match_scenario  # noqa: E402
+from tests.e2e_stats import door_hold_scenario  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, engine_telemetry, log_invariants,
                              metamod)
@@ -1184,6 +1185,10 @@ def main() -> int:
                     help="run without driving a match. Every row is then "
                          "match_id NULL, which is correct for warmup and "
                          "proves nothing about match attribution")
+    ap.add_argument("--door-scenario", action="store_true",
+                    help="after everything else, change to dod_thunder2 and run the "
+                         "rotating-door hold scenario (guard off, control, guard on); "
+                         "report-only unless the door does the wrong thing")
     ap.add_argument("--no-break-scenarios", action="store_true",
                     help="skip the staged scenarios (they kill bots on command)")
     ap.add_argument("--kill-switch-seconds", type=int, default=60,
@@ -1526,6 +1531,23 @@ def main() -> int:
                         play(play_seconds=args.play_seconds, log_path=args.log)
                         _stage_clean_scenarios()
                         _stage_break_diagnostics()
+                    if args.door_scenario:
+                        # It changes the map, so nothing may run on this server after it.
+                        if assist_drive_amxx is None:
+                            report["door_hold_scenario"] = {
+                                "code": door_hold_scenario.CODE,
+                                "status": "not_exercised",
+                                "detail": "KTPAssistDrive was not compiled, so there is "
+                                          "no door drive", "legs": []}
+                        else:
+                            print("staging door-hold scenario on "
+                                  f"{door_hold_scenario.MAP}", flush=True)
+                            report["door_hold_scenario"] = door_hold_scenario.run(
+                                handle, args.log, serverfiles=args.serverfiles,
+                                engine_lane=args.engine_so is not None,
+                                interval_s=float(args.profile_interval))
+                        print("  door hold: " + report["door_hold_scenario"]["detail"],
+                              flush=True)
                 completed = True
                 break
             except Exception as e:  # noqa: BLE001
@@ -2049,6 +2071,11 @@ def main() -> int:
             carried.append(report["own_weapon_scenario"])
         if report.get("untracked_after_match_scenario"):
             carried.append(report["untracked_after_match_scenario"])
+        # Opt-in and report-only: a door scenario that could not be set up is printed,
+        # not counted as a coverage gap, so asking for it never reds a run by itself.
+        door = report.get("door_hold_scenario")
+        if door and door["status"] == "pipeline":
+            failures.append(f"{door['code']}: {door['detail']}")
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")
