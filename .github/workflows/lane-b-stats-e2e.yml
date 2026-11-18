@@ -456,15 +456,17 @@ jobs:
       - name: Pull runtime base image
         run: docker pull "$BASE_IMAGE"
 
-      # The image's two build-time downloads live on third-party hosts, and the
+      # The image's build-time downloads live on remote hosts, and the
       # Metamod-R release asset answered 504 for an entire retry budget one
       # night -- failing PRs that touched nothing related to it, upstream of
-      # every harness test. Cache the archives instead: a retry survives a blip,
+      # every harness test. Cache the files instead: a retry survives a blip,
       # not an outage.
       #
       # The checksums are READ OUT OF the Dockerfile rather than copied here, so
       # bumping a pinned version is a cache miss by construction and the old
-      # archive can never be restored under the new pin.
+      # file can never be restored under the new pin. The FastDL files are
+      # whatever its `install_pinned <path> "$<ARG>"` lines name, so adding one
+      # there is enough to cache it.
       - name: Resolve the pinned vendor checksums
         id: vendor
         run: |
@@ -476,9 +478,10 @@ jobs:
           bot_sha=$(grep -m1 '^ARG NEW_BOT_SHA256=' "$df" | cut -d= -f2- || true)
           mm_url=$(grep -m1 '^ARG METAMOD_URL=' "$df" | cut -d= -f2- || true)
           mm_sha=$(grep -m1 '^ARG METAMOD_SHA256=' "$df" | cut -d= -f2- || true)
+          fastdl_url=$(grep -m1 '^ARG FASTDL_URL=' "$df" | cut -d= -f2- || true)
           # A key built from a checksum that failed to parse would be stable and
           # wrong, which is worse than no cache at all.
-          for pair in "bot_url=$bot_url" "bot_sha=$bot_sha" "mm_url=$mm_url" "mm_sha=$mm_sha"; do
+          for pair in "bot_url=$bot_url" "bot_sha=$bot_sha" "mm_url=$mm_url" "mm_sha=$mm_sha" "fastdl_url=$fastdl_url"; do
             if [ "${pair#*=}" = "" ]; then
               echo "::error::could not read ${pair%%=*} from $df; refusing to build a cache key from it"
               exit 1
@@ -487,11 +490,32 @@ jobs:
           case "${bot_sha}${mm_sha}" in
             *[!0-9a-f]*) echo "::error::parsed a non-hex checksum from $df"; exit 1 ;;
           esac
+          # One `<path> <sha256>` row per FastDL file the image installs.
+          pinned="${RUNNER_TEMP:-/tmp}/lane-b-pinned-files.txt"
+          : > "$pinned"
+          while read -r rel var; do
+            sha=$(grep -m1 "^ARG ${var}=" "$df" | cut -d= -f2- || true)
+            case "$sha" in
+              ""|*[!0-9a-f]*) echo "::error::could not read a hex ${var} for ${rel} from $df"; exit 1 ;;
+            esac
+            if [ "${#sha}" -ne 64 ]; then
+              echo "::error::${var} in $df is not a sha256"; exit 1
+            fi
+            echo "$rel $sha" >> "$pinned"
+          done < <(sed -nE 's/^[[:space:]]+install_pinned ([^ ]+) "\$([A-Z0-9_]+)".*/\1 \2/p' "$df")
+          if [ ! -s "$pinned" ]; then
+            echo "::error::found no install_pinned lines in $df; the FastDL files would go uncached and unverified here"
+            exit 1
+          fi
+          files_sha=$(cut -d' ' -f2 "$pinned" | sha256sum | cut -d' ' -f1)
           {
             echo "bot_url=$bot_url"
             echo "bot_sha=$bot_sha"
             echo "mm_url=$mm_url"
             echo "mm_sha=$mm_sha"
+            echo "fastdl_url=$fastdl_url"
+            echo "pinned=$pinned"
+            echo "key=lane-b-vendor-${bot_sha}-${mm_sha}-${files_sha}"
           } >> "$GITHUB_OUTPUT"
 
       # No restore-keys on purpose: a prefix match is exactly how a bumped
@@ -503,7 +527,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/lane-b/vendor
-          key: lane-b-vendor-${{ steps.vendor.outputs.bot_sha }}-${{ steps.vendor.outputs.mm_sha }}
+          key: ${{ steps.vendor.outputs.key }}
 
       # Verified here as well as inside the image. The in-image check is what
       # makes a restored archive safe to trust at all; this one is what stops a
@@ -514,6 +538,8 @@ jobs:
           BOT_SHA: ${{ steps.vendor.outputs.bot_sha }}
           MM_URL: ${{ steps.vendor.outputs.mm_url }}
           MM_SHA: ${{ steps.vendor.outputs.mm_sha }}
+          FASTDL_URL: ${{ steps.vendor.outputs.fastdl_url }}
+          PINNED: ${{ steps.vendor.outputs.pinned }}
         run: |
           set -euo pipefail
           mkdir -p build/lane-b/vendor
@@ -537,6 +563,10 @@ jobs:
           }
           supply new_bot.zip "$BOT_URL" "$BOT_SHA"
           supply metamod.zip "$MM_URL" "$MM_SHA"
+          # The Dockerfile looks for each under its basename, so that is the vendored name.
+          while read -r rel sha; do
+            supply "$(basename "$rel")" "$FASTDL_URL/$rel" "$sha"
+          done < "$PINNED"
 
       # success() is explicit rather than relied upon: this must not run after a
       # failed verification, and saving is pointless on a hit because the entry
@@ -546,7 +576,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/lane-b/vendor
-          key: lane-b-vendor-${{ steps.vendor.outputs.bot_sha }}-${{ steps.vendor.outputs.mm_sha }}
+          key: ${{ steps.vendor.outputs.key }}
 
       - name: Build Lane B image
         run: |
