@@ -181,9 +181,14 @@ a `pipeline` verdict on the same check still fails the job, because the waiver
 only ever covers `not_exercised`; and the obvious remedy — inject a subtitle
 ourselves — was declined because the slot table comes from `dod.so`'s string
 order, so checking the plugin against text we chose tests this harness and not the
-game. Why no subtitle arrives is still open; both candidates are in
-`tests/e2e_stats/voice_menu_scenario.py`, and one of them is a harness shape
-rather than a floor.
+game. Why no subtitle arrives is now settled, and it is neither earlier
+candidate: `dod.so` never sends a `#Voice_subtitle_*` TextMsg to anyone. A voice
+pick ends in `CBasePlayer::VoiceCom`, whose only output is a `pfnPlaybackEvent`
+carrying the voice index, so any subtitle is the client's own doing. So the
+waiver is a property of this check's oracle, not of the all-bot lane, and a human
+in the lane would not change it. The slot table itself is confirmed against the
+same binary: stats_logging's 27 names equal `s_VoiceCommands[1..27]` in order.
+Evidence and the read in `tests/e2e_stats/voice_menu_scenario.py`.
 
 ### 6. Artifacts
 
