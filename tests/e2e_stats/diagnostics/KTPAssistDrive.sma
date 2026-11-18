@@ -19,6 +19,7 @@ public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_ad_run", "cmd_run")
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
+	register_srvcmd("ktp_ad_postmatch_damage", "cmd_postmatch_damage")
 	register_srvcmd("ktp_vc_run", "cmd_voice")
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
 	register_srvcmd("ktp_ow_run", "cmd_own_weapon")
@@ -64,6 +65,24 @@ public cmd_postmatch_frag() {
 stock ad_flush_stats_capture() {
 	if (callfunc_begin("ksc_flush_task", "stats_logging.amxx") == 1)
 		callfunc_end()
+}
+
+// Run after a clean match end: one self-inflicted hit through the real damage
+// forward. Self-damage earns no assist credit, so it leaves the next match alone.
+public cmd_postmatch_damage() {
+	new players[32], num
+	get_players(players, num, "a")
+	if (!num) {
+		log_amx("[AD] PMDMG ABORT need one live player")
+		return PLUGIN_HANDLED
+	}
+
+	new id = players[0]
+	log_amx("[AD] PMDMG BEGIN userid=%d", get_user_userid(id))
+	dodx_test_dispatch_damage(id, id, 1, 27, 0, 0)
+	ad_flush_stats_capture()
+	log_amx("[AD] PMDMG END")
+	return PLUGIN_HANDLED
 }
 
 public cmd_run() {

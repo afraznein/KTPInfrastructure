@@ -51,6 +51,7 @@ from scripts.match_analytics import (  # noqa: E402
 )
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import own_weapon_scenario, voice_menu_scenario  # noqa: E402
+from tests.e2e_stats import untracked_after_match_scenario  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, engine_telemetry, log_invariants,
                              metamod)
@@ -1443,6 +1444,12 @@ def main() -> int:
                         if assist_drive_amxx is not None:
                             print("staging post-match context probe", flush=True)
                             handle.rcon("ktp_ad_postmatch_frag")
+                            # Untracked capture must resume once the match is
+                            # over, not wait for the next match start.
+                            print("staging post-match untracked damage", flush=True)
+                            report["untracked_after_match_scenario"] = (
+                                untracked_after_match_scenario.run(handle, args.log)
+                            )
 
                     def _stage_kill_switch():
                         if not args.kill_switch_seconds:
@@ -2040,6 +2047,8 @@ def main() -> int:
             carried.append(report["voice_menu_scenario"])
         if report.get("own_weapon_scenario"):
             carried.append(report["own_weapon_scenario"])
+        if report.get("untracked_after_match_scenario"):
+            carried.append(report["untracked_after_match_scenario"])
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")
