@@ -23,6 +23,7 @@ public plugin_init() {
 	register_srvcmd("ktp_vc_run", "cmd_voice")
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
 	register_srvcmd("ktp_ow_run", "cmd_own_weapon")
+	register_srvcmd("ktp_dd_run", "cmd_door")
 	register_event("TextMsg", "on_textmsg", "b")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
@@ -411,4 +412,140 @@ public dod_client_weaponpickup(id, weapon, value) {
 	log_amx("[OW] FWD id=%d wpn=%d value=%d", id, weapon, value)
 	if (value && weapon == g_owWpn)
 		g_owPicked = true
+}
+
+// Door hold on dod_thunder2: the door at hinge (-152 -920 -66) is opened from the north by one
+// bot, which is then stood south of it, in the leaf's closing arc, facing the given yaw. The
+// rotating-door design note (KTP-ReHLDS) models this spot: facing 180 holds, facing 0 does not.
+// The bot opens the door and is the door's activator, so its facing is the one DoorGoUp reads.
+new const Float:DD_HINGE[3] = { -152.0, -920.0, -66.0 }
+new const Float:DD_OPENER[3] = { -124.0, -880.0, -76.0 }
+new const Float:DD_VICTIM[3] = { -111.0, -964.0, -76.0 }
+// Far enough north that the leaf, finishing a swing to +90 once released, clears the bot.
+new const Float:DD_PARK[3] = { -124.0, -820.0, -76.0 }
+#define DD_TASK 77303
+#define DD_SAMPLES 32
+
+new g_ddDoor, g_ddBot, g_ddLeft, Float:g_ddYaw
+
+stock dd_find_door() {
+	for (new e = get_maxplayers() + 1; e < 900; e++) {
+		new ec[32]
+		ec[0] = 0
+		get_entvar(e, var_classname, ec, charsmax(ec))
+		if (!equal(ec, "func_door_rotating"))
+			continue
+		new Float:o[3]
+		get_entvar(e, var_origin, o)
+		if (get_distance_f(o, DD_HINGE) < 2.0)
+			return e
+	}
+	return 0
+}
+
+stock Float:dd_door_yaw() {
+	new Float:a[3]
+	get_entvar(g_ddDoor, var_angles, a)
+	return a[1]
+}
+
+// fixangle stops the engine taking a bot's yaw from its usercmd, and nothing clears it for a
+// bot because no client data is ever sent to one.
+stock dd_face(id, Float:yaw) {
+	new Float:a[3]
+	a[1] = yaw
+	set_entvar(id, var_angles, a)
+	set_entvar(id, var_v_angle, a)
+	set_entvar(id, var_fixangle, 1)
+}
+
+stock dd_put(id, const Float:at[3]) {
+	new Float:o[3], Float:still[3]
+	o[0] = at[0]
+	o[1] = at[1]
+	o[2] = at[2]
+	dodx_set_user_origin(id, o)
+	set_entvar(id, var_velocity, still)
+}
+
+stock dd_release(const reason[]) {
+	if (is_user_connected(g_ddBot)) {
+		set_entvar(g_ddBot, var_fixangle, 0)
+		dd_put(g_ddBot, DD_PARK)
+	}
+	log_amx("[DD] %s", reason)
+}
+
+public cmd_door() {
+	new arg[16]
+	read_argv(1, arg, charsmax(arg))
+	g_ddYaw = str_to_float(arg)
+	remove_task(DD_TASK)
+
+	g_ddDoor = dd_find_door()
+	if (!g_ddDoor) {
+		log_amx("[DD] ABORT door not found at the thunder2 hinge")
+		return PLUGIN_HANDLED
+	}
+	new players[32], num
+	get_players(players, num, "a")
+	if (!num) {
+		log_amx("[DD] ABORT need one live player")
+		return PLUGIN_HANDLED
+	}
+	new Float:avel[3]
+	get_entvar(g_ddDoor, var_avelocity, avel)
+	if (floatabs(dd_door_yaw()) > 1.0 || avel[1] != 0.0) {
+		log_amx("[DD] ABORT door not closed door_yaw=%.1f door_avel=%.1f", dd_door_yaw(), avel[1])
+		return PLUGIN_HANDLED
+	}
+
+	g_ddBot = players[0]
+	log_amx("[DD] BEGIN userid=%d door=%d yaw=%.1f", get_user_userid(g_ddBot), g_ddDoor, g_ddYaw)
+	// Walk the bot into the closed leaf from the north, facing south: the touch opens it
+	// away from him, to -90, and makes him the activator.
+	dd_put(g_ddBot, DD_OPENER)
+	dd_face(g_ddBot, -90.0)
+	new Float:push[3]
+	push[1] = -400.0
+	set_entvar(g_ddBot, var_velocity, push)
+	set_task(1.5, "dd_place", DD_TASK)
+	return PLUGIN_HANDLED
+}
+
+public dd_place() {
+	if (!is_user_alive(g_ddBot)) {
+		log_amx("[DD] ABORT the bot died or left")
+		return
+	}
+	new Float:yaw = dd_door_yaw()
+	if (yaw > -85.0) {
+		dd_release("ABORT door did not open to the south side")
+		log_amx("[DD] door_yaw=%.1f", yaw)
+		return
+	}
+	log_amx("[DD] OPENED door_yaw=%.1f", yaw)
+	dd_put(g_ddBot, DD_VICTIM)
+	dd_face(g_ddBot, g_ddYaw)
+	log_amx("[DD] PLACED yaw=%.1f", g_ddYaw)
+	g_ddLeft = DD_SAMPLES
+	set_task(0.5, "dd_sample", DD_TASK)
+}
+
+public dd_sample() {
+	if (!is_user_alive(g_ddBot)) {
+		log_amx("[DD] ABORT the bot died or left")
+		return
+	}
+	new Float:o[3], Float:a[3], Float:davel[3]
+	get_entvar(g_ddBot, var_origin, o)
+	get_entvar(g_ddBot, var_angles, a)
+	get_entvar(g_ddDoor, var_avelocity, davel)
+	log_amx("[DD] SAMPLE door_yaw=%.2f door_avel=%.1f bot=%.1f %.1f %.1f bot_yaw=%.1f",
+		dd_door_yaw(), davel[1], o[0], o[1], o[2], a[1])
+	if (--g_ddLeft > 0) {
+		set_task(0.5, "dd_sample", DD_TASK)
+		return
+	}
+	dd_release("END")
 }
