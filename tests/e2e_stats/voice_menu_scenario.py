@@ -3,9 +3,9 @@
 stats_logging 1.33.0 maps (voice menu N, menuselect K) to the voice that slot plays and logs it as
 `voicemenu_<name>`. The slot table comes from dod.so's string order, so it is a claim until the game
 confirms it. KTPAssistDrive's `ktp_vm_run` has bots open each voice menu and pick each slot, spaced
-apart so the game's own voice cooldown never swallows one, and logs every `#Voice_subtitle_*`
-TextMsg the game sends to teammates. A slot is verified when the plugin's logged name and the
-subtitle the game chose for that pick name the same voice.
+apart so the game's own voice cooldown never swallows one, and logs any `#Voice_subtitle_*`
+TextMsg it sees (dod.so sends none -- see below). A slot would be verified when the plugin's
+logged name and that subtitle name the same voice.
 
 Verdicts, same three-way shape as every carried check:
   ok              27 picks logged and every one agrees with the game's subtitle
@@ -27,15 +27,22 @@ logged name against our own text verifies this module's regex and comparison and
 the thing the check exists to answer. It would read green while measuring nothing,
 which is worse than an honest gap.
 
-WHY NO SUBTITLE ARRIVES IS NOT SETTLED, and the two candidates have different fixes:
-  1. dod.so will not emit when the SPEAKER is a fake client. Then the check is
-     unexercisable here by construction and wants an explicit not-applicable verdict.
-  2. It emits only to NON-FAKE RECIPIENTS -- the subtitle is logged per recipient
-     (`diagnostics/KTPAssistDrive.sma` logs `SUB to=<id>` from inside a TextMsg hook)
-     and the game sends it to teammates, so an all-bot lane may simply hold no
-     eligible recipient. Then this is a harness shape to fix, not a floor to accept.
-Telling them apart needs the lane exercised with one non-fake spectator or teammate.
-2 is exactly why nobody should "fix" this by relaxing the check itself.
+WHY NO SUBTITLE ARRIVES: dod.so NEVER SENDS ONE, to any player, bot or human.
+Read from the shipped dod.so (it carries symbols; CRC32 1BEDADC8, the binary this lane
+loads per its `GameConfig CRC computed` line). `menuselect` with a voice menu open calls
+`CDoDTeamPlay::VoiceCommSelect`, which plays `s_VoiceCommands[(menu - 1) * 9 + slot]`
+through `CBasePlayer::VoiceCom`, and VoiceCom's only output is `pfnPlaybackEvent` on the
+usVoice/gerVoice event with the voice index in iparam1, plus a hand-signal animation.
+Whatever subtitle a player sees must come from the CLIENT handling that event. `gmsgTextMsg` is written only by
+`ClientPrint` and `UTIL_ClientPrintAll`, and no code reads the subtitle strings, which
+sit in data tables beside the command names. So neither earlier candidate (a fake-client
+speaker, or no non-fake recipient) holds: this check waits for a message that does not
+exist, a human in the lane would not change that, and the waiver is a property of the
+oracle, not of the all-bot lane.
+What the binary DOES settle is the claim this check was written to test: the 27 names in
+stats_logging's `g_kscVoiceMenuSlots` equal `s_VoiceCommands[1..27]` in order, and the
+index formula above is VoiceCommSelect's own. A runtime check would have to observe the
+event's iparam1 (or VoiceCom's side effects), not a TextMsg.
 """
 
 from __future__ import annotations
