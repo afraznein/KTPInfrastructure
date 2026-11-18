@@ -145,11 +145,11 @@ RUN dpkg --add-architecture i386 && \
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Vendored copies of the two build-time downloads, if the builder supplied any.
+# Vendored copies of the build-time downloads, if the builder supplied any.
 #
-# Both fetches below are a single point of failure on a third-party host: the
+# Every fetch below is a single point of failure on a remote host: the
 # Metamod-R release asset answered 504 for an entire retry budget one night and
-# failed PRs that touched nothing related to it. CI now restores these archives
+# failed PRs that touched nothing related to it. CI now restores these files
 # from an actions/cache keyed on the pinned sha256s below, and each fetch block
 # prefers the local copy.
 #
@@ -200,6 +200,53 @@ RUN set -eux; \
 # it is visible in a report rather than baked into a layer.
 LABEL ktp.new_bot.version="${NEW_BOT_VERSION}"
 LABEL ktp.new_bot.activated="false — activated at run time by tests/e2e_stats/metamod.py"
+
+# ---------------------------------------------------------------------------
+# dod_thunder2 — the map the door-hold scenario runs on.
+#
+# Not a stock map, so steamcmd never installs it. The scenario
+# (tests/e2e_stats/door_hold_scenario.py) reports not_exercised without it.
+#
+# Fetched from our own FastDL, which serves the same bytes the fleet runs, and
+# sha256-pinned the same way as the two archives above: a changed file fails
+# the build rather than quietly moving the door the scenario measures.
+#
+# The two models ride along because the server precaches every env_model, and
+# a model that is missing at precache stops the changelevel outright. They are
+# the map's only server-side references absent from the stock depot list
+# (scripts/data/dod-depot31-stock-paths.txt). Sounds, sprites, the sky and the
+# overview are stock or client-only.
+#
+# A file the base image already carries must match its pin too. Overwriting it
+# would replace content the rest of the lane was built against.
+# ---------------------------------------------------------------------------
+ARG FASTDL_URL=https://fastdl.ktpdod.com/dod
+ARG THUNDER2_BSP_SHA256=0c9d4ae5799484debbd51199aa8fd3bf5769ae676dc4bf2e44086b058613c733
+ARG THUNDER2_FLO_TREE_SHA256=612629fd6f00700ef000d404470c07b1091646aa8760693ab3cf21672011e6ba
+ARG THUNDER2_PARKBENCH_SHA256=ae5de48e5a4ed9902677a5fbfe6ad60bd2eacb9abad10a0dc10c4edc6f88d6da
+
+RUN set -eux; \
+    install_pinned() { \
+      rel=$1; sha=$2; dest="/opt/hlds/dod/$rel"; vendored="/tmp/vendor/$(basename "$rel")"; \
+      if [ -e "$dest" ]; then \
+        echo "$sha  $dest" | sha256sum -c -; \
+        return 0; \
+      fi; \
+      mkdir -p "$(dirname "$dest")"; \
+      if [ -f "$vendored" ]; then \
+        cp "$vendored" "$dest"; \
+      else \
+        curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+          "$FASTDL_URL/$rel" -o "$dest"; \
+      fi; \
+      echo "$sha  $dest" | sha256sum -c -; \
+      chmod 0644 "$dest"; \
+    }; \
+    install_pinned maps/dod_thunder2.bsp "$THUNDER2_BSP_SHA256"; \
+    install_pinned models/mapmodels/flo_tree.mdl "$THUNDER2_FLO_TREE_SHA256"; \
+    install_pinned models/mapmodels/m3_parkbench.mdl "$THUNDER2_PARKBENCH_SHA256"
+
+LABEL ktp.door_map="dod_thunder2"
 
 # ---------------------------------------------------------------------------
 # Metamod-R — the plugin loader new_bot needs.
