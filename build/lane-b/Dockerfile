@@ -194,7 +194,7 @@ RUN set -eux; \
 
 # Deliberately NOT activated here. new_bot is a Metamod plugin and the KTP
 # stack runs Metamod-free (ReHLDS extension mode — addons/extensions.ini loads
-# ktpamx directly, and liblist.gam still points gamedll_linux at dlls/dod.so).
+# ktpamx directly, and liblist.gam points gamedll_linux at the game DLL).
 # Installing the files is safe and inert; wiring it into a plugin loader is a
 # change to the stack under test and belongs to the harness, at run time, where
 # it is visible in a report rather than baked into a layer.
@@ -247,6 +247,39 @@ RUN set -eux; \
     install_pinned models/mapmodels/m3_parkbench.mdl "$THUNDER2_PARKBENCH_SHA256"
 
 LABEL ktp.door_map="dod_thunder2"
+
+# ---------------------------------------------------------------------------
+# The fleet's game DLL — dlls/dod_i386.so, the file every instance's
+# liblist.gam loads.
+#
+# Steam's depot ships the stock dlls/dod.so, which is a different build, and
+# steamcmd cannot supply dod_i386.so at all (it is not in
+# scripts/data/dod-depot31-stock-paths.txt). Without this layer Lane B tested a
+# game DLL the fleet does not run, and anything keyed to the fleet build (the
+# engine's door reversal guard, DODX's offsets) refused or guessed.
+#
+# Committed beside this Dockerfile rather than fetched, so it is in the build
+# context and never passes through the vendor cache. Pinned by sha256: other
+# bytes fail the build. The md5 is 4f4727b2390d3a0ed6f5ad862dd6d4be, the
+# identity the fleet and KTP-ReHLDS's door guard key on.
+#
+# Installed BEFORE the Metamod layer, which snapshots liblist.gam as the
+# production copy that restore_production() puts back.
+# ---------------------------------------------------------------------------
+ARG GAMEDLL_SHA256=c6090f0cb2b8b64cd1df11d473be82d031d1ecfee26a63a54992b9347369a9d3
+
+COPY gamedll/dod_i386.so /opt/hlds/dod/dlls/dod_i386.so
+
+RUN set -eux; \
+    echo "${GAMEDLL_SHA256}  /opt/hlds/dod/dlls/dod_i386.so" | sha256sum -c -; \
+    chmod 0755 /opt/hlds/dod/dlls/dod_i386.so; \
+    sed -i -E 's|^([[:space:]]*gamedll_linux[[:space:]]+)"[^"]*"|\1"dlls/dod_i386.so"|' \
+      /opt/hlds/dod/liblist.gam; \
+    # Exactly one gamedll_linux line, and it names the fleet DLL.
+    test "$(grep -cE '^[[:space:]]*gamedll_linux[[:space:]]' /opt/hlds/dod/liblist.gam)" = 1; \
+    grep -qE '^[[:space:]]*gamedll_linux[[:space:]]+"dlls/dod_i386\.so"' /opt/hlds/dod/liblist.gam
+
+LABEL ktp.gamedll="dlls/dod_i386.so md5 4f4727b2390d3a0ed6f5ad862dd6d4be"
 
 # ---------------------------------------------------------------------------
 # Metamod-R — the plugin loader new_bot needs.

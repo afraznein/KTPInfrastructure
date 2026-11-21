@@ -206,7 +206,7 @@ class BotKit:
 
         The KTP stack runs **Metamod-free**: `dod/addons/extensions.ini` loads
         `ktpamx_i386.so` through ReHLDS's extension mechanism, and
-        `liblist.gam` still points `gamedll_linux` at the stock `dlls/dod.so`.
+        `liblist.gam` points `gamedll_linux` at the game DLL (`dlls/dod_i386.so`, the fleet build).
         There is no metamod directory and no plugins.ini anywhere in the image.
 
         A Metamod-plugin bot therefore has nothing to load it. Returning the
@@ -218,8 +218,8 @@ class BotKit:
                 f"{self.spec.name} is a Metamod plugin, but the KTP stack is "
                 "Metamod-free (ReHLDS extension mode: addons/extensions.ini "
                 "loads ktpamx directly, liblist.gam keeps gamedll_linux at "
-                "dlls/dod.so). Loading it needs Metamod installed and inserted "
-                "between the engine and dod.so, which changes the stack under "
+                "dlls/dod_i386.so). Loading it needs Metamod installed and inserted "
+                "between the engine and the game DLL, which changes the stack under "
                 "test and is an explicit decision, not a build detail."
             )
         return None

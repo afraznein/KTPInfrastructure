@@ -82,3 +82,5 @@ config/overviews/*.txt -text
 # Linux and on a Windows clone; pin LF so both sides parse identical bytes.
 scripts/data/*.txt text eol=lf
 .githooks/* text eol=lf
+# The Lane B game DLL is the fleet binary, pinned by sha256; never let a checkout touch its bytes.
+build/lane-b/gamedll/*.so binary

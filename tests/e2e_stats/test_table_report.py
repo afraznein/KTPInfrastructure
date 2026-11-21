@@ -73,7 +73,7 @@ def test_render_markdown_includes_summary_and_samples():
         "gamerules_clock_preflight": {
             "status": "ok", "detail": "GameRules available",
             "server_crc": [{"crc32": "89ABCDEF",
-                            "path": "/opt/hlds/dod/dlls/dod.so"}],
+                            "path": "/opt/hlds/dod/dlls/dod_i386.so"}],
         },
         "frag_context_diagnostics": {
             "expected_synthetic_unmatched": 3,
@@ -109,7 +109,7 @@ def test_render_markdown_includes_summary_and_samples():
     assert "## Exact AMXX gamedata provenance" in body
     assert "803 | 123456" in body
     assert "## GameRules / round-clock preflight" in body
-    assert "/opt/hlds/dod/dlls/dod.so" in body
+    assert "/opt/hlds/dod/dlls/dod_i386.so" in body
     assert "SQL `NULL` / not applicable" in body
     assert "`hlstats_Events_Frags`" in body
     assert "garand\\|scoped" in body
