@@ -16,9 +16,13 @@ Three legs, each judged on `push:` `blocked_ms` between the drive's markers:
   release  guard 0, facing 0    control: the first reversal works, a few ms at most
   guard    guard 1, facing 180  the guard turns it back: a few ms, and guard= counts it
 
+The changelevel drops every bot (the engine drops fake clients on a level change), so the
+scenario adds its one bot itself, with new_bot's `addbot`, and waits for it to be alive.
+
 Everything this cannot set up is `not_exercised`, never a failure: the map missing from the
 image or a different build of it, a lane without engine telemetry, an engine without the
-cvar or one that refused it, the drive aborting, or the bot moving or turning on its own. A
+cvar or one that refused it, no bot alive after `addbot`, the drive aborting, or the bot
+moving or turning on its own. A
 `pipeline` result means the drive ran as designed and the door did the wrong thing.
 
 The scenario changes the map, so the harness runs it last and only when asked
@@ -50,12 +54,16 @@ MAX_YAW_DRIFT = 1.0
 
 CHANGELEVEL_SETTLE = 5.0
 SPAWN_SETTLE = 15.0
+# new_bot joins a team and picks a class before it spawns; polled once a second.
+BOT_SPAWN_POLLS = 45
+BOT_TEAM = "allies"
 # The drive opens the door, waits 1.5 s, then samples for 16 s.
 LEG_SECONDS = 20.0
 # Time for the released door to finish its cycle and close before the next leg.
 RESET_SECONDS = 10.0
 
 _KV = re.compile(r"(\w+)=(-?[0-9.]+)")
+_LIVE = re.compile(r"\[DD\] LIVE n=(\d+)")
 _PLACED_AT = (-111.0, -964.0, -76.0)
 
 
@@ -186,6 +194,25 @@ def _guard_value(handle) -> str | None:
     return found.group(1) if found else None
 
 
+def _live_players(handle) -> int:
+    found = _LIVE.search(handle.rcon("ktp_dd_live") or "")
+    return int(found.group(1)) if found else 0
+
+
+def _add_bot(handle) -> int:
+    """Add the drive's bot and wait for it to spawn. Returns the live count seen last."""
+    # Teams of one and zero are uneven; balancing must not kick the only bot.
+    handle.rcon("balance teams off")
+    handle.rcon(f"addbot {BOT_TEAM}")
+    live = 0
+    for _ in range(BOT_SPAWN_POLLS):
+        live = _live_players(handle)
+        if live:
+            return live
+        time.sleep(1.0)
+    return live
+
+
 def run(handle, log_path: Path, *, serverfiles: Path, engine_lane: bool,
         interval_s: float) -> dict:
     if not engine_lane:
@@ -209,6 +236,9 @@ def run(handle, log_path: Path, *, serverfiles: Path, engine_lane: bool,
     if MAP not in (handle.rcon("status") or ""):
         return _not_exercised(f"changelevel {MAP} did not take")
     time.sleep(SPAWN_SETTLE)
+    if not _add_bot(handle):
+        return _not_exercised(f"no live player {BOT_SPAWN_POLLS} s after `addbot {BOT_TEAM}` "
+                              f"on {MAP}; new_bot ships no waypoints for it, which may be why")
 
     legs = [
         _run_leg(handle, log_path, leg="hold", yaw=HOLD_YAW, expect="held",
