@@ -61,7 +61,9 @@ answer to be present:
 
 1. `CURRENT_USER()` is exactly `ktp_ro@localhost`;
 2. every `SHOW GRANTS` line grants nothing beyond `USAGE`, `SELECT`, `SHOW VIEW`
-   (an `ALL PRIVILEGES`, a write privilege, `WITH GRANT OPTION` or a role grant fails);
+   (an `ALL PRIVILEGES`, a write privilege, `WITH GRANT OPTION` or a role grant fails).
+   `SELECT` may be schema-wide, per table, or per column (`SELECT (`a`, `b`) ON ...`);
+   a column list on anything but `SELECT` fails, and so does a line it cannot parse;
 3. a statement the server cannot run comes back as ERROR 1193 — otherwise a transport
    that swallows errors would make 1 and 2 pass on nothing.
 

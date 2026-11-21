@@ -18,7 +18,8 @@ On every run, over the same SSH connection, the helper asks the server who it is
 what it may do, and requires all three answers to be PRESENT:
 
   * CURRENT_USER() is exactly ktp_ro@localhost,
-  * every SHOW GRANTS line grants nothing beyond USAGE / SELECT / SHOW VIEW,
+  * every SHOW GRANTS line grants nothing beyond USAGE / SELECT / SHOW VIEW, where
+    SELECT may be schema-wide, per table or per column (`SELECT (`a`, `b`) ON ...`),
   * a statement the server cannot run comes back as ERROR 1193, so an empty answer
     from a broken transport cannot pass as a clean one.
 
@@ -55,11 +56,59 @@ PROOF_CMD = (
 )
 QUERY_CMD = f"runuser -u {RO_USER} -- mysql --user={RO_USER} --batch {DB}"
 
-_GRANT = re.compile(
-    r"^GRANT (?P<privs>.+?) ON (?P<obj>\S+) TO `" + RO_USER + r"`@`localhost`$")
+_GRANT_HEAD = "GRANT "
+_GRANT_TAIL = " TO `" + RO_USER + "`@`localhost`"
+_IDENT = r"`(?:[^`]|``)+`"
+_OBJECT = re.compile(r"^(?:\*|" + _IDENT + r")\.(?:\*|" + _IDENT + r")$")
+_PRIV = re.compile(r"^(?P<name>[A-Z]+(?: [A-Z]+)*)(?: \((?P<cols>.*)\))?$")
+_COLUMNS = re.compile(r"^" + _IDENT + r"(?:, " + _IDENT + r")*$")
 
 # exec(command, stdin_text) -> (stdout, stderr, exit status)
 Exec = Callable[[str, Optional[str]], Tuple[str, str, int]]
+
+
+def _split_top_level(text: str, sep: str) -> Optional[list[str]]:
+    """Split on `sep` outside backticks and parentheses; None if quoting or nesting is unbalanced."""
+    parts, start, depth, quoted, i = [], 0, 0, False, 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "`":
+            quoted = not quoted  # a doubled `` inside a name toggles twice, so it stays quoted
+        elif not quoted and ch == "(":
+            depth += 1
+        elif not quoted and ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif not quoted and depth == 0 and text.startswith(sep, i):
+            parts.append(text[start:i])
+            start = i + len(sep)
+            i = start
+            continue
+        i += 1
+    if quoted or depth:
+        return None
+    parts.append(text[start:])
+    return parts
+
+
+def _parse_grant(line: str) -> Optional[list[tuple[str, bool]]]:
+    """(privilege name, has a column list) for each privilege in a ktp_ro grant line, or None."""
+    if not (line.startswith(_GRANT_HEAD) and line.endswith(_GRANT_TAIL)):
+        return None
+    halves = _split_top_level(line[len(_GRANT_HEAD):-len(_GRANT_TAIL)], " ON ")
+    if halves is None or len(halves) != 2 or not _OBJECT.match(halves[1]):
+        return None
+    privs = _split_top_level(halves[0], ",")
+    if privs is None:
+        return None
+    parsed = []
+    for raw in privs:
+        m = _PRIV.match(raw.strip())
+        if not m or (m.group("cols") is not None and not _COLUMNS.match(m.group("cols"))):
+            return None
+        parsed.append((m.group("name"), m.group("cols") is not None))
+    return parsed
 
 
 def proof_problems(text: str) -> list[str]:
@@ -75,15 +124,16 @@ def proof_problems(text: str) -> list[str]:
         problems.append("no GRANT line came back")
     saw_select = False
     for ln in grants:
-        m = _GRANT.match(ln)
-        if not m:
+        privs = _parse_grant(ln)
+        if privs is None:
             problems.append(f"grant not of the SELECT-only shape: {ln}")
             continue
-        privs = {p.strip() for p in m.group("privs").split(",")}
-        extra = privs - ALLOWED_PRIVS
+        # Only SELECT may carry a column list; UPDATE (`c`) or REFERENCES (`c`) is not a read.
+        extra = {f"{name} (columns)" if cols else name for name, cols in privs
+                 if name not in ALLOWED_PRIVS or (cols and name != "SELECT")}
         if extra:
             problems.append(f"grant carries {sorted(extra)}: {ln}")
-        saw_select = saw_select or "SELECT" in privs
+        saw_select = saw_select or any(name == "SELECT" for name, _ in privs)
     if grants and not saw_select:
         problems.append("no SELECT grant, so a read would fail for the wrong reason")
 
