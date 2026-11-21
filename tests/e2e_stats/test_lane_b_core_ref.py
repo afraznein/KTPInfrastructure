@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from tests.e2e_stats.artifacts import DEFAULT_SCHEMA_FILES, plan_schema_files
+from tests.e2e_stats.metamod import FLEET_GAMEDLL_CRC32
 from tests.source_anchors import PYTHON, assert_in_order, code_text, pawn_source
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                  match_epoch_interval,
@@ -376,9 +377,10 @@ class _PreflightHandle:
         return self.output
 
 
-def _preflight(tmp_path, output, *, log_extra="", crc_path="/opt/hlds/dod/dlls/dod.so"):
+def _preflight(tmp_path, output, *, log_extra="",
+               crc_path="/opt/hlds/dod/dlls/dod_i386.so", crc=FLEET_GAMEDLL_CRC32):
     log = tmp_path / "server.log"
-    crc = (f"GameConfig CRC computed server=89ABCDEF ({crc_path})\n"
+    crc = (f"GameConfig CRC computed server={crc} ({crc_path})\n"
            if crc_path is not None else "")
     log.write_text(crc + log_extra)
     handle = _PreflightHandle(output)
@@ -393,7 +395,7 @@ def test_clock_preflight_accepts_exact_server_crc_and_live_clock(tmp_path):
         "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=1195.25 limit=1200.00",
     )
     assert result["status"] == "ok"
-    assert result["server_crc"][0]["path"].endswith("/dod/dlls/dod.so")
+    assert result["server_crc"][0]["path"].endswith("/dod/dlls/dod_i386.so")
 
 
 @pytest.mark.parametrize("output", [
@@ -412,7 +414,7 @@ def test_clock_preflight_fails_closed_on_bad_or_ambiguous_marker(tmp_path, outpu
 def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path):
     marker = "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"
     for message in (
-        'Unable to prove declared mm_gamedll "dlls/dod.so"',
+        'Unable to prove declared mm_gamedll "dlls/dod_i386.so"',
         'Unable to load library "server"',
         'GameConfig CRC mismatch for library "server"',
     ):
@@ -423,6 +425,16 @@ def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path)
     assert _preflight(
         tmp_path, marker, crc_path="/opt/hlds/metamod/metamod.so"
     )["status"] == "pipeline"
+
+
+def test_clock_preflight_rejects_the_stock_game_dll(tmp_path):
+    marker = "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"
+    stock = _preflight(tmp_path, marker, crc_path="/opt/hlds/dod/dlls/dod.so")
+    assert stock["status"] == "pipeline"
+    assert "dod/dlls/dod_i386.so" in stock["detail"]
+    other = _preflight(tmp_path, marker, crc="1BEDADC8")
+    assert other["status"] == "pipeline"
+    assert "1BEDADC8" in other["detail"] and FLEET_GAMEDLL_CRC32 in other["detail"]
 
 
 def test_wait_for_match_start_log_matches_only_this_match(tmp_path):

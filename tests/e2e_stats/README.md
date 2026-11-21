@@ -218,7 +218,7 @@ compiled one (md5 `018b17442ef4ef352623428eebe93200`) is the next step.
     engine  →  addons/extensions.ini  →  ktpamx_i386.so       (unchanged from production)
     engine  →  liblist.gam            →  metamod_i386.so
     metamod →  plugins.ini            →  new_bot_mm.so        (bot only)
-    metamod →  +localinfo mm_gamedll  →  dlls/dod.so
+    metamod →  +localinfo mm_gamedll  →  dlls/dod_i386.so  (the fleet build, baked into the image)
 
 Each loads **once, at its own hook point**. ktpamx still logs "Running without
 Metamod - using ReHLDS hookchains", exactly as production.
