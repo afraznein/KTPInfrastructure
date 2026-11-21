@@ -24,6 +24,7 @@ public plugin_init() {
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
 	register_srvcmd("ktp_ow_run", "cmd_own_weapon")
 	register_srvcmd("ktp_dd_run", "cmd_door")
+	register_srvcmd("ktp_dd_live", "cmd_door_live")
 	register_event("TextMsg", "on_textmsg", "b")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
@@ -474,6 +475,14 @@ stock dd_release(const reason[]) {
 		dd_put(g_ddBot, DD_PARK)
 	}
 	log_amx("[DD] %s", reason)
+}
+
+// RCON reply, so the harness can wait for the bot it added after the changelevel.
+public cmd_door_live() {
+	new players[32], num
+	get_players(players, num, "a")
+	server_print("[DD] LIVE n=%d", num)
+	return PLUGIN_HANDLED
 }
 
 public cmd_door() {
