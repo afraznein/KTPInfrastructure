@@ -994,12 +994,20 @@ def gamerules_clock_preflight(handle, log_path: Path) -> dict:
     wrong_paths = [
         item["path"] for item in crc_evidence
         if not item["path"].replace("\\", "/").lower()
-        .endswith("/dod/dlls/dod.so")
+        .endswith("/dod/" + metamod.FLEET_GAMEDLL)
     ]
     if wrong_paths:
         evidence["detail"] = (
-            "server GameConfig CRC did not identify dod/dlls/dod.so: "
+            f"server GameConfig CRC did not identify dod/{metamod.FLEET_GAMEDLL}: "
             + ", ".join(wrong_paths)
+        )
+        return evidence
+    wrong_crcs = sorted({item["crc32"] for item in crc_evidence
+                         if item["crc32"] != metamod.FLEET_GAMEDLL_CRC32})
+    if wrong_crcs:
+        evidence["detail"] = (
+            f"server library CRC {', '.join(wrong_crcs)} is not the fleet build "
+            f"{metamod.FLEET_GAMEDLL_CRC32}"
         )
         return evidence
     if gamerules != 1:

@@ -179,10 +179,11 @@ from `report["coverage_gaps_gating"]` which is what the exit code reads.
 Two things that make this a ruling rather than a convenience, both worth keeping:
 a `pipeline` verdict on the same check still fails the job, because the waiver
 only ever covers `not_exercised`; and the obvious remedy — inject a subtitle
-ourselves — was declined because the slot table comes from `dod.so`'s string
+ourselves — was declined because the slot table comes from the game DLL's string
 order, so checking the plugin against text we chose tests this harness and not the
 game. Why no subtitle arrives is now settled, and it is neither earlier
-candidate: `dod.so` never sends a `#Voice_subtitle_*` TextMsg to anyone. A voice
+candidate: the game DLL never sends a `#Voice_subtitle_*` TextMsg to anyone (read from
+stock `dod.so`, then re-read from the fleet's `dod_i386.so` when Lane B moved to it). A voice
 pick ends in `CBasePlayer::VoiceCom`, whose only output is a `pfnPlaybackEvent`
 carrying the voice index, so any subtitle is the client's own doing. So the
 waiver is a property of this check's oracle, not of the all-bot lane, and a human

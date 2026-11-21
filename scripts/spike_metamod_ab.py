@@ -14,7 +14,7 @@ feature.
 
 So this measures instead of assuming:
 
-    Boot A — production topology: extensions.ini → ktpamx, gamedll = dod.so
+    Boot A — production topology: extensions.ini → ktpamx, gamedll = dod_i386.so
     Boot B — bot topology:        metamod → {ktpamx, new_bot}, gamedll = metamod
 
 and diffs the module set, the plugin set and their statuses. Empty diff means
