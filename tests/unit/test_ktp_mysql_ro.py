@@ -78,6 +78,92 @@ class ProofTests(unittest.TestCase):
         self.assertTrue(ro.proof_problems(out))
 
 
+USAGE = "GRANT USAGE ON *.* TO `ktp_ro`@`localhost`"
+
+
+class NarrowGrantTests(unittest.TestCase):
+    """Shapes from migrations-to-apply 2_MYSQL_hlstatsx_ktp_ro_narrow_grants.sql: the schema-wide
+    SELECT is replaced by per-table, per-view and per-column SELECT grants."""
+
+    def test_schema_wide_select_still_passes(self):
+        self.assertEqual(ro.proof_problems(_with(USAGE, "GRANT SELECT ON `hlstatsx`.* TO `ktp_ro`@`localhost`")), [])
+
+    def test_many_per_table_selects_pass(self):
+        out = _with(USAGE,
+                    "GRANT SELECT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`",
+                    "GRANT SELECT ON `hlstatsx`.`hlstats_Players` TO `ktp_ro`@`localhost`",
+                    "GRANT SELECT ON `hlstatsx`.`ktp_ro_ac_config_public` TO `ktp_ro`@`localhost`")
+        self.assertEqual(ro.proof_problems(out), [])
+
+    def test_column_select_passes(self):
+        out = _with(USAGE,
+                    "GRANT SELECT (`id`, `steam_id`, `nickname`, `last_login`) ON `hlstatsx`.`ktp_ac_players` TO `ktp_ro`@`localhost`",
+                    "GRANT SELECT (`odd name`, `a,b`, `tick``mark`, `x ON y`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`",
+                    "GRANT SELECT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`")
+        self.assertEqual(ro.proof_problems(out), [])
+
+    def test_column_select_alone_counts_as_select(self):
+        out = _with(USAGE, "GRANT SELECT (`username`) ON `hlstatsx`.`hlstats_Users` TO `ktp_ro`@`localhost`")
+        self.assertEqual(ro.proof_problems(out), [])
+
+    def test_column_update_is_refused(self):
+        out = _with(USAGE, "GRANT SELECT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`",
+                    "GRANT UPDATE (`revoked`) ON `hlstatsx`.`ktp_ac_web_tokens` TO `ktp_ro`@`localhost`")
+        self.assertTrue(any("UPDATE" in p for p in ro.proof_problems(out)))
+
+    def test_column_insert_and_references_are_refused(self):
+        for priv in ("INSERT", "REFERENCES"):
+            out = _with(USAGE, "GRANT SELECT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`",
+                        f"GRANT {priv} (`a`, `b`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`")
+            self.assertTrue(any(priv in p for p in ro.proof_problems(out)), priv)
+
+    def test_select_with_a_write_on_one_table_is_refused(self):
+        out = _with(USAGE, "GRANT SELECT, INSERT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`")
+        self.assertTrue(any("INSERT" in p for p in ro.proof_problems(out)))
+
+    def test_column_select_beside_column_update_is_refused(self):
+        out = _with(USAGE, "GRANT SELECT (`a`), UPDATE (`b`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`")
+        self.assertTrue(any("UPDATE" in p for p in ro.proof_problems(out)))
+
+    def test_column_list_on_a_non_select_allowed_priv_is_refused(self):
+        out = _with(USAGE, "GRANT SELECT ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`",
+                    "GRANT SHOW VIEW (`a`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`")
+        self.assertTrue(ro.proof_problems(out))
+
+    def test_all_on_one_table_and_grant_option_are_refused(self):
+        self.assertTrue(ro.proof_problems(_with(
+            USAGE, "GRANT ALL PRIVILEGES ON `hlstatsx`.`ktp_matches` TO `ktp_ro`@`localhost`")))
+        self.assertTrue(ro.proof_problems(_with(
+            USAGE, "GRANT SELECT (`a`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost` WITH GRANT OPTION")))
+
+    def test_unparseable_grants_are_refused(self):
+        bad = [
+            "GRANT SELECT (`a`, `b` ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`",    # unclosed paren
+            "GRANT SELECT (`a) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`",          # unclosed backtick
+            "GRANT SELECT (a, b) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`",        # unquoted columns
+            "GRANT SELECT () ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`",            # empty column list
+            "GRANT SELECT,, SHOW VIEW ON `hlstatsx`.* TO `ktp_ro`@`localhost`",     # empty privilege
+            "GRANT SELECT ON hlstatsx.t extra TO `ktp_ro`@`localhost`",             # not an object
+            "GRANT EXECUTE ON PROCEDURE `hlstatsx`.`p` TO `ktp_ro`@`localhost`",    # routine grant
+            "GRANT BACKUP_ADMIN ON *.* TO `ktp_ro`@`localhost`",                    # dynamic privilege
+            "GRANT SELECT TO `ktp_ro`@`localhost`",                                 # no ON clause
+        ]
+        for ln in bad:
+            problems = ro.proof_problems(_with(USAGE, "GRANT SELECT ON `hlstatsx`.* TO `ktp_ro`@`localhost`", ln))
+            self.assertTrue(problems, ln)
+
+    def test_refused_column_grant_never_sends_the_query(self):
+        proof = _with(USAGE, "GRANT SELECT (`a`), UPDATE (`b`) ON `hlstatsx`.`t` TO `ktp_ro`@`localhost`")
+        calls = []
+
+        def exec_(cmd, stdin_text):
+            calls.append(cmd)
+            return (proof, "", 0)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            self.assertEqual(ro.run("SELECT 1", exec_), 2)
+        self.assertEqual(calls, [ro.PROOF_CMD])
+
+
 class RunTests(unittest.TestCase):
     def _exec(self, proof_out, query=("n\n1\n", "", 0)):
         calls = []
