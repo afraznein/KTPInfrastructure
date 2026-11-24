@@ -237,6 +237,10 @@ core with those two instances; the live-match block keeps tests off a host while
 is live. Chicago has no `isolcpus` and its instances are pinned across its vCPUs including cpu0,
 so delete the `CPUAffinity` line there.
 
+Before adding a second region, run `mpstat -P 0,1 1` on the node while a connection test is
+running, to confirm the node's two cores (cpu0 and cpu1, housekeeping and NIC interrupts) are not
+contended. A `%idle` near zero on either core means the test is competing with interrupt work.
+
 ## Tests
 
 `npm test` — ticket and busy-gate units, stall arithmetic, and an end-to-end run against a real
