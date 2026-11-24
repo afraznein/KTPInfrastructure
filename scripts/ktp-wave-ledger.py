@@ -21,13 +21,20 @@ reminder. The intent is recorded at STAGE time, when the md5 is already known
 
 Each artifact also carries its BUILD BASE -- the source commit it was compiled
 from -- because the md5 alone answers "is this the same file" and never "has
-this moved since". Of eleven artifacts on the fleet only three had a base
-recorded anywhere, and the missing eight cannot be recovered: none of these
-artifacts is byte-reproducible (`.amxx` bakes a per-minute BUILD_TIME, ReHLDS
-bakes a build-id and `__DATE__`), so rebuilding candidate commits and comparing
-md5s returns a MISMATCH for the correct base and reads as "none of these built
-it". `stats_logging.amxx`'s base is gone for exactly that reason. Stage time is
-the only moment the base is known, so that is where it is written.
+this moved since". Most of the fleet's artifacts had no base recorded anywhere,
+and whether a missing one can be recovered depends on the ARTIFACT CLASS:
+
+  * KTPAMXX's IN-TREE plugins bake neither a sha nor a timestamp, so a rebuild
+    from the same commit is byte-identical and rebuilding candidate commits DOES
+    find the base -- against the same `amxxpc`, which no commit pins.
+  * A plugin built by its own repo's `compile.sh` bakes a per-minute
+    KTP_BUILD_TIME, and the C++ side bakes a build-id and `__DATE__`. For those
+    the rebuild-and-compare returns a MISMATCH for the CORRECT base and reads as
+    "none of these built it".
+
+Stage time is the only moment the base is known for the latter two, so that is
+where it is written -- and recording it for the first class too is what keeps
+its rebuild-and-compare a one-liner rather than an archaeology exercise.
 
 Three things this deliberately does NOT do:
 
@@ -52,6 +59,17 @@ Usage:
   ktp-wave-ledger.py sweep [--no-ledger]        # the same whole-fleet read, marks nothing (timer)
   ktp-wave-ledger.py record -a NAME=MD5:REMOTE_DIR [-a ...] --hosts a,b --targets 24 \
                             --base NAME=owner/repo@sha
+  ktp-wave-ledger.py cancel WAVE_ID --reason "why"  # unstaged before its swap; reads the fleet
+  ktp-wave-ledger.py repin-expected [--write]   # re-pin the weekly audit's baseline to the fleet
+
+A wave has two resolved states, not one. `reconcile` closes a wave that shipped;
+`cancel` closes one whose artifacts were deliberately removed before 03:00, which
+otherwise stays pending for ever and blocks the NEXT stage on a row that is never
+going to flip. Until `cancel` existed the only way past that was
+`--allow-unreconciled`, which lifts the gate for every wave instead of resolving
+one. `cancel` reads the fleet and REFUSES unless it can show the artifact is not
+live and no matching `.new` remains -- a row claiming a wave never happened, over
+a fleet running it, is worse than the pending row it replaces.
 
 "No fleet, no network" is not "no side effect": `check` MARKS a satisfied wave
 reconciled in the ledger unless `--no-clear` is passed. `sweep` says it marks
@@ -70,6 +88,8 @@ is marked reconciled only when the whole fleet agrees with CLAUDE.md:
   ROW_NOT_LIVE       the row's first md5 -- the build it says is live -- is on no instance
   NOT_UNIFORM        instances disagree: a partial activation
   STAGED_UNLEDGERED  a `.new` in no pending wave, which the next swap activates regardless
+  EXPECTED_STALE     the whole fleet runs an md5 provision/expected-binaries.conf does not pin,
+                     so the weekly audit reports it as new drift; fails the run, holds no wave
 
 Exit codes (`check` / `reconcile` / `sweep`):
   0  nothing due, or every due wave's rows agree with the fleet
@@ -135,8 +155,11 @@ MD5_IN_TEXT_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])", re.IGNOREC
 BASE_RE = re.compile(r"^(?:[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@)?[0-9a-f]{7,40}(?:-dirty)?$",
                      re.IGNORECASE)
 
-NO_BASE = ("NOT RECORDED -- and not recoverable: this artifact is not byte-reproducible, "
-           "so rebuilding candidate commits returns a mismatch for the CORRECT base")
+NO_BASE = ("NOT RECORDED -- whether it is recoverable depends on the artifact class: "
+           "KTPAMXX's in-tree plugins rebuild byte-identically from their commit (against "
+           "the same amxxpc), so candidate commits are still worth trying; a plugin built "
+           "by its own compile.sh bakes a per-minute stamp and the C++ side bakes "
+           "__DATE__, and for those a rebuild returns a mismatch for the CORRECT base")
 
 
 # --------------------------------------------------------------------------
@@ -350,9 +373,12 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
 
     `build_time` is the stamp the staged build baked, and `replaces_build_time`
     the stamps it overwrites. With `base` they are what makes an artifact
-    replayable: `.amxx` md5s are not reproducible across minutes, so a build
-    whose stamp was not recorded here cannot be rebuilt to its own md5 even from
-    the right commit, and the fleet keeps no rollback copies.
+    replayable: a STAMPED `.amxx` -- one built by its own repo's compile.sh --
+    carries a per-minute KTP_BUILD_TIME, so a build whose stamp was not recorded
+    here cannot be rebuilt to its own md5 even from the right commit, and the
+    fleet keeps no rollback copies. KTPAMXX's in-tree plugins bake no stamp at
+    all, which is why `build_stamp()` returns None for them: a class fact, not a
+    lost value.
     """
     staged_at = time.time() if staged_at is None else staged_at
     for a in artifacts:
@@ -389,6 +415,9 @@ def record_wave(artifacts: list[dict], hosts: list[str], targets: int,
 
 
 def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
+    """Unresolved waves, oldest first. Resolved means reconciled OR cancelled --
+    a wave unstaged before its swap never activates, so leaving it pending would
+    block the next stage on a row that is never going to flip."""
     d = ledger_dir()
     if not os.path.isdir(d):
         return []
@@ -402,7 +431,7 @@ def load_waves(include_reconciled: bool = False) -> list[tuple[str, dict]]:
                 entry = json.load(fh)
         except Exception:
             continue
-        if entry.get("reconciled_at") and not include_reconciled:
+        if (entry.get("reconciled_at") or entry.get("cancelled_at")) and not include_reconciled:
             continue
         out.append((p, entry))
     out.sort(key=lambda pe: pe[1].get("staged_at", 0))
@@ -414,6 +443,70 @@ def mark_reconciled(path: str, entry: dict, by: str) -> None:
     entry["reconciled_by"] = by
     entry["reconciled_actor"] = deploy_actor()
     os.replace(_write_json(path, entry), path)
+
+
+def mark_cancelled(path: str, entry: dict, reason: str, by: str) -> None:
+    entry["cancelled_at"] = int(time.time())
+    entry["cancelled_by"] = by
+    entry["cancelled_actor"] = deploy_actor()
+    entry["cancelled_reason"] = reason
+    os.replace(_write_json(path, entry), path)
+
+
+@dataclass
+class CancelCheck:
+    """Why a wave may or may not be recorded as cancelled."""
+    ok: bool
+    lines: list[str] = field(default_factory=list)
+
+
+def cancel_check(entry: dict, read: FleetRead) -> CancelCheck:
+    """Can we PROVE this wave did not activate?
+
+    Cancelling is a claim about the past, so an unprovable one is refused rather
+    than written: a row saying a wave never happened, over a fleet running its
+    artifact, is worse than the pending row it replaces. Four ways to fail, and
+    the last is the one nobody expects.
+    """
+    bad = []
+    for a in entry["artifacts"]:
+        b, want = a["basename"], a["md5"]
+        hosts = set(entry["hosts"])
+        live = {i: m for i, m in read.live.get(b, {}).items()
+                if i.split(":", 1)[0] in hosts}
+        staged = {i: m for i, m in read.staged.get(b, {}).items()
+                  if i.split(":", 1)[0] in hosts}
+
+        if not live:
+            bad.append(f"  {b}: no instance reported this artifact -- absence is unestablished, "
+                       f"not proven. Nothing written.")
+            continue
+        still = sorted(i for i, m in staged.items() if m == want)
+        if still:
+            bad.append(f"  {b}: STILL STAGED on {len(still)} instance(s) as .new on {want} "
+                       f"({', '.join(still[:4])}{', ...' if len(still) > 4 else ''}). "
+                       f"Cancel records an unstage that already happened -- unstage first.")
+            continue
+        on = sorted(i for i, m in live.items() if m == want)
+        # Uniform first, and deliberately NOT called "activated": the ledger
+        # records no replaced md5, so a wave that swapped and a wave that staged
+        # bytes already live read identically here. Neither is a cancel.
+        if on and len(on) == len(live):
+            bad.append(f"  {b}: {want} is live on all {len(live)} instance(s) -- either this wave "
+                       f"activated or it staged bytes that were already live, and the fleet cannot "
+                       f"tell those apart. Either way it did not fail to ship: reconcile it.")
+            continue
+        if on:
+            bad.append(f"  {b}: this wave ACTIVATED on part of its scope -- {want} is live on "
+                       f"{len(on)}/{len(live)} instance(s) ({', '.join(on[:4])}"
+                       f"{', ...' if len(on) > 4 else ''}). A partial swap is a wave to finish or "
+                       f"roll back, not one to cancel.")
+    if bad:
+        return CancelCheck(False, ["Refusing to record this wave as cancelled:", ""] + bad)
+    insts = {i for a in entry["artifacts"] for i in read.live.get(a["basename"], {})}
+    return CancelCheck(True, [
+        f"Verified across {len(insts)} instance(s): no artifact of this wave is live, and no "
+        f"matching .new remains."])
 
 
 # --------------------------------------------------------------------------
@@ -453,6 +546,29 @@ class GateResult:
     blocked: list[tuple[dict, list[RowFinding]]] = field(default_factory=list)
 
 
+def _gate_finding(text: str, artifact: dict) -> RowFinding:
+    """`check_row` answers whether a row CARRIES an md5. The gate needs the
+    stronger answer, because the staging convention writes the incoming md5 into
+    the row tail at stage time -- so presence is satisfied hours before
+    activation, by the very sentence saying the row is not flipped yet.
+
+    The claim leg applies only where there IS a row: an unmapped basename takes
+    the documented weak file-wide check, which `row_claim` cannot speak to.
+    """
+    md5 = artifact["md5"].lower()
+    f = check_row(text, artifact["basename"], md5, artifact.get("version"))
+    if not f.ok or f.scope != "row":
+        return f
+    claim = row_claim(text, artifact["basename"])
+    if claim == md5:
+        return f
+    return RowFinding(
+        artifact["basename"], md5, f.component, False, "row",
+        f"{f.component} row carries {md5} but CLAIMS {claim or 'no md5'} is the live build -- "
+        f"presence is not a flip. The incoming md5 is recorded in the row tail at stage time, so "
+        f"the row's FIRST md5 is what says which build activated.")
+
+
 def gate(claude_md: str | None = None, now: float | None = None,
          auto_clear: bool = True) -> GateResult:
     """Waves that have already activated but whose CLAUDE.md rows still disagree.
@@ -482,8 +598,7 @@ def gate(claude_md: str | None = None, now: float | None = None,
     path, text = got
     lines, blocked = [], []
     for p, entry in due:
-        findings = [check_row(text, a["basename"], a["md5"], a.get("version"))
-                    for a in entry["artifacts"]]
+        findings = [_gate_finding(text, a) for a in entry["artifacts"]]
         bad = [f for f in findings if not f.ok]
         if bad:
             blocked.append((entry, bad))
@@ -739,6 +854,115 @@ def format_sweep(read: FleetRead, findings: list[SweepFinding], ledger_note: str
 
 
 # --------------------------------------------------------------------------
+# provision/expected-binaries.conf -- the weekly audit's baseline
+# --------------------------------------------------------------------------
+#
+# The weekly fleet audit runs on the data server from a fresh checkout and
+# compares the fleet against this file. It cannot read the version rows or this
+# ledger (both live on the operator's side), so the file is a second record of
+# the same md5s -- and every engine/dodx wave left it stale until someone noticed
+# the audit re-firing. Reconcile is where the fleet's new md5 is already in hand,
+# so this is where the file is checked, and `repin-expected` writes it.
+
+EXPECTED_PREFIX_LEN = 16
+_PIN_RE = re.compile(r"^(\s*)([^#=\s][^=]*?)(\s*=\s*)([0-9a-f]+)(\s*(?:#.*)?)$", re.IGNORECASE)
+
+
+def default_expected_binaries() -> str:
+    env = os.environ.get("KTP_EXPECTED_BINARIES")
+    if env:
+        return os.path.expanduser(env)
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(here, "..", "provision", "expected-binaries.conf"))
+
+
+def parse_expected_pins(text: str) -> dict[str, str]:
+    """{relative path: md5 prefix} from the [default] section.
+
+    Group sections ([baremetal], [vps]) are overrides for a subset of hosts, and
+    this checks one fleet-wide md5 per artifact, so they are left to the audit.
+    """
+    pins, section = {}, "default"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip()
+            continue
+        m = _PIN_RE.match(raw)
+        if m and section == "default":
+            pins[m.group(2).strip()] = m.group(4).lower()
+    return pins
+
+
+@dataclass
+class PinFinding:
+    path: str
+    pinned: str
+    live: str          # full md5, uniform across every instance read
+
+
+def expected_pin_findings(read: FleetRead, pins: dict[str, str]) -> tuple[list[PinFinding], list[str]]:
+    """(stale pins, pinned paths this read could not speak to).
+
+    Only a UNIFORM live md5 is a re-pin: a split fleet is a partial activation,
+    which `sweep` already reports as NOT_UNIFORM, and pinning either half of it
+    would bless that half.
+    """
+    stale, unchecked = [], []
+    for path, pin in sorted(pins.items()):
+        seen = read.live.get(os.path.basename(path))
+        values = set((seen or {}).values())
+        if not seen or None in values or len(values) != 1:
+            unchecked.append(path)
+            continue
+        live = values.pop()
+        if not live.startswith(pin):
+            stale.append(PinFinding(path, pin, live))
+    return stale, unchecked
+
+
+def repin_text(text: str, stale: list[PinFinding]) -> str:
+    """`text` with each stale pin's value replaced in place; comments and layout untouched."""
+    want = {f.path: f.live[:EXPECTED_PREFIX_LEN] for f in stale}
+    out, section = [], "default"
+    for raw in text.splitlines(keepends=True):
+        body = raw.rstrip("\r\n")
+        eol = raw[len(body):]
+        s = body.strip()
+        if s.startswith("[") and s.endswith("]"):
+            section = s[1:-1].strip()
+        m = _PIN_RE.match(body)
+        if m and section == "default" and m.group(2).strip() in want:
+            body = m.group(1) + m.group(2) + m.group(3) + want[m.group(2).strip()] + m.group(5)
+        out.append(body + eol)
+    return "".join(out)
+
+
+def check_expected_binaries(read: FleetRead, path: str | None = None
+                            ) -> tuple[list[PinFinding], list[str]]:
+    """(stale pins, report lines). A missing file is reported, never a pass."""
+    p = path or default_expected_binaries()
+    try:
+        with open(p, encoding="utf-8") as fh:
+            pins = parse_expected_pins(fh.read())
+    except OSError:
+        return [], [f"expected-binaries: NOT checked -- no file at {p} "
+                    "(set $KTP_EXPECTED_BINARIES; an installed copy has no provision/ beside it)."]
+    stale, unchecked = expected_pin_findings(read, pins)
+    lines = [f"expected-binaries ({p}): {len(pins) - len(unchecked)}/{len(pins)} pin(s) checked"
+             + (f"; not read by this sweep: {', '.join(unchecked)}" if unchecked else "") + "."]
+    for f in stale:
+        lines.append(f"  EXPECTED_STALE: {f.path} pins {f.pinned}, fleet runs {f.live} on every "
+                     f"instance -- the weekly audit will report it as new repo drift.")
+    if stale:
+        lines.append("  Re-pin in a PR, the same hour as the row flip: "
+                     "ktp-wave-ledger.py repin-expected --write")
+    return stale, lines
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -752,6 +976,8 @@ def _cmd_status(args) -> int:
         due = "ACTIVATED" if e["activates_after"] <= now else "pending activation"
         if e.get("reconciled_at"):
             due = f"reconciled by {e['reconciled_by']}"
+        if e.get("cancelled_at"):
+            due = f"CANCELLED -- {e.get('cancelled_reason') or 'no reason recorded'}"
         print(f"{e['wave_id']}  [{due}]  {e['targets']} instance(s)"
               f"  staged by {e.get('staged_by') or 'NOT RECORDED'}"
               f"{'  NARROWED (not a fleet wave)' if e.get('narrowed') else ''}")
@@ -812,6 +1038,7 @@ def _cmd_reconcile(args) -> int:
               "stage that skipped the ledger leaves no wave behind.")
 
     rc = 0
+    pin_stale: list[PinFinding] = []
     ready = []
     for p, entry in waves:
         print(f"\nwave {entry['wave_id']} ({entry['targets']} instance(s)):")
@@ -862,6 +1089,11 @@ def _cmd_reconcile(args) -> int:
         if findings:
             rc = 1
         blocking = [f for f in findings if f.kind != "STAGED_UNLEDGERED"]
+        # A stale audit baseline fails the run but holds no wave open: the rows are
+        # what the ledger reconciles, and the pin changes only when a PR merges.
+        pin_stale, pin_lines = check_expected_binaries(read)
+        for ln in pin_lines:
+            print(f"  {ln}")
 
     for p, entry in ready:
         if blocking:
@@ -875,6 +1107,11 @@ def _cmd_reconcile(args) -> int:
         print(f"\nFAILED: CLAUDE.md ({path}) disagrees with what the fleet is running.",
               file=sys.stderr)
         print("The fleet md5 is the truth. Flip the row, then re-run.", file=sys.stderr)
+    if pin_stale:
+        print(f"\nFAILED: provision/expected-binaries.conf pins {len(pin_stale)} md5(s) the fleet no "
+              "longer runs, so Monday's audit reports them as new drift. Re-pin it in a PR "
+              "(repin-expected --write).", file=sys.stderr)
+        rc = 1
     return rc
 
 
@@ -903,7 +1140,50 @@ def _cmd_sweep(args) -> int:
     findings = sweep(read, text, waves)
     for ln in format_sweep(read, findings, note):
         print(ln)
-    return 1 if findings else 0
+    pin_stale, pin_lines = check_expected_binaries(read)
+    for ln in pin_lines:
+        print(ln)
+    return 1 if findings or pin_stale else 0
+
+
+def _cmd_repin_expected(args) -> int:
+    path = args.file or default_expected_binaries()
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except OSError:
+        print(f"FATAL: no expected-binaries file at {path}.", file=sys.stderr)
+        return 2
+    pins = parse_expected_pins(text)
+    basenames = {b: d for b, d in sweep_basenames([]).items()
+                 if b in {os.path.basename(p) for p in pins}}
+    read = fleet_read(basenames)
+    if read.errors:
+        _print_read_errors(read)
+        return 2
+    stale, unchecked = expected_pin_findings(read, pins)
+    split = [p for p in unchecked if os.path.basename(p) in read.live]
+    for p in split:
+        seen = read.live[os.path.basename(p)]
+        spread = sorted({m or "ABSENT" for m in seen.values()})
+        print(f"  {p}: NOT uniform ({', '.join(spread)}) -- left alone; a partial activation is "
+              "not a baseline.", file=sys.stderr)
+    if not stale:
+        print(f"expected-binaries: every uniform pin already matches the fleet ({path}).")
+        return 1 if split else 0
+    for f in stale:
+        print(f"  {f.path}: {f.pinned} -> {f.live[:EXPECTED_PREFIX_LEN]}  (full {f.live})")
+    if not args.write:
+        print("Dry run: nothing written. --write edits the file; commit it in a PR, and record the "
+              "wave id in the comment block above the changed line.")
+        return 1
+    new = repin_text(text, stale)
+    tmp = f"{path}.tmp-{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8", newline="") as fh:
+        fh.write(new)
+    os.replace(tmp, path)
+    print(f"Wrote {path}. Update the label comment above each changed line, then open the PR.")
+    return 1 if split else 0
 
 
 def _cmd_record(args) -> int:
@@ -929,6 +1209,54 @@ def _cmd_record(args) -> int:
 
     path = record_wave(artifacts, args.hosts.split(","), args.targets)
     print(path)
+    return 0
+
+
+def _cmd_cancel(args) -> int:
+    waves = {e["wave_id"]: (p, e) for p, e in load_waves(include_reconciled=True)}
+    got = waves.get(args.wave_id)
+    if got is None:
+        print(f"No wave {args.wave_id} in {ledger_dir()}. Known: "
+              f"{', '.join(sorted(waves)) or '(none)'}", file=sys.stderr)
+        return 2
+    path, entry = got
+
+    if entry.get("reconciled_at"):
+        when = datetime.fromtimestamp(entry["reconciled_at"], tz=timezone.utc)
+        print(f"wave {args.wave_id} was reconciled at {when:%Y-%m-%d %H:%M} UTC by "
+              f"{entry.get('reconciled_by')} -- a wave that shipped cannot be cancelled.",
+              file=sys.stderr)
+        return 2
+    if entry.get("cancelled_at"):
+        when = datetime.fromtimestamp(entry["cancelled_at"], tz=timezone.utc)
+        print(f"wave {args.wave_id} is already cancelled, at {when:%Y-%m-%d %H:%M} UTC by "
+              f"{entry.get('cancelled_by')}: {entry.get('cancelled_reason')}", file=sys.stderr)
+        return 2
+
+    print(f"wave {entry['wave_id']} ({entry['targets']} instance(s)), staged by "
+          f"{entry.get('staged_by') or 'NOT RECORDED'}:")
+    for a in entry["artifacts"]:
+        print(f"  {a['basename']}  {a['md5']}"
+              f"{'  ' + a['version'] if a.get('version') else ''}")
+
+    read = fleet_read(sweep_basenames([(path, entry)]), hosts=entry["hosts"])
+    if read.errors:
+        _print_read_errors(read)
+        print("Cancelling claims a wave did not activate, so an unread fleet is a refusal, not a "
+              "warning. Nothing written.", file=sys.stderr)
+        return 2
+
+    chk = cancel_check(entry, read)
+    stream = sys.stderr if not chk.ok else sys.stdout
+    for ln in chk.lines:
+        print(ln, file=stream)
+    if not chk.ok:
+        return 2
+
+    mark_cancelled(path, entry, args.reason, "cancel")
+    print(f"\nRecorded: wave {entry['wave_id']} CANCELLED -- {args.reason}")
+    print("The row-flip gate now treats it as resolved, so the next stage is not blocked by it. "
+          "No version row changes: nothing shipped.")
     return 0
 
 
@@ -973,6 +1301,21 @@ def main(argv=None) -> int:
     w.add_argument("--hosts", required=True)
     w.add_argument("--targets", type=int, required=True)
     w.set_defaults(func=_cmd_record)
+
+    e = sub.add_parser("repin-expected",
+                       help="Read the fleet and re-pin provision/expected-binaries.conf (the weekly "
+                            "audit's baseline) to whatever every instance runs. Dry run unless --write.")
+    e.add_argument("--write", action="store_true", help="Edit the file in place.")
+    e.add_argument("--file", help="Default: $KTP_EXPECTED_BINARIES, else ../provision/expected-binaries.conf.")
+    e.set_defaults(func=_cmd_repin_expected)
+
+    k = sub.add_parser("cancel", help="Record a wave that was unstaged before its swap, so the "
+                                      "row-flip gate stops waiting for a row that will never flip.")
+    k.add_argument("wave_id")
+    k.add_argument("--reason", required=True,
+                   help="Why it was unstaged. Stored on the row: a cancelled wave is the only "
+                        "resolved state carrying no artifact to explain itself.")
+    k.set_defaults(func=_cmd_cancel)
 
     args = ap.parse_args(argv)
     require_current(__file__, also=["deploy-to-fleet.py"],

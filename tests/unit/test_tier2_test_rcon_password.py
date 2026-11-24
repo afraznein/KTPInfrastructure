@@ -15,6 +15,7 @@ from tests.smoke.boot_subprocess import (
     cfg_with_rcon_password,
     resolve_test_rcon_password,
 )
+from tests.source_anchors import HASH, assert_in_order, code_text
 
 REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "tests" / "smoke" / "fixtures" / "test_server.cfg"
@@ -96,11 +97,12 @@ def test_curl_smoke_exits_loudly_when_unset():
 
 
 def test_tier2_workflow_masks_and_exports_before_pytest():
-    wf = TIER2_WORKFLOW.read_text()
-    load = wf.index("- name: Load test-server rcon password")
-    run = wf.index("- name: Run Tier 2 integration suite")
-    assert load < run
-    step = wf[load:run]
+    # Nearly half this workflow is comments, and `body` refuses a closing
+    # anchor it cannot find after the opening one, so the ordering of the two
+    # steps is held by taking the slice at all.
+    wf = code_text(TIER2_WORKFLOW.read_text(), HASH, TIER2_WORKFLOW.name)
+    step = wf.body("- name: Load test-server rcon password",
+                   "- name: Run Tier 2 integration suite")
     assert "/etc/ktp/tier2-test-rcon.env" in step
-    assert step.index('::add-mask::$pw') < step.index('>> "$GITHUB_ENV"')
+    assert_in_order(step, "::add-mask::$pw", '>> "$GITHUB_ENV"')
     assert "exit 1" in step

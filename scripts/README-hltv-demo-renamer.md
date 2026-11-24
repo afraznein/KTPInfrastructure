@@ -13,7 +13,7 @@ ktp-organize-hltv-demos.sh @ 04:00 ET    moves to: demos/ATL1/ktp/ktp_1777498304
         ↓
 public portal at https://fastdl.ktpdod.com/demos/
         ↓
-ktp-demo-retention.sh @ 04:30 ET         deletes per-tier age (ktp/draft 180d, 12man/scrim 90d)
+ktp-demo-retention.sh @ 04:30 ET         deletes per-tier age (draft 180d, 12man/scrim 30d; ktp kept permanently)
 ktp-demo-cleanup-auto.sh every 30 min    sweeps unmatched root-level auto-*.dem >6h (retuned 2026-05-03; refuses to run while the renamer service is down)
 ```
 

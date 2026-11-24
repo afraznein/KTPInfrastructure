@@ -1,17 +1,52 @@
 """Drive and judge the voice-MENU scenario: every one of the 27 menu slots, checked against the game.
 
 stats_logging 1.33.0 maps (voice menu N, menuselect K) to the voice that slot plays and logs it as
-`voicemenu_<name>`. The slot table comes from dod.so's string order, so it is a claim until the game
+`voicemenu_<name>`. The slot table comes from the game DLL's string order, so it is a claim until the game
 confirms it. KTPAssistDrive's `ktp_vm_run` has bots open each voice menu and pick each slot, spaced
-apart so the game's own voice cooldown never swallows one, and logs every `#Voice_subtitle_*`
-TextMsg the game sends to teammates. A slot is verified when the plugin's logged name and the
-subtitle the game chose for that pick name the same voice.
+apart so the game's own voice cooldown never swallows one, and logs any `#Voice_subtitle_*`
+TextMsg it sees (the game DLL sends none -- see below). A slot would be verified when the plugin's
+logged name and that subtitle name the same voice.
 
 Verdicts, same three-way shape as every carried check:
   ok              27 picks logged and every one agrees with the game's subtitle
   pipeline        a pick was not logged, or a logged name disagrees with the subtitle
   not_exercised   the drive could not run (no bots) or the game sent no subtitles at all,
                   so the table was not tested -- never dressed up as a pass
+
+THE ALL-BOT LANE HAS NEVER SEEN A SUBTITLE, AND THE GAP IS WAIVED RATHER THAN CLOSED.
+Every run logs its 27 picks and the game sends no `#Voice_subtitle_*` at all, so this
+check has only ever reported `not_exercised`. Ruled 2026-11-03: that is the lane's
+coverage floor -- `lane_b_e2e.UNEXERCISABLE_IN_ALL_BOT_LANE` carries this code, so the
+gap is still reported and no longer fails the run. Before 2026-11-03 it failed every
+nightly under `--require-complete-coverage`, which is how a permanently-red lane
+teaches everyone to skim past its real failures.
+
+A synthetic TextMsg injection was DECLINED, and not on cost: the slot table comes from
+the game DLL's string order, so injecting a subtitle we chose and then checking the plugin's
+logged name against our own text verifies this module's regex and comparison and NOT
+the thing the check exists to answer. It would read green while measuring nothing,
+which is worse than an honest gap.
+
+WHY NO SUBTITLE ARRIVES: the game DLL NEVER SENDS ONE, to any player, bot or human.
+Read from the fleet's dlls/dod_i386.so (it carries symbols; CRC32 C76CE69D, md5
+4f4727b2390d3a0ed6f5ad862dd6d4be, the binary this lane loads per its `GameConfig CRC
+computed` line). It was first read from stock dlls/dod.so (CRC32 1BEDADC8), which the lane
+loaded before 2026-11-20, and every point below holds in both. `menuselect` with a voice menu open calls
+`CDoDTeamPlay::VoiceCommSelect`, which plays `s_VoiceCommands[(menu - 1) * 9 + slot]`
+through `CBasePlayer::VoiceCom`, and VoiceCom's only output is `pfnPlaybackEvent` on the
+usVoice/gerVoice event with the voice index in iparam1, plus a hand-signal animation.
+Whatever subtitle a player sees must come from the CLIENT handling that event. `gmsgTextMsg` is written only by
+`ClientPrint` and `UTIL_ClientPrintAll`, and no code reads the subtitle strings, which
+sit in data tables beside the command names (`s_VoiceCommands` rows are {command, subtitle,
+alt, alt}, and ClientCommand reads only the command; `s_HandSignalSubtitles` has no reference
+from code at all). So neither earlier candidate (a fake-client
+speaker, or no non-fake recipient) holds: this check waits for a message that does not
+exist, a human in the lane would not change that, and the waiver is a property of the
+oracle, not of the all-bot lane.
+What the binary DOES settle is the claim this check was written to test: the 27 names in
+stats_logging's `g_kscVoiceMenuSlots` equal `s_VoiceCommands[1..27]` in order, and the
+index formula above is VoiceCommSelect's own. A runtime check would have to observe the
+event's iparam1 (or VoiceCom's side effects), not a TextMsg.
 """
 
 from __future__ import annotations

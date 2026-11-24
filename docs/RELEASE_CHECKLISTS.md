@@ -42,11 +42,13 @@ Moved out of the stack-root `CLAUDE.md` on 2026-07-27. The **plugin** bump check
 
   🔑 **`reconcile` checks the RESTART, not the wave.** The 03:00 swap activates every staged `.new`, whoever staged it, so `reconcile` reads every pinned artifact and every staged `.new` on all 24 instances and keeps a wave open until the whole fleet agrees with `CLAUDE.md`, even when no wave is due. `ktp-wave-ledger.py sweep` is the same read without marking anything, and `systemd/ktp-wave-sweep.{service,timer}` runs it at 03:45 and 23:45 ET, so a stage that went around `stage-wave.py` still gets caught.
 
+  🔑 **Re-pin `provision/expected-binaries.conf` in the same hour, for any wave that moved the engine, core, dodx, reapi or amxxcurl.** That file is the weekly fleet audit's baseline, and the audit runs on the data server where neither the rows nor the ledger can be read, so it is a second record that nothing else updates. `reconcile` and `sweep` report `EXPECTED_STALE` and exit 1 while a pin lags the whole fleet; `python3 scripts/ktp-wave-ledger.py repin-expected --write` rewrites the stale values, and the change goes in as a PR. Plugin waves do not touch it: plugins are compared host-to-host, not pinned.
+
   Exit **1** means the row is stale (the fleet moved, the record did not). Exit **2** means it could not check — an unreadable `CLAUDE.md` or an unreachable fleet is never reported as a pass. `--no-fleet` checks the row against the recorded md5 alone and says so in its output; `--allow-unreconciled` on `stage-wave.py` overrides the gate, for a deliberate stack only.
   ⚠️ **If the wave did NOT activate cleanly, do not flip the row to clear the gate** — find the leftover `.new` first (`ktp-verify-post-swap.sh`). A gate satisfied by a wrong edit is worse than one that blocked.
   📌 The ledger lives at `$KTP_WAVE_LEDGER_DIR` (default `~/.ktp/waves`), outside this public repo. The version rows themselves live in the `fleet-versions` skill, not `CLAUDE.md` -- `ktp-wave-ledger.py` defaults to `.claude/skills/fleet-versions/SKILL.md` one level above the checkout; set `$KTP_CLAUDE_MD` (or pass `--claude-md`) if the file you want checked is somewhere else.
 
-  🔴 **`--base NAME=[owner/repo@]<sha>` is REQUIRED, and the reason is that it cannot be recovered afterwards.** The md5 answers *"is this the same file"* and never *"has this moved since"*. **No fleet artifact is byte-reproducible** — `.amxx` bakes a per-minute `BUILD_TIME`, ReHLDS bakes a build-id and `__DATE__` — so **rebuilding candidate commits and comparing md5s returns a MISMATCH for the base that actually built it**, and reads as *"none of these built it"*. `stats_logging.amxx`'s base is gone for exactly that reason. Stage time is the last moment it is knowable, which is why it is a gate rather than a checklist line. `--allow-missing-base` overrides and writes a positive **NOT RECORDED** into the ledger; a dirty build tree is recorded verbatim as `<sha>-dirty`, because that says the artifact is *not* that commit.
+  🔴 **`--base NAME=[owner/repo@]<sha>` is REQUIRED, and the reason is that it cannot be recovered afterwards.** The md5 answers *"is this the same file"* and never *"has this moved since"*. **Reproducibility is per ARTIFACT CLASS, and reading it as "none of them" talks you out of the one check that catches a wrong build.** A plugin built by its own repo's `compile.sh` bakes a per-minute `KTP_BUILD_TIME` and the C++ side bakes a build-id and `__DATE__` — for those, **rebuilding candidate commits and comparing md5s returns a MISMATCH for the base that actually built it**, and reads as *"none of these built it"*. **KTPAMXX's in-tree plugins (`stats_logging.amxx`, `admin.amxx`) bake neither a sha nor a timestamp, so they DO reproduce from their commit** — against the same `amxxpc`, which no commit pins. `--base` is required for that class too: it is what keeps the check a one-liner instead of an archaeology exercise. Stage time is the last moment it is knowable, which is why it is a gate rather than a checklist line. `--allow-missing-base` overrides and writes a positive **NOT RECORDED** into the ledger; a dirty build tree is recorded verbatim as `<sha>-dirty`, because that says the artifact is *not* that commit.
 - Cores: `find /tmp -maxdepth 1 -name 'core.*' -mtime -1` — **not** the game trees. `core_pattern` is `/tmp/core.%e.%p.%t`, so a game-tree search matches only `core.so`/`core.ini`/`core.wav` and looks clean whether or not anything crashed.
 - `ktp_extension_loaded` — proves extension mode actually initialized. A missing or misplaced `dod/addons/extensions.ini` returns silently (`sys_dll.cpp:1077`) and degrades the server to vanilla HLDS: no wall-penetration fix, no cvar enforcement, no match handler.
 - **Re-sync the Tier-2 runner stack** — see the section below. This is the step that keeps a Tier-2 green meaning anything.
@@ -71,6 +73,8 @@ python3 scripts/sync-runner-stack.py --apply   # do it
 
 Without `--apply` the tool only reports. With it, it backs up each drifted file on the runner before overwriting, and re-reads the md5 after the pull *and* after the push. It refuses while a Tier-2 run is live, and refuses while the reference instance is holding staged `.new` files, because a sync into a pending wave is stale again at the next 03:00 — `--ignore-running` and `--ack-pending-wave` override each, and say so in the output.
 
+⚠️ **A KTPInfrastructure merge to `main` starts a Tier-2 run within seconds** (`push:` on `main` in `tier2-integration.yml`), so a sync right after a merge is refused as in flight. Wait for that run to finish; never reach for `--ignore-running` to get past it.
+
 **What it deliberately does not cover.** Each of these needs its own look on every wave:
 
 - **Test-mode plugins.** KTPMatchHandler and KTPPracticeMode are `KTP_TEST_MODE` builds; byte-equality with the fleet would be *wrong*, so md5 says nothing about them. Check with `stage-runner.py --show`.
@@ -80,8 +84,12 @@ Without `--apply` the tool only reports. With it, it backs up each drifted file 
 **Confirm it landed** by making the tripwire agree, not by re-reading the tool's own output:
 
 ```bash
-ssh <data server> /usr/local/bin/ktp-tier2-heartbeat.sh
+ssh <data server> 'KTP_TIER2_DRIFT_STATE=$(mktemp -u) /usr/local/bin/ktp-tier2-heartbeat.sh'
 ```
+
+⚠️ A hand run is not read-only. Its own state stays untouched without `--write`, but the drift leg
+(`ktp-tier2-stack-drift.py`) saves its drift-age state on drift and clears it on a clean run. Point
+`KTP_TIER2_DRIFT_STATE` at a throwaway path, as above, or the hand run rewrites what cron reads next.
 
 ### KTPAntiCheat Release Checklist (Desktop + API)
 

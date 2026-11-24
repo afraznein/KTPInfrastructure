@@ -108,11 +108,41 @@ def test_stop_outcome_credits_the_defenders():
 
 
 def test_unknown_liveness_censors_the_window():
-    boundaries = [b for b in spawn_all() if b["player_id"] != 6]
+    # Player 6's first boundary is a death after the close: alive, unrecorded.
+    boundaries = [b for b in spawn_all() if b["player_id"] != 6] + [
+        boundary(6, 1, 120.0, "end")]
     result = build_clutch_shadow(
         [window(1, 1, 1, 100.0)], boundaries, ROSTER)
     assert result["censored_windows"] == 1
     assert result["evaluated_windows"] == 0
+
+
+def test_a_roster_member_absent_from_the_half_does_not_censor_it():
+    # Player 6 has no boundary in half 1 at all, as a half-2 substitute would
+    # not. Before schema 41 this censored every window of the half.
+    boundaries = [b for b in spawn_all() if b["player_id"] != 6] + [
+        boundary(2, 1, 40.0, "end"), boundary(3, 1, 45.0, "end")]
+    result = build_clutch_shadow(
+        [window(1, 1, 1, 100.0)], boundaries, ROSTER)
+    assert result["censored_windows"] == 0
+    assert result["players"] == [{"player_id": 1, "clutches": 1}]
+    assert result["clutches"][0]["against"] == 2
+
+
+def test_a_late_first_spawn_is_not_alive_rather_than_unknown():
+    boundaries = [b for b in spawn_all() if b["player_id"] != 6] + [
+        boundary(6, 1, 150.0, "start"),
+        boundary(2, 1, 40.0, "end"), boundary(3, 1, 45.0, "end")]
+    result = build_clutch_shadow(
+        [window(1, 1, 1, 100.0)], boundaries, ROSTER)
+    assert result["censored_windows"] == 0
+    assert result["clutches"][0]["against"] == 2
+
+
+def test_the_envelope_is_published_not_private():
+    result = build_clutch_shadow([], spawn_all(), ROSTER)
+    assert result["visibility"] == "public_dto"
+    assert result["parameters"]["absent_from_half"] == "not_alive"
 
 
 def test_no_clutch_when_two_winners_alive_or_lone_enemy():

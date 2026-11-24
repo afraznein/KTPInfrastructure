@@ -1,0 +1,27 @@
+# Scripts CI may install into /usr/local/bin on the data server, and nothing else.
+# DEST<TAB>SRC, one per line. SRC is read from origin/main, never from a runner's tree.
+#
+# Ruled 2026-11-02: CI gets write access to the production script directory ONLY
+# through a named allowlist. This file is that list, and it is the whole scope:
+#   - sudo enforces it, not the workflow. config/sudoers.d/ktp-ci-install is
+#     generated from this file and grants one exact command per row.
+#   - Adding a row takes a merged PR AND the operator reinstalling the sudoers
+#     fragment, so CI cannot widen its own grant. Until both land, the new row's
+#     install is refused by sudo and the workflow goes red.
+#   - Removing a row takes effect at once: ktp-ci-install reads this file at the
+#     verified tip of main and refuses anything it does not name.
+#
+# What belongs here: reporting and analysis scripts whose worst merged mistake is a
+# wrong report. What does not: anything that deletes, restarts, reboots, backs up or
+# pushes off-box; anything that alerts or watches (the witness must not be updated
+# by what it witnesses); the installer and the runner's own heartbeat (denied in
+# code as well). Each row must already have a manifest row from a person's install.
+/usr/local/bin/ktp-fastdl-indexes.py	scripts/ktp-fastdl-indexes.py
+/usr/local/bin/ktp-hltv-correlate.py	scripts/ktp-hltv-correlate.py
+/usr/local/bin/ktp-map-coefficients-refit.sh	scripts/ktp-map-coefficients-refit.sh
+/usr/local/bin/ktp-perf-rollup	scripts/ktp-perf-rollup.py
+/usr/local/bin/ktp-precache-audit	scripts/precache_audit.py
+/usr/local/bin/ktp-spike-digest	scripts/ktp-spike-digest.py
+/usr/local/bin/ktp-stats-export.py	scripts/ktp-stats-export.py
+/usr/local/bin/own_weapon_kills.py	scripts/own_weapon_kills.py
+/usr/local/bin/voice_taunts.py	scripts/voice_taunts.py

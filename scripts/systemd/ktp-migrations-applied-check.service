@@ -1,0 +1,29 @@
+# ⛔ NOT INSTALLED. Installing it is an operator act carried by a dpl- row; derive the
+# real state with `systemctl show <unit> -p UnitFileState -p ActiveState`, never from here.
+# docs/runbooks/MIGRATIONS_APPLIED_CHECK.md.
+[Unit]
+Description=Check every AC migration against the live hlstatsx schema
+Documentation=https://github.com/afraznein/KTPInfrastructure/blob/main/docs/runbooks/MIGRATIONS_APPLIED_CHECK.md
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Holds the KTPAntiCheat clone, the success stamp, and runs/ from ktp-run-record.sh.
+StateDirectory=ktp-migrations-applied-check
+# Re-applied on every start, so a hand-set 0750 would otherwise be relaxed to 0755.
+StateDirectoryMode=0750
+EnvironmentFile=-/etc/ktp/migrations-applied-check.env
+ExecStart=/usr/local/bin/ktp-run-record.sh /usr/local/bin/ktp-migrations-applied-check.sh
+# A fetch over the network is the slow leg; oneshot has no start timeout by default.
+TimeoutStartSec=10min
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# Read-only rather than true: the fetch needs root's SSH key and known_hosts.
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

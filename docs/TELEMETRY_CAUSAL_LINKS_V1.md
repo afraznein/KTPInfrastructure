@@ -32,8 +32,10 @@ Those fields mean "observed in the same death hook", not merely "nearby".
 
 ## Persistence and replay
 
-The private link key is `(match_id, half, producer_sequence)`. It is valid
-only within the same server producer context. Replays must retain the original
+The private link key is `(server_id, match_id, half, event_type,
+producer_sequence)`. `producer_sequence` is per event type, so a key without the
+type or the server resolves to unrelated events. Each link column names its
+referent's type; never merge them into one generic column. Replays must retain the original
 link values; a conflicting replay is rejected. The link fields must be nullable
 for legacy capture rows and for honest no-parent cases.
 

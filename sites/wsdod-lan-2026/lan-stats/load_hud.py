@@ -8,6 +8,17 @@ going back to the LAN box.
 
 Idempotent: truncates the hud_* tables before loading, so a re-run replaces
 rather than doubles.
+
+`hud_player_stats` is a lossy snapshot and `hud_kill_assists` is ground truth:
+its `assists` counter under-reports, because the producer reads it while it is
+being incremented. The miss is spread thinly across nearly every match rather
+than concentrated, so a consumer reading the counter is quietly a few percent
+low with nothing to notice. Read the event tables.
+
+Not a per-kill cap, which is the first theory anyone reaches for: every assisted
+kill carries exactly one assister, so there is no second assister to lose. The
+producer is the externally maintained HUD observer, so the shortfall is theirs
+and this note is the whole of our side of it.
 """
 
 from __future__ import annotations
@@ -154,7 +165,9 @@ def main() -> int:
     for k, s in sinks.items():
         print("  %-8s -> %-18s %8d rows" % (k, s.table, s.total))
 
-    # kill assists: explode the list now that hud_kills has ids
+    # kill assists: explode the list now that hud_kills has ids.
+    # The join key is not unique -- two kills sharing a tick, killer and victim
+    # would each take the other's assisters. Latent, not seen in the archive.
     print("\nexploding assist_ids...")
     sql = """
     INSERT INTO hud_kill_assists (kill_id, steam_id)

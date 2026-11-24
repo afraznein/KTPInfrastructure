@@ -11,8 +11,9 @@
 #
 # ## Caching
 #
-# The build takes ~10 minutes. It follows KTPAMXX preprod so the test core stays
-# synchronized, while the output stamp avoids rebuilding an unchanged commit.
+# The build takes ~10 minutes. The CALLER names the KTPAMXX ref, so the test
+# core is pinned to the commit under validation, while the output stamp avoids
+# rebuilding an unchanged one.
 #
 # The stamp covers the RECIPE as well as the commit — this script's own hash is
 # part of it — because changing the toolchain or the configure flags without
@@ -29,7 +30,7 @@
 #
 #   LANEB_WORK    scratch dir for checkouts           (default: $HOME/ktp)
 #   LANEB_SRC     KTPAMXX source (path or git URL)    (default: GitHub)
-#   LANEB_REF     ref to build                        (default: preprod)
+#   LANEB_REF     ref to build                        (REQUIRED -- no default)
 #   LANEB_OUT     where to write ktpamx_i386.so       (default: $HOME/lane-b-out/ktpamx_i386.so)
 #   LANEB_DODX_OUT where to write dodx_ktp_i386.so     (default: beside LANEB_OUT)
 #   LANEB_DOCKER  docker binary                       (default: docker)
@@ -40,11 +41,27 @@ FORCE=0
 
 W="${LANEB_WORK:-$HOME/ktp}"
 SRC="${LANEB_SRC:-https://github.com/afraznein/KTPAMXX.git}"
-REF="${LANEB_REF:-preprod}"
+REF="${LANEB_REF:-}"
 OUT="${LANEB_OUT:-$HOME/lane-b-out/ktpamx_i386.so}"
 DODX_OUT="${LANEB_DODX_OUT:-$(dirname "$OUT")/dodx_ktp_i386.so}"
 DOCKER="${LANEB_DOCKER:-docker}"
 HLSDK_URL="${LANEB_HLSDK_URL:-https://github.com/afraznein/KTPhlsdk.git}"
+
+# `preprod` was retired on KTPAMXX, so there is no ref this script can assume.
+# A default naming a dead branch does not fail here -- it fails one step later as
+# "could not resolve preprod", which reads like a typo or a network fault.
+if [ -z "$REF" ]; then
+    {
+        echo "LANEB_REF is not set and this script will not guess which core to build."
+        echo "It used to default to KTPAMXX preprod, which is RETIRED:"
+        echo "    git ls-remote --exit-code --heads <ktpamxx> preprod   # answers 2"
+        echo "Name the ref you mean:"
+        echo "    LANEB_REF=<branch|tag|sha> scripts/build_ktpamx_laneb.sh"
+        echo "Nothing in CI relied on the default: the composite action resolves its"
+        echo "own ref input to a commit and passes that, and local_bots.sh passes one."
+    } >&2
+    exit 2
+fi
 
 mkdir -p "$W" "$(dirname "$OUT")" "$(dirname "$DODX_OUT")"
 
@@ -76,6 +93,7 @@ resolve_sha() {
 SHA="$(resolve_sha || true)"
 if [ -z "$SHA" ]; then
     echo "could not resolve $REF in $SRC" >&2
+    echo "  (a retired or deleted branch answers exactly this way)" >&2
     exit 1
 fi
 STAMP="${SHA}-$(recipe_hash)"

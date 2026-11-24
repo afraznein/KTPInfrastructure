@@ -5,8 +5,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..source_anchors import PYTHON, assert_in_order, code_text
+
 ROOT = Path(__file__).resolve().parents[2]
-SOURCE = (ROOT / "scripts/lane_b_e2e.py").read_text(encoding="utf-8")
+_PATH = ROOT / "scripts/lane_b_e2e.py"
+SOURCE = code_text(_PATH.read_text(encoding="utf-8"), PYTHON, _PATH.name)
 
 
 def test_private_analytics_report_is_emitted_into_the_artifact():
@@ -15,14 +18,13 @@ def test_private_analytics_report_is_emitted_into_the_artifact():
     assert "render_private_analytics_markdown(private_report)" in SOURCE
     # Generated after the shareable v5 bundle so a v5 failure is already
     # recorded before the advisory block runs.
-    assert SOURCE.index('failures.append(f"v5_match_report: {detail}")') < (
-        SOURCE.index("build_private_analytics_report(")
-    )
+    assert_in_order(SOURCE, 'failures.append(f"v5_match_report: {detail}")',
+                    "build_private_analytics_report(")
 
 
 def test_private_analytics_failure_is_advisory_not_fatal():
-    block = SOURCE[SOURCE.index("# Private shadow analytics"):
-                   SOURCE.index('if args.database_dump is not None:')]
+    block = SOURCE.body("# Private shadow analytics",
+                        "if args.database_dump is not None:")
     assert '"status": "FAIL"' in block
     # No failures.append anywhere in the advisory block: a shadow report
     # must never turn a green run red.

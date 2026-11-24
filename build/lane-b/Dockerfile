@@ -132,8 +132,9 @@ RUN dpkg --add-architecture i386 && \
 # binary in a test rig.
 #
 # Vendored override, for when the Drive link rots or the build host has no
-# outbound internet:
-#   docker build --build-arg NEW_BOT_URL=file:///vendor/new_bot-0.2.2.zip ...
+# outbound internet: drop the archive at build/lane-b/vendor/new_bot.zip and the
+# fetch below prefers it. The sha256 pin still has to match, so this is an
+# availability escape hatch and not a way around the checksum.
 #
 # ## Redistribution
 #
@@ -142,16 +143,40 @@ RUN dpkg --add-architecture i386 && \
 # artifact. The fleet consumes no images at all, so nothing here can reach
 # production by accident.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Vendored copies of the build-time downloads, if the builder supplied any.
+#
+# Every fetch below is a single point of failure on a remote host: the
+# Metamod-R release asset answered 504 for an entire retry budget one night and
+# failed PRs that touched nothing related to it. CI now restores these files
+# from an actions/cache keyed on the pinned sha256s below, and each fetch block
+# prefers the local copy.
+#
+# Committed empty on purpose. A COPY whose source matches nothing fails the
+# build, so the directory has to exist even for a builder that populates
+# nothing -- that builder falls through to curl and behaves exactly as before.
+# ---------------------------------------------------------------------------
+COPY vendor/ /tmp/vendor/
+
 ARG NEW_BOT_VERSION=0.2.2
 ARG NEW_BOT_URL=https://drive.google.com/uc?export=download&id=1KWxlqTNOe_yTXPZ3CLL13qTiz-cL-WYu
 ARG NEW_BOT_SHA256=8f659fe14af21377c61e8c4645e2f0380d70cb33e4caf6f1f5caf4ed2d594f49
 
 RUN set -eux; \
-    # Retry transient Drive hiccups/rate-limits instead of failing an unrelated
-    # PR outright; sha256sum below still catches a payload that downloads fine
-    # but isn't the right bytes (an HTML rate-limit page, a moved file).
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
-      "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    # A vendored copy beats retrying here: Drive throttles under load and serves
+    # interstitial HTML, and no retry budget outlasts a host-side outage.
+    if [ -f /tmp/vendor/new_bot.zip ]; then \
+      cp /tmp/vendor/new_bot.zip /tmp/new_bot.zip; \
+    else \
+      # Retry transient Drive hiccups/rate-limits instead of failing an unrelated
+      # PR outright; sha256sum below still catches a payload that downloads fine
+      # but isn't the right bytes (an HTML rate-limit page, a moved file).
+      curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+        "$NEW_BOT_URL" -o /tmp/new_bot.zip; \
+    fi; \
+    # Deliberately outside the branch: a cache is a transport, never a reason to
+    # trust bytes, so the pin is checked whichever way the archive arrived.
     echo "${NEW_BOT_SHA256}  /tmp/new_bot.zip" | sha256sum -c -; \
     # The archive is rooted at `dod/`, and the game tree is /opt/hlds/dod, so
     # extracting at /opt/hlds lands every file exactly where it belongs.
@@ -169,12 +194,92 @@ RUN set -eux; \
 
 # Deliberately NOT activated here. new_bot is a Metamod plugin and the KTP
 # stack runs Metamod-free (ReHLDS extension mode — addons/extensions.ini loads
-# ktpamx directly, and liblist.gam still points gamedll_linux at dlls/dod.so).
+# ktpamx directly, and liblist.gam points gamedll_linux at the game DLL).
 # Installing the files is safe and inert; wiring it into a plugin loader is a
 # change to the stack under test and belongs to the harness, at run time, where
 # it is visible in a report rather than baked into a layer.
 LABEL ktp.new_bot.version="${NEW_BOT_VERSION}"
 LABEL ktp.new_bot.activated="false — activated at run time by tests/e2e_stats/metamod.py"
+
+# ---------------------------------------------------------------------------
+# dod_thunder2 — the map the door-hold scenario runs on.
+#
+# Not a stock map, so steamcmd never installs it. The scenario
+# (tests/e2e_stats/door_hold_scenario.py) reports not_exercised without it.
+#
+# Fetched from our own FastDL, which serves the same bytes the fleet runs, and
+# sha256-pinned the same way as the two archives above: a changed file fails
+# the build rather than quietly moving the door the scenario measures.
+#
+# The two models ride along because the server precaches every env_model, and
+# a model that is missing at precache stops the changelevel outright. They are
+# the map's only server-side references absent from the stock depot list
+# (scripts/data/dod-depot31-stock-paths.txt). Sounds, sprites, the sky and the
+# overview are stock or client-only.
+#
+# A file the base image already carries must match its pin too. Overwriting it
+# would replace content the rest of the lane was built against.
+# ---------------------------------------------------------------------------
+ARG FASTDL_URL=https://fastdl.ktpdod.com/dod
+ARG THUNDER2_BSP_SHA256=0c9d4ae5799484debbd51199aa8fd3bf5769ae676dc4bf2e44086b058613c733
+ARG THUNDER2_FLO_TREE_SHA256=612629fd6f00700ef000d404470c07b1091646aa8760693ab3cf21672011e6ba
+ARG THUNDER2_PARKBENCH_SHA256=ae5de48e5a4ed9902677a5fbfe6ad60bd2eacb9abad10a0dc10c4edc6f88d6da
+
+RUN set -eux; \
+    install_pinned() { \
+      rel=$1; sha=$2; dest="/opt/hlds/dod/$rel"; vendored="/tmp/vendor/$(basename "$rel")"; \
+      if [ -e "$dest" ]; then \
+        echo "$sha  $dest" | sha256sum -c -; \
+        return 0; \
+      fi; \
+      mkdir -p "$(dirname "$dest")"; \
+      if [ -f "$vendored" ]; then \
+        cp "$vendored" "$dest"; \
+      else \
+        curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+          "$FASTDL_URL/$rel" -o "$dest"; \
+      fi; \
+      echo "$sha  $dest" | sha256sum -c -; \
+      chmod 0644 "$dest"; \
+    }; \
+    install_pinned maps/dod_thunder2.bsp "$THUNDER2_BSP_SHA256"; \
+    install_pinned models/mapmodels/flo_tree.mdl "$THUNDER2_FLO_TREE_SHA256"; \
+    install_pinned models/mapmodels/m3_parkbench.mdl "$THUNDER2_PARKBENCH_SHA256"
+
+LABEL ktp.door_map="dod_thunder2"
+
+# ---------------------------------------------------------------------------
+# The fleet's game DLL — dlls/dod_i386.so, the file every instance's
+# liblist.gam loads.
+#
+# Steam's depot ships the stock dlls/dod.so, which is a different build, and
+# steamcmd cannot supply dod_i386.so at all (it is not in
+# scripts/data/dod-depot31-stock-paths.txt). Without this layer Lane B tested a
+# game DLL the fleet does not run, and anything keyed to the fleet build (the
+# engine's door reversal guard, DODX's offsets) refused or guessed.
+#
+# Committed beside this Dockerfile rather than fetched, so it is in the build
+# context and never passes through the vendor cache. Pinned by sha256: other
+# bytes fail the build. The md5 is 4f4727b2390d3a0ed6f5ad862dd6d4be, the
+# identity the fleet and KTP-ReHLDS's door guard key on.
+#
+# Installed BEFORE the Metamod layer, which snapshots liblist.gam as the
+# production copy that restore_production() puts back.
+# ---------------------------------------------------------------------------
+ARG GAMEDLL_SHA256=c6090f0cb2b8b64cd1df11d473be82d031d1ecfee26a63a54992b9347369a9d3
+
+COPY gamedll/dod_i386.so /opt/hlds/dod/dlls/dod_i386.so
+
+RUN set -eux; \
+    echo "${GAMEDLL_SHA256}  /opt/hlds/dod/dlls/dod_i386.so" | sha256sum -c -; \
+    chmod 0755 /opt/hlds/dod/dlls/dod_i386.so; \
+    sed -i -E 's|^([[:space:]]*gamedll_linux[[:space:]]+)"[^"]*"|\1"dlls/dod_i386.so"|' \
+      /opt/hlds/dod/liblist.gam; \
+    # Exactly one gamedll_linux line, and it names the fleet DLL.
+    test "$(grep -cE '^[[:space:]]*gamedll_linux[[:space:]]' /opt/hlds/dod/liblist.gam)" = 1; \
+    grep -qE '^[[:space:]]*gamedll_linux[[:space:]]+"dlls/dod_i386\.so"' /opt/hlds/dod/liblist.gam
+
+LABEL ktp.gamedll="dlls/dod_i386.so md5 4f4727b2390d3a0ed6f5ad862dd6d4be"
 
 # ---------------------------------------------------------------------------
 # Metamod-R — the plugin loader new_bot needs.
@@ -210,8 +315,14 @@ ARG METAMOD_URL=https://github.com/rehlds/Metamod-R/releases/download/1.3.0.149/
 ARG METAMOD_SHA256=ede7f59c4e0220afe8c02aa348a130cce527f87d36ffdb674e37a501ce57be94
 
 RUN set -eux; \
-    curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
-      "$METAMOD_URL" -o /tmp/metamod.zip; \
+    # This is the asset whose 504 motivated the vendor cache.
+    if [ -f /tmp/vendor/metamod.zip ]; then \
+      cp /tmp/vendor/metamod.zip /tmp/metamod.zip; \
+    else \
+      curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 --retry-max-time 120 \
+        "$METAMOD_URL" -o /tmp/metamod.zip; \
+    fi; \
+    # Deliberately outside the branch, for the same reason as the bot archive.
     echo "${METAMOD_SHA256}  /tmp/metamod.zip" | sha256sum -c -; \
     # Archive is rooted at `addons/`, so extract into the game dir.
     unzip -q -o /tmp/metamod.zip 'addons/*' -d /opt/hlds/dod; \
@@ -222,7 +333,9 @@ RUN set -eux; \
     # topologies in place, and boot A has to be able to get back to exactly
     # what production runs, byte for byte, or the A/B diff means nothing.
     cp /opt/hlds/dod/liblist.gam        /opt/hlds/dod/liblist.gam.production; \
-    cp /opt/hlds/dod/addons/extensions.ini /opt/hlds/dod/addons/extensions.ini.production
+    cp /opt/hlds/dod/addons/extensions.ini /opt/hlds/dod/addons/extensions.ini.production; \
+    # Last consumer of the vendor dir, so it is cleared here rather than left behind.
+    rm -rf /tmp/vendor
 
 LABEL ktp.metamod.version="${METAMOD_VERSION}"
 LABEL ktp.metamod.activated="false — run-time only, see tests/e2e_stats/metamod.py"

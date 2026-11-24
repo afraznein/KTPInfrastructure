@@ -166,12 +166,38 @@ through as green forever. The JSON report has everything needed:
 `report["carried"]`, `report["break_scenarios"]`, `report["failures"]`,
 `report["coverage_gaps"]`.
 
+**`--require-complete-coverage` makes a gap fail, and one code is exempt.** The
+nightly passes that flag, so bot luck that would merely warn becomes a red run —
+which is the right trade for release evidence. `voice_menu_slots` is the
+exception, ruled 2026-11-03: an all-bot lane has never produced a
+`#Voice_subtitle_*`, so that check can only ever answer `not_exercised` and the
+flag turned it into a nightly that was red on something unreachable. It is listed
+in `lane_b_e2e.UNEXERCISABLE_IN_ALL_BOT_LANE`, still reported in
+`report["coverage_gaps"]` and marked **waived** in the step summary, and absent
+from `report["coverage_gaps_gating"]` which is what the exit code reads.
+
+Two things that make this a ruling rather than a convenience, both worth keeping:
+a `pipeline` verdict on the same check still fails the job, because the waiver
+only ever covers `not_exercised`; and the obvious remedy — inject a subtitle
+ourselves — was declined because the slot table comes from the game DLL's string
+order, so checking the plugin against text we chose tests this harness and not the
+game. Why no subtitle arrives is now settled, and it is neither earlier
+candidate: the game DLL never sends a `#Voice_subtitle_*` TextMsg to anyone (read from
+stock `dod.so`, then re-read from the fleet's `dod_i386.so` when Lane B moved to it). A voice
+pick ends in `CBasePlayer::VoiceCom`, whose only output is a `pfnPlaybackEvent`
+carrying the voice index, so any subtitle is the client's own doing. So the
+waiver is a property of this check's oracle, not of the all-bot lane, and a human
+in the lane would not change it. The slot table itself is confirmed against the
+same binary: stats_logging's 27 names equal `s_VoiceCommands[1..27]` in order.
+Evidence and the read in `tests/e2e_stats/voice_menu_scenario.py`.
+
 ### 6. Artifacts
 
 | File | Why |
 |---|---|
-| `lane-b-e2e.json` | every verdict and count |
-| `lane-b-e2e.log` | **the important one** — every diagnosis in this project started here, and `replay_daemon.py` can re-run the daemon leg from it without bots, so a nightly failure is reproducible from its own artifact |
+| `lane-b-e2e.json` | **start a diagnosis here** — the harness summary and every verdict, count and named row (e.g. `frag_context_weapon_disagreements`) |
+| `lane-b-summary.md` | the same verdicts rendered for the job summary |
+| `lane-b-e2e.log` | the raw game log, for daemon replay: `replay_daemon.py` re-runs the daemon leg from it without bots. It carries no verdicts, so a grep of it for `weapon disagreement` returns 0 even on a run that had one |
 | `hlstats-e2e.out` | the daemon's own `(IGNORED) <reason>` output |
 | `daemon/PROVENANCE` | which daemon libs were used |
 
@@ -188,6 +214,12 @@ will bite a CI author specifically:
   second with identical arguments succeeds. `lane_b_e2e.py` retries three times
   and reports the attempt count. Do not treat attempt 1 failing as a lane
   failure.
+- **An attempt that dies `rc=-11` (SIGSEGV) is not a seccomp refusal.** It
+  reproduces identically under `unconfined` and under the narrow profile, and
+  the harness retry absorbs it.
+- **`full` may be non-deterministic in its assertions, not in its boot.**
+  `server never booted in N attempts` means zero tests ran. Treat it as an
+  environment outage, never as flake.
 - **Two concurrent runs share the game log** and produce nonsense scenario
   verdicts. The `concurrency:` group already prevents this; keep it, and keep
   `cancel-in-progress: false`.

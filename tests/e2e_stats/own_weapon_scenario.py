@@ -6,8 +6,8 @@ claims the nearest gun of that type. A kill with a gun whose first owner is the 
 `"<killer>" triggered "own_weapon_kill" against "<victim>" with "<weapon>"`.
 
 KTPAssistDrive's `ktp_ow_run` kills teammate A for real, has teammate B press the drop key and puts B
-on A's body, logs every `dod_client_weaponpickup` the game fires for B as `[OW] FWD`, and then
-dispatches a teamkill of A by B with A's gun. If the game hands B nothing in 5 s it calls the plugin's
+on the gun A dropped, logs every `dod_client_weaponpickup` the game fires for B as `[OW] FWD`, and then
+dispatches a teamkill of A by B with A's gun. If the game hands B nothing in 8 s it calls the plugin's
 handler directly (`[OW] SYNTHETIC`), which still tests the ledger but not the game's pickup.
 
 Verdicts:
@@ -49,7 +49,7 @@ def judge(body: str) -> dict:
     fwd = len(re.findall(r"\[OW\] FWD id=\d+ wpn=\d+ value=1", body))
     if end.group(1) == "synthetic":
         return {"code": CODE, "status": "not_exercised",
-                "detail": f"ledger ok ({bname} -> {aname} with {wpn}); the game handed {bname} no gun in 5 s, "
+                "detail": f"ledger ok ({bname} -> {aname} with {wpn}); the game handed {bname} no gun in 8 s, "
                           f"so the pickup was synthetic ({fwd} real pickup forwards)"}
     return {"code": CODE, "status": "ok",
             "detail": f"game pickup reached dod_client_weaponpickup; {bname} -> {aname} with {wpn} logged once"}

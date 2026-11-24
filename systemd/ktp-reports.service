@@ -34,14 +34,23 @@ EnvironmentFile=/etc/ktp/reports.env
 # All three steps carry the SAME floor. generate's only scopes discovery; a
 # report written another way (an explicit match id, a manual test) is stopped
 # by aggregate's and sync's. aggregate and report_sync refuse to start without it.
-ExecStart=/usr/bin/python3 -m scripts.report_service --repo . generate --since 2026-09-13
-ExecStart=/usr/bin/python3 -m scripts.report_service --repo . aggregate --since 2026-09-13
-ExecStart=/usr/bin/python3 -m scripts.report_sync --since 2026-09-13
+#
+# Each step runs under report_step.sh, which writes a timestamped start and end
+# line to the log. The journal says only `code=killed` on a timeout; a start
+# with no end in /var/log/ktp-report-service.log names the step that took it.
+ExecStart=/bin/bash scripts/report_step.sh generate /usr/bin/python3 -m scripts.report_service --repo . generate --since 2026-09-13
+ExecStart=/bin/bash scripts/report_step.sh aggregate /usr/bin/python3 -m scripts.report_service --repo . aggregate --since 2026-09-13
+ExecStart=/bin/bash scripts/report_step.sh sync /usr/bin/python3 -m scripts.report_sync --since 2026-09-13
+# Unbuffered, so a killed step's last progress line reaches the log instead of
+# dying in Python's buffer.
+Environment=PYTHONUNBUFFERED=1
 
-# generate only revisits a match when the report schema version changes, so a
-# tick with nothing new is nearly free. A full re-stamp after a schema bump is
-# the slow case this bounds.
-TimeoutStartSec=5400
+# Under the timer's 15-minute period, and equal to the per-query subprocess
+# timeout, so the job can no longer outlive its own slowest permitted step. At
+# 5400 -- exactly 6x that period -- the kill landed on a trigger minute and
+# started a successor that wedged the same way. A re-stamp survives it: generate
+# persists per match and re-derives what is left on the next tick.
+TimeoutStartSec=600
 Nice=10
 IOSchedulingClass=idle
 

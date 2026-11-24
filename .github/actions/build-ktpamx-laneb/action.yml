@@ -2,10 +2,11 @@
 #
 # ## Why this is cached rather than rebuilt nightly
 #
-# The build is a full 32-bit C++ compile — roughly ten minutes. Its input is
-# KTPAMXX `preprod`, so the test-only core stays synchronized with every AMXX
-# change under validation instead of drifting on a long-lived feature branch.
-# The SHA-keyed cache still avoids rebuilding an unchanged preprod tip.
+# The build is a full 32-bit C++ compile, roughly ten minutes. Its input is the
+# ref the CALLER names, so the test-only core is pinned to the AMXX commit under
+# validation rather than following a branch. There is no default: KTPAMXX
+# `preprod` was retired, and this action refuses rather than guess. The
+# SHA-keyed cache still avoids rebuilding an unchanged commit.
 #
 # ## What the key covers, and why it covers more than the commit
 #
@@ -38,9 +39,12 @@ inputs:
     required: false
     default: https://github.com/afraznein/KTPAMXX.git
   ref:
-    description: KTPAMXX ref carrying the compile-gated Lane B core support
-    required: false
-    default: preprod
+    description: >-
+      KTPAMXX ref carrying the compile-gated Lane B core support. REQUIRED:
+      there is no default, because the branch this used to name (`preprod`)
+      was retired, and a default pointing at a dead branch resolves nothing
+      while reading like a typo.
+    required: true
   out:
     description: Path to write ktpamx_i386.so to
     required: false
@@ -67,6 +71,20 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Refuse without a ref
+      # `required: true` is advisory for a composite action, so it is enforced
+      # here. An empty ref does already fail closed one step down -- an empty
+      # ls-remote pattern matches nothing, measured 0 against 246 unfiltered --
+      # but it fails as "cannot resolve ''", which names no cause.
+      if: inputs.ref == ''
+      shell: bash
+      run: |
+        echo "::error::build-ktpamx-laneb was called with no ref, and there is"\
+             "no default: KTPAMXX preprod was retired, so this action will not"\
+             "guess which core Lane B tests. Pass ref explicitly; the lane"\
+             "itself passes 'ref: HEAD'."
+        exit 2
+
     - name: Resolve the ref to a commit
       id: resolve
       shell: bash

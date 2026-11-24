@@ -2,8 +2,9 @@
 # these ship it, staggered so they never overlap it or each other.
 #
 # Sourcing a conf file rather than inlining the targets: cron.d has no include,
-# and the scripts REFUSE to run with the variables unset -- so a missing conf
-# fails loudly instead of quietly backing up nowhere.
+# and the scripts REFUSE to run with the variables unset. But a MISSING conf
+# fails the `.` itself, so `&&` skips the script and NOTHING is logged --
+# judge these legs by /var/log/ktp-offsite.log's mtime, not by its silence.
 SHELL=/bin/bash
 # DB dumps: one hour after the dump, small (~480 MB) and md5-verified far-side.
 0 4 * * 0   root  . /etc/ktp/offsite.conf && /usr/local/bin/ktp-db-offsite.sh >> /var/log/ktp-offsite.log 2>&1

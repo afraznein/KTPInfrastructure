@@ -104,13 +104,18 @@ class CarryForward(unittest.TestCase):
             self.assertNotIn(old, flag_swing.MAP_COEFFICIENT_CARRY_FORWARD,
                              f"{old} is itself carried forward; chains are not resolved")
 
-    def test_the_shipped_table_gives_s10b_the_s10a_fit(self):
-        # The case this mechanism was added for, against the real artifact.
+    def test_the_shipped_table_never_leaves_s10b_on_the_prior(self):
+        # The case this mechanism was added for, against the real artifact:
+        # s10b inherits s10a until a refit gives it a row, then its own row wins.
         cfg = FlagSwingConfig().for_map("dod_railroad2_s10b")
-        self.assertEqual((cfg.flag_coefficient, cfg.alive_coefficient),
-                         flag_swing.MAP_COEFFICIENTS["dod_railroad2_s10a"])
-        self.assertEqual(cfg.calibration,
-                         "carried_forward_from:dod_railroad2_s10a")
+        own = flag_swing.MAP_COEFFICIENTS.get("dod_railroad2_s10b")
+        if own is None:
+            expected = (flag_swing.MAP_COEFFICIENTS["dod_railroad2_s10a"],
+                        "carried_forward_from:dod_railroad2_s10a")
+        else:
+            expected = (own, "fitted_per_map:dod_railroad2_s10b")
+        self.assertEqual(((cfg.flag_coefficient, cfg.alive_coefficient),
+                          cfg.calibration), expected)
 
 
 def half(flag_term, label, n=40):

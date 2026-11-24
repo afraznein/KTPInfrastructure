@@ -45,6 +45,10 @@ SELECT
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_kills,
   (SELECT COALESCE(SUM(deaths), 0) FROM ktp_match_stats
     WHERE match_id = {{MATCH_ID}} AND half = 0) AS cached_deaths,
+  -- Kills inside the cap-out freeze: match_id NULL, producer_match_id set.
+  -- The facts count them (the scoreboard did); the daemon's cache does not.
+  (SELECT COUNT(*) FROM hlstats_Events_Frags
+    WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}) AS untagged_frags,
   -- Every hit the attacker landed: the ingest query groups ktp_damage_events
   -- by attacker_id with no victim join and no team predicate. So the report
   -- side comparable with it is damage_dealt + team_damage + self_damage.
@@ -108,10 +112,11 @@ SELECT
                          AND a.player_id = d.attacker_id
                          AND a.team IS NOT NULL
                          AND v.team IS NOT NULL)) AS unpartitioned_hits_taken,
-  -- A ledger row tagged for a different match is summed into this match's
-  -- report and was never in the daemon's accumulators, so the two totals are
-  -- not comparable. The IS NOT NULL arm is explicit, not load-bearing: an
-  -- untagged row is pre-producer-context, and `NULL <> 'x'` already excludes.
+  -- A ledger row tagged for a different match is in the ingest total, which
+  -- sums by match_id, and out of the box score, which defers to the producer,
+  -- so the two totals are not comparable. The IS NOT NULL arm is explicit,
+  -- not load-bearing: an untagged row is pre-producer-context, and
+  -- `NULL <> 'x'` already excludes.
   (SELECT COUNT(*) FROM ktp_damage_events
     WHERE match_id = {{MATCH_ID}}
       AND producer_match_id IS NOT NULL

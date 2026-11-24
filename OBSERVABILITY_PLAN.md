@@ -17,7 +17,7 @@ Season 10 opens 2026-09-13.
 
 | Item | State |
 |---|---|
-| §2.4 LinuxGSM patch verification | **Shipped** — `ktp-monitor-patch-check.sh`, PR #297. Not yet run against production |
+| §2.4 LinuxGSM patch verification | **Shipped** — `ktp-monitor-patch-check.sh`, PR #297. ~~Not yet run against production~~ — **run 2026-10-12, clean on 24/24** (§ Re-measured 2026-10-12, and sequencing row 2). This row contradicted that one inside the same file. ⛔ Point-in-time: `update-lgsm` overwrites the patched file, so the weekly `audit-fleet-drift.py` parse is the cover |
 | §2.6 Alert coverage matrix | **Shipped** — `docs/runbooks/ALERT_COVERAGE.md`, PR #301 |
 | §2.3 Close the known drift | Detection is covered; closure needs a live-host rollout and per-host sign-off |
 | §2.5 Trend surface | **Researched below. The handover's guess was right, and one finding is urgent** |
@@ -322,8 +322,9 @@ state directory per run — with nothing saying which applied when, so the next
 unit picked by coin flip. The decision, the two cases where the other two shapes
 are still right, and how a wedge shows up are in
 [`docs/runbooks/UNIT_RUN_RECORDS.md`](docs/runbooks/UNIT_RUN_RECORDS.md).
-⚠️ Writing a record is not coverage: nothing ages these files yet, and the leg
-that would is a producer for `ktp-data-server-health.sh`, not a sixth watcher.
+Writing a record is not coverage by itself; since 2026-11-12 the records are aged
+by a producer in `ktp-data-server-health.sh` (`ktp-run-record-age`), not by a
+watcher of their own.
 
 **Status 2026-09-18.** `scripts/ktp-alert-routing.sh` (90bbe10) is the shared
 helper; `ktp-data-server-health.sh` now routes through it — `page` on a new-down

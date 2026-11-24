@@ -20,7 +20,8 @@ the tool; it was that the documented way to invoke it was undocumented.
 This is that shim, once, in the repo.
 
 WHAT IT DOES NOT DO. It adds no deploy logic and makes no connection of its own.
-It resolves a credential pair and the version rows, and execs a sibling. Every gate -- the
+It resolves a credential pair, the version rows and -- for the two scripts that talk
+to the tier-2 runner -- the hosts they need, and execs a sibling. Every gate -- the
 attribution check, the md5 pins, --pull-live, the row-flip gate, the activation-day
 gate -- belongs to the script being run and is untouched.
 
@@ -47,6 +48,10 @@ ENVIRONMENT
                            <project>/ktp_hosts.py and passed to the child only
   KTP_FLEET_SSH_KEY        passed through untouched -- it selects a per-person key
                            and the child prefers it over any password
+  GAME_SSH_PASSWORD        the SAME fleet credential under the name
+                           sync-runner-stack.py reads for its fleet-reference
+                           connection. Derived from KTP_FLEET_SSH_PASSWORD rather
+                           than imported twice -- see SSH_PASSWORD_ALIASES
   KTP_RCON_PASSWORD        honoured if already set; else imported from
                            ktp_hosts.py, and only for the one script that issues
                            rcon (NEEDS_RCON). Without it ktp-verify-deploy.py
@@ -62,12 +67,30 @@ ENVIRONMENT
                            project root above it -- the default then resolves to
                            a directory holding neither the rows nor ktp_hosts.py.
                            Same variable the KTPDoDServerConfig shim uses
+  KTP_TIER2_SSH_HOST       the tier-2 runner, which is the data server. Honoured
+                           if already set; else ktp_hosts.SERVERS["data"]["host"].
+                           Given to stage-wave.py (its --expect-runner gate) and
+                           sync-runner-stack.py, and to nothing else
+  KTP_TIER2_SSH_KEY        key PATH for that host, which is keys-only. Honoured if
+                           set; else ktp_hosts.SERVERS["data"]["key"], and the file
+                           must exist. sync-runner-stack.py only: stage-wave.py
+                           does not read it (paramiko finds the key itself)
+  KTP_DRIFT_REF_HOST       the game host the runner is synced FROM. Honoured if
+                           set; else ktp_hosts.SERVERS["atlanta"]["host"], the
+                           reference ktp-tier2-stack-drift.py documents (tree
+                           dod-27015). sync-runner-stack.py only
+  None of the three has a default here, and none is hardcoded: the children refuse
+  defaults on purpose, because a runner synced from a guessed host is worse than a
+  run that fails. If one cannot be resolved, sync-runner-stack.py is not started
+  and the message names the variable and where to set it; stage-wave.py is
+  started with a note, since only its --expect-runner gate needs the host.
 
 Exit code is the child's, unchanged. 2 means this script would not start it.
 """
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 
@@ -82,10 +105,84 @@ RUNNABLE = (
     "sync-runner-stack.py",
 )
 
+# Left out on purpose, with the reason the refusal prints. The unit tests check
+# each reason against the script's own source, so a stale one fails.
+NOT_RUNNABLE = {
+    "stage-runner.py":
+        "it reads neither the fleet credential nor the version rows, so this "
+        "wrapper would only hand it a live password it never uses. Run it "
+        "directly from the worktree with KTP_TIER2_SSH_HOST set; the data "
+        "server is keys-only and paramiko finds the key itself",
+    "ktp_script_freshness.py":
+        "its reporting mode reads the KTP_FRESHNESS_* variables this wrapper "
+        "strips, and it needs no credential. Run it directly: "
+        "python scripts/ktp_script_freshness.py <path>",
+    "ktp-install":
+        "it imports fcntl, which is POSIX-only, so it cannot run on a Windows "
+        "workstation at all. The real one is /usr/local/bin/ktp-install on the "
+        "host it installs to",
+}
+
 # Who gets the rcon credential: the one script that issues rcon, and nothing else.
 # A wrapper that holds a live value hands out as little of it as the job needs, and
 # the four others have no reference to it at all. Narrower than RUNNABLE on purpose.
 NEEDS_RCON = ("ktp-verify-deploy.py",)
+
+# Children that read the fleet SSH credential under a DIFFERENT env name than the
+# one exported above. sync-runner-stack.py's fleet-reference connection reads
+# GAME_SSH_PASSWORD and is password-only (it passes no key), so a wrapper setting
+# just KTP_FLEET_SSH_PASSWORD hands it an empty string -- and paramiko then raises
+# "No authentication methods available", which reads like a host or key fault
+# rather than a wiring one. It went unnoticed because nothing had run that script
+# through here since it was allowlisted.
+#
+# This table alone would be the same kind of defect one layer up: a restated list
+# that goes stale the next time a child picks a new name. unsatisfied_credentials()
+# below is the part that does not rot -- it reads the child's own source.
+SSH_PASSWORD_ALIASES = {
+    "sync-runner-stack.py": ("GAME_SSH_PASSWORD",),
+}
+
+# Credential names an allowlisted child reads that this wrapper deliberately does
+# NOT set, each with the reason it is fine. Anything a child reads that is not here
+# and not supplied is a wiring gap, and tests/unit/test_run_fleet_script.py fails
+# until someone either supplies it or writes down why they did not. That decision
+# point is the actual fix: the GAME_SSH_PASSWORD gap survived because nothing ever
+# had to account for the difference between the names set and the names read.
+KNOWN_UNSATISFIED = {
+    "KTP_TIER2_SSH_PASSWORD":
+        "the data server is keys-only, so KTP_TIER2_SSH_KEY carries a key PATH "
+        "instead; a password there would fail even if it were supplied",
+}
+
+# Host inputs, by the child that reads them. Least privilege again: a staging tool
+# has no business being handed the game host the runner sync diffs against. The
+# unit tests derive each child's set from its source, so a child that starts
+# reading one of these names fails until it is added here.
+HOST_VARS = {
+    "stage-wave.py": ("KTP_TIER2_SSH_HOST",),
+    "sync-runner-stack.py": ("KTP_TIER2_SSH_HOST", "KTP_TIER2_SSH_KEY",
+                             "KTP_DRIFT_REF_HOST"),
+}
+
+# Where each comes from in ktp_hosts.SERVERS. Names, never addresses: this repo is
+# public, and ktp_hosts is already the single source of truth for every host.
+HOST_SOURCES = {
+    "KTP_TIER2_SSH_HOST": ("data", "host"),   # the tier-2 runner lives on the data server
+    "KTP_TIER2_SSH_KEY": ("data", "key"),     # keys-only host; a path, not a secret
+    "KTP_DRIFT_REF_HOST": ("atlanta", "host"),  # ktp-tier2-stack-drift.py's reference
+}
+
+# Children that cannot do anything useful without their hosts. For these an
+# unresolvable one stops the run here, with the cause; the child's own FATAL names
+# the variable but not why the wrapper did not supply it.
+HOSTS_REQUIRED = ("sync-runner-stack.py",)
+
+# Credential-shaped env names, read out of a child's source rather than listed.
+CREDENTIAL_NAME = re.compile(
+    r'''(?:os\.environ(?:\.get\(|\[)|os\.getenv\()["']'''
+    r'''([A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|RCON)[A-Z0-9_]*)["']'''
+)
 
 # Never forwarded: each one loosens the guard the child runs behind. Same list as
 # ktp-wave-sweep.py, for the same reason.
@@ -112,6 +209,21 @@ def scripts_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def propagate_ssh_aliases(env: dict, aliases: tuple) -> None:
+    """One resolved value under every name the child reads.
+
+    A copy, never a second import: the import is the only step that touches live
+    values, so an alias satisfiable from what is already in the environment must
+    not trigger one. That is also why this is called on the no-import path.
+    """
+    resolved = env.get("KTP_FLEET_SSH_PASSWORD")
+    if not resolved:
+        return
+    for alias in aliases:
+        if not env.get(alias):
+            env[alias] = resolved
+
+
 def child_env(name: str) -> dict:
     env = {k: v for k, v in os.environ.items() if k not in GUARD_OVERRIDES}
     dropped = [k for k in GUARD_OVERRIDES if k in os.environ]
@@ -132,20 +244,25 @@ def child_env(name: str) -> dict:
 
     # A key beats a password in the child, so do not import a credential it will
     # not use: the import is the only step that touches live values.
-    want_ssh = not (env.get("KTP_FLEET_SSH_KEY", "").strip()
-                    or env.get("KTP_FLEET_SSH_PASSWORD"))
+    # The exception is a child whose own connection takes a password and no key --
+    # for that one a configured key is not an alternative, so the password is still
+    # needed. Keying this off the alias table rather than the script name keeps the
+    # two facts about such a child in one place.
+    aliases = SSH_PASSWORD_ALIASES.get(name, ())
+    want_ssh = not env.get("KTP_FLEET_SSH_PASSWORD") and (
+        bool(aliases) or not env.get("KTP_FLEET_SSH_KEY", "").strip())
     # Only ktp-verify-deploy.py issues rcon, and only under --check-runtime. Giving
     # it the value whenever it is the child beats parsing the child's flags here --
     # that coupling breaks the next time the child grows a flag.
     want_rcon = name in NEEDS_RCON and not env.get("KTP_RCON_PASSWORD")
     if not (want_ssh or want_rcon):
+        propagate_ssh_aliases(env, aliases)
+        resolve_hosts(env, name)
         return env
 
     root = project_root()
-    if root not in sys.path:
-        sys.path.insert(0, root)
     try:
-        import ktp_hosts                      # the single source of truth
+        ktp_hosts = import_ktp_hosts()
     except ImportError as exc:
         raise SystemExit(
             "cannot import ktp_hosts from %s for the fleet credential (%s).\n"
@@ -170,7 +287,90 @@ def child_env(name: str) -> dict:
             print("ktp_hosts has no FLEET_RCON_PASSWORD, so %s cannot be given one "
                   "-- it will refuse a --check-runtime leg rather than skip it"
                   % name, file=sys.stderr)
+
+    propagate_ssh_aliases(env, aliases)
+    resolve_hosts(env, name)
     return env
+
+
+def import_ktp_hosts():
+    root = project_root()
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    import ktp_hosts                          # the single source of truth
+    return ktp_hosts
+
+
+def resolve_hosts(env: dict, name: str) -> None:
+    """Fill the host inputs this child reads and nothing else.
+
+    An already-set value wins and triggers no import. A value that cannot be
+    resolved is never guessed: the children refuse defaults on purpose.
+    """
+    wanted = [v for v in HOST_VARS.get(name, ()) if not env.get(v, "").strip()]
+    if not wanted:
+        return
+    root = project_root()
+    problems = []
+    try:
+        ktp_hosts = import_ktp_hosts()
+    except ImportError as exc:
+        problems = [(v, "cannot import ktp_hosts from %s (%s)" % (root, exc))
+                    for v in wanted]
+    else:
+        servers = getattr(ktp_hosts, "SERVERS", None)
+        for var in wanted:
+            server, field = HOST_SOURCES[var]
+            entry = servers.get(server) if isinstance(servers, dict) else None
+            value = entry.get(field) if isinstance(entry, dict) else None
+            if not value:
+                problems.append((var, "ktp_hosts.SERVERS[%r][%r] is missing or empty"
+                                 % (server, field)))
+                continue
+            if field == "key":
+                value = os.path.expanduser(value)
+                if not os.path.isfile(value):
+                    # A missing key surfaces as an auth failure on a keys-only host,
+                    # which reads as a wrong credential rather than a missing file.
+                    problems.append((var, "the key ktp_hosts names does not exist at %s"
+                                     % value))
+                    continue
+            env[var] = value
+    if not problems:
+        return
+    lines = ["%s is unset and could not be resolved: %s. Set it in the environment, "
+             "or fix that entry in %s" % (var, why, os.path.join(root, "ktp_hosts.py"))
+             for var, why in problems]
+    if name in HOSTS_REQUIRED:
+        raise SystemExit("\n".join(lines) + "\n%s refuses to run without it, so it was "
+                         "not started. Do not pass a guessed host." % name)
+    for line in lines:
+        print("note:   %s -- %s is started anyway; only a step that needs the host "
+              "refuses (stage-wave.py: --expect-runner)" % (line, name), file=sys.stderr)
+
+
+def unsatisfied_credentials(target: str, env: dict) -> list:
+    """Credential-shaped env names the child reads that nothing in env sets.
+
+    Read out of the child's source on purpose. The defect this reports is exactly
+    a hand-kept list going stale -- so a hand-kept list is the one thing it must
+    not be. A name here is not automatically wrong: a child may read a password it
+    does not need because a key is configured instead. It is wrong when the child
+    then fails to authenticate, and that is the case this makes legible.
+
+    BLIND SPOT, stated rather than discovered later: this sees LITERAL names only.
+    ktp-verify-deploy.py resolves its own credentials through
+    os.environ.get(env_var, "") over a table, so its names are computed and this
+    returns nothing for it. An empty result therefore means 'no literal gap found',
+    never 'every credential is wired' -- and reading it as the latter would be the
+    same mistake one level up.
+    """
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as fh:
+            src = fh.read()
+    except OSError:
+        return []   # not this script's job to report; the exec below will
+    return sorted({n for n in CREDENTIAL_NAME.findall(src) if not env.get(n)})
 
 
 def main(argv: list) -> int:
@@ -183,6 +383,9 @@ def main(argv: list) -> int:
         return 0
 
     name = os.path.basename(argv[0])
+    if name in NOT_RUNNABLE:
+        raise SystemExit("%s is deliberately not in this script's allowlist: %s."
+                         % (name, NOT_RUNNABLE[name]))
     if name not in RUNNABLE:
         raise SystemExit("%s is not in this script's allowlist. It runs with a live "
                          "fleet credential in its environment, so the list is "
@@ -199,7 +402,26 @@ def main(argv: list) -> int:
                 else "KTP_FLEET_SSH_PASSWORD"]
     if env.get("KTP_RCON_PASSWORD"):
         supplied.append("KTP_RCON_PASSWORD")
+    for alias in SSH_PASSWORD_ALIASES.get(name, ()):
+        if env.get(alias):
+            supplied.append(alias)
     print("creds:  %s set in child env, value not shown" % ", ".join(supplied))
+    hosts = [v for v in HOST_VARS.get(name, ()) if env.get(v)]
+    if hosts:
+        print("hosts:  %s set in child env" % ", ".join(hosts))
+    for missing in unsatisfied_credentials(target, env):
+        why = KNOWN_UNSATISFIED.get(missing)
+        if why:
+            print("note:   %s reads %s and nothing here sets it -- %s"
+                  % (name, missing, why), file=sys.stderr)
+        else:
+            # Not a refusal: the child may still authenticate another way, and a
+            # gate in front of a working one is a second thing to misfire. But an
+            # undeclared name is how the GAME_SSH_PASSWORD gap looked, so say so.
+            print("note:   %s reads %s, which nothing here sets and nothing has "
+                  "accounted for. If it then fails to authenticate, this is why "
+                  "-- add it to SSH_PASSWORD_ALIASES or KNOWN_UNSATISFIED."
+                  % (name, missing), file=sys.stderr)
     print("-" * 70)
     sys.stdout.flush()
     return subprocess.call([sys.executable, target] + argv[1:], env=env)

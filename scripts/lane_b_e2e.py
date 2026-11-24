@@ -51,6 +51,8 @@ from scripts.match_analytics import (  # noqa: E402
 )
 from scripts import team_score_telemetry  # noqa: E402
 from tests.e2e_stats import own_weapon_scenario, voice_menu_scenario  # noqa: E402
+from tests.e2e_stats import untracked_after_match_scenario  # noqa: E402
+from tests.e2e_stats import door_hold_scenario  # noqa: E402
 from tests.e2e_stats import (assertions, assist_scenario, break_scenarios,  # noqa: E402
                              containment, engine_telemetry, log_invariants,
                              metamod)
@@ -75,6 +77,13 @@ from tests.smoke.boot_subprocess import booted_subprocess  # noqa: E402
 # command three times in one container; retried rather than explained.
 BOOT_ATTEMPTS = 3
 
+# Checks an all-bot lane cannot exercise AT ALL, so no amount of bot luck
+# reaches them: they still report their gap, they just stop gating the run.
+# Adding a code here is a ruling about the lane's coverage floor, never a way
+# to quiet a flake -- a flaky check still gates, which is the whole point of
+# --require-complete-coverage.
+UNEXERCISABLE_IN_ALL_BOT_LANE = frozenset({"voice_menu_slots"})
+
 _AMXX_GAMEDATA_DEST = "dod/addons/ktpamx/data/gamedata"
 _CLOCK_PREFLIGHT_RE = re.compile(
     r"KTP_BD_CLOCK_PREFLIGHT\s+gamerules=(?P<gamerules>-?\d+)\s+"
@@ -93,6 +102,27 @@ _SERVER_RESOLVER_WARNINGS = (
     'GameConfig CRC missing for library "server"',
     "Could not find g_pGameRules address",
 )
+
+
+def gating_coverage_gaps(report: dict) -> list[str]:
+    """The coverage gaps that may fail the run under --require-complete-coverage.
+
+    The waived text is rebuilt from `carried` with the same expression that put
+    it in `coverage_gaps`, so a formatting change re-arms the gate instead of
+    silently widening the waiver.
+    """
+    waived = {f"{c['code']}: {c['detail']}"
+              for c in report.get("carried") or []
+              if c.get("status") == "not_exercised"
+              and c.get("code") in UNEXERCISABLE_IN_ALL_BOT_LANE}
+    return [gap for gap in report.get("coverage_gaps") or []
+            if gap not in waived]
+
+
+def run_exit_code(*, failures: list[str], gating_gaps: list[str],
+                  require_complete_coverage: bool) -> int:
+    """Process exit status. Behavioural so it is not asserted by grepping text."""
+    return 1 if failures or (require_complete_coverage and gating_gaps) else 0
 
 
 def compile_sma(src: Path, out: Path, *, scripting: Path,
@@ -585,7 +615,8 @@ def check_match_players_for_match(db, *, match_id: str, expected: int) -> dict:
     """Require the report match's roster without counting the diagnostic one."""
     rows = db.count(
         "SELECT COUNT(*) FROM ktp_match_players "
-        f"WHERE BINARY match_id=BINARY {sql_literal(match_id)}"
+        f"WHERE match_id={sql_literal(match_id)} "
+        f"AND BINARY match_id=BINARY {sql_literal(match_id)}"
     )
     ok = rows == expected
     return {
@@ -608,7 +639,8 @@ SELECT attempted, enqueued, dropped, emitted, daemon_received,
        daemon_accepted, daemon_rejected, correlation_failure_count,
        sequence_gap_count, duplicate_or_reordered_count
 FROM ktp_capture_health
-WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+WHERE match_id={sql_literal(match_id)}
+  AND BINARY match_id=BINARY {sql_literal(match_id)}
   AND half={int(half)} AND event_type={sql_literal(event_type)}
 """))
     if len(rows) != 1:
@@ -630,8 +662,9 @@ SELECT UNIX_TIMESTAMP(m.start_time) AS start_epoch,
        UNIX_TIMESTAMP(cm.created_at) AS activation_receipt_epoch
 FROM ktp_matches m
 JOIN ktp_capture_manifests cm
-  ON BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
-WHERE BINARY m.match_id=BINARY {sql_literal(match_id)}
+  ON cm.match_id=m.match_id AND BINARY cm.match_id=BINARY m.match_id AND cm.half=m.half
+WHERE m.match_id={sql_literal(match_id)}
+  AND BINARY m.match_id=BINARY {sql_literal(match_id)}
   AND m.half={int(half)}
 """))
     if len(rows) != 1:
@@ -828,7 +861,9 @@ SELECT MAX(map_name) AS map_name, COUNT(DISTINCT map_name) AS maps,
        MAX(half) AS terminal_half, COUNT(*) AS match_rows,
        MIN(match_type) AS match_type, COUNT(DISTINCT match_type) AS match_types,
        SUM(end_time IS NULL) AS open_rows
-FROM ktp_matches WHERE BINARY match_id=BINARY {sql_literal(match_id)}
+FROM ktp_matches
+WHERE match_id={sql_literal(match_id)}
+  AND BINARY match_id=BINARY {sql_literal(match_id)}
 GROUP BY match_id
 """))
     if len(context) != 1:
@@ -959,12 +994,20 @@ def gamerules_clock_preflight(handle, log_path: Path) -> dict:
     wrong_paths = [
         item["path"] for item in crc_evidence
         if not item["path"].replace("\\", "/").lower()
-        .endswith("/dod/dlls/dod.so")
+        .endswith("/dod/" + metamod.FLEET_GAMEDLL)
     ]
     if wrong_paths:
         evidence["detail"] = (
-            "server GameConfig CRC did not identify dod/dlls/dod.so: "
+            f"server GameConfig CRC did not identify dod/{metamod.FLEET_GAMEDLL}: "
             + ", ".join(wrong_paths)
+        )
+        return evidence
+    wrong_crcs = sorted({item["crc32"] for item in crc_evidence
+                         if item["crc32"] != metamod.FLEET_GAMEDLL_CRC32})
+    if wrong_crcs:
+        evidence["detail"] = (
+            f"server library CRC {', '.join(wrong_crcs)} is not the fleet build "
+            f"{metamod.FLEET_GAMEDLL_CRC32}"
         )
         return evidence
     if gamerules != 1:
@@ -1150,6 +1193,10 @@ def main() -> int:
                     help="run without driving a match. Every row is then "
                          "match_id NULL, which is correct for warmup and "
                          "proves nothing about match attribution")
+    ap.add_argument("--door-scenario", action="store_true",
+                    help="after everything else, change to dod_thunder2 and run the "
+                         "rotating-door hold scenario (guard off, control, guard on); "
+                         "report-only unless the door does the wrong thing")
     ap.add_argument("--no-break-scenarios", action="store_true",
                     help="skip the staged scenarios (they kill bots on command)")
     ap.add_argument("--kill-switch-seconds", type=int, default=60,
@@ -1410,6 +1457,12 @@ def main() -> int:
                         if assist_drive_amxx is not None:
                             print("staging post-match context probe", flush=True)
                             handle.rcon("ktp_ad_postmatch_frag")
+                            # Untracked capture must resume once the match is
+                            # over, not wait for the next match start.
+                            print("staging post-match untracked damage", flush=True)
+                            report["untracked_after_match_scenario"] = (
+                                untracked_after_match_scenario.run(handle, args.log)
+                            )
 
                     def _stage_kill_switch():
                         if not args.kill_switch_seconds:
@@ -1486,6 +1539,23 @@ def main() -> int:
                         play(play_seconds=args.play_seconds, log_path=args.log)
                         _stage_clean_scenarios()
                         _stage_break_diagnostics()
+                    if args.door_scenario:
+                        # It changes the map, so nothing may run on this server after it.
+                        if assist_drive_amxx is None:
+                            report["door_hold_scenario"] = {
+                                "code": door_hold_scenario.CODE,
+                                "status": "not_exercised",
+                                "detail": "KTPAssistDrive was not compiled, so there is "
+                                          "no door drive", "legs": []}
+                        else:
+                            print("staging door-hold scenario on "
+                                  f"{door_hold_scenario.MAP}", flush=True)
+                            report["door_hold_scenario"] = door_hold_scenario.run(
+                                handle, args.log, serverfiles=args.serverfiles,
+                                engine_lane=args.engine_so is not None,
+                                interval_s=float(args.profile_interval))
+                        print("  door hold: " + report["door_hold_scenario"]["detail"],
+                              flush=True)
                 completed = True
                 break
             except Exception as e:  # noqa: BLE001
@@ -2007,6 +2077,13 @@ def main() -> int:
             carried.append(report["voice_menu_scenario"])
         if report.get("own_weapon_scenario"):
             carried.append(report["own_weapon_scenario"])
+        if report.get("untracked_after_match_scenario"):
+            carried.append(report["untracked_after_match_scenario"])
+        # Opt-in and report-only: a door scenario that could not be set up is printed,
+        # not counted as a coverage gap, so asking for it never reds a run by itself.
+        door = report.get("door_hold_scenario")
+        if door and door["status"] == "pipeline":
+            failures.append(f"{door['code']}: {door['detail']}")
         for sc in report.get("break_scenarios", []):
             if sc["status"] == "violation":
                 failures.append(f"{sc['name']}: {sc['detail']}")
@@ -2230,19 +2307,25 @@ def main() -> int:
     print(f"  break positions:  {rows['break_positions']}")
 
     gaps = report.get("coverage_gaps") or []
+    gating_gaps = gating_coverage_gaps(report)
+    report["coverage_gaps_gating"] = gating_gaps
     if gaps:
         print(f"\n=== {len(gaps)} NOT EXERCISED ===")
         for g in gaps:
-            print("  - " + g.replace("\n", "\n    "))
+            suffix = "" if g in gating_gaps else "  [waived: not exercisable in an all-bot lane]"
+            print("  - " + g.replace("\n", "\n    ") + suffix)
     if failures:
         print(f"\n=== {len(failures)} FAILURE(S) ===")
         for f in failures:
             print("  - " + f.replace("\n", "\n    "))
-    elif gaps:
+    elif gating_gaps:
         # Not a pass. Nothing is broken, but the run did not test what it set
         # out to test, and recording that as green is how a lane stops meaning
         # anything.
         print("\nno defects found, but this run is INCOMPLETE — see above")
+    elif gaps:
+        print("\nno defects found; every gap above is waived coverage this "
+              "lane cannot reach — see above")
     else:
         print("\nall assertions passed")
 
@@ -2257,8 +2340,9 @@ def main() -> int:
     args.summary_out.write_text(summary, encoding="utf-8")
     print(f"wrote {args.out}")
     print(f"wrote {args.summary_out}")
-    incomplete_release_evidence = args.require_complete_coverage and bool(gaps)
-    return 1 if failures or incomplete_release_evidence else 0
+    return run_exit_code(
+        failures=failures, gating_gaps=gating_gaps,
+        require_complete_coverage=args.require_complete_coverage)
 
 
 if __name__ == "__main__":

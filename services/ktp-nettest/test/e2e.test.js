@@ -52,6 +52,57 @@ test('full run: stall, ping, bandwidth', { timeout: 60000 }, () => withServer({ 
   assert.deepStrictEqual([...phases], ['stall', 'ping', 'download', 'upload', 'done']);
 }));
 
+// Chrome's 1 Hz wake-up alignment for page timers in a hidden tab or a display:none cross-origin
+// frame, which is how the site embeds /frame.
+const alignedOneHzClock = (onTick) => {
+  let t = null, live = true;
+  const loop = () => { if (!live) return; onTick(); t = setTimeout(loop, 1000 - (Date.now() % 1000)); };
+  t = setTimeout(loop, 1000 - (Date.now() % 1000));
+  return () => { live = false; clearTimeout(t); };
+};
+
+test('stall: a 1 Hz throttled sender is reported as the browser pausing, not as line stalls', { timeout: 60000 }, () => withServer({ isBusy: () => false }, async (base) => {
+  const r = await runTest({ base, ticket: ticket(5, 'th'), stallSeconds: 4, mb: 1, RTCPeerConnection: BrowserPC, fetch, clock: alignedOneHzClock });
+  assert.strictEqual(r.stall_sent, 400);
+  assert.ok(r.stall_send_gaps_250 >= 3, `send gaps ${r.stall_send_gaps_250}`);
+  assert.ok(r.stall_recv_gaps_250 >= 3, `the old meter's count: ${r.stall_recv_gaps_250}`);
+  assert.strictEqual(r.stall_gaps_250, 0, JSON.stringify(r));
+  assert.strictEqual(r.client_version, 'ktp-nettest-client/2');
+}));
+
+test('stall: echoes lost while the sender kept pace still count as a line stall', { timeout: 60000 }, () => withServer({ isBusy: () => false }, async (base) => {
+  let t0 = 0;
+  class LossyPC extends BrowserPC {
+    createDataChannel(label, opts) {
+      const face = super.createDataChannel(label, opts);
+      let inner = null;
+      Object.defineProperty(face, 'onmessage', {
+        get: () => inner,
+        set: (fn) => {
+          inner = (ev) => {
+            if (!t0) t0 = Date.now();
+            const dt = Date.now() - t0;
+            if (dt > 800 && dt < 1500) return;  // 700 ms outage on the line
+            fn(ev);
+          };
+        },
+      });
+      return face;
+    }
+  }
+  const r = await runTest({ base, ticket: ticket(6, 'ls'), stallSeconds: 3, mb: 1, RTCPeerConnection: LossyPC, fetch });
+  assert.strictEqual(r.stall_send_gaps_250, 0, JSON.stringify(r));
+  assert.strictEqual(r.stall_gaps_250, 1, JSON.stringify(r));
+  assert.ok(r.stall_worst_gap_ms >= 600, String(r.stall_worst_gap_ms));
+}));
+
+test('tick.js: the stall pacing worker is served', () => withServer({ isBusy: () => false }, async (base) => {
+  const r = await fetch(`${base}/tick.js`);
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers.get('content-type'), /^text\/javascript/);
+  assert.match(await r.text(), /setInterval\(\(\) => postMessage\(0\), 10\)/);
+}));
+
 let busy = false;
 test('gates: no ticket 401, busy 409, second run inside 10 min 429, busy route open', () => withServer({ isBusy: () => busy }, async (base) => {
   assert.strictEqual((await fetch(`${base}/ping`)).status, 401);
@@ -79,3 +130,18 @@ test('region turning busy after the stall test skips the rest, keeps the stall r
     assert.strictEqual(r.down_mbps, undefined);
   });
 });
+
+test('frame: served for the site to embed, names the site as its only parent and embedder', () => withServer({ isBusy: () => false }, async (base) => {
+  const r = await fetch(`${base}/frame`);
+  assert.strictEqual(r.status, 200);
+  assert.match(r.headers.get('content-type'), /^text\/html/);
+  const csp = r.headers.get('content-security-policy');
+  assert.match(csp, /frame-ancestors https:\/\/ktpleague\.gg$/);
+  assert.match(csp, /script-src 'self'/);
+  const html = await r.text();
+  assert.match(html, /<meta name="ktp-parent-origin" content="https:\/\/ktpleague\.gg">/);
+  assert.match(html, /<script src="\/client\.js"><\/script><script src="\/frame\.js"><\/script>/);
+  const js = await fetch(`${base}/frame.js`);
+  assert.strictEqual(js.status, 200);
+  assert.match(await js.text(), /e\.origin !== parentOrigin/);
+}));

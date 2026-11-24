@@ -122,6 +122,7 @@ PRODUCER_LANE: dict[str, Lane] = {
     "ktp-scheduled-restart": Lane.OPS_DAILY,
     "hltv-restart-all": Lane.OPS_DAILY,
     "ktp-demo-retention": Lane.COMMUNITY,
+    "ktp-hud-archive-retention": Lane.OPS_WEEKLY,
     "ktp-spike-digest": Lane.OPS_WEEKLY,
     "ktp-soak-verify": Lane.OPS_WEEKLY,
     "ktp-tier2-heartbeat": Lane.OPS_WEEKLY,

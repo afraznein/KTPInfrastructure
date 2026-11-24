@@ -11,6 +11,8 @@ would notice. These assertions are structural on purpose.
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
 import pytest
@@ -102,3 +104,56 @@ class TestOwningWorkflowKeepsTheStrictCheck:
     def test_it_has_the_python_the_check_needs(self):
         uses = [s.get("uses", "") for s in _steps(PUBLISH, "publish")]
         assert any(u.startswith("actions/setup-python@") for u in uses)
+
+
+def _logical_lines(script: str) -> list[str]:
+    """Shell lines with backslash continuations joined, so a wrapped command is one line."""
+    out, cur = [], ""
+    for line in script.splitlines():
+        if line.rstrip().endswith("\\"):
+            cur += line.rstrip()[:-1] + " "
+            continue
+        out.append(cur + line)
+        cur = ""
+    if cur:
+        out.append(cur)
+    return out
+
+
+class TestTheServerCanOpenItsSocket:
+    """ubuntu-latest moved to a docker whose default seccomp profile refuses the i386
+    socketcall multiplexer, so hlds died before any assertion ran and every call of this
+    workflow went green on an env-fault exemption that asserted nothing."""
+
+    REPO = Path(__file__).resolve().parents[2]
+
+    def test_every_boot_carries_the_seccomp_override(self, boot_script):
+        ups = [l for l in _logical_lines(boot_script) if "docker compose" in l and " up " in l]
+        assert ups, "no `docker compose ... up` in the boot step -- wrong step?"
+        for line in ups:
+            assert '-f "$SMOKE_COMPOSE_OVERRIDE"' in line, (
+                f"a boot without the i386 seccomp profile dies on ENOSYS: {line.strip()}"
+            )
+
+    def test_the_override_names_a_real_profile(self, boot_script):
+        rel = "ci/seccomp/lane-b-i386.json"
+        assert f'SMOKE_SECCOMP="$PWD/{rel}"' in boot_script
+        prof = json.loads((self.REPO / rel).read_text(encoding="utf-8"))
+        subs = [s for a in prof["archMap"] for s in a.get("subArchitectures", [])]
+        assert "SCMP_ARCH_X86" in subs, "without the x86 sub-arch the profile covers nothing for i386"
+        assert '"seccomp=%s"' in boot_script and "security_opt" in boot_script
+
+    def test_a_missing_profile_fails_the_step(self, boot_script):
+        lines = boot_script.splitlines()
+        i = next(n for n, l in enumerate(lines) if "json.load" in l and "SMOKE_SECCOMP" in l)
+        assert lines[i].lstrip().startswith("if ! ")
+        assert "exit 1" in "\n".join(lines[i:i + 4])
+
+    def test_no_unescaped_backtick_inside_a_double_quoted_echo(self, boot_script):
+        """An unescaped backtick in `echo "..."` is command substitution: the summary
+        ran `main` as a command and printed its error instead of the fence."""
+        bad = [
+            l.strip() for l in boot_script.splitlines()
+            if l.lstrip().startswith('echo "') and re.search(r"(?<!\\)`", l)
+        ]
+        assert not bad, f"unescaped backtick(s) in a double-quoted echo: {bad}"

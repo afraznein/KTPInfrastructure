@@ -87,6 +87,20 @@ def test_the_loader_prefers_the_tracked_blob_over_the_working_tree(guard):
 _ASSIGN = re.compile(r"^(\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=)(.*)$")
 
 
+def _sole_line(lines, matches):
+    """The one line `matches` picks out, so a mutation cannot land on another.
+
+    `next(...)` takes the first and says nothing about the rest, which is how a
+    mutation ends up editing a line other than the one the test names.
+    """
+    hits = [i for i, ln in enumerate(lines) if matches(ln)]
+    assert len(hits) == 1, (
+        f"the mutation target must be unique; {len(hits)} lines match "
+        f"(1-based: {[i + 1 for i in hits]})"
+    )
+    return hits[0]
+
+
 def _fill(example_text, a=FAKE_CHANNEL_A, b=FAKE_CHANNEL_B):
     """The `.example` with only its two placeholders filled — i.e. a correct L2.
 
@@ -127,7 +141,7 @@ def test_identical_after_filling_is_the_passing_case(guard, real_example):
 
 def test_a_non_allowlisted_line_fails_and_is_named(guard, real_example):
     lines = _fill(real_example).split("\n")
-    target = next(i for i, ln in enumerate(lines) if ln.strip().startswith("EXPECTED_RUNNING="))
+    target = _sole_line(lines, lambda ln: ln.strip().startswith("EXPECTED_RUNNING="))
     lines[target] = "EXPECTED_RUNNING=99"
     findings = guard.example_guard("\n".join(lines), real_example)
     assert findings, "a changed non-allowlisted assignment must fail"
@@ -140,8 +154,8 @@ def test_the_three_line_comment_case_fails(guard, real_example):
     """Today's actual drift: the `.example` carries a comment block the real
     canonical lacks. A guard that only looked at assignments would miss it."""
     lines = _fill(real_example).split("\n")
-    start = next(i for i, ln in enumerate(lines)
-                 if ln.startswith("# A quiet sweep is still not proof of health"))
+    start = _sole_line(
+        lines, lambda ln: ln.startswith("# A quiet sweep is still not proof of health"))
     stripped = lines[:start] + lines[start + 3:]
     findings = guard.example_guard("\n".join(stripped), real_example)
     assert findings, "a comment block present only in the .example must fail"

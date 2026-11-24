@@ -37,25 +37,51 @@ For a path with no manifest row, derive the candidate set and require **exactly 
 one candidate is the finding, not a tie to break by preferring `scripts/`. And strip CR before
 hashing either side, per `docs/LIVE_SCRIPT_INVENTORY.md`.
 
-## KTP plugin lines are not under `dod/logs/`, and the log name carries no year
+## Which log tree a KTP marker lands in is decided by the EMIT CALL, and the log name carries no year
 
 Two independent ways for a producer-log grep to read clean while blind. Both fired on one morning,
 hours after a plugin had gone fleet-wide and was demonstrably emitting.
 
-**The path.** Plugin output goes to `dod/addons/ktpamx/logs/L<YYYYMMDD>.log`, not to the engine's
-`dod/logs/`. A grep of `dod/logs` for a producer marker returned zero on every game host while that
-producer was live. What caught it was the control: a marker from a known-live producer returned zero
-in the same files, which no healthy fleet can do.
+**The path, and the rule is narrower than "plugin versus engine".** An instance keeps two log trees
+and a plugin may write to either — or to both. The emit call decides, so derive it from the
+emitting `.sma` rather than from what kind of thing the producer is:
+
+| call in the `.sma` | lands in |
+|---|---|
+| `log_amx()`, or a `stock` wrapper over it | `dod/addons/ktpamx/logs/L<YYYYMMDD>.log` |
+| `log_message()` | `dod/logs/L<MMDD><NNN>.log` |
+
+A grep of `dod/logs` for `event=NETOBS_SNAPSHOT` returned zero on every game host while that
+producer was live: `KTPCvarChecker`'s `ktp_cvar.sma` emits it through `log_amx` (19 calls, no
+`log_message` and no `log_to_file` on `origin/main`), so none of it was ever in that tree. What
+caught it was the control — a marker from a known-live producer returned zero in the same files,
+which no healthy fleet can do.
+
+⛔ **The mirror of that mistake is live code, so do not "correct" a `dod/logs` grep on sight.**
+`KTPMatchHandler.sma` carries 14 `log_message` calls alongside 27 `log_amx` ones, and
+`KTP_MATCH_START` is one of the `log_message` ones — `services/ktp-nettest/lib/busy.js` reads it out
+of `dod/logs` to block load tests during a live match, and moving that read to the amxx tree blinds
+the gate. `KTPAMXX`'s in-tree `stats_logging.sma` is `log_message` throughout (22 calls, zero
+`log_amx`), because HLStatsX parses the engine log. Derive before editing:
+
+```bash
+for c in log_message log_amx log_to_file; do
+  printf '%s: ' "$c"; git -C <repo> grep -o "$c" origin/main -- '<plugin>.sma' | wc -l
+done
+```
 
 **The glob.** A GoldSrc log name is `L<MMDD>` with **no year**, so `dod/logs/L1024*.log` matches
 every October 24 in that host's history, not this morning's. On one host that is hundreds of files
 and six figures of lines — enough that a per-day figure derived from it reads entirely plausible and
-is years wide.
+is years wide. The amxx tree's `L<YYYYMMDD>.log` does carry a year, which is why the same glob habit
+is safe in one tree and not the other.
 
-**What to do instead.** Select by mtime, never by the log name:
+**What to do instead.** Select by mtime, never by the log name — in whichever tree the call above
+sends you:
 
 ```bash
 find ~/dod-*/serverfiles/dod/addons/ktpamx/logs -name 'L*.log' -newermt '-1 day'
+find ~/dod-*/serverfiles/dod/logs            -name 'L*.log' -newermt '-1 day'
 ```
 
 and pair every producer grep with a marker you know is live, so a zero is distinguishable from a

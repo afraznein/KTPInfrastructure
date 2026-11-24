@@ -231,6 +231,15 @@ on:
         required: false
         type: string
         default: '360'
+      door_scenario:
+        description: >-
+          'true' runs the rotating-door hold scenario last: changes to dod_thunder2
+          and judges push: blocked_ms with ktp_door_reversal_guard off and on. Needs
+          engine_ref (engine telemetry) and the map in the image, or it reports
+          not_exercised. 'full' lane only.
+        required: false
+        type: string
+        default: 'false'
   schedule:
     # Requested after publish-base-image (04:30 UTC) so a run usually pulls a
     # fresh base, but GitHub starts scheduled runs hours late, so neither that
@@ -293,6 +302,7 @@ jobs:
       PLAY_SECONDS: ${{ inputs.play_seconds || '360' }}
       SHOT_DETAIL: ${{ inputs.shot_detail || '1' }}
       SHOT_DETAIL_TYPES: ${{ inputs.shot_detail_types || '-1' }}
+      DOOR_SCENARIO: ${{ inputs.door_scenario || 'false' }}
       BASE_IMAGE: ghcr.io/${{ github.repository_owner }}/ktp-runtime-test-base:latest
 
     steps:
@@ -446,6 +456,128 @@ jobs:
       - name: Pull runtime base image
         run: docker pull "$BASE_IMAGE"
 
+      # The image's build-time downloads live on remote hosts, and the
+      # Metamod-R release asset answered 504 for an entire retry budget one
+      # night -- failing PRs that touched nothing related to it, upstream of
+      # every harness test. Cache the files instead: a retry survives a blip,
+      # not an outage.
+      #
+      # The checksums are READ OUT OF the Dockerfile rather than copied here, so
+      # bumping a pinned version is a cache miss by construction and the old
+      # file can never be restored under the new pin. The FastDL files are
+      # whatever its `install_pinned <path> "$<ARG>"` lines name, so adding one
+      # there is enough to cache it.
+      - name: Resolve the pinned vendor checksums
+        id: vendor
+        run: |
+          set -euo pipefail
+          df=build/lane-b/Dockerfile
+          # `|| true` so a vanished ARG reaches the named error below rather
+          # than killing the step at the assignment with nothing printed.
+          bot_url=$(grep -m1 '^ARG NEW_BOT_URL=' "$df" | cut -d= -f2- || true)
+          bot_sha=$(grep -m1 '^ARG NEW_BOT_SHA256=' "$df" | cut -d= -f2- || true)
+          mm_url=$(grep -m1 '^ARG METAMOD_URL=' "$df" | cut -d= -f2- || true)
+          mm_sha=$(grep -m1 '^ARG METAMOD_SHA256=' "$df" | cut -d= -f2- || true)
+          fastdl_url=$(grep -m1 '^ARG FASTDL_URL=' "$df" | cut -d= -f2- || true)
+          # A key built from a checksum that failed to parse would be stable and
+          # wrong, which is worse than no cache at all.
+          for pair in "bot_url=$bot_url" "bot_sha=$bot_sha" "mm_url=$mm_url" "mm_sha=$mm_sha" "fastdl_url=$fastdl_url"; do
+            if [ "${pair#*=}" = "" ]; then
+              echo "::error::could not read ${pair%%=*} from $df; refusing to build a cache key from it"
+              exit 1
+            fi
+          done
+          case "${bot_sha}${mm_sha}" in
+            *[!0-9a-f]*) echo "::error::parsed a non-hex checksum from $df"; exit 1 ;;
+          esac
+          # One `<path> <sha256>` row per FastDL file the image installs.
+          pinned="${RUNNER_TEMP:-/tmp}/lane-b-pinned-files.txt"
+          : > "$pinned"
+          while read -r rel var; do
+            sha=$(grep -m1 "^ARG ${var}=" "$df" | cut -d= -f2- || true)
+            case "$sha" in
+              ""|*[!0-9a-f]*) echo "::error::could not read a hex ${var} for ${rel} from $df"; exit 1 ;;
+            esac
+            if [ "${#sha}" -ne 64 ]; then
+              echo "::error::${var} in $df is not a sha256"; exit 1
+            fi
+            echo "$rel $sha" >> "$pinned"
+          done < <(sed -nE 's/^[[:space:]]+install_pinned ([^ ]+) "\$([A-Z0-9_]+)".*/\1 \2/p' "$df")
+          if [ ! -s "$pinned" ]; then
+            echo "::error::found no install_pinned lines in $df; the FastDL files would go uncached and unverified here"
+            exit 1
+          fi
+          files_sha=$(cut -d' ' -f2 "$pinned" | sha256sum | cut -d' ' -f1)
+          {
+            echo "bot_url=$bot_url"
+            echo "bot_sha=$bot_sha"
+            echo "mm_url=$mm_url"
+            echo "mm_sha=$mm_sha"
+            echo "fastdl_url=$fastdl_url"
+            echo "pinned=$pinned"
+            echo "key=lane-b-vendor-${bot_sha}-${mm_sha}-${files_sha}"
+          } >> "$GITHUB_OUTPUT"
+
+      # No restore-keys on purpose: a prefix match is exactly how a bumped
+      # version would silently restore the archive it replaced.
+      # A PR run's saved entry is visible only to that branch and its base, so a
+      # new branch still fetches upstream until a `main` run has saved this key.
+      - name: Restore the vendored build-time archives
+        id: vendor-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/lane-b/vendor
+          key: ${{ steps.vendor.outputs.key }}
+
+      # Verified here as well as inside the image. The in-image check is what
+      # makes a restored archive safe to trust at all; this one is what stops a
+      # bad archive reaching the save step and being handed to every later run.
+      - name: Fetch and verify whatever the cache did not supply
+        env:
+          BOT_URL: ${{ steps.vendor.outputs.bot_url }}
+          BOT_SHA: ${{ steps.vendor.outputs.bot_sha }}
+          MM_URL: ${{ steps.vendor.outputs.mm_url }}
+          MM_SHA: ${{ steps.vendor.outputs.mm_sha }}
+          FASTDL_URL: ${{ steps.vendor.outputs.fastdl_url }}
+          PINNED: ${{ steps.vendor.outputs.pinned }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/lane-b/vendor
+          supply() {
+            local name=$1 url=$2 sha=$3 dest
+            dest="build/lane-b/vendor/$name"
+            if [ -f "$dest" ]; then
+              echo "$name: restored from cache"
+            else
+              echo "$name: cache miss, fetching"
+              curl -fsSL --retry 20 --retry-all-errors --retry-delay 5 \
+                --retry-max-time 120 "$url" -o "$dest"
+            fi
+            if ! echo "$sha  $dest" | sha256sum -c - >/dev/null 2>&1; then
+              # Leaving it on disk would offer the save step a poisoned entry.
+              rm -f "$dest"
+              echo "::error::$name does not match its sha256 pin; refusing to cache it"
+              exit 1
+            fi
+            echo "$name: sha256 pin verified"
+          }
+          supply new_bot.zip "$BOT_URL" "$BOT_SHA"
+          supply metamod.zip "$MM_URL" "$MM_SHA"
+          # The Dockerfile looks for each under its basename, so that is the vendored name.
+          while read -r rel sha; do
+            supply "$(basename "$rel")" "$FASTDL_URL/$rel" "$sha"
+          done < "$PINNED"
+
+      # success() is explicit rather than relied upon: this must not run after a
+      # failed verification, and saving is pointless on a hit because the entry
+      # already exists under this exact key.
+      - name: Save the vendored build-time archives
+        if: success() && steps.vendor-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/lane-b/vendor
+          key: ${{ steps.vendor.outputs.key }}
+
       - name: Build Lane B image
         run: |
           set -euo pipefail
@@ -594,6 +726,10 @@ jobs:
             test -f build/lane-b-artifacts/engine/engine_i486.so
             ENGINE_ARGS="--engine-so /work/build/engine/engine_i486.so --engine-provenance /work/build/engine/provenance.json"
           fi
+          DOOR_ARGS=""
+          if [ "$DOOR_SCENARIO" = "true" ]; then
+            DOOR_ARGS="--door-scenario"
+          fi
           # Written by the builder as paths under this same /work/build mount, holding only what the daemon ref carries.
           mapfile -t schema_migrations < build/lane-b-artifacts/artifacts/schema-migrations.txt
           test "${#schema_migrations[@]}" -gt 0
@@ -617,7 +753,7 @@ jobs:
             -v "${PWD}/KTPAMXX/plugins/include:/src/KTPAMXX/plugins/include:ro" \
             -w /work ktp-lane-b:ci \
             python3 -u scripts/lane_b_e2e.py \
-              ${ENGINE_ARGS} \
+              ${ENGINE_ARGS} ${DOOR_ARGS} \
               --ktpamx-so /work/build/ktpamx_i386.so \
               --dodx-so /work/build/dodx_ktp_i386.so \
               --amxx-gamedata /work/build/artifacts/gamedata \

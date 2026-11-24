@@ -46,6 +46,7 @@ MySQL is read-only over the local socket, no credentials, same as weekly_outlier
 from __future__ import annotations
 
 import argparse
+import bisect
 import json
 import math
 import os
@@ -55,7 +56,7 @@ import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 TYPE_NAME = {0: "official", 1: "scrim", 2: "12man", 3: "draft", 4: "official", 5: "draft"}
 OFFICIAL = (0, 4)
@@ -84,25 +85,100 @@ def q(sql: str, db: str) -> list[list[str]]:
 
 
 def presses_sql(since: str) -> str:
-    # One row per (press, candidate own kill in the lookback); Python keeps the nearest.
-    # LEFT JOIN so a press with no kill behind it is still a press (the denominator for
-    # "share of voice commands that are taunts").
+    # Presses only; their own kills come from frags_sql and kill_rows pairs them. Joining
+    # frags here probed the killerId index (no eventTime in it) once per press, so every
+    # press re-read its speaker's all-time frags and the run grew with the season.
+    # The daemon leaves ~9% of in-half presses with match_id NULL (scattered, often in bursts),
+    # so an untagged press is adopted by the live half running on its server at that moment.
+    # Two branches so each keeps an index: tagged via match_id, untagged via the voice action ids.
+    # Forced, because left alone MySQL reads every untagged row of every action type per voice action.
+    voice = "(a.code LIKE 'voice\\\\_%' OR a.code LIKE 'voicemenu\\\\_%' OR a.code LIKE 'signal\\\\_%')"
     return f"""
-SELECT pa.id, pa.eventTime, pa.match_id, m.match_type, a.code,
-       pa.playerId, sp.lastName,
-       IFNULL(f.victimId, ''), IFNULL(vp.lastName, ''), IFNULL(f.weapon, ''),
-       IFNULL(TIMESTAMPDIFF(SECOND, f.eventTime, pa.eventTime), '')
-FROM hlstats_Events_PlayerActions pa
-JOIN hlstats_Actions a ON a.id = pa.actionId AND (a.code LIKE 'voice\\\\_%' OR a.code LIKE 'voicemenu\\\\_%' OR a.code LIKE 'signal\\\\_%')
+SELECT p.id, p.eventTime, p.match_id, m.match_type, p.code,
+       p.playerId, sp.lastName
+FROM (SELECT pa.id, pa.eventTime, pa.match_id, a.code, pa.playerId
+      FROM (SELECT DISTINCT match_id FROM ktp_matches WHERE start_time >= '{since}') t
+      JOIN hlstats_Events_PlayerActions pa ON pa.match_id = t.match_id
+      JOIN hlstats_Actions a ON a.id = pa.actionId AND {voice}
+      UNION ALL
+      SELECT pa.id, pa.eventTime, h.match_id, a.code, pa.playerId
+      FROM hlstats_Actions a
+      STRAIGHT_JOIN hlstats_Events_PlayerActions pa FORCE INDEX (actionId)
+                    ON pa.actionId = a.id AND pa.match_id IS NULL
+      JOIN ktp_matches h ON h.server_id = pa.serverId AND pa.eventTime BETWEEN h.start_time AND h.end_time
+      WHERE {voice} AND h.start_time >= '{since}') p
 JOIN (SELECT match_id, MIN(match_type) AS match_type, MIN(start_time) AS start_time
-      FROM ktp_matches GROUP BY match_id) m ON m.match_id = pa.match_id
-JOIN hlstats_Players sp ON sp.playerId = pa.playerId
-LEFT JOIN hlstats_Events_Frags f
-       ON f.killerId = pa.playerId
-      AND f.eventTime BETWEEN pa.eventTime - INTERVAL {LOOKBACK} SECOND AND pa.eventTime
-LEFT JOIN hlstats_Players vp ON vp.playerId = f.victimId
+      FROM ktp_matches GROUP BY match_id) m ON m.match_id = p.match_id
+JOIN hlstats_Players sp ON sp.playerId = p.playerId
 WHERE m.start_time >= '{since}' AND m.match_type IS NOT NULL
-ORDER BY pa.eventTime, pa.id"""
+ORDER BY p.eventTime, p.id"""
+
+
+def frags_sql(floor: str, killers) -> str:
+    # One sequential pass over the table instead of an index probe per press. killerId is
+    # ignored as an index on purpose: it would fetch these speakers' all-time frags row by row.
+    ids = ",".join(str(int(k)) for k in sorted(killers))
+    return f"""
+SELECT f.id, f.killerId, IFNULL(f.victimId, ''), IFNULL(f.weapon, ''), f.eventTime
+FROM hlstats_Events_Frags f IGNORE INDEX (killerId)
+WHERE f.eventTime >= '{floor}' AND f.killerId IN ({ids})"""
+
+
+def names_sql(player_ids) -> str:
+    ids = ",".join(str(int(i)) for i in sorted(player_ids))
+    return f"SELECT playerId, IFNULL(lastName, '') FROM hlstats_Players WHERE playerId IN ({ids})"
+
+
+def _dt(s: str) -> datetime:
+    return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
+
+def frag_floor(press_rows: list[list[str]]) -> str | None:
+    """Earliest frag any press can reach: the first press minus the lookback."""
+    if not press_rows:
+        return None
+    first = min(_dt(r[1]) for r in press_rows)
+    return (first - timedelta(seconds=LOOKBACK)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def kill_rows(press_rows: list[list[str]], frag_rows: list[list[str]],
+              victim_names: dict[str, str]) -> list[list[str]]:
+    """The fan-out the old LEFT JOIN produced: one row per (press, own kill within LOOKBACK
+    seconds at or before it), or one row with empty kill fields when there is none."""
+    by_killer: dict[str, list[tuple[datetime, int, str, str]]] = defaultdict(list)
+    for fid, killer, victim, weapon, t in frag_rows:
+        by_killer[killer].append((_dt(t), int(fid), victim, weapon))
+    times: dict[str, list[datetime]] = {}
+    for killer, fs in by_killer.items():
+        fs.sort()
+        times[killer] = [f[0] for f in fs]
+    out = []
+    for pid, t, mid, mtype, code, spk, spk_name in press_rows:
+        pt = _dt(t)
+        fs = by_killer.get(spk, ())
+        cands = []
+        if fs:
+            i = bisect.bisect_left(times[spk], pt - timedelta(seconds=LOOKBACK))
+            while i < len(fs) and fs[i][0] <= pt:
+                cands.append(fs[i])
+                i += 1
+        if not cands:
+            out.append([pid, t, mid, mtype, code, spk, spk_name, "", "", "", ""])
+        for ft, _fid, victim, weapon in sorted(cands, key=lambda f: f[1]):
+            out.append([pid, t, mid, mtype, code, spk, spk_name, victim,
+                        victim_names.get(victim, ""), weapon, str(int((pt - ft).total_seconds()))])
+    return out
+
+
+def fetch_presses(since: str, db: str) -> list[list[str]]:
+    presses = q(presses_sql(since), db)
+    floor = frag_floor(presses)
+    if floor is None:
+        return []
+    frags = q(frags_sql(floor, {r[5] for r in presses}), db)
+    victims = {f[2] for f in frags if f[2] != ""}
+    names = {r[0]: "\t".join(r[1:]) for r in q(names_sql(victims), db)} if victims else {}
+    return kill_rows(presses, frags, names)
 
 
 def played_sql(since: str) -> str:
@@ -496,7 +572,7 @@ def main() -> int:
         raise SystemExit(f"--window {a.window} exceeds the {LOOKBACK} s lookback the query carries")
 
     rc = 0
-    events = distinct(nearest(q(presses_sql(a.since), a.db)))
+    events = distinct(nearest(fetch_presses(a.since, a.db)))
     capable = voice_capable_matches(q(manifests_sql(a.since), a.db))
     played = matches_played(q(played_sql(a.since), a.db), capable)
     names_note = ""

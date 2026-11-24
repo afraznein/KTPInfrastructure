@@ -17,9 +17,10 @@
 # running.
 #
 # THE CREDENTIAL SPLIT, WHICH IS THE POINT
-# The `collect` job runs on the self-hosted runner that already lives on the data
-# server. It reads /etc/ktp/audit-fleet.json, which is already there. No fleet
-# credential is stored in GitHub, and none needs to be.
+# The `collect` job runs on the `ktp-ops` self-hosted runner on the data
+# server, not the tier-2 runner that pull requests reach. It reads
+# /etc/ktp/audit-fleet.json, which is already there. No fleet credential is
+# stored in GitHub, and none needs to be.
 #
 # The `triage` job runs on a GitHub-hosted runner and has no fleet access at all.
 # Claude is given Read and Write and nothing else -- no Bash, no network, no
@@ -40,15 +41,31 @@
 #
 # TRIGGERS ARE DELIBERATELY NARROW
 # The self-hosted runner executes as root on the data server and can reach all
-# five game hosts. `pull_request` must never appear in this file -- a fork PR
-# would run attacker-controlled code there. Schedule and manual dispatch only.
+# five game hosts. `pull_request` must never appear in the `on:` block below --
+# a fork PR would run attacker-controlled code there. Schedule and manual
+# dispatch only. (Said that way on purpose: a checker that greps the whole file
+# for the token matches this very sentence, which is how one false alarm went.)
 #
-# RELATIONSHIP TO THE EXISTING CRON
-# Both run for now. This workflow uses its own state file so the two do not eat
-# each other's "new since last run" delta, and does NOT pass --alert-discord, so
-# it does not double-post: the cron keeps that job, and this workflow's only
-# Discord output is a one-line notice pointing at the issue. Retire the cron once
-# this has proven itself, then drop the -ci suffix below.
+# THE CRON IS GONE -- THIS WORKFLOW IS THE ONLY CALLER
+# Measured 2026-10-30: nothing under /etc/cron.d, cron.weekly, cron.daily,
+# /etc/crontab or root's spool references the fleet audit, against a control of 23
+# /etc/cron.d entries. This paragraph used to say "both run for now", and leaving
+# it that way cost real time twice: a reader who believes the cron still runs
+# weekly concludes a merged check needs installing on /opt/ktp-infra before it
+# takes effect, which was concluded for two separate merges. It does not -- the
+# checkout above is a fresh tree, so merged means running.
+#
+# The reason this workflow withholds --alert-discord has gone with the cron.
+# That flag is passed only by scripts/ktp-fleet-audit.sh, the wrapper the cron
+# ran, so nothing passes it anywhere now and there is no double-post left to
+# avoid. This workflow's one-line notice and the issue it points at are the whole
+# Discord output. Adding --alert-discord here is a real decision about alert
+# volume, not the cleanup this paragraph once implied.
+#
+# The -ci suffix on the state files below is kept deliberately. The retired
+# cron's own state file still sits beside them and is dated 2026-10-05; dropping
+# the suffix would start a fresh timeline under a name that implies continuity
+# with it.
 #
 # SETUP, BEFORE THE FIRST RUN
 #   1. `claude setup-token` locally, then store the result as the repository
@@ -93,7 +110,7 @@ concurrency:
 jobs:
   collect:
     name: Collect fleet state
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 20
     permissions:
       contents: read
@@ -275,11 +292,12 @@ jobs:
           # Overrunning --max-turns FAILS the job even when the triage was
           # written, and the publish step is skipped behind it: run
           # 34990174564 finished in 27 turns with is_error false and posted
-          # nothing. The real ceiling is this job's 20-minute timeout, and
-          # those 27 turns cost under five.
+          # nothing. Run 42955296706 did it again at 47 against a cap of 45.
+          # The real ceiling is this job's 20-minute timeout, so size the cap
+          # from that: that run spent about 11 seconds a turn.
           claude_args: |
             --model claude-opus-5
-            --max-turns 45
+            --max-turns 100
             --allowedTools "Read,Write"
           # Read and Write only. Claude cannot run a command, reach the network,
           # or touch GitHub -- it reads a report and writes a file. The step after
@@ -414,7 +432,7 @@ jobs:
     name: Discord notice
     needs: [collect, triage]
     if: needs.triage.outputs.issue_url != ''
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 5
     permissions: {}
     steps:
@@ -452,7 +470,7 @@ jobs:
       && (github.event_name == 'schedule' || inputs.dry_run == false)
       && (needs.collect.outputs.needs_triage != 'true'
       || (needs.triage.result == 'success' && needs.notify.result == 'success'))
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     timeout-minutes: 5
     permissions:
       contents: read

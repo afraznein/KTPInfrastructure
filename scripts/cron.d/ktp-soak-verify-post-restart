@@ -18,6 +18,10 @@
 #   - Any new RED: hash drift between hosts, missing-not-on-allowlist,
 #     or .new files lingering (the 2026-04-21 swap-script regression class).
 #
+# The suite runs ktp-verify-deploy --check-runtime. The rcon password is read at
+# run time from /home/dod/distribute/dodserver.cfg and passed to that child only;
+# if it cannot be read the disk checks still run, the soak posts RED and exits 5.
+#
 # Companion to /etc/cron.d/ktp-soak-verify-post-matchday (Mon 10:00 ET).
 
 SHELL=/bin/bash

@@ -21,6 +21,7 @@ file carries no credentials (the repository is public).
 
     hlstatsx-ingest-monitor.py [--db hlstatsx] [--since 90]
                                [--logs /path/to/dod/logs] [--quiet]
+                               [--gap-warn-max 2]
 """
 from __future__ import annotations
 
@@ -77,6 +78,40 @@ SETTLE_MINUTES = 10
 # so single-half matches get a longer settle instead: long enough that a real
 # halftime would have started h2, short enough to still report the abandoned one.
 SINGLE_HALF_SETTLE_MINUTES = 45
+# Nine halves between 2026-08-26 and 2026-10-24 received every marker the producer
+# sent and stored none of them. ktp-data-server-health.sh ALREADY pages on that --
+# `capture-half-loss` scored the 10-24 half at "100% of 5729 position events lost"
+# and took fourteen keys down at 19:17:09, the same hour the half ended. What no
+# surface carried was the CAUSE, nine times running, and the cause is one line of
+# arithmetic away: compare the half's own marker stamp against the ktp_matches
+# interval the daemon resolves it against. This check exists for that sentence.
+#
+# It is deliberately keyed on the half rather than the stream: the health script's
+# leg reports the worst (half, event_type) ratio, so one dead half arrives as
+# fourteen separate keys and the half-wide shape has to be reassembled by hand.
+#
+# Threshold measured over the whole ktp_capture_health history (1,713 half-groups,
+# 2026-08-31 to 2026-11-04): 1,704 groups lose no stream outright, exactly ONE
+# loses a single stream, and the remaining eight lose 4, 5, 5, 10, 11, 12, 12 and
+# 13. The gap between 1 and 4 is the signal. The lone 1-stream group is a
+# one-second boundary race -- a team_membership marker stamped 22:38:05 against an
+# interval closed at 22:38:04, one event -- and paging on that trains the reader to
+# ignore the finding that matters. Two is the floor with a 2x margin either side.
+CAPTURE_LOSS_MIN_STREAMS = 2
+# A half whose start the daemon stamped late rejects its own go-live snapshot --
+# 12 life + 12 position + 5 flag rows on a 12-player, 5-flag map -- as "found 0
+# event-time match intervals", and only that. More rows or more streams than one
+# snapshot is a backlog large enough to have cost more than the snapshot: on
+# 2026-11-10 the 25 s one cost 282 rows over 12 streams and dropped frags beside it.
+# Interim until the producer's KTP_MATCH_START carries its own event_epoch.
+FOUND0_REASON = "found 0 event-time match intervals"
+FOUND0_MAX_ROWS = 50
+FOUND0_MAX_STREAMS = 3
+# frag_context and damage are the streams a lost UDP line cannot be re-derived for;
+# sequence_gap_count is the gaps still open when the health row was written.
+GAP_STREAMS = ("frag_context", "damage")
+# A stray event or two per half is ordinary UDP intake loss; a backlog loses dozens.
+GAP_WARN_MAX = 2
 # A match is finished when every half has an end_time and the last one has
 # settled -- and, if only one half exists, when that longer settle has passed.
 FINISHED = """
@@ -231,6 +266,166 @@ def check_half_ratio(db: str, since: int, findings: list[str]) -> None:
             % (mid, k1, s1, r1, k2, s2, r2, 100.0 * r2 / r1))
 
 
+def check_capture_total_loss(db: str, since: int, findings: list[str]) -> None:
+    """Halves where the capture streams received everything and kept nothing.
+
+    `daemon_rejected == daemon_received` with a non-zero receive means the daemon
+    saw every marker the producer sent and wrote none of them. Both known causes
+    are the same mechanism: `doEvent_KTPMatchStart` upserts `ktp_matches` on
+    (match_id, half) and only ever fills a NULL match_type, so a (match_id, half)
+    that comes round twice keeps the FIRST interval's start_time and end_time.
+    `ktpResolveProducerEventContext` then finds no interval containing the half's
+    own event epochs, and every event-time-gated stream drops with
+    "found 0 event-time match intervals". Seen two ways on the fleet: a reused
+    match_id (a captain typing ".confirm" at the 1.3 Queue ID prompt made
+    `1.3-confirm-NY1`, an id an earlier match on that instance already owned eight
+    months before -- refused since KTPMatchHandler 0.10.180, which is fielded) and a
+    half replayed after its own interval was closed, which nothing refuses: the
+    upsert cannot reopen a closed interval, so the second run of a (match_id, half)
+    is still lost today. Nothing here tells the two apart -- both stamp after their
+    own interval and take the same branch below -- so a hit is not evidence that
+    the refused shape has returned.
+
+    No settle window, unlike the summary checks: a health row records a rejection
+    that has already happened, so a half still being written can only under-count.
+    Both ktp_capture_health and ktp_matches are ktp_* tables, so this join needs no
+    explicit collation -- COLL is for the upstream hlstats_Events_* family.
+    """
+    rows = q(db, """
+        SELECT h.server_id, h.match_id, h.half,
+               SUM(h.daemon_received > 0 AND h.daemon_rejected = h.daemon_received) lost,
+               COUNT(*) streams,
+               SUM(CASE WHEN h.daemon_received > 0
+                         AND h.daemon_rejected = h.daemon_received
+                        THEN h.daemon_rejected ELSE 0 END) events_lost,
+               FROM_UNIXTIME(MIN(h.event_epoch)) marker_stamp,
+               IFNULL(MAX(m.start_time), '') iv_start,
+               IFNULL(MAX(m.end_time), '') iv_end,
+               IFNULL(MAX(m.id IS NOT NULL), 0) iv_present
+        FROM ktp_capture_health h
+        LEFT JOIN ktp_matches m
+               ON m.match_id = h.match_id AND m.half = h.half
+              AND m.server_id = h.server_id
+        WHERE h.event_time > NOW() - INTERVAL %d MINUTE
+        GROUP BY h.server_id, h.match_id, h.half
+        HAVING lost >= %d
+        ORDER BY marker_stamp
+    """ % (int(since), CAPTURE_LOSS_MIN_STREAMS))
+    for sid, mid, half, lost, streams, events, stamp, iv_start, iv_end, iv_present in rows:
+        # The HAVING above is for the server's benefit; this is the floor itself,
+        # off the same constant, so the threshold is exercised rather than asserted
+        # as a string in a test that cannot run the query.
+        if int(lost) < CAPTURE_LOSS_MIN_STREAMS:
+            continue
+        if not int(iv_present):
+            why = ("There is no ktp_matches row for that (server, match, half) at "
+                   "all, so no interval can contain the half.")
+        elif stamp < iv_start:
+            why = ("The half's own markers are stamped %s but its ktp_matches "
+                   "interval starts %s -- the interval belongs to a later run of "
+                   "the same (match_id, half)." % (stamp, iv_start))
+        elif iv_end and stamp > iv_end:
+            why = ("The half's own markers are stamped %s but its ktp_matches "
+                   "interval is %s..%s -- the interval belongs to an earlier run "
+                   "of the same (match_id, half), and the upsert on (match_id, "
+                   "half) never refreshed it." % (stamp, iv_start, iv_end))
+        else:
+            why = ("The ktp_matches interval %s..%s does contain the markers "
+                   "(stamped %s), so this is NOT the stale-interval shape -- read "
+                   "rejection_reasons on these rows before assuming a cause."
+                   % (iv_start, iv_end or "open", stamp))
+        findings.append(
+            "capture TOTAL LOSS: %s h%s on server %s -- %s of %s streams rejected "
+            "every event they received, %s events discarded. %s Nothing downstream "
+            "of ktp_capture_health can tell this half from one that was never "
+            "played." % (mid, half, sid, lost, streams, events, why))
+
+
+def found0_count(reasons: str) -> int:
+    """Rows a rejection_reasons string attributes to FOUND0_REASON.
+
+    The column is `reason=count;reason=count`, most frequent first, with `=` and
+    `;` scrubbed out of each reason, so a reason never splits. It is truncated at
+    255 characters, so this is a floor, never an overcount.
+    """
+    total = 0
+    for part in (reasons or "").split(";"):
+        reason, sep, count = part.rpartition("=")
+        if sep and FOUND0_REASON in reason and count.isdigit():
+            total += int(count)
+    return total
+
+
+def check_capture_partial_rejection(db: str, since: int, findings: list[str]) -> None:
+    """Halves that rejected more than one go-live snapshot as outside their interval.
+
+    The total-loss check needs whole streams lost; a half stamped late by an ingest
+    backlog loses only its first rows on each stream and stays under it. Halves
+    that ARE a total loss are left to that check, so one half is not reported twice.
+    """
+    rows = q(db, """
+        SELECT server_id, match_id, half, event_type, rejection_reasons,
+               (daemon_received > 0 AND daemon_rejected = daemon_received) lost
+        FROM ktp_capture_health
+        WHERE event_time > NOW() - INTERVAL %d MINUTE
+          AND rejection_reasons LIKE '%%%s%%'
+    """ % (int(since), FOUND0_REASON))
+    halves: dict[tuple[str, str, str], dict] = {}
+    for sid, mid, half, etype, reasons, lost in rows:
+        n = found0_count(reasons)
+        if n <= 0:
+            continue
+        h = halves.setdefault((sid, mid, half), {"rows": 0, "streams": set(), "lost": 0})
+        h["rows"] += n
+        h["streams"].add(etype)
+        h["lost"] += int(lost)
+    for (sid, mid, half), h in sorted(halves.items()):
+        if h["lost"] >= CAPTURE_LOSS_MIN_STREAMS:
+            continue
+        if h["rows"] <= FOUND0_MAX_ROWS and len(h["streams"]) <= FOUND0_MAX_STREAMS:
+            continue
+        findings.append(
+            "capture PARTIAL LOSS: %s h%s on server %s -- %d rows over %d streams (%s) "
+            "rejected as \"%s\", more than one go-live snapshot (>%d rows or >%d "
+            "streams). The usual cause is the daemon stamping the half's start late "
+            "behind an ingest backlog; compare the game log's KTP_MATCH_START time "
+            "with ktp_matches.start_time, and check frag/damage sequence gaps for "
+            "the same half." % (mid, half, sid, h["rows"], len(h["streams"]),
+                                 ",".join(sorted(h["streams"])), FOUND0_REASON,
+                                 FOUND0_MAX_ROWS, FOUND0_MAX_STREAMS))
+
+
+def check_capture_sequence_gaps(db: str, since: int, findings: list[str],
+                                warnings: list[str], warn_max: int = GAP_WARN_MAX) -> None:
+    """frag_context or damage events the producer emitted and the daemon never got.
+
+    A gap of at most warn_max events on a (half, stream) is a warning; more pages.
+    """
+    rows = q(db, """
+        SELECT server_id, match_id, half, event_type, sequence_gap_count,
+               emitted, daemon_received
+        FROM ktp_capture_health
+        WHERE event_time > NOW() - INTERVAL %d MINUTE
+          AND event_type IN (%s)
+          AND sequence_gap_count > 0
+        ORDER BY server_id, match_id, half, event_type
+    """ % (int(since), ", ".join("'%s'" % t for t in GAP_STREAMS)))
+    for sid, mid, half, etype, gaps, emitted, received in rows:
+        if int(gaps) <= 0:
+            continue
+        if int(gaps) <= warn_max:
+            warnings.append(
+                "capture sequence gap (small, not paged): %s h%s on server %s -- %s has "
+                "%s open gap(s), %s emitted / %s received" % (mid, half, sid, etype, gaps,
+                                                             emitted, received))
+            continue
+        findings.append(
+            "capture SEQUENCE GAP: %s h%s on server %s -- %s still has %s open "
+            "gap(s), %s emitted / %s received. Those events never reached the "
+            "daemon (UDP intake loss), and the backlog that drops them usually "
+            "drops kill lines too -- check hlstats_Events_Frags for this half." % (mid, half, sid, etype, gaps, emitted, received))
+
+
 def check_unresolved_actions(findings: list[str], info: list[str]) -> None:
     """Read the daemon's own health line. Silent unless it has something to say."""
     out = subprocess.run(
@@ -348,16 +543,23 @@ def main() -> int:
     ap.add_argument("--since", type=int, default=90, help="minutes to look back (default 90)")
     ap.add_argument("--logs", help="game log directory; enables log-vs-database checking "
                                    "(LAN deploys, where servers and daemon share a host)")
-    ap.add_argument("--quiet", action="store_true", help="print only findings")
+    ap.add_argument("--quiet", action="store_true", help="print only findings and warnings")
+    ap.add_argument("--gap-warn-max", type=int, default=GAP_WARN_MAX,
+                    help="largest per-half sequence gap that warns instead of paging "
+                         "(default %d)" % GAP_WARN_MAX)
     args = ap.parse_args()
 
     findings: list[str] = []
     info: list[str] = []
+    warnings: list[str] = []
 
     check_udp_drops(findings, info)
     check_missing_halves(args.db, args.since, findings)
     check_aggregate_vs_events(args.db, args.since, findings, info)
     check_half_ratio(args.db, args.since, findings)
+    check_capture_total_loss(args.db, args.since, findings)
+    check_capture_partial_rejection(args.db, args.since, findings)
+    check_capture_sequence_gaps(args.db, args.since, findings, warnings, args.gap_warn_max)
     check_unresolved_actions(findings, info)
     if args.logs:
         check_logs_against_db(args.db, args.logs, args.since, findings)
@@ -365,13 +567,17 @@ def main() -> int:
     if not args.quiet:
         for line in info:
             print("  %s" % line)
+    # Printed even under --quiet: a warning is worth seeing, just not worth a page.
+    for w in warnings:
+        print("  ?? %s" % w)
     if findings:
         print("HLStatsX ingest: %d finding(s) in the last %d minutes" % (len(findings), args.since))
         for f in findings:
             print("  !! %s" % f)
         return 1
     if not args.quiet:
-        print("HLStatsX ingest: clean over the last %d minutes" % args.since)
+        print("HLStatsX ingest: clean over the last %d minutes%s"
+              % (args.since, " (%d warning(s))" % len(warnings) if warnings else ""))
     return 0
 
 

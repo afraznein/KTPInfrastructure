@@ -2,10 +2,10 @@
 # KTP HLTV Demo Retention
 #
 # Tiered retention per match-type:
-#   ktp/     180 days   (league matches — long archive)
+#   ktp/     kept permanently (official league matches — never retired, by ruling)
 #   draft/   180 days   (draft matches — long archive)
-#   12man/    90 days   (pickup games — shorter)
-#   scrim/    90 days   (scrims — shorter)
+#   12man/    30 days   (pickup games — shorter)
+#   scrim/    30 days   (scrims — shorter)
 #
 # Modes:
 #   delete   (default) — delete .dem files past their per-type retention
@@ -47,14 +47,14 @@ MODE="${1:-delete}"
 # irreplaceable one-off recordings that happen to use the same ktp/draft/12man/
 # scrim subdir names, so the per-subdir patterns below match them by accident.
 # Without this guard the Philly 2026 set would vanish from the web tree at the
-# 90/180-day marks with no warning.
+# 30/180-day marks with no warning.
 # Per-subdir retention (days). Anything not listed here is NOT touched —
 # intentionally conservative: a new match-type must be explicitly enrolled.
+# ktp/ is deliberately absent: official match demos are kept permanently.
 declare -A RETENTION=(
-    [ktp]=180
     [draft]=180
-    [12man]=90
-    [scrim]=90
+    [12man]=30
+    [scrim]=30
 )
 
 # Discord channels for preview alerts
@@ -249,7 +249,8 @@ run_preview() {
     local any=0 failures=0
     local -a rows=()
 
-    for subdir in ktp draft 12man scrim; do
+    for subdir in draft 12man scrim; do
+        [ -n "${RETENTION[$subdir]+set}" ] || continue
         local days=${RETENTION[$subdir]}
         local warn_min=$((days - PREVIEW_WINDOW_DAYS - 1))
         local warn_maxexc=$((days + 1))

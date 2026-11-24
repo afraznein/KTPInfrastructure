@@ -6,9 +6,14 @@
 > the last 80 merges went straight to `main` already. The tip is preserved as the tag
 > `archive/preprod-retired-20260919` (`08ccdfaf`).
 >
-> ⚠️ **The policy below still applies to KTPAMXX, KTPMatchHandler and KTPHLStatsX**, whose
-> `preprod` branches are live and genuinely diverged from their `main`. Read every paragraph
-> that follows as being about those repositories, not this one.
+> ⚠️ **The policy below still applies to whichever component repositories still keep
+> `preprod`.** Read every paragraph that follows as being about those, not this one.
+>
+> ⛔ **Do not read the repository names below as a live list.** Two of the three this
+> banner used to name had already lost the branch by 2026-11-06. Derive it per repository:
+> `git -C <repo> ls-remote --exit-code --heads origin preprod` — **exit 0 present, exit 2
+> gone** — carrying `main` as a positive control, because a wrong remote or a typo also
+> answers 2.
 >
 > 🔑 One consequence worth carrying, because it is what made the retirement a three-repo
 > change rather than a branch delete: `preprod` was not only a merge route, it was a **harness
@@ -93,8 +98,13 @@ as of this date:
 - `KTPMatchHandler`
 
 **Stale as of 2026-08-26 ET** — see "Access blockers resolved" below.
-`andsmit9` now has write access to three more repositories, and all three now
-carry `preprod`, so the live count is eight, not five.
+`andsmit9` gained write access to three more repositories, and at that time all
+three carried `preprod`.
+
+⛔ **Do not carry the count forward.** It was eight when that line was written, and
+the branches have been retired one repository at a time since — so any number printed
+here is wrong by the time it is read. Count it when you need it, with the
+per-repository `ls-remote` in the banner above.
 
 KTPInfrastructure `preprod` contains:
 

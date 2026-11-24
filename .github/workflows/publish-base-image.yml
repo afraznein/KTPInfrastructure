@@ -35,7 +35,9 @@ permissions:
 jobs:
   publish:
     name: Build + push ktp-runtime-test-base
-    runs-on: ubuntu-latest
+    # Not ubuntu-latest: that label moved to 26.04, whose docker 29.4.2 refuses the
+    # i386 socketcall syscall, so steamcmd inside the image build reports itself offline.
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     env:
@@ -58,6 +60,8 @@ jobs:
           repository: ${{ github.repository_owner }}/KTP-ReHLDS
           path: KTPReHLDS
           token: ${{ secrets.KTP_CHECKOUT_TOKEN || github.token }}
+          # The engine's build number is the commit count, so appversion refuses a shallow clone.
+          fetch-depth: 0
 
       - name: Checkout KTPAMXX (with submodules — public/amtl)
         uses: actions/checkout@v6
@@ -163,6 +167,18 @@ jobs:
         run: |
           export KTP_PROJECT_ROOT="$(cd .. && pwd)"
           make build VERSION="$VERSION"
+
+      # docker 29.4.2's default seccomp profile blocks socketcall(2), so every
+      # 32-bit network call in a RUN step fails with ENOSYS. steamcmd turns that into
+      # "needs to be online to update" three minutes in; this says what it is up front.
+      - name: Check the runner's docker can run 32-bit network code
+        run: |
+          v="$(docker version -f '{{.Server.Version}}')"
+          echo "runner docker server: $v, kernel $(uname -r)"
+          if [ "$v" = "29.4.2" ]; then
+            echo "::error::docker $v blocks socketcall(2) for i386; steamcmd cannot reach Steam inside the build. Use a runner with docker <29.4.2 or >=29.4.3."
+            exit 1
+          fi
 
       # --- Build the runtime image with our just-built artifacts.
       - name: Build runtime image

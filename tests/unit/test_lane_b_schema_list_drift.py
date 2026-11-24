@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from tests.e2e_stats import artifacts  # noqa: E402
+from tests.source_anchors import HASH, code_text  # noqa: E402
 
 WORKFLOW = REPO / ".github" / "workflows" / "lane-b-stats-e2e.yml"
 
@@ -51,11 +52,14 @@ def _expansion_problems(text: str) -> list[str]:
     problems = [f"--schema block {i} does not apply {_EXPANSION}"
                 for i, block in enumerate(_schema_blocks(text))
                 if _EXPANSION not in block]
-    for step in _schema_steps(text):
-        name = step.splitlines()[0]
+    for raw in _schema_steps(text):
+        name = raw.splitlines()[0]
+        # A `#` note mentioning either anchor is not the step doing it, and a
+        # second `--schema` in the step makes "after" a claim about which one.
+        step = code_text(raw, flavour=HASH, origin=f"lane-b-stats-e2e.yml:{name}")
         if _READ not in step:
             problems.append(f"step {name!r} never reads the builder's list")
-        elif step.index(_READ) > step.index("--schema"):
+        elif min(step.occurrences(_READ)) > min(step.occurrences("--schema")):
             problems.append(f"step {name!r} reads the builder's list after using it")
     return problems
 

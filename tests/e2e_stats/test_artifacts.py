@@ -181,6 +181,9 @@ def daemon_repo(tmp_path):
         (49, "voice_menu_actions"),
         (50, "shot_rewind_shift"),
         (51, "own_weapon_kill_action"),
+        (52, "shot_miss_events"),
+        (53, "move_census_prefix_label"),
+        (54, "causal_parent_links"),
     ):
         (repo / "sql" / f"migrate_{number:03d}_{name}.sql").write_text(
             f"-- migration {number}\n")
@@ -269,6 +272,9 @@ def test_default_schema_sequence_includes_retention_through_shot_events():
         "sql/migrate_049_voice_menu_actions.sql",
         "sql/migrate_050_shot_rewind_shift.sql",
         "sql/migrate_051_own_weapon_kill_action.sql",
+        "sql/migrate_052_shot_miss_events.sql",
+        "sql/migrate_053_move_census_prefix_label.sql",
+        "sql/migrate_054_causal_parent_links.sql",
     )
     assert DEFAULT_SCHEMA_FILES[-len(expected):] == expected
 

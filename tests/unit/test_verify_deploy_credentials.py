@@ -91,6 +91,35 @@ def test_the_credential_refusal_does_not_take_the_freshness_guards_code(vd) -> N
     assert vd.EXIT_NO_CREDENTIAL != vd.EXIT_FRESHNESS_REFUSED
 
 
+def test_the_exit_code_table_reaches_help(vd) -> None:
+    """Distinct codes are worth nothing to a caller who has to open the file to
+    learn them. `--help` showed the docstring's FIRST PARAGRAPH only, so the
+    table lived where only a reader of the source would meet it."""
+    out = subprocess.run([sys.executable, str(SCRIPT), "--help"],
+                         capture_output=True, text=True, check=True).stdout
+    assert "Exit codes" in out
+    for code in (vd.EXIT_NOT_GREEN, vd.EXIT_FATAL,
+                 vd.EXIT_FRESHNESS_REFUSED, vd.EXIT_NO_CREDENTIAL):
+        assert f"\n  {code}  " in out, f"exit code {code} is not documented in --help"
+    assert "refused before starting" in out
+    # The discriminator: the first paragraph was in the truncated help too, so
+    # asserting on it alone would pass against the bug.
+    assert "Tier 2 first cut" in out
+
+
+def test_the_docstring_stays_printable_on_a_single_byte_console() -> None:
+    """It is now the help text, and this script is run from the Windows
+    workstation as well as the fleet. A `->` in it raised UnicodeEncodeError
+    under a cp1252 stdout and `--help` died with a traceback instead of
+    printing -- on Linux CI it passes either way, so only this catches it."""
+    doc = SCRIPT.read_text(encoding="utf-8").split('"""')[1]
+    offenders = sorted({ch for ch in doc if ord(ch) > 127})
+    assert offenders == [], f"non-ASCII in the help text: {offenders}"
+    # Control: the whole FILE still has non-ASCII elsewhere, so an empty result
+    # above is about the docstring and not about a probe that reads nothing.
+    assert any(ord(ch) > 127 for ch in SCRIPT.read_text(encoding="utf-8"))
+
+
 def test_home_redirection_is_live(vd, tmp_path) -> None:
     """The fixture's silence would prove nothing if `~` resolved nowhere. Write
     the dotfile the resolver looks for and require it to be found."""

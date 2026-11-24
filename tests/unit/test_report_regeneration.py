@@ -69,9 +69,10 @@ def test_only_manual_dispatch_triggers_it():
     assert "github.ref == 'refs/heads/main'" in _wf()
 
 
-def test_runs_on_the_tier2_runner_against_the_reports_checkout():
+def test_runs_on_the_ops_runner_against_the_reports_checkout():
     wf = _wf()
-    assert "runs-on: [self-hosted, ktp-tier2]" in wf
+    assert "runs-on: [self-hosted, ktp-ops]" in wf
+    assert "ktp-tier2]" not in wf
     assert "REPORTS_REPO: /opt/ktp-reports/KTPInfrastructure" in wf
     assert "REPORTS_USER: ktpreports" in wf
     assert "/opt/ktp-infra" not in wf

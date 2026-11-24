@@ -26,7 +26,7 @@ after the outage rather than before it:
 | 2026-08-25 | `hltv-demo-renamer` wedged on a half-open SSH session and sat `active` | 53h; every match demo in the window went unrenamed and was purged |
 | 2026-07-22 | LinuxGSM `command_monitor.sh` stopped parsing on the LAN box; monitor exited 2 every minute, silently | 9 days, including a 3h outage monitor sat through |
 | 2026-08-12 | `ktp-render-banlist` ran every minute and failed every minute, keeping its exit timestamp fresh | Until the three-legged check was added |
-| 2026-09-08→22 | Six AC evidence bundles were lost to aborted uploads; nginx logs the cause at `info`, below the default `error` level, so `api.ktpdod.com.error.log` has been 0 bytes since 2026-07-18 | The whole fortnight — found by reading the access log, not by an alert |
+| 2026-09-08→22 | Six AC evidence bundle uploads aborted before the API saw them ("lost" as seen at the abort: the client's retry queue, `PendingUploadStore`, already re-offered a dropped upload at next login, and whether these six arrived later was not checked); nginx logs the cause at `info`, below the default `error` level, so `api.ktpdod.com.error.log` has been 0 bytes since 2026-07-18 | The whole fortnight — found by reading the access log, not by an alert |
 | 2026-10-07 | A match-half had 100% of eleven event types rejected. `capture-loss` was watching, running hourly, and silent: it averages a flat 24 hours, so the dead half landed under its 5% warn | Found by an evidence pass over the rows, not by the alert built for exactly this |
 | 2026-10-12 | `ktp-weekly-outliers.service` exited `203/EXEC` — systemd could not execute the wrapper its `ExecStart` names, because the wrapper was never installed. `OnFailure` fired, into the channel this board rules EXPECTED; and the health sweep's ignore entry for that unit matched on the unit NAME, so it accepted an exec failure exactly as it accepts the by-design exit 1 | A week's report. Both alarms worked and both were muffled by design; found by hand |
 
@@ -170,7 +170,7 @@ that never "failed", and alerts on state transitions only.
 | `hltv-restart.service` | yes | no | yes |
 | `ktp-identity-reconcile.service` | yes | no | yes |
 | `ktp-hlstatsx-ingest-monitor.service` | yes | no | yes |
-| `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery (the embed carries the top rows from stdout); the report is at `/var/lib/ktp-weekly-outliers/latest.md`. The unit then sits `failed` until next Monday, which is the finding, not a fault — it is in the health sweep's `FAILED_UNIT_IGNORE` for that reason (added 2026-10-10 after six days of re-reports) |
+| `ktp-weekly-outliers.service` | yes | no | by design: exit 1 means a player-half scored at or above `--alert-z` this week, so the Monday alert IS the report's delivery (the embed carries the top rows from stdout); the report is at `/var/lib/ktp-weekly-outliers/latest.md`. The unit then sits `failed` until next Monday, which is the finding, not a fault — it is in the health sweep's `FAILED_UNIT_IGNORE_EXIT` at `=1` for that reason (added 2026-10-10 after six days of re-reports). ⛔ **Not the name-only `FAILED_UNIT_IGNORE`, which is empty and must stay empty for this unit:** a name glob accepts every way it can fail, and that is exactly how the `203/EXEC` above went unreported. So **`systemctl --failed` naming this one unit is the expected steady state for six days out of seven, and an empty `--failed` on a Monday that found outliers would be the surprise** |
 | `ktp-voice-taunts.service` | yes | no | a failing run alerts; there is no alert exit, the file is the product |
 | `ktp-own-weapon-kills.service` | yes | no | a failing run alerts; exit 3 = only the public snapshot upsert failed (the file is still written) |
 | `ktp-reports.service` | yes, once the unit from `systemd/` is reinstalled; the live unit has none | no | a failing run alerts; `ktp-reports.timer` is not in `CRITICAL_TIMERS`, so a timer that stops firing does not. The journal only says `exit-code`; the cause is in `/var/log/ktp-report-service.log` |
@@ -208,14 +208,15 @@ document, which is how four of them sat here unlisted until 2026-10-12.
 | `ktp-hlstatsx-ingest-monitor.timer` | yes (2026-09-16) | ingest monitoring stops silently |
 | `ktp-weekly-outliers.timer` | yes (2026-10-05) | the weekly outlier report stops and nobody notices until someone asks why Monday was quiet |
 | `ktp-voice-taunts.timer` | yes (2026-10-23) | the nightly voice-taunt report stops; `latest.md` keeps yesterday's numbers and reads as current |
-| `ktp-own-weapon-kills.timer` | yes (2026-10-31) | the nightly own-weapon kill report stops; the public page keeps yesterday's snapshot and reads as current |
+| `ktp-own-weapon-kills.timer` | yes (2026-10-31) | the nightly own-weapon kill report stops; the public page keeps yesterday's snapshot and reads as current. A failing RUN alerts (`OnFailure=` via `dropins/ktp-own-weapon-kills.service.d/`); exit 3 means only the website upsert failed: the dated markdown is still written and the unit still fails, so the alert fires. ⚠️ **The report script is `/usr/local/bin/own_weapon_kills.py`, with an underscore and no `ktp-` prefix** — a probe for `ktp-own-weapon-kills*` in `/usr/local/bin` finds nothing and reads as *script absent* while it is installed. ⚠️ **Enable the timer before (or with) the health-script install that carries this entry.** A disabled or absent timer fails the `active` **and** `enabled` leg, but the health check alerts on a CHANGE of state, so that order mistake costs one alert and then a standing entry in the *currently down* list — not an hourly page. ➡️ **Settle it on the box:** `systemctl show ktp-own-weapon-kills.timer -p LoadState -p UnitFileState -p ActiveState`, and `grep -c own-weapon-kills /usr/local/bin/ktp-data-server-health.sh` for whether the deployed health script carries the entry. |
 | `ktp-stats-export.timer` | yes (2026-09-16) | exports stop; last file stays in place and reads healthy |
 | `ktp-corpus-push.timer` / `-denver` | yes (2026-09-16) | corpus pushes stop silently |
 | `ktp-roster-history-audit.timer` | yes (2026-09-16) | audit stops silently |
 | `ktp-identity-reconcile.timer` | yes (2026-09-16) | the *service* has `OnFailure=`, so a failing run alerts; a timer that stops firing does not |
-| `ktp-install-freshness.timer` | yes (2026-10-13) | nothing reports that the box has drifted from the repo — and the drift this job exists to find is itself silent, so a stopped timer and a clean estate produce the same output. A failing RUN alerts (`OnFailure=` via `dropins/ktp-install-freshness.service.d/`), and `SuccessExitStatus=0` only, so a drift finding is a failure by design. 🔴 **THIS ROW IS THE ONE PLACE TO READ BEFORE TRUSTING THAT LIST: the entry names a unit this repo marks `⛔ NOT INSTALLED OR ENABLED — proposal` on the timer's own first line.** The `CRITICAL_TIMERS` leg flags anything that is not `active` **and** `enabled`, so an entry for a unit nobody installed is an hourly page that can never clear by itself — the one failure mode that trains a reader to skim this report. ➡️ **Settle it on the box, not here:** `systemctl cat ktp-install-freshness.timer` (`show` on a nonexistent unit answers like a stopped one), then `grep -c 'ktp-install-freshness' /var/lib/ktp-data-server-health.json`. ⚠️ The entry was added *so the units could be installed* — the runbook rule below requires a timer and its entry in one change, and the entry went first, which is the rule met in the order that leaves this gap |
+| `ktp-install-freshness.timer` | yes (2026-10-13) | nothing reports that the box has drifted from the repo — and the drift this job exists to find is itself silent, so a stopped timer and a clean estate produce the same output. A failing RUN alerts (`OnFailure=` via `dropins/ktp-install-freshness.service.d/`), and `SuccessExitStatus=0` only, so a drift finding is a failure by design. 🔻 **SETTLED ON THE BOX 2026-11-07, AND THERE IS NO PAGE: the timer is `loaded`, `enabled` and `active`**, last run Fri 2026-11-06 06:24:52 EST, next elapse Sat 2026-11-07 06:24:59 EST, and its service `Finished` cleanly. ⛔ **The stale side was the REPO, not the box** — `scripts/systemd/ktp-install-freshness.timer` carried `⛔ NOT INSTALLED OR ENABLED — proposal` on its own first line while its `.service` twin next to it said `✅ LIVE: installed and enabled`, so the pair contradicted itself and this row was built on the wrong half. Corrected in the same change. 🔑 **`scripts/ktp-install-freshness.sh` already recorded that this exact header *“said NOT INSTALLED OR ENABLED for weeks after it was turned on”* — it rotted a second time, which is why the remedy here is the derivation below rather than another corrected sentence.** ⚠️ **The hazard the row describes is real and unchanged in shape:** the `CRITICAL_TIMERS` leg flags anything that is not `active` **and** `enabled`, so an entry for a unit nobody installed is an hourly page that can never clear by itself — the one failure mode that trains a reader to skim this report. ➡️ **So settle it on the box, never from a header here:** `systemctl cat ktp-install-freshness.timer` (`show` on a nonexistent unit answers like a stopped one), then `systemctl show ktp-install-freshness.timer -p LoadState -p UnitFileState -p ActiveState --value` and `grep -c 'ktp-install-freshness' /var/lib/ktp-data-server-health.json`. ⚠️ The entry was added *so the units could be installed* — the runbook rule below requires a timer and its entry in one change, and the entry went first, which is the rule met in the order that leaves this gap |
 | `ktp-map-coefficients.timer` | yes (2026-10-14) | the weekly refit stops, in the quietest way available: it only ever PROPOSES, never writing to `main`, so the committed coefficient table stays put and keeps serving — indistinguishable from "the maps have not changed". The 2026-10-14 dry run is the measure: after weeks unfitted it proposed 13 changes, one of them a map whose alive coefficient had halved. ⚠️ **No `OnFailure=`** — no unit-level directive and no drop-in under `scripts/systemd/dropins/`, against `ktp-stats-export.service.d/` as a control that has one — so a failing run reaches only the hourly sweep's generic `failed-unit:` leg, which covers it purely because a weekly oneshot sits `failed` long enough to be sampled. `TimeoutStartSec=3h`, `Mon 14:00 UTC` |
 | `ktp-monday-reminder.timer` | **no** | reminder stops; human-visible |
+| `ktp-migrations-applied-check.timer` | **no** — on purpose, it ships uninstalled | the daily AC migrations-applied check stops and a stale migration ledger goes unnoticed again. Watched by its success stamp instead: `ktp-data-server-health.sh` leg `ktp-migrations-applied-check` pages on a missing or two-day-old `last-checked` once the timer file is installed. A finding or a could-not-check fails the run, which alerts through `OnFailure=` via `dropins/ktp-migrations-applied-check.service.d/`. [`MIGRATIONS_APPLIED_CHECK.md`](MIGRATIONS_APPLIED_CHECK.md) |
 | `ktp-reports.timer` | **no** | report regeneration stops; the last files stay in place and read current. A failing RUN alerts (`OnFailure=` present) — the journal only says `exit-code`, and the cause is in `/var/log/ktp-report-service.log`. Fires at `:04,:19,:34,:49` |
 | `ktp-telemetry-export.timer` | **no** | the baseline export stops; the last baseline stays in place and reads current, so the site's telemetry page goes stale with no error. A failing RUN alerts (`OnFailure=` present). Hourly at `:40` |
 | `ktp-ac-flagged-payload-retention.timer` | **no** | the weekly flagged-payload sweep stops, so payloads are retained past their window — the direction that keeps evidence rather than losing it, which is why this is the least urgent of the four. ⚠️ **No `OnFailure=`** (measured 2026-10-12, against `ktp-stats-export.service` as a control that has one), so a failing run is caught only by the hourly sweep's generic `failed-unit:` leg — and only because it is weekly, so the oneshot sits `failed` long enough to be seen. `Sun 05:30` ET |
@@ -253,6 +254,14 @@ failing run from a stopped timer:** the hourly health sweep's generic `failed-un
 reports any unit left in `failed` state (`FAILED_UNIT_IGNORE` is empty by default and is
 empty on the box). It catches a oneshot whose failure PERSISTS — so it covers the weekly
 sweep and not a 60-second one.
+✅ **A fourth, since 2026-11-12: run-record age.** Units wrapped by
+`ktp-run-record.sh` are aged by the same sweep on their newest `runs/*` file, and
+`ktp-identity-reconcile` on its own runner's `reports/*`
+(`<unit>-run-record=stale` / `unfinished` / `none`; table and thresholds in
+[`UNIT_RUN_RECORDS.md`](UNIT_RUN_RECORDS.md) § Who reads the records). It sees what
+the other three cannot: a run SIGKILLed past its timeout, and a unit that stopped
+being run while its timer is outside `CRITICAL_TIMERS` — `ktp-telemetry-export` is
+one, so for that unit this is the only stopped-running leg.
 
 ⛔ **`ktp-monday-reminder.timer` is the only one deliberately left out** — a reminder that
 fails to arrive is noticed by the people expecting it. 🔻 **That sentence used to read
@@ -265,7 +274,7 @@ Cron-scheduled work is outside both mechanisms entirely:
 
 | Job | Watched by |
 |---|---|
-| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing on the box — `KTPAdminBot`#21's stale-state field (merged, not deployed) covers it in minutes, the weekly audit gate (2026-09-18) in days |
+| `ktp-data-server-health` (hourly) | **the next run of itself**, via the run ledger (2026-09-17): an aborted or missed run becomes `health-check-aborted` / `health-check-missed-runs` in the following completed run's report. A check that stops for good still says nothing on the box — `KTPAdminBot`#21's stale-state field (merged and deployed, see hole 4) covers it within two hours, the weekly audit gate (2026-09-18) in days |
 | `ktp-fleet-audit` (Monday 05:00 ET) | **nothing**; it does refuse to run against a non-git `/opt/ktp-infra` |
 | `ktp-tier2-heartbeat` | itself; deliberately a data-server cron so it does not share fate with the GH runner it watches. ⚠️ **Diagnose it with `ktp-tier2-heartbeat.sh --dry-run`.** It alerts on transitions, so a run that saved a verdict computed without the cron file's environment can mask the next real change — the state write is armed by the cron file (or a cron parent) and by `--write`, and by nothing else |
 | `ktp-backup-watchdog` | itself; exists because a run that never happens produces no output |
@@ -284,14 +293,17 @@ Cron-scheduled work is outside both mechanisms entirely:
 | Offsite weapon-context copy **stale** (current-version manifest on the far side not the one the run wrote) | yes | **no** | `ktp-corpus-offsite.sh` checks both current manifests on the far side by content after shipping them and fails the run on a mismatch — but nothing watches `ktp-offsite`, so only the log says so |
 | Offsite AC corpus or weapon-context sidecars present but **unrecoverable** (wrong recipient, lost identity file) | **no** | **no** | `ktp-corpus-drill.sh` is the only thing that would catch it (it round-trips both populations, including a sidecar rewritten in place), and it runs where a private key is — the operator's machine, quarterly, by hand. ⛔ Do not close this by scheduling the drill on the data server |
 | HLStatsX ingest stalls | yes | yes | `hlstatsx-ingest-monitor.py` |
+| The AC review digest owes a post and does not make one | yes (2026-11-04) | yes | `ktp-data-server-health.sh`, `ac-review-digest:failed` / `ac-review-digest:loop-silent` — the weekly digest is the only thing that routes the review backlog to a person, and its cadence marker in `ktp_ac_config` advances **only on a delivered post**: every other outcome rolls it back on purpose, so a late session surfaces at the next tick. 🔑 **One marker value therefore means both “nothing to report” and “broken for weeks”, and the service's own log is the only place they differ** — its failure line says in as many words that nobody was told, and nothing read that log on a schedule. The leg counts the failure line over a trailing window (warn 1, clear 1) and separately reports a digest that is overdue with **no outcome logged at all**, which is the loop not ticking. ⚠️ `ktp-ac-api` is `active` through every one of these cases, so the unit rows above cover none of them. ⛔ **Both quiet legs are `unmeasurable`, never a clean zero:** an unreadable marker, and a journal that does not reach back across the window — that journal is size-bounded, not time-bounded, so the floor is derived per run rather than assumed. ⚠️ The three log literals are a contract with the API's digest service; a reword there makes this blind in the quiet direction, which is why `tests/unit/test_health_review_digest.py` pins them |
 | Tier 2 suite goes quiet | yes | yes | `ktp-tier2-heartbeat.sh` |
 | Perf spike signatures | yes | yes | `ktp-profile-aggregator` → MySQL → Discord, `posted_alert` dedup |
 | Stats daemon rejecting the fleet's capture events | yes | yes | `ktp-data-server-health.sh`, `capture-loss:<event_type>` — trailing 24h per event type from `ktp_capture_health`, warn 5% / clear 2%, floor 200 received. Added after the 09-02→09-08 loss went six days unnoticed. ⛔ **This leg is an average and cannot see one bad half** — that is what the next two rows are for |
 | **One match-half** loses its events, on a day that otherwise looks fine | yes (2026-10-07) | yes | `ktp-data-server-health.sh`, `capture-half-loss` — worst `(half, event_type)` in a trailing 24h by `emitted - daemon_accepted` over `emitted`, floor 200 emitted, one constant key with the half named in the body. Scored against the producer's own `emitted`, not against `daemon_received`, so a half that arrived as nothing scores 100% instead of 0/0. ✅ **FIELDED — verified 2026-10-12 by md5, not by a ledger**: `/usr/local/bin/ktp-data-server-health.sh` is `dce19827a34941ba1bf82b4dd4c73c38` / 84,274 bytes, byte-identical to this repo's blob at `ce8989a`, and carries both leg names (controls: `health_state` 5 lines, two nonsense tokens 0). ✅ **And the reducer is demonstrated against a real lost half** — see § Capture loss, the 2026-10-12 determination. ⚠️ **Warn 50 / clear 25 are now MEASURED-BRACKETED rather than guessed, and the band between them is empty** — of 6,325 `(half, event_type)` streams over 200 emitted in the trailing 30 days, 4,354 sit at exactly 0% loss, 1,637 under 1%, 271 between 1 and 5%, **12 between 5 and 25%, ZERO between 25 and 100%, and 51 at exactly 100%**. So warn 50 sits in a gap nothing has ever occupied, and the distribution is bimodal rather than continuous: picking a number inside the gap is an operator preference, not a measurement problem |
 | A match-half **never reconciles at all** (health rows missing, not rejected) | yes (2026-10-07) | yes | `ktp-data-server-health.sh`, `capture-half-unreconciled` — `ktp_capture_manifests` rows with no `ktp_capture_health` row after a 180-minute grace, warn 1. No rejection rate can see this: a missing row is not a 100% rate, and health rows travel the same one-way UDP path as the events. ✅ **FIELDED, same md5 as the row above.** ⚠️ **Known false positive**: an abandoned half (map change mid-half, `.forcereset`, crash) never sends health either. Measured 2026-10-12: **one** such half in the last 30 days (2026-09-18), so the false-positive rate this leg actually carries is about one a month, not a daily page |
+| A total-loss half is detected and its **cause** is not named | yes (2026-11-05) | yes | `hlstatsx-ingest-monitor.py`, `check_capture_total_loss` — the row above pages on the loss and says nothing about why. Nine halves between 2026-08-26 and 2026-10-24 were detected and left uncaused: `capture-half-loss` scored the 10-24 one at *"100% of 5729 position events lost"* and took fourteen keys down at 19:17:09, the hour the half ended. 🔑 **The cause is one comparison away and no surface made it** — the half's own marker stamp against the `ktp_matches` interval the daemon resolves it against. `doEvent_KTPMatchStart` upserts on `(match_id, half)` and refreshes neither `start_time` nor `end_time`, so the second run of a (match_id, half) inherits the first run's window and every event-time-gated stream drops with *"found 0 event-time match intervals"*. ⚠️ **Floor is two totally-lost streams, measured not chosen**: over all 1,713 half-groups the distribution is 1,704 at zero, exactly one at a single stream, then 4, 5, 5, 10, 11, 12, 12, 13 — the lone 1-stream group is a one-second boundary race worth one event. ⚠️ **Reused ids are refused since KTPMatchHandler 0.10.180 (fielded); a REPLAYED half is not refused by anything**, and the finding cannot tell the two apart -- both stamp after their own interval and take the same branch -- so this is not a check for a closed defect. ⚠️ **NOT FIELDED** until the script is reinstalled |
+| A half rejects **part** of its capture as outside its interval (late-stamped start), or frag/damage events never reach the daemon | yes (2026-11-11) | yes | `hlstatsx-ingest-monitor.py`, `check_capture_partial_rejection` (*found 0 event-time match intervals* on more than one go-live snapshot: >50 rows or >3 streams, total-loss halves excluded) and `check_capture_sequence_gaps` (an open `sequence_gap_count` of 3 or more on one `frag_context`/`damage` half-stream pages; 1-2 is a `??` warning that leaves the exit code at 0, `--gap-warn-max`). Interim until `KTP_MATCH_START` carries `event_epoch`. ⚠️ **NOT FIELDED** until the script is reinstalled |
 | A match-half's events are **refused with no reason recorded** (loss visible, cause unrecorded) | yes (2026-10-20) | yes | `ktp-data-server-health.sh`, `capture-half-reasonless` — `(half, event_type)` streams in a trailing 24h with `daemon_rejected > 0` and `rejection_reasons` NULL or empty, warn 1, up to three named in the body. This was the estate's whole state until migration 044 and `afraznein/KTPHLStatsX`#166: every rejection site computed the reason as its dispatch status string, tested it to decide the marker was refused, then discarded it, so a lost half was pageable and not diagnosable. ⚠️ **Measured 2026-10-20 read-only, which is what makes the warn reachable:** of 623 rejecting streams written before the 10-13 17:40 ET daemon swap, **623 carry no reason — the leg would have fired on every one of them**; of 49 written after, **0** do, and no non-rejecting row carries a reason either. Pre-044 rows stay in the table, so the trailing window is what keeps this quiet, not a floor. ⛔ **Its query is deliberately separate from the two rows above** — folding the 044 column into theirs would let a missing column fail the loss leg, and the reason for a loss must not be able to hide the loss; when the column is absent this leg prints that it is BLIND and latches nothing. ⚠️ **It also puts the cause on the page**: the hourly line names the reason behind the most refused events, which the `capture-half-loss` detail still does not |
 | Hits stop turning into damage (registration regresses) | yes (2026-09-18) | yes | `ktp-data-server-health.sh`, `hitreg-reg` — clean live-enemy trace hits vs `ktp_damage_events` within 300 ms, per finished 12-man half in `ktp_hitreg_quality` (KTPHLStatsX 036), trailing 48h, warn 10 / clear 5 per thousand missed, floor 300 hits. Measured normal 0–2. `hitreg-reg=stale` when 12-mans ran for 7d and none was scorable — the watcher saying it has gone blind, not a clean 100%. Lane B runs the same predicate pre-deploy (`check_hit_registration`) |
-| AC evidence bundle never reaches the API (aborted upload) | yes (2026-09-23) | yes | `ktp-data-server-health.sh`, `ac-upload-abort` — a request on `/api/session/upload` that nginx answered itself (`urt=-`) with a 4xx/5xx, over a trailing 6h of `api.ktpdod.com.access.log`, warn 1. The discriminator is `urt`, never the status: a 400 the API produced carries a duration and is a rejected bundle, not a lost one. `ac-upload-abort=unmeasurable` fires when the window holds lines with no `rt`/`urt`/`rl` — the fields only exist from the 2026-09-16 `log_format` change, and a rotated file from before it scores 0 aborts out of real traffic |
+| AC evidence bundle upload aborted before the API saw it | yes (2026-09-23) | yes | `ktp-data-server-health.sh`, `ac-upload-abort` — a request on `/api/session/upload` that nginx answered itself (`urt=-`) with a 4xx/5xx, over a trailing 6h of `api.ktpdod.com.access.log`, warn 1. The discriminator is `urt`, never the status: a 400 the API produced carries a duration and is a rejected bundle, not a lost one. `ac-upload-abort=unmeasurable` fires when the window holds lines with no `rt`/`urt`/`rl` — the fields only exist from the 2026-09-16 `log_format` change, and a rotated file from before it scores 0 aborts out of real traffic. ⚠️ An abort is not by itself a lost bundle: the client keeps a retryable failure staged and re-offers it at the player's next login (`PendingUploadStore.cs`), so look for a later successful upload of that session before calling one lost |
 
 ---
 
@@ -376,25 +388,42 @@ Ranked by what they would cost during Season 10.
 
 1. ~~**No disk or inode alerting on the five game hosts.**~~ Closed in the repo
    2026-09-18: a disk leg in the per-minute `ktp-fleet-health.sh`, same
-   thresholds and deadband as the data server. **Open on the fleet** until the
-   changed script is rolled to all five hosts.
+   thresholds and deadband as the data server. ~~**Open on the fleet** until the
+   changed script is rolled to all five hosts.~~ **Closed on the fleet too —
+   measured 2026-11-07, read-only, on all five hosts at once:**
+   `/home/dodserver/ktp-fleet-health.sh` is md5 `59b77b0d2f996d341bff90fd0cff581a`
+   on every one of them, **byte-identical to this repo's
+   `monitoring/fleet-health/ktp-fleet-health.sh`**; one `ktp-fleet-health`
+   line in each `dodserver` crontab (haystacks 8–12 lines, nonsense-token
+   control 0); and the state file's mtime was **2026-11-07 01:08–01:09 on all
+   five**, so it is provably running rather than merely installed.
+   ⚠️ **Judge this by the state mtime, never by the crontab line** — a cron
+   entry proves the schedule, not the run, which is the distinction hole 4 is
+   about. ⛔ **Do not re-file this as open on the fleet.** It read open here for
+   seven weeks after the roll, because closing the repo half and closing the
+   fleet half are two acts and only the first leaves a commit.
 2. ~~**`CRITICAL_TIMERS` is three entries against ten timers.**~~ Closed
    2026-09-16: all ten live timers bar the Monday reminder are listed.
 3. ~~**`ktp-admin-bot` and `ktp-frag-diag-tail` have no detection path at all**~~
    Ruled not critical, 2026-09-18. Not a hole; a decision.
-4. **Narrowed 2026-09-17, not closed: the hourly health check now reports its own
-   last run; the weekly fleet audit still reports nothing.** Both are watchers,
-   and a watcher that stops looks exactly like a quiet estate — which is why the
-   2026-08-31 abort ran for fifteen days before anyone asked why the channel had
-   gone calm. `ktp-data-server-health.sh` keeps a run ledger, and the next
-   completed run raises `health-check-aborted` (naming the line it died on) or
-   `health-check-missed-runs`. **A run that dies still cannot speak for itself** —
-   the following run speaks for it — so a check that stops for good is invisible
-   from the box. Two external detectors: `afraznein/KTPAdminBot`#21's stale-state
-   field (merged, **not deployed**, minutes), and since 2026-09-18 the weekly
-   audit's gate, which triages a state file older than 6h and any item open more
-   than 3 days — the latter being the ten-day identity-reconcile shape, which
-   presence-reporting alone never surfaced.
+4. ~~**The hourly health check and the weekly fleet audit cannot report their
+   own silence.**~~ Closed: both external detectors are live. The hourly check
+   keeps a run ledger, so the next completed run raises `health-check-aborted`
+   (naming the line it died on) or `health-check-missed-runs`; a check that
+   stops for good is caught by `afraznein/KTPAdminBot`#21's stale-state field,
+   which flags `/var/lib/ktp-data-server-health.json` once no run has completed
+   for two hours, and in days by the weekly audit gate (2026-09-18), which
+   triages a state file older than 6h and any item open more than 3 days — the
+   ten-day identity-reconcile shape that presence-reporting alone never surfaced.
+   ⚠️ **This entry said the #21 field was "merged, not deployed" for weeks after
+   it was deployed.** Measured 2026-11-10: `/opt/ktp-admin-bot/ops_alert_state.py`
+   on the data server is byte-identical to `KTPAdminBot` `origin/main` (md5
+   `e21c26fc9307dad44ba2a601c1611631`, installed 2026-10-14) and `ktp-admin-bot`
+   is active. Derive it the same way rather than trusting this sentence:
+   `md5sum /opt/ktp-admin-bot/ops_alert_state.py` against the blob on `main`.
+   ⛔ **Out of scope, not a residue of this hole:** both detectors run on the
+   data server, so a box that is down takes them with it. That is host liveness,
+   which no detector on the host can report.
 5. ~~**`ktp-restart-drift.py` runs on no schedule.**~~ The schedule half is
    false, and has been since the weekly audit became a workflow.
    `.github/workflows/fleet-audit.yml` runs it every Monday
@@ -523,9 +552,17 @@ and why the weekly audit is the only path that reaches the fleet today, are in
 
 1. Do the five game hosts carry a local disk/inode check this repo does not
    track? Hole 1 assumes not.
-2. Is the LinuxGSM tmux patch currently in place on all 24 instances, and which
+2. ~~Is the LinuxGSM tmux patch currently in place on all 24 instances, and which
    LinuxGSM version is each host running? `ktp-monitor-patch-check.sh` answers
-   this in one read-only sweep; it has not been run against production.
+   this in one read-only sweep; it has not been run against production.~~
+   **It was run — 2026-10-12, clean on 24/24, recorded in
+   [`OBSERVABILITY_PLAN.md`](../../OBSERVABILITY_PLAN.md) § Re-measured 2026-10-12.**
+   ⛔ **Point-in-time, NOT standing, and that is the whole reason this entry is
+   rewritten rather than struck:** `./dodserver update-lgsm` overwrites the
+   patched file, so a clean sweep expires at the next LinuxGSM update. The
+   standing cover is `audit-fleet-drift.py` parsing that script in the weekly
+   workflow; a hand run only corroborates it. ➡️ **Re-derive before relying on
+   it; do not read the 10-12 result as today's state.**
 3. ~~Which Discord channels receive which alerts today?~~ **Answered 2026-09-15**,
    measured against all five game hosts and the data server: the full producer →
    channel table is in [`ALERT_ROUTING.md`](ALERT_ROUTING.md). Seven producers

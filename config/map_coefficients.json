@@ -2,177 +2,144 @@
   "corpus_candidates": {
     "officials_only": {
       "extra_halves": 0,
-      "held_out_loss_on_officials": 0.651386
+      "held_out_loss_on_officials": 0.654706
     },
     "officials_plus_12man": {
-      "extra_halves": 321,
-      "held_out_loss_on_officials": 0.65316
+      "extra_halves": 623,
+      "held_out_loss_on_officials": 0.65722
     },
     "officials_plus_all_practice": {
-      "extra_halves": 595,
-      "held_out_loss_on_officials": 0.65125
+      "extra_halves": 1117,
+      "held_out_loss_on_officials": 0.656456
     }
   },
-  "corpus_selected": "officials_plus_all_practice",
+  "corpus_selected": "officials_only",
   "corpus_since": "2026-09-13",
   "definition": "flag_swing_map_coefficients_v1",
-  "fitted_at": "2026-10-15T13:31:21Z",
+  "fitted_at": "2026-11-09T16:13:30Z",
   "label_mix": {
-    "engine": 676,
-    "ledger": 22
+    "engine": 1285,
+    "ledger": 33
   },
   "label_source": "ktp_score_events, falling back to the demo ledger where the engine feed does not reach (see the module docstring)",
   "maps": {
     "dod_anjou_a5": {
-      "alive_coefficient": 0.8019,
-      "flag_coefficient": 1.1198,
-      "log_loss": 0.729374,
-      "official_halves": 0,
-      "own_alive_coefficient": 0.3357,
-      "own_flag_coefficient": 0.0,
-      "samples": 1371,
-      "shrinkage_weight": 0.0909,
-      "training_halves": 2
+      "alive_coefficient": 0.5536,
+      "flag_coefficient": 1.1161,
+      "log_loss": 0.69608,
+      "official_halves": 12,
+      "own_alive_coefficient": 0.0,
+      "own_flag_coefficient": 0.5116,
+      "samples": 7284,
+      "shrinkage_weight": 0.375,
+      "training_halves": 12
     },
     "dod_anzio": {
-      "alive_coefficient": 1.0439,
-      "flag_coefficient": 1.0281,
-      "log_loss": 0.672052,
-      "official_halves": 22,
-      "own_alive_coefficient": 1.0701,
-      "own_flag_coefficient": 1.0008,
-      "samples": 101714,
-      "shrinkage_weight": 0.8817,
-      "training_halves": 149
-    },
-    "dod_armory_b6": {
-      "alive_coefficient": 0.6527,
-      "flag_coefficient": 0.9476,
-      "log_loss": 0.739782,
-      "official_halves": 0,
-      "own_alive_coefficient": 0.0,
-      "own_flag_coefficient": 0.0,
-      "samples": 4430,
-      "shrinkage_weight": 0.2308,
-      "training_halves": 6
-    },
-    "dod_armory_b7": {
-      "alive_coefficient": 0.9952,
-      "flag_coefficient": 0.9834,
-      "log_loss": 0.674834,
-      "official_halves": 0,
-      "own_alive_coefficient": 1.0281,
-      "own_flag_coefficient": 0.9275,
-      "samples": 61795,
-      "shrinkage_weight": 0.8165,
-      "training_halves": 89
-    },
-    "dod_halle": {
-      "alive_coefficient": 0.6772,
-      "flag_coefficient": 0.9433,
-      "log_loss": 0.695385,
-      "official_halves": 0,
-      "own_alive_coefficient": 0.3346,
-      "own_flag_coefficient": 0.3663,
-      "samples": 7050,
-      "shrinkage_weight": 0.3333,
-      "training_halves": 10
-    },
-    "dod_harrington": {
-      "alive_coefficient": 0.5142,
-      "flag_coefficient": 1.152,
-      "log_loss": 0.672003,
-      "official_halves": 19,
-      "own_alive_coefficient": 0.462,
-      "own_flag_coefficient": 1.1395,
-      "samples": 106008,
-      "shrinkage_weight": 0.8649,
-      "training_halves": 128
-    },
-    "dod_lennon5_b1": {
-      "alive_coefficient": 0.624,
-      "flag_coefficient": 1.3302,
-      "log_loss": 0.65783,
-      "official_halves": 22,
-      "own_alive_coefficient": 0.5776,
-      "own_flag_coefficient": 1.3505,
-      "samples": 75279,
-      "shrinkage_weight": 0.8291,
-      "training_halves": 97
-    },
-    "dod_railroad2_s10a": {
-      "alive_coefficient": 1.098,
-      "flag_coefficient": 1.4689,
-      "log_loss": 0.651721,
-      "official_halves": 0,
-      "own_alive_coefficient": 1.3058,
-      "own_flag_coefficient": 1.6665,
-      "samples": 17296,
+      "alive_coefficient": 1.1409,
+      "flag_coefficient": 1.4034,
+      "log_loss": 0.656397,
+      "official_halves": 24,
+      "own_alive_coefficient": 1.3535,
+      "own_flag_coefficient": 1.3407,
+      "samples": 15274,
       "shrinkage_weight": 0.5455,
       "training_halves": 24
     },
-    "dod_saints2_b3e": {
-      "alive_coefficient": 0.8572,
-      "flag_coefficient": 1.7113,
-      "log_loss": 0.642791,
-      "official_halves": 0,
-      "own_alive_coefficient": 0.8673,
-      "own_flag_coefficient": 2.2754,
-      "samples": 12262,
-      "shrinkage_weight": 0.4595,
-      "training_halves": 17
+    "dod_armory_b7": {
+      "alive_coefficient": 1.2692,
+      "flag_coefficient": 1.5902,
+      "log_loss": 0.637015,
+      "official_halves": 28,
+      "own_alive_coefficient": 1.5431,
+      "own_flag_coefficient": 1.6698,
+      "samples": 18467,
+      "shrinkage_weight": 0.5833,
+      "training_halves": 28
     },
-    "dod_saints2_b4e": {
-      "alive_coefficient": 0.8289,
-      "flag_coefficient": 1.2191,
-      "log_loss": 0.67485,
-      "official_halves": 0,
-      "own_alive_coefficient": 0.7635,
-      "own_flag_coefficient": 1.1769,
-      "samples": 4373,
+    "dod_harrington": {
+      "alive_coefficient": 0.8679,
+      "flag_coefficient": 1.7216,
+      "log_loss": 0.635333,
+      "official_halves": 27,
+      "own_alive_coefficient": 0.8546,
+      "own_flag_coefficient": 1.9015,
+      "samples": 22358,
+      "shrinkage_weight": 0.5745,
+      "training_halves": 27
+    },
+    "dod_lennon5_b1": {
+      "alive_coefficient": 0.9985,
+      "flag_coefficient": 0.952,
+      "log_loss": 0.685523,
+      "official_halves": 26,
+      "own_alive_coefficient": 1.0853,
+      "own_flag_coefficient": 0.5468,
+      "samples": 19364,
+      "shrinkage_weight": 0.5652,
+      "training_halves": 26
+    },
+    "dod_railroad2_s10a": {
+      "alive_coefficient": 0.9351,
+      "flag_coefficient": 1.9143,
+      "log_loss": 0.561815,
+      "official_halves": 6,
+      "own_alive_coefficient": 1.0998,
+      "own_flag_coefficient": 3.3661,
+      "samples": 4176,
       "shrinkage_weight": 0.2308,
       "training_halves": 6
     },
-    "dod_saints2_b5e": {
-      "alive_coefficient": 1.1266,
-      "flag_coefficient": 1.6449,
-      "log_loss": 0.654614,
+    "dod_railroad2_s10b": {
+      "alive_coefficient": 0.7565,
+      "flag_coefficient": 1.5332,
+      "log_loss": 0.65826,
       "official_halves": 18,
-      "own_alive_coefficient": 1.1687,
-      "own_flag_coefficient": 1.7075,
-      "samples": 93559,
-      "shrinkage_weight": 0.8684,
-      "training_halves": 132
+      "own_alive_coefficient": 0.6129,
+      "own_flag_coefficient": 1.5937,
+      "samples": 12651,
+      "shrinkage_weight": 0.4737,
+      "training_halves": 18
+    },
+    "dod_saints2_b5e": {
+      "alive_coefficient": 0.7373,
+      "flag_coefficient": 1.9333,
+      "log_loss": 0.63963,
+      "official_halves": 26,
+      "own_alive_coefficient": 0.6232,
+      "own_flag_coefficient": 2.283,
+      "samples": 18364,
+      "shrinkage_weight": 0.5652,
+      "training_halves": 26
     },
     "dod_solitude2": {
-      "alive_coefficient": 0.8757,
-      "flag_coefficient": 1.2309,
-      "log_loss": 0.664626,
-      "official_halves": 0,
-      "own_alive_coefficient": 1.0117,
-      "own_flag_coefficient": 1.2265,
-      "samples": 2861,
-      "shrinkage_weight": 0.1667,
-      "training_halves": 4
+      "alive_coefficient": 0.6327,
+      "flag_coefficient": 1.129,
+      "log_loss": 0.708234,
+      "official_halves": 8,
+      "own_alive_coefficient": 0.0,
+      "own_flag_coefficient": 0.2547,
+      "samples": 5186,
+      "shrinkage_weight": 0.2857,
+      "training_halves": 8
     },
     "dod_thunder2": {
-      "alive_coefficient": 0.7476,
-      "flag_coefficient": 2.4257,
-      "log_loss": 0.625989,
-      "official_halves": 22,
-      "own_alive_coefficient": 0.6882,
-      "own_flag_coefficient": 3.128,
-      "samples": 20771,
-      "shrinkage_weight": 0.6296,
-      "training_halves": 34
+      "alive_coefficient": 0.8527,
+      "flag_coefficient": 2.5004,
+      "log_loss": 0.624056,
+      "official_halves": 26,
+      "own_alive_coefficient": 0.8272,
+      "own_flag_coefficient": 3.2864,
+      "samples": 15538,
+      "shrinkage_weight": 0.5652,
+      "training_halves": 26
     }
   },
   "pooled": {
-    "alive_coefficient": 0.8485,
-    "flag_coefficient": 1.2318,
-    "halves": 698,
-    "log_loss": 0.667327,
-    "samples": 508769
+    "alive_coefficient": 0.8857,
+    "flag_coefficient": 1.4787,
+    "halves": 201,
+    "log_loss": 0.656854,
+    "samples": 138662
   },
   "prior_halves": 20.0
 }

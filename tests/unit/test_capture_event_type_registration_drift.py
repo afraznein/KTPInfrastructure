@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO))
 from scripts.match_analytics import (  # noqa: E402
     CAPTURE_EVENT_TYPES, CAPTURE_EVENT_TYPES_OPTIONAL)
 from tests.e2e_stats import artifacts, manifest_contract  # noqa: E402
+from tests.source_anchors import PYTHON, code_text  # noqa: E402
 
 # Verbatim from KTPAMXX plugins/dod/ktp_stats_capture.inc at 0864ba4e, both
 # halves of the pair this module reads: the enum the table is sized by, and the
@@ -150,6 +151,16 @@ def test_an_optional_stream_with_no_producer_is_fine():
     _assert(PRODUCER_SNAPSHOT)
 
 
+def test_shot_miss_is_registered_ahead_of_the_producer_that_emits_it():
+    """Registered here before KTPAMXX #185 is fielded, for the reason in the
+    module docstring: the health row comes off the plugin's enum, not off its
+    capabilities, so the gate that would otherwise make this safe does not."""
+    assert "shot_miss" in CAPTURE_EVENT_TYPES_OPTIONAL
+    assert "shot_miss" not in CAPTURE_EVENT_TYPES, (
+        "an optional stream in the required set fails every half that lacks it")
+    _assert(PRODUCER_SNAPSHOT)
+
+
 def test_an_enum_member_with_no_name_is_named():
     """Pawn zero-fills the short tail, so the new type emits under an empty name."""
     widened = PRODUCER_SNAPSHOT.replace(
@@ -164,7 +175,8 @@ def test_an_enum_member_with_no_name_is_named():
 
 def test_collect_still_calls_the_check():
     """The leg both earlier class fixes lacked: nothing may quietly drop the call."""
-    source = inspect.getsource(artifacts.ArtifactSet.collect)
+    source = code_text(inspect.getsource(artifacts.ArtifactSet.collect), PYTHON,
+                       "ArtifactSet.collect")
     assert "assert_capture_event_types_registered(" in source
     assert "assert_capture_manifest_grammar(" in source
 

@@ -25,8 +25,14 @@ pytestmark = pytest.mark.skipif(SH is None, reason="needs a POSIX /bin/sh")
 
 def _install_layer() -> str:
     lines = DOCKERFILE.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines)
-                 if line.startswith("RUN ") and any(STEAMCMD in l for l in lines[i:i + 3]))
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith("RUN ") and any(STEAMCMD in l for l in lines[i:i + 3])]
+    assert len(starts) == 1, (
+        f"expected exactly one steamcmd install layer, found {len(starts)} "
+        f"(1-based lines: {[i + 1 for i in starts]}); a second one means this "
+        "test exercises whichever came first"
+    )
+    start = starts[0]
     block = []
     for line in lines[start:]:
         block.append(line)

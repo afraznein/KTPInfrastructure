@@ -19,7 +19,7 @@ from .metamod import (EXTENSIONS, LIBLIST, PLUGINS_INI, TopologyError,
                       current_gamedll, describe, enable_metamod,
                       restore_production)
 
-_LIBLIST = 'game "Day of Defeat"\nversion "1.3"\ngamedll_linux "dlls/dod.so"\n'
+_LIBLIST = 'game "Day of Defeat"\nversion "1.3"\ngamedll_linux "dlls/dod_i386.so"\n'
 _EXTENSIONS = "addons/ktpamx/dlls/ktpamx_i386.so\n"
 
 
@@ -37,13 +37,13 @@ def tree(tmp_path):
 
 
 def test_starts_in_production_topology(tree):
-    assert current_gamedll(tree) == "dlls/dod.so"
+    assert current_gamedll(tree) == "dlls/dod_i386.so"
 
 
 def test_enable_metamod_points_gamedll_at_metamod(tree):
     topo = enable_metamod(tree, bot_spec=NEW_BOT)
     assert current_gamedll(tree) == "addons/metamod/metamod_i386.so"
-    assert topo.extra_args == ["+localinfo", "mm_gamedll", "dlls/dod.so"]
+    assert topo.extra_args == ["+localinfo", "mm_gamedll", "dlls/dod_i386.so"]
 
 
 def test_enable_metamod_disables_extensions(tree):
@@ -102,7 +102,7 @@ def test_round_trip_is_idempotent(tree):
     for _ in range(3):
         enable_metamod(tree, bot_spec=NEW_BOT)
         restore_production(tree)
-    assert current_gamedll(tree) == "dlls/dod.so"
+    assert current_gamedll(tree) == "dlls/dod_i386.so"
 
 
 def test_enable_requires_metamod_present(tree):

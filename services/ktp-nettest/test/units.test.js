@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -90,6 +91,41 @@ test('stall summary: loss, gaps over 250 ms, duplicates ignored', () => {
   assert.deepStrictEqual(summarizePing([20, 30, 20]), { ping_ms: 20, jitter_ms: 10 });
 });
 
+test('stall summary: a sender paused by timer throttling is not a line stall', () => {
+  // The 60/60 shape: a 1 Hz clamped timer sends 100 packets per wake-up, and every echo arrives
+  // within a few ms of being sent. The old meter counted each second between bursts as a stall.
+  const sendAt = [], echoes = [];
+  for (let s = 0; s < 60; s++) {
+    for (let j = 0; j < 100; j++) {
+      const seq = s * 100 + j, sent = 1000 * s + j * 0.01;
+      sendAt.push(sent);
+      echoes.push({ seq, rtt: 30, at: sent + 30 });
+    }
+  }
+  const s = summarizeStall(6000, echoes, 60, sendAt);
+  assert.strictEqual(s.stall_recv_gaps_250, 59, 'raw receive gaps: what the old meter reported');
+  assert.strictEqual(s.stall_send_gaps_250, 59);
+  assert.ok(s.stall_send_worst_gap_ms >= 999, String(s.stall_send_worst_gap_ms));
+  assert.strictEqual(s.stall_gaps_250, 0);
+  assert.ok(s.stall_worst_gap_ms < 5, String(s.stall_worst_gap_ms));
+  assert.strictEqual(s.stall_loss_pct, 0);
+});
+
+test('stall summary: a hole while the sender kept pace is still a line stall', () => {
+  const sendAt = [], echoes = [];
+  for (let i = 0; i < 300; i++) {
+    sendAt.push(i * 10);
+    if (i >= 100 && i < 160) continue;  // 600 ms of echoes lost while sending stayed at 100/s
+    echoes.push({ seq: i, rtt: 30, at: i * 10 + 30 });
+  }
+  const s = summarizeStall(300, echoes, 3, sendAt);
+  assert.strictEqual(s.stall_send_gaps_250, 0);
+  assert.strictEqual(s.stall_gaps_250, 1);
+  assert.strictEqual(s.stall_recv_gaps_250, 1);
+  assert.strictEqual(s.stall_worst_gap_ms, 600);
+  assert.strictEqual(s.stall_loss_pct, 20);
+});
+
 test('busy: first half START in previous log keeps the box busy through the map change', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nettest-'));
   const t0 = new Date();
@@ -144,4 +180,93 @@ test('busy: a half whose log outgrew the window still blocks', () => {
   assert.ok(fs.statSync(f).size > 16 * 1024 * 1024, 'fixture must exceed the window to mean anything');
   assert.strictEqual(makeBusy([dir])(), true);
   fs.rmSync(dir, { recursive: true });
+});
+
+test('frame page escapes the configured origin', () => {
+  const { framePage } = require('../server');
+  const html = framePage('https://a.example"><script>x</script>');
+  assert.ok(!html.includes('"><script>x'), html);
+  assert.ok(html.includes('&#34;&#62;&#60;script&#62;'), html);
+});
+
+// frame.js against a fake window: only the site's own parent window may start a run.
+function loadFrame(runTest) {
+  const vm = require('node:vm');
+  const sent = [], listeners = [];
+  // JSON round trip: objects built inside the vm context have that realm's prototypes.
+  const parent = { postMessage: (msg, origin) => sent.push({ msg: JSON.parse(JSON.stringify(msg)), origin }) };
+  class Busy extends Error {}
+  const window = {
+    parent,
+    addEventListener: (ev, fn) => ev === 'message' && listeners.push(fn),
+    KtpNettest: { runTest, Busy, VERSION: 'v-test' },
+  };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'frame.js'), 'utf8'), {
+    window,
+    location: { origin: 'https://ny.node.test' },
+    document: { querySelector: () => ({ content: 'https://ktpleague.gg' }) },
+  });
+  const post = (data, { origin = 'https://ktpleague.gg', source = parent } = {}) =>
+    Promise.all(listeners.map((fn) => fn({ data, origin, source })));
+  return { sent, post, Busy };
+}
+
+test('frame: announces ready, runs only for the site parent, reports result and busy', async () => {
+  const calls = [];
+  const f = loadFrame(async (o) => { calls.push(o); o.onProgress({ phase: 'stall', done: 0.5 }); return { busy_skipped: false }; });
+  assert.deepStrictEqual(f.sent[0], { msg: { type: 'ktp-nettest:ready', version: 'v-test' }, origin: 'https://ktpleague.gg' });
+
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' }, { origin: 'https://evil.test' });
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' }, { source: {} });
+  await f.post({ type: 'ktp-nettest:run', ticket: 7 });
+  assert.strictEqual(calls.length, 0, 'wrong origin, wrong source and a non-string ticket start nothing');
+
+  await f.post({ type: 'ktp-nettest:run', ticket: 't1' });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].base, 'https://ny.node.test');
+  assert.strictEqual(calls[0].ticket, 't1');
+  assert.ok(f.sent.every((s) => s.origin === 'https://ktpleague.gg'), 'every reply targets the site origin only');
+  assert.deepStrictEqual(f.sent.slice(1).map((s) => s.msg.type), ['ktp-nettest:progress', 'ktp-nettest:result']);
+
+  const b = loadFrame(async () => { throw new b.Busy('match in progress'); });
+  await b.post({ type: 'ktp-nettest:run', ticket: 't2' });
+  assert.deepStrictEqual(b.sent.at(-1).msg, { type: 'ktp-nettest:error', busy: true, message: 'match in progress' });
+});
+
+test('startup: refuses a missing secret, the shipped example placeholder, and a short secret', () => {
+  const { startupProblem } = require('../server');
+  const env = fs.readFileSync(path.join(__dirname, '..', 'deploy', 'nettest.env.example'), 'utf8');
+  const shipped = /^KTP_NETTEST_TICKET_SECRET=(.*)$/m.exec(env);
+  assert.ok(shipped && shipped[1], 'the example must carry a secret line for this test to mean anything');
+  assert.match(startupProblem({ region: 'NY', secret: shipped[1] }), /placeholder/);
+  assert.match(startupProblem({ region: 'NY', secret: '' }), /required/);
+  assert.match(startupProblem({ region: '', secret: 'a'.repeat(64) }), /required/);
+  assert.match(startupProblem({ region: 'NY', secret: 'a'.repeat(31) }), /shorter than 32/);
+  assert.strictEqual(startupProblem({ region: 'NY', secret: crypto.randomBytes(32).toString('hex') }), null, 'a generated secret starts');
+});
+
+test('deploy kit: install.sh never enables or starts the service; the env example binds loopback', () => {
+  const deploy = path.join(__dirname, '..', 'deploy');
+  const sh = fs.readFileSync(path.join(deploy, 'install.sh'), 'utf8')
+    .split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.match(sh, /systemctl daemon-reload/, 'positive control: the scan sees systemctl calls');
+  assert.doesNotMatch(sh, /systemctl\s+(--now\s+)?(enable|start|restart|reload-or-restart|try-restart)\b/);
+  const env = fs.readFileSync(path.join(deploy, 'nettest.env.example'), 'utf8');
+  assert.match(env, /^KTP_NETTEST_BIND=127\.0\.0\.1$/m);
+  const unit = fs.readFileSync(path.join(deploy, 'ktp-nettest.service'), 'utf8');
+  assert.match(unit, /^ProtectHome=tmpfs$/m);
+  // werift's host-candidate gathering needs getifaddrs, which is a netlink socket.
+  const families = unit.match(/^RestrictAddressFamilies=(.*)$/m);
+  assert.ok(families, 'unit restricts address families');
+  assert.ok(families[1].split(/\s+/).includes('AF_NETLINK'), families[1]);
+});
+
+test('offer filter: drops .local candidates and end-of-candidates, keeps every other line', () => {
+  const { dropMdnsCandidates } = require('../server');
+  const host = 'a=candidate:2 1 udp 2113937151 192.0.2.7 51235 typ host';
+  const sdp = ['v=0', 'a=candidate:1 1 udp 2113937151 3f1c-9a.local 51234 typ host', host,
+    'a=end-of-candidates', 'a=ice-ufrag:ab', ''].join('\r\n');
+  assert.strictEqual(dropMdnsCandidates(sdp), ['v=0', host, 'a=ice-ufrag:ab', ''].join('\r\n'));
+  const plain = ['v=0', host, 'a=end-of-candidates', ''].join('\r\n');
+  assert.strictEqual(dropMdnsCandidates(plain), plain, 'an offer with no .local candidate is untouched');
 });

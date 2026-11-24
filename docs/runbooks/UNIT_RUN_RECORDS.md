@@ -14,9 +14,16 @@ file answers *what is still readable next week*.
 Six scheduled units on the data server report by printing and exiting non-zero:
 `ktp-weekly-outliers`, `ktp-install-freshness`, `ktp-stats-export`,
 `ktp-telemetry-export`, `ktp-render-banlist`, `ktp-hlstatsx-ingest-monitor`.
-Their stdout *is* the report, and journald here holds about two days — so a weekly
-unit that fails on a Tuesday cannot be read by the following Tuesday. No incident
-is needed; that is the steady state.
+Their stdout *is* the report, and when this was written journald here held about
+two days — so a weekly unit that failed on a Tuesday could not be read by the
+following Tuesday.
+
+🔻 **That retention figure is stale and is not the reason this convention stands.**
+Measured 2026-11-12: the data server's journal reached back about ten and a half
+days and survived the 2026-11-03 reboot (`SystemMaxUse=8G` since #596, 5.6G used).
+That still holds only one previous run of a weekly unit, and it moves with log
+volume, so ➡️ **re-derive it (`journalctl --no-pager -o short-iso | head -1`) rather
+than trusting any figure here.** A dated file per run does not depend on it.
 
 `ktp-identity-reconcile` is the one that already paid for this twice. On 2026-09-08
 it failed carrying a real divergence and `journalctl -u` returned `-- No entries --`
@@ -59,7 +66,7 @@ much they cost to learn the other way:
   it and a log there needs a unit-file change installed by hand on the box.
   A unit that is unhardened today and hardened later does not have to move its
   records.
-- **It survives a reboot**, unlike `/run`, and outlives both journald (~2 days here)
+- **It survives a reboot**, unlike `/run`, and outlives both journald (days, not weeks, here)
   and syslog rotation (~1 week).
 - **"Which run" is answerable.** An append-only log cannot separate a run that died
   in its first second from one that finished.
@@ -182,6 +189,36 @@ written fails the promotion loudly instead of leaving a record that looks comple
 but healthy run is not a page, short enough that a wedge is caught inside one
 cadence. A weekly unit can afford 15 minutes; a 60-second timer cannot.
 
+## Who reads the records
+
+`ktp-data-server-health.sh` ages them hourly, as a producer (`OBSERVABILITY_PLAN.md`
+§ 2.1), in the `ktp-run-record-age` block. Per unit in its `RUN_RECORD_UNITS` table:
+
+| item | when |
+|---|---|
+| `<unit>-run-record=stale` | the newest `runs/*.txt` (dated record or `last-ok.txt`) is older than the unit's ceiling — its cadence plus room for one late run |
+| `<unit>-run-record=unfinished` | the newest file is a `.part` older than `TimeoutStartSec` plus the stop window: the latest run was killed or the box went down mid-run |
+| `<unit>-run-record=none` | the installed unit's `ExecStart=` names the wrapper, it has been installed longer than one ceiling, and it has written nothing |
+
+A row may name a records subdirectory and a runner other than the wrapper. One does:
+`ktp-identity-reconcile`, whose unit lives in `keep-the-prac` and whose own runner,
+`reconcile-identities-run.sh`, writes the same shape — `reports/<UTC>.txt` promoted
+from a `.part` — so it is aged on `reports/` and opted in by that runner on its
+`ExecStart=` line. Its `reports/latest.txt` symlink is skipped: a pointer is not a run.
+Its cadence and timeout are copied into the test as `FOREIGN`, because the unit file
+is not in this repo; a change to that timer or timeout must land there too.
+
+A unit not installed, or installed without its runner on its `ExecStart=` line, is
+skipped. An orphan `.part` stops reporting as soon as a later run ends — it stays on
+disk as evidence and does not page forever. `ktp-render-banlist` and
+`ktp-migrations-applied-check` are left out on purpose: each already has its own leg
+in the same script, and one fault should be one item.
+
+⚠️ **Adding a unit to the wrapper means adding a row to that table**, or naming its
+own leg. `tests/unit/test_health_run_record_age.py` fails when a wrapped unit in
+`scripts/systemd/` is in neither, and checks each ceiling against the unit's timer and
+`TimeoutStartSec=`.
+
 ## Not covered, deliberately
 
 - **A timer that stops firing.** No record shape can see this — nothing runs. That
@@ -194,12 +231,6 @@ cadence. A weekly unit can afford 15 minutes; a 60-second timer cannot.
   exports `PYTHONUNBUFFERED=1` so a killed Python run's last lines are on disk
   rather than in a kernel buffer; a C or shell program that buffers its own output
   will still lose the tail when SIGKILLed.
-- **Ageing `last-ok.txt` automatically.** The files are written; nothing reads them
-  on a schedule yet. The leg that would — newest `runs/*` mtime per unit against
-  that unit's cadence, plus any `.part` older than its timeout — belongs in
-  `ktp-data-server-health.sh` as a producer, per `OBSERVABILITY_PLAN.md` § 2.1.
-  Until it exists, these records answer *what happened* on demand and alert nobody
-  by themselves. ⚠️ Writing a record is not coverage; say which it is.
 
 ## Install
 

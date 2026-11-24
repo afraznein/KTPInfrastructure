@@ -1,7 +1,8 @@
 # Match-report regeneration, by hand, behind the operator's approval click.
 #
-# The tier-2 runner is root on the PRODUCTION data server, so a run of this
-# workflow is a production change. Three things bound it:
+# The `ktp-ops` runner is root on the PRODUCTION data server and serves no
+# pull-request workflow, so a run of this workflow is a production change.
+# Three things bound it:
 #   - `environment: report-regeneration` holds every run until a required
 #     reviewer approves it. The environment is created and owned by the
 #     operator in repo settings; nothing here creates or edits it.
@@ -67,7 +68,7 @@ jobs:
   regenerate:
     name: Regenerate match reports
     if: github.ref == 'refs/heads/main'
-    runs-on: [self-hosted, ktp-tier2]
+    runs-on: [self-hosted, ktp-ops]
     environment: report-regeneration
     timeout-minutes: 45
     permissions:

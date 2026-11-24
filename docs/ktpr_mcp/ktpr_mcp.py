@@ -10,6 +10,7 @@ Tools:
   clutch_report(profile, source)      -> win/loss + margin + opponent-strength + consistency splits (mysql only)
   map_report(profile, source)         -> role x map average KTPR (mysql only)
   side_report(profile, source)        -> axis vs allies KTPR split per player (mysql only)
+  reliability_report(profile, source) -> half-to-half reliability, SEM and rank band (mysql only)
   predict_accuracy(profile, source)   -> leave-one-out win prediction accuracy vs K/D baseline (mysql only)
   match_avg_vs_season(profile, source) -> season-total KTPR vs mean-of-per-match KTPR (mysql only)
   shrunk_ktpr(profile, source, shrink_matches) -> sample-size-shrunk KTPR toward role median
@@ -220,6 +221,26 @@ def side_report(profile: str = "new", source: str = "mysql") -> list[dict]:
     rows = E.compute_side_splits(season_players, half_rows, E.load_params(profile))
     rows.sort(key=lambda r: -abs(r["side_diff"] or 0))
     return rows
+
+
+@mcp.tool()
+def reliability_report(profile: str = "new", source: str = "mysql") -> dict:
+    """
+    The KTPR error bar: half-to-half reliability and the standard error it implies.
+    Pairs each player's two halves of a match, correlates them (r_halves), steps that
+    up to a full match with Spearman-Brown (r_full), and returns SEM = sd(KTPR) *
+    sqrt(1 - r_full) plus a rank-equivalent (median players within one SEM, each
+    side). Not side-adjusted, so the SEM is conservative. Requires 'mysql' source and
+    a formula='team' profile. Returns {pairs, r_halves, r_full, sd_ktpr, sem,
+    rank_equivalent, players, side_adjusted, skipped_one_half,
+    skipped_over_two_halves[, reason]}.
+    """
+    if source != "mysql":
+        raise ValueError("reliability_report requires source='mysql' (per-half data)")
+    import ktpr_mysql as Q
+    season_players = Q.load_players_from_mysql()
+    half_rows = Q.load_half_player_stats()
+    return E.compute_reliability(season_players, half_rows, E.load_params(profile))
 
 
 @mcp.tool()

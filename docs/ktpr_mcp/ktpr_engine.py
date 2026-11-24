@@ -585,6 +585,86 @@ def compute_side_splits(season_players: list[Player], half_rows: list[Player],
     return out
 
 
+def _pearson(xs: list[float], ys: list[float]) -> float | None:
+    n = len(xs)
+    if n < 2:
+        return None
+    mx, my = _mean(xs), _mean(ys)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    syy = sum((y - my) ** 2 for y in ys)
+    if sxx == 0 or syy == 0:
+        return None
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / math.sqrt(sxx * syy)
+
+
+def paired_half_reliability(pairs: list[tuple[float, float]], season_vals: list[float],
+                            min_pairs: int = 10) -> dict:
+    """
+    r_halves, Spearman-Brown r_full and SEM from per-match half pairs.
+
+    The correlation is the double-entry (intraclass) form: each pair enters in both
+    orders, because a half row does not say which half it was. `rank_equivalent` is the
+    median, over season players, of half the number of other players within one SEM.
+    """
+    out = {"pairs": len(pairs), "r_halves": None, "r_full": None,
+           "sd_ktpr": round(_stdev(season_vals), 4) if len(season_vals) >= 2 else None,
+           "sem": None, "rank_equivalent": None, "players": len(season_vals)}
+    if len(pairs) < min_pairs:
+        out["reason"] = f"fewer than {min_pairs} paired player-matches"
+        return out
+    xs = [a for a, b in pairs] + [b for a, b in pairs]
+    ys = [b for a, b in pairs] + [a for a, b in pairs]
+    r = _pearson(xs, ys)
+    if r is None:
+        out["reason"] = "half values have no spread"
+        return out
+    out["r_halves"] = round(r, 4)
+    if r <= 0:
+        out["reason"] = "r_halves is not positive: the halves disagree more than chance, so no SEM"
+        return out
+    r_full = 2 * r / (1 + r)
+    out["r_full"] = round(r_full, 4)
+    if out["sd_ktpr"] is None:
+        out["reason"] = "fewer than two season players"
+        return out
+    sem = _stdev(season_vals) * math.sqrt(1 - r_full)
+    out["sem"] = round(sem, 4)
+    within = [(sum(1 for w in season_vals if abs(w - v) <= sem) - 1) / 2 for v in season_vals]
+    out["rank_equivalent"] = round(_median(within), 1)
+    return out
+
+
+def compute_reliability(season_players: list[Player], half_rows: list[Player],
+                        p: KtprParams, min_pairs: int = 10) -> dict:
+    """
+    S2b error bar: how much of a player's KTPR is measurement noise.
+
+    Within one match a player's true level is taken as fixed, so the spread between his
+    two halves is noise. Requires `half_rows` from ktpr_mysql.load_half_player_stats and
+    formula='team'. Values are NOT side-adjusted (S2a is descoped), so the side effect
+    counts as noise and the SEM is conservative. A player-match with one half, or more
+    than two (overtime), is counted and left out rather than guessed at.
+    """
+    if p.formula != "team":
+        raise ValueError("compute_reliability needs a formula='team' profile")
+    baseline_for = _team_baselines(season_players, p)
+    half_vals = compute_team(half_rows, p, baseline_for=baseline_for)
+
+    by_key: dict[tuple[str, str], list[float]] = {}
+    for pl, v in zip(half_rows, half_vals):
+        if not pl.name or not pl.match_id or v is None:
+            continue
+        by_key.setdefault((pl.name, pl.match_id), []).append(v)
+    pairs = [(vs[0], vs[1]) for vs in by_key.values() if len(vs) == 2]
+
+    season_vals = [v for v in compute_ktpr(season_players, p) if v is not None]
+    out = paired_half_reliability(pairs, season_vals, min_pairs=min_pairs)
+    out["side_adjusted"] = False
+    out["skipped_one_half"] = sum(1 for vs in by_key.values() if len(vs) == 1)
+    out["skipped_over_two_halves"] = sum(1 for vs in by_key.values() if len(vs) > 2)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Formula validation: does KTPR itself hold up, not just what it says
 # ---------------------------------------------------------------------------

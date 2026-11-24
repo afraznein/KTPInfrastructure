@@ -195,6 +195,16 @@ DEFAULT_SCHEMA_FILES = (
     "sql/migrate_050_shot_rewind_shift.sql",
     # own_weapon_kill, a player-vs-player action like 003's assist (stats_logging 1.35.0).
     "sql/migrate_051_own_weapon_kill_action.sql",
+    # ktp_shot_miss_events: the ray of a shot that hit nobody, which the shot
+    # line had no room for (stats_logging 1.37.0, capability-gated).
+    "sql/migrate_052_shot_miss_events.sql",
+    # ktp_move_census.census_flags: a quality label on rows an earlier producer
+    # left without their terminal window, so a consumer can exclude them by
+    # predicate instead of discarding the era.
+    "sql/migrate_053_move_census_prefix_label.sql",
+    # Causal parent links on frags and assists: which life-end a frag closed, and
+    # which frag an assist fed. NULL means no parent -- 0 already means untracked.
+    "sql/migrate_054_causal_parent_links.sql",
 )
 
 DEFAULT_SEED_FILES = (

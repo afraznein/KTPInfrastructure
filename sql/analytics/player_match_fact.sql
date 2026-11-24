@@ -19,20 +19,22 @@ match_context AS (
 ),
 producer_coverage AS (
     -- A producer that had not fired anywhere by the time this match ended did
-    -- not exist for it: its count is unknown, not zero.
+    -- not exist for it: its count is unknown, not zero. An open match compares
+    -- against the DATETIME maximum, not the row's own time, so the bound stays
+    -- a range an event_time index can seek.
     SELECT
         EXISTS(SELECT 1 FROM hlstats_Events_PlayerPlayerActions e
                JOIN hlstats_Actions a ON a.id = e.actionId
                WHERE a.game = 'dod' AND a.code = 'assist'
-                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+                 AND e.eventTime <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS assists_covered,
         EXISTS(SELECT 1 FROM hlstats_Events_PlayerActions e
                JOIN hlstats_Actions a ON a.id = e.actionId
                WHERE a.game = 'dod' AND a.code = 'cap_break'
-                 AND e.eventTime <= COALESCE(mc.ended_at, e.eventTime))
+                 AND e.eventTime <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS breaks_covered,
         EXISTS(SELECT 1 FROM ktp_flag_captures c
-               WHERE c.event_time <= COALESCE(mc.ended_at, c.event_time))
+               WHERE c.event_time <= COALESCE(mc.ended_at, TIMESTAMP '9999-12-31 23:59:59'))
             AS captures_covered
     FROM match_context mc
 ),
@@ -41,20 +43,47 @@ roster AS (
     FROM ktp_match_players
     WHERE match_id = {{MATCH_ID}}
 ),
+frags AS (
+    -- A kill inside the cap-out freeze (KTP_ROUND_FREEZE .. KTP_ROUND_LIVE)
+    -- is written with match_id NULL but producer_match_id set, and the
+    -- scoreboard counted it. Two seeks, not one OR: the OR plans as
+    -- ref_or_null over every untagged row (0.9 s), the union seeks
+    -- idx_frag_producer_context for the second half (0.02 s).
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id = {{MATCH_ID}}
+    UNION ALL
+    SELECT killerId, victimId, half, weapon, headshot
+    FROM hlstats_Events_Frags
+    WHERE match_id IS NULL AND producer_match_id = {{MATCH_ID}}
+),
 kills AS (
     SELECT killerId AS player_id, COUNT(*) AS kills,
            COALESCE(SUM(headshot), 0) AS headshots,
            SUM(CASE WHEN weapon IN ('grenade', 'grenade2', 'mills_bomb')
                     THEN 1 ELSE 0 END) AS grenade_kills
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
+    FROM frags
     GROUP BY killerId
 ),
-deaths AS (
-    SELECT victimId AS player_id, COUNT(*) AS deaths
-    FROM hlstats_Events_Frags
-    WHERE match_id = {{MATCH_ID}}
+enemy_deaths AS (
+    SELECT victimId AS player_id, COUNT(*) AS enemy_deaths
+    FROM frags
     GROUP BY victimId
+),
+deaths AS (
+    -- The scoreboard's deaths column: DoD adds one for any death, so a
+    -- teamkill victim and a suicide count beside a frag victim. The three
+    -- sources are disjoint rows, so they add. Enemy-only is enemy_deaths.
+    SELECT player_id, COUNT(*) AS deaths
+    FROM (
+        SELECT victimId AS player_id
+        FROM frags
+        UNION ALL
+        SELECT victimId FROM hlstats_Events_Teamkills WHERE match_id = {{MATCH_ID}}
+        UNION ALL
+        SELECT playerId FROM hlstats_Events_Suicides WHERE match_id = {{MATCH_ID}}
+    ) every_death
+    GROUP BY player_id
 ),
 teamkills AS (
     SELECT killerId AS player_id, COUNT(*) AS team_kills
@@ -69,8 +98,11 @@ suicides AS (
     GROUP BY playerId
 ),
 assists AS (
+    -- No match_id index here either, and nearly every row is an assist, so the
+    -- actionId index reads the whole table; the roster's playerId lookups don't.
     SELECT e.playerId AS player_id, COUNT(*) AS assists
-    FROM hlstats_Events_PlayerPlayerActions e
+    FROM roster r
+    JOIN hlstats_Events_PlayerPlayerActions e ON e.playerId = r.player_id
     JOIN hlstats_Actions a ON a.id = e.actionId
     WHERE e.match_id = {{MATCH_ID}} AND a.game = 'dod' AND a.code = 'assist'
     GROUP BY e.playerId
@@ -113,6 +145,10 @@ damage AS (
     FROM roster r
     LEFT JOIN ktp_damage_events d
       ON d.match_id = r.match_id
+     -- A non-NULL producer_match_id is authoritative; a row tagged for another
+     -- match belongs to that match's box score, not this one.
+     AND (d.producer_match_id IS NULL
+          OR (d.producer_match_id = d.match_id AND BINARY d.producer_match_id = BINARY d.match_id))
      AND (d.attacker_id = r.player_id OR d.victim_id = r.player_id)
     LEFT JOIN roster attacker ON attacker.player_id = d.attacker_id
     LEFT JOIN roster victim ON victim.player_id = d.victim_id
@@ -141,10 +177,14 @@ captures AS (
     GROUP BY c.player_id
 ),
 weapon_totals AS (
-    SELECT playerId AS player_id, SUM(shots) AS shots, SUM(hits) AS hits
-    FROM hlstats_Events_Statsme
-    WHERE match_id = {{MATCH_ID}}
-    GROUP BY playerId
+    -- Statsme has no match_id index, so reach it through the roster's playerId
+    -- lookups rather than scanning the whole MyISAM table under its read lock.
+    -- Only roster players are joined below, so the result is the same.
+    SELECT st.playerId AS player_id, SUM(st.shots) AS shots, SUM(st.hits) AS hits
+    FROM roster r
+    JOIN hlstats_Events_Statsme st ON st.playerId = r.player_id
+    WHERE st.match_id = {{MATCH_ID}}
+    GROUP BY st.playerId
 ),
 position_coverage AS (
     SELECT player_id, COUNT(*) AS position_samples
@@ -167,6 +207,7 @@ SELECT
     CASE WHEN r.match_id LIKE '%-TEST' THEN 1 ELSE 0 END AS is_test_match,
     COALESCE(k.kills, 0) AS kills,
     COALESCE(dth.deaths, 0) AS deaths,
+    COALESCE(ed.enemy_deaths, 0) AS enemy_deaths,
     CASE WHEN pc.assists_covered THEN COALESCE(a.assists, 0) END AS assists,
     COALESCE(k.headshots, 0) AS headshots,
     COALESCE(k.grenade_kills, 0) AS grenade_kills,
@@ -213,6 +254,7 @@ JOIN match_context mc ON mc.match_id = r.match_id
 CROSS JOIN producer_coverage pc
 LEFT JOIN kills k ON k.player_id = r.player_id
 LEFT JOIN deaths dth ON dth.player_id = r.player_id
+LEFT JOIN enemy_deaths ed ON ed.player_id = r.player_id
 LEFT JOIN teamkills tk ON tk.player_id = r.player_id
 LEFT JOIN suicides s ON s.player_id = r.player_id
 LEFT JOIN assists a ON a.player_id = r.player_id

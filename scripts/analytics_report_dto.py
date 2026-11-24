@@ -29,8 +29,11 @@ from zoneinfo import ZoneInfo
 from scripts.in_game_result import unavailable as in_game_unavailable
 from scripts.kill_streaks import DEFINITION as KILL_STREAK_DEFINITION
 from scripts.kill_streaks import DEFINITION_VERSION as KILL_STREAK_DEFINITION_VERSION
+from scripts.outnumbered_kills import COVERAGE_KEYS as OUTNUMBERED_COVERAGE
+from scripts.outnumbered_kills import DEFINITION as OUTNUMBERED_DEFINITION
+from scripts.outnumbered_kills import DEFINITION_VERSION as OUTNUMBERED_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.18.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.20.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -412,6 +415,10 @@ def sanitize_report(report: dict) -> dict:
         "capouts": _capouts_block(se),
         "player_halves": _player_halves_block(report),
         "kill_streaks": _kill_streaks_block(report),
+        # Ruled 2026-10-05: two stats, shown separately, never summed and never
+        # presented together as one "clutches" total.
+        "outnumbered_kills": _outnumbered_kills_block(report),
+        "fight_clutches": _fight_clutches_block(se, names_by_id),
         "weapon_sides": _weapon_sides_block(report),
         "duels_by_side": _duels_by_side_block(report),
         "player_classes": _player_classes_block(report),
@@ -447,7 +454,7 @@ def _unknown_team_totals(teams: list[dict], players: list[dict]) -> None:
 
 
 PLAYER_FIELDS = (
-    "kills", "deaths", "assists", "headshots", "team_kills",
+    "kills", "deaths", "enemy_deaths", "assists", "headshots", "team_kills",
     "suicides", "damage_dealt", "damage_taken",
     "damage_differential", "capture_credits", "cap_breaks",
     "shots", "hits", "raw_accuracy", "kd_ratio",
@@ -455,6 +462,7 @@ PLAYER_FIELDS = (
     "headshot_rate", "fast_2k", "fast_3k", "fast_4k_plus",
     "best_streak", "grenade_kills", "grenade_damage",
     "grenade_damage_taken", "score", "points_per_minute",
+    "outnumbered_kills", "fight_clutches",
 )
 
 # Fields where a small number is the good one. A fill bar still scales on the
@@ -462,7 +470,8 @@ PLAYER_FIELDS = (
 # goes to the minimum, and a consumer that renders a full bar as an
 # achievement here has it backwards -- hence the flag travels in the DTO.
 LOWER_IS_BETTER = frozenset({
-    "deaths", "damage_taken", "team_kills", "suicides", "grenade_damage_taken",
+    "deaths", "enemy_deaths", "damage_taken", "team_kills", "suicides",
+    "grenade_damage_taken",
 })
 
 
@@ -488,7 +497,10 @@ NULL_NOTE = "null, not 0, for a match that predates the source that measures it.
 
 FIELD_GLOSSARY = {
     "kills": {"unit": "count", "what": "Frags credited to the player."},
-    "deaths": {"unit": "count", "what": "Times the player was killed."},
+    "deaths": {"unit": "count",
+               "what": "Times the player died, as the scoreboard counts it: "
+                       "killed by an enemy, killed by a teammate, or suicide."},
+    "enemy_deaths": {"unit": "count", "what": "Times an enemy killed the player."},
     "assists": {"unit": "count",
                 "what": "Kills the player contributed to without the "
                         "finishing blow, as DoD itself credits them.",
@@ -541,6 +553,21 @@ FIELD_GLOSSARY = {
     "fast_4k_plus": {"unit": "count", "what": "Chains of 4 or more kills."},
     "best_streak": {"unit": "count",
                     "what": "Longest run of kills without dying."},
+    "outnumbered_kills": {"unit": "count",
+                          "what": "Enemy kills made while the player's side was "
+                                  "outnumbered by 2 or more, the player "
+                                  "included, counting who was alive just "
+                                  "before the kill.",
+                          "caveat": "A separate stat from fight_clutches. Never "
+                                    "add the two together: one is common and "
+                                    "one is rare, by about two orders of "
+                                    "magnitude."},
+    "fight_clutches": {"unit": "count",
+                       "what": "Flag fights the player's side won with the "
+                               "player as its only survivor, against 2 or "
+                               "more living enemies when the fight closed.",
+                       "caveat": "A separate stat from outnumbered_kills. "
+                                 "Never add the two together."},
     "grenade_kills": {"unit": "count", "what": "Kills by grenade."},
     "grenade_damage": {"unit": "damage", "what": "Opponent damage by grenade."},
     "grenade_damage_taken": {"unit": "damage",
@@ -903,6 +930,83 @@ def _kill_streaks_block(report: dict) -> dict:
              "by_side": {s: _num((p.get("by_side") or {}).get(s)) for s in SIDES},
              "lower_bound": bool(p.get("lower_bound"))}
             for p in ks.get("players") or []
+        ],
+    }
+
+
+def _outnumbered_kills_block(report: dict) -> dict:
+    """outnumbered_kill_v1 (scripts/outnumbered_kills.py). A report built before
+    schema 41 has none and reads unavailable, never zero."""
+    ok = report.get("outnumbered_kills")
+    if not ok:
+        return {"definition": OUTNUMBERED_DEFINITION,
+                "definition_version": OUTNUMBERED_DEFINITION_VERSION,
+                "parameters": {},
+                "coverage": {k: None for k in OUTNUMBERED_COVERAGE},
+                "players": []} | _not_in_report()
+    coverage = ok.get("coverage") or {}
+    return {
+        "definition": ok.get("definition"),
+        "definition_version": _num(ok.get("definition_version")),
+        "status": ok.get("status"),
+        "flags": list(ok.get("flags") or []),
+        "parameters": _scalar_parameters(ok),
+        "coverage": {k: _num(coverage.get(k)) for k in OUTNUMBERED_COVERAGE},
+        "rows": [
+            {"name": _name(r.get("player_name_at_match")), "team": _num(r.get("team")),
+             "half": _num(r.get("half")), "side": _side(r.get("side")),
+             "kills": _num(r.get("kills")),
+             "outnumbered_kills": _num(r.get("outnumbered_kills")),
+             "lower_bound": bool(r.get("lower_bound"))}
+            for r in ok.get("rows") or []
+        ],
+        "players": [
+            {"name": _name(p.get("player_name_at_match")), "team": _num(p.get("team")),
+             "kills": _num(p.get("kills")),
+             "outnumbered_kills": _num(p.get("outnumbered_kills")),
+             "by_side": {s: _num((p.get("by_side") or {}).get(s)) for s in SIDES},
+             "lower_bound": bool(p.get("lower_bound"))}
+            for p in ok.get("players") or []
+        ],
+    }
+
+
+FIGHT_CLUTCH_DEFINITION = "fight_clutch_v1"
+FIGHT_CLUTCH_COVERAGE = ("evaluated_windows", "censored_windows")
+
+
+def _scalar_parameters(block: dict) -> dict:
+    return {k: v for k, v in (block.get("parameters") or {}).items()
+            if isinstance(v, (str, int, float))}
+
+
+def _fight_clutches_block(se: dict, names_by_id: dict) -> dict:
+    """fight_clutch_v1 (scripts/flag_fights.py::build_clutch_shadow). Before
+    schema 41 the envelope censored a whole half for one absent roster member,
+    so those reports read unavailable rather than publish an undercount."""
+    fc = se.get("fight_clutches") or {}
+    if (fc.get("parameters") or {}).get("absent_from_half") != "not_alive":
+        return {"definition": FIGHT_CLUTCH_DEFINITION, "definition_version": 1,
+                "parameters": {},
+                "coverage": {k: None for k in FIGHT_CLUTCH_COVERAGE},
+                "players": []} | _not_in_report("events")
+    return {
+        "definition": fc.get("definition"),
+        "definition_version": _num(fc.get("definition_version")),
+        "status": fc.get("status"),
+        "flags": list(fc.get("caveats") or []),
+        "parameters": _scalar_parameters(fc),
+        "coverage": {k: _num(fc.get(k)) for k in FIGHT_CLUTCH_COVERAGE},
+        "events": [
+            {"half": _num(c.get("half")), "flag_name": c.get("flag_name"),
+             "name": names_by_id.get(c.get("player_id")), "team": _num(c.get("team")),
+             "against": _num(c.get("against")), "kind": c.get("kind")}
+            for c in fc.get("clutches") or []
+        ],
+        "players": [
+            {"name": names_by_id.get(p.get("player_id")),
+             "fight_clutches": _num(p.get("clutches"))}
+            for p in fc.get("players") or []
         ],
     }
 

@@ -26,15 +26,12 @@ provenance -- a durable record of what was staged, when and by whom -- and not
 a workaround for an unreadable artifact. Keep it for the resolution order
 above; do not re-justify it with the claim.
 
-⚠️ `staged_md5()` is read by nothing in this repo, and that is the current
-state rather than an oversight to fix blind. A suite assertion comparing
-manifest to disk would be permanently red for most of what the manifest holds:
-the Tier-2 workflow rebuilds the plugins it gates on every run (each baking a
-fresh per-minute BUILD_TIME), and `sync-runner-stack.py` mirrors the stack files
-from the fleet, whose record is the fleet. `stage-runner.py --show` is the one
-place that comparison is made, and it classifies those two cases rather than
-calling either drift. Before wiring this into a test, settle which artifacts are
-left -- the manifest is their record and only theirs.
+`staged_md5()` is what `test_stage_manifest_vs_disk.py` compares against disk.
+Most of what the manifest holds keeps its record elsewhere -- the Tier-2
+workflow rebuilds the plugins it gates on every run, and `sync-runner-stack.py`
+mirrors the stack files from the fleet -- so that test classifies those two
+cases (`scripts/runner_manifest.py`, shared with `stage-runner.py --check`) and
+fails only on a difference neither explains.
 """
 
 from __future__ import annotations

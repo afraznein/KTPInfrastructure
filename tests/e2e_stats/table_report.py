@@ -219,7 +219,14 @@ def render_markdown(report: dict) -> str:
     if failures:
         out += ["", "## Failures", ""] + [f"- {_cell(item, 500)}" for item in failures]
     if gaps:
-        out += ["", "## Coverage gaps", ""] + [f"- {_cell(item, 500)}" for item in gaps]
+        # A waived gap is why the job can be green beside an INCOMPLETE header;
+        # without the marker that pairing reads as a check that does not report.
+        gating = report.get("coverage_gaps_gating")
+        waived = [] if gating is None else [g for g in gaps if g not in gating]
+        out += ["", "## Coverage gaps", ""] + [
+            f"- {_cell(item, 500)}"
+            + ("" if item not in waived else " — **waived**, not exercisable in an all-bot lane")
+            for item in gaps]
 
     scored = report.get("v5_match_report")
     if scored:

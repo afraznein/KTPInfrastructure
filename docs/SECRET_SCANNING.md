@@ -139,7 +139,7 @@ control returning zero:
 - No checkouts on any of the five game hosts.
 
 ⚠️ Also watch `/home/dod/distribute/` — `ktp-file-distributor.service` pushes
-anything created there to all 24 instances within ~15s. It is a deploy path, not a
+anything created there to all 24 instances in about 25 s. It is a deploy path, not a
 staging area.
 
 ## The `.gitignore` credential tags

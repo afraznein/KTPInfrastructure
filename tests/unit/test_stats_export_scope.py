@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.source_anchors import SQL, assert_in_order, code_text
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / "scripts" / "ktp-stats-export.py"
 
@@ -87,14 +89,17 @@ def test_a_half_disagreement_resolves_to_the_non_official_type(mod):
     """
     db = _Db()
     mod.fetch_matches(db, 48, None)
-    sql = db.sql[0]
+    sql = code_text(db.sql[0], flavour=SQL, origin="ktp-stats-export.fetch_matches")
     # Built from the constant, not from a remembered "0, 4": the fail-safe arm
     # and the window predicate have to name the same set or the gate drifts.
     types = ", ".join(str(t) for t in mod.OFFICIAL_MATCH_TYPES)
-    assert f"case when match_type not in ({types})" in sql
+    arm = f"case when match_type not in ({types})"
+    assert arm in sql
     # ...and that arm is the coalesce's FIRST, so an official half cannot
-    # outvote a non-official one. Swapping the arms inverts the gate.
-    assert sql.index("not in") < sql.index("min(match_type)) mtype")
+    # outvote a non-official one. Swapping the arms inverts the gate. Anchored
+    # on the whole arm, not on a bare "not in": six characters of SQL is a
+    # phrase the statement can grow a second copy of without anyone noticing.
+    assert_in_order(sql, arm, "min(match_type)) mtype")
 
 
 def test_digest_is_stable_and_content_sensitive(mod):
@@ -262,3 +267,17 @@ def test_every_counted_event_is_scoped_to_the_restart(mod):
     # NULL-safe: `NULL >= x` is NULL, and a naive predicate drops those rows
     # without a word -- it cost two real mid-round kills the first time.
     assert "f.game_time is null and f.eventTime >= w.et" in kills_deaths
+
+
+def test_frags_inside_the_capout_freeze_still_count(mod):
+    """KTP_ROUND_FREEZE pauses the daemon's match_id tagging until the
+    restart, so a grenade kill in that gap is a frag row with match_id NULL
+    and producer_match_id set. The scoreboard counted it (both captains'
+    boards on 1794773028-NY2 had two), so the frag branches fall back."""
+    db = _ScriptedDb(roster=[], box=[], events=[], points=[])
+    mod.fetch_scoreboard_totals(db, "m-1")
+    sql = db.sql[0]
+    assert sql.count("match_id is null and producer_match_id") == 1, sql
+    assert sql.count("from frags f") == 2, sql
+    # Teamkill and suicide tables carry no producer_match_id: no fallback.
+    assert "t.producer_match_id" not in sql and "u.producer_match_id" not in sql

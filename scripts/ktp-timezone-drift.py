@@ -74,7 +74,9 @@ STATS_SCHEMA = os.environ.get("KTP_STATS_SCHEMA", "hlstatsx")
 # orders of magnitude below the smallest zone error worth catching.
 DEFAULT_STAMP_TOLERANCE = 2
 # Host clock vs this machine's, over SSH. Wide enough for round-trip and a lazy
-# scheduler, far below anything NTP would leave standing.
+# scheduler, far below anything NTP would leave standing. Whole seconds over SSH:
+# it catches dead NTP, not the 1 s skew that drops hlstats event-context rows,
+# and lowering it will not. Nothing schedules this script.
 DEFAULT_CLOCK_TOLERANCE = 5
 
 LOG_STAMP_RE = re.compile(r"^L (\d{2})/(\d{2})/(\d{4}) - (\d{2}):(\d{2}):(\d{2}):")

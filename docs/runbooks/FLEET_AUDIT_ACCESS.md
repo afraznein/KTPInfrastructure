@@ -9,11 +9,32 @@ records the finding that came out of checking: **the weekly audit has been
 running against a repo checkout 135 commits old, and it says so every week into
 a log nobody reads.**
 
+🔻 **SUPERSEDED IN ITS CENTRAL FINDING, 2026-10-30 — the stalling path this document
+was written about is gone, and the caller it says the audit lacks now exists.** The weekly
+root cron is retired. `.github/workflows/fleet-audit.yml` runs the audit on the tier-2
+self-hosted runner from `actions/checkout@v6`, so every run uses the reviewed commit and a
+merge reaches the weekly run by itself. Measured: nothing under `/etc/cron.d`,
+`cron.weekly`, `cron.daily`, `/etc/crontab` or root's spool references the fleet audit,
+against a control of 23 `/etc/cron.d` entries.
+
+⛔ **So do not read the first table row, or point 4 of the proposal below, as current —
+and do not conclude from the stale `/opt/ktp-infra` checkout that a merged check needs an
+install before it runs.** That inference was drawn twice, for two separate merges, and it
+is wrong for anything this workflow invokes.
+
+⚠️ **Two artifacts named below outlived the cron and still look current:**
+`/var/log/ktp-fleet-audit.log` and `/var/lib/ktp-audit-state.json`, last written
+2026-10-05. ➡️ **Judge this audit from the workflow's run list, never from either of
+them.** The rest of the document stands as written — the credential paths, the access
+asymmetry and the five-incident argument are all still accurate. Only the privileged
+caller changed.
+
 ## The access model today
 
 | Path | Reaches the 5 game hosts | How |
 |---|---|---|
-| Weekly cron on the data server | **yes** | `root` → `/usr/local/bin/ktp-fleet-audit.sh` → `/opt/ktp-infra/scripts/audit-fleet-drift.py` → paramiko SSH as `dodserver`, password from `/etc/ktp/audit-fleet.json` (root, 0600) |
+| `fleet-audit.yml` on the tier-2 runner | **yes** | `actions/checkout@v6` → `python3 scripts/audit-*.py` → paramiko SSH as `dodserver`, password from `/etc/ktp/audit-fleet.json` (root, 0600). Runs as root on the data server, so no fleet credential is stored in GitHub |
+| ~~Weekly cron on the data server~~ — **RETIRED** | — | Was `root` → `/usr/local/bin/ktp-fleet-audit.sh` → `/opt/ktp-infra/scripts/audit-fleet-drift.py`. Its checkout never pulled, so a check merged to main was not a check that ran — which is the finding this document opens with |
 | An operator at a workstation | **yes** | `KTP_FLEET_SSH_PASSWORD` or `~/.ktp_fleet_ssh_password`, used by `deploy-to-fleet.py`, `deploy-restart-script.py`, `ktp-restart-drift.py` |
 | `krodssh@api.ktpdod.com` | **no** | Holds no private key. `sudo` needs a password. Not in `adm` / `systemd-journal`, so the journal is unreadable |
 | An agent or CI job on this workstation | **no** | `dodserver@<ip>` refuses the workstation key on all five hosts, checked individually |

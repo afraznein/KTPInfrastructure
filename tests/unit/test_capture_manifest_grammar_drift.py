@@ -40,6 +40,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))
 
 from tests.e2e_stats import artifacts, manifest_contract  # noqa: E402
+from tests.source_anchors import PYTHON, assert_in_order, code_text  # noqa: E402
 from tests.e2e_stats.break_scenarios import _MANIFEST_RE  # noqa: E402
 from tests.e2e_stats.log_invariants import (  # noqa: E402
     _ENGINE_CAPTURE_MANIFEST_RE,
@@ -195,12 +196,14 @@ def test_collect_checks_the_grammar_against_the_extracted_producer():
     in place. This asserts the authoritative leg is still called, and called on
     the EXTRACTED `.inc` rather than on anything committed here.
     """
-    source = inspect.getsource(artifacts.ArtifactSet.collect)
+    source = code_text(inspect.getsource(artifacts.ArtifactSet.collect), PYTHON,
+                       "ArtifactSet.collect")
     assert "assert_capture_manifest_grammar(inst.plugin_inc)" in source
-    assert (source.index("plugins/dod/ktp_stats_capture.inc")
-            < source.index("assert_capture_manifest_grammar"))
+    assert_in_order(source, "plugins/dod/ktp_stats_capture.inc",
+                    "assert_capture_manifest_grammar")
 
-    checker = inspect.getsource(artifacts.assert_capture_manifest_grammar)
+    checker = code_text(inspect.getsource(artifacts.assert_capture_manifest_grammar),
+                        PYTHON, "assert_capture_manifest_grammar")
     assert "_MANIFEST_RE" in checker
     assert "plugin_inc.read_text" in checker
 

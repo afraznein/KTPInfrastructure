@@ -1,7 +1,8 @@
 # Runbook: config KEYS on the fleet that are not in the distributed source
 
 `ktp-file-distributor.service` watches `/home/dod/distribute` and pushes any
-created or changed file to all 24 game instances within ~15s. It is purely
+created or changed file to all 24 game instances in about 25 s (5 s debounce plus
+~20 s of fan-out for one small file; a map batch takes over a minute). It is purely
 event-driven: no startup sync, no periodic reconcile, no comparison anywhere.
 `docs/runbooks/DISTRIBUTE_DRIFT.md` covers the file-level consequence. This file
 covers the key-level one, which is the same invariant and a different finding.
@@ -77,6 +78,7 @@ precisely the state that was about to be destroyed.
 ```
 instances compared: 24/24  paths compared: 97/100  keys compared: 34612
   findings: 60  inconclusive: 3  nothing-to-compare: 4  excluded-everywhere: 1
+  ruled-excluded: 1
 ```
 
 Every number there is **work done**, deliberately, because `findings: 0` was the
@@ -94,6 +96,11 @@ August alert and it was zero for the wrong reason. Read it in this order:
   the check compared them against nothing. These parse fine. ⛔ **A reader does
   not fix one and neither does an `excludePatterns` entry — an exclusion is what
   puts a path here.** See the scope section below.
+- **`ruled-excluded`.** A subset of `excluded-everywhere`: paths that parse,
+  and that **every** target names in `excludePatterns`. That entry is the
+  declared exception, so the weekly gate does not count these (ruled
+  2026-11-12, decision 4). A path that is accepted by no target only because
+  no `includePatterns` matches it is not in this count and still fires.
 - **`nothing-to-compare`.** Both sides hold zero keys. They agree, and they
   carry no evidence — kept separate so `paths compared` can never be read as
   "paths that actually had something to say".
@@ -212,7 +219,7 @@ The remediation half of this runbook is short for the same reason it is in
 `DISTRIBUTE_DRIFT.md`, and that file is the authority on it:
 
 - **Any file created or changed under `/home/dod/distribute` deploys to all 24
-  within ~15s.** Diff against a live instance first, and edit in place
+  in about 25 s.** Diff against a live instance first, and edit in place
   (`cat new > file`) rather than `rm`/`mv`.
 - **Removing a file from the tree DELETES it on all 24.** Fix the instances
   first, then remove the source — two passes, verifying after each.
@@ -326,3 +333,14 @@ The check reports; it does not fix. None of these is the checker's to decide.
    it), which is the "own bucket" the ruling asks for. ➡️ **To stop the weekly line
    for `listip.cfg`, reconcile the file rather than the check** — mirror the
    per-instance copies and drop the exclusion, which makes it comparable again.
+
+   🔻 **AMENDED 2026-11-12 (operator): the GATE stops counting such a path; the
+   check still reports it.** The 10-29 ruling kept the weekly line, and that line
+   alone held the fleet-audit issue open every week. Scope is still not
+   intersected and the path still prints its name, so the 10-29 reasoning holds.
+   What changed is only the gate: the check's headline carries `ruled-excluded:`,
+   the paths every target names in `excludePatterns`, and leg 11 of
+   `fleet-audit-gate.sh` subtracts that count and nothing else. A path that falls
+   out through `includePatterns` alone, is absent from the source, or does not
+   parse is still counted. The `KEYDRIFT-INCONCLUSIVE` line stays in the
+   transition baseline, so a path entering or leaving the ruled set is news once.

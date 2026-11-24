@@ -9,6 +9,7 @@
 
 #include <amxmodx>
 #include <dodx>
+#include <reapi>
 
 #define PLUGIN  "KTP Assist Drive"
 #define VERSION "0.1"
@@ -18,9 +19,12 @@ public plugin_init() {
 	register_plugin(PLUGIN, VERSION, AUTHOR)
 	register_srvcmd("ktp_ad_run", "cmd_run")
 	register_srvcmd("ktp_ad_postmatch_frag", "cmd_postmatch_frag")
+	register_srvcmd("ktp_ad_postmatch_damage", "cmd_postmatch_damage")
 	register_srvcmd("ktp_vc_run", "cmd_voice")
 	register_srvcmd("ktp_vm_run", "cmd_voice_menu")
 	register_srvcmd("ktp_ow_run", "cmd_own_weapon")
+	register_srvcmd("ktp_dd_run", "cmd_door")
+	register_srvcmd("ktp_dd_live", "cmd_door_live")
 	register_event("TextMsg", "on_textmsg", "b")
 	log_amx("[AD] loaded -- NOT FOR PRODUCTION")
 }
@@ -63,6 +67,24 @@ public cmd_postmatch_frag() {
 stock ad_flush_stats_capture() {
 	if (callfunc_begin("ksc_flush_task", "stats_logging.amxx") == 1)
 		callfunc_end()
+}
+
+// Run after a clean match end: one self-inflicted hit through the real damage
+// forward. Self-damage earns no assist credit, so it leaves the next match alone.
+public cmd_postmatch_damage() {
+	new players[32], num
+	get_players(players, num, "a")
+	if (!num) {
+		log_amx("[AD] PMDMG ABORT need one live player")
+		return PLUGIN_HANDLED
+	}
+
+	new id = players[0]
+	log_amx("[AD] PMDMG BEGIN userid=%d", get_user_userid(id))
+	dodx_test_dispatch_damage(id, id, 1, 27, 0, 0)
+	ad_flush_stats_capture()
+	log_amx("[AD] PMDMG END")
+	return PLUGIN_HANDLED
 }
 
 public cmd_run() {
@@ -201,13 +223,14 @@ public on_textmsg(id) {
 
 // Own-weapon kill drive (stats_logging 1.35.0). Two live teammates A and B carrying different
 // primaries. A dies for real (user_kill), so the game drops A's gun; B presses the drop key and is
-// put on A's body, so the game's own touch hands B that gun. Every dod_client_weaponpickup the
+// put on that dropped gun (not A's body, which it can land well away from), so the game's own touch
+// hands B that gun. Every dod_client_weaponpickup the
 // DODX poll fires for B is logged as [OW] FWD -- the game-side claim this scenario exists to
-// observe. If no real pickup arrives in 5 s, stats_logging's handler is called directly instead
+// observe. If no real pickup arrives in 8 s, stats_logging's handler is called directly instead
 // ([OW] SYNTHETIC) so the ledger is still tested, and the verdict says the engine half was not.
 // The kill itself is a dispatched TEAMKILL: no frag_context marker, so no expected no-row diagnostic.
 new g_owA, g_owB, g_owWpn, g_owPolls, g_owBits, bool:g_owActive, bool:g_owPicked
-new Float:g_owAOrigin[3]
+new Float:g_owAOrigin[3], g_owBox, g_owBoxCls[40]
 
 stock bool:ow_is_primary(w) {
 	switch (w) {
@@ -230,6 +253,63 @@ stock ow_primary(id) {
 		if ((bits & (1 << w)) && ow_is_primary(w))
 			return w
 	return 0
+}
+
+stock bool:ow_is_player_held(e) {
+	new owner = get_entvar(e, var_owner)
+	return owner >= 1 && owner <= get_maxplayers() && owner != g_owA
+}
+
+// Prefer the weaponbox: a gun packed inside one keeps a stale origin.
+stock ow_find_box() {
+	new logname[32], wcls[40], best = 0, bool:bestBox = false
+	new Float:bestDist = 512.0
+	xmod_get_wpnlogname(g_owWpn, logname, charsmax(logname))
+	formatex(wcls, charsmax(wcls), "weapon_%s", logname)
+	for (new e = get_maxplayers() + 1; e < 900; e++) {
+		new ec[40]
+		ec[0] = 0
+		get_entvar(e, var_classname, ec, charsmax(ec))
+		new bool:box = bool:equal(ec, "weaponbox")
+		if (!box && !equal(ec, wcls))
+			continue
+		if (ow_is_player_held(e) || (bestBox && !box))
+			continue
+		new Float:o[3]
+		get_entvar(e, var_origin, o)
+		new Float:d = get_distance_f(o, g_owAOrigin)
+		if ((box && !bestBox) || d < bestDist) {
+			best = e
+			bestBox = box
+			bestDist = d
+			copy(g_owBoxCls, charsmax(g_owBoxCls), ec)
+		}
+	}
+	if (best) {
+		new model[64]
+		get_entvar(best, var_model, model, charsmax(model))
+		log_amx("[OW] GUN ent=%d cls=%s model=%s owner=%d dist=%.0f", best, g_owBoxCls, model,
+			get_entvar(best, var_owner), bestDist)
+	} else {
+		log_amx("[OW] GUN none near a, using a's body")
+	}
+	return best
+}
+
+// The gun can still be sliding when B arrives, so every move re-reads where it is.
+stock ow_put_b_on_gun() {
+	new Float:o[3]
+	if (g_owBox) {
+		new ec[40]
+		ec[0] = 0
+		get_entvar(g_owBox, var_classname, ec, charsmax(ec))
+		if (equal(ec, g_owBoxCls)) {
+			get_entvar(g_owBox, var_origin, o)
+			dodx_set_user_origin(g_owB, o)
+			return
+		}
+	}
+	dodx_set_user_origin(g_owB, g_owAOrigin)
 }
 
 public cmd_own_weapon() {
@@ -272,36 +352,48 @@ public ow_drop() {
 		log_amx("[OW] ABORT a or b left")
 		return
 	}
+	// dod.so's drop takes the entity classname; DODX's log name is its suffix.
+	new cls[40], logname[32]
+	xmod_get_wpnlogname(ow_primary(g_owB), logname, charsmax(logname))
+	formatex(cls, charsmax(cls), "weapon_%s", logname)
+	// Before B's drop, so B's own gun cannot be the one found.
+	g_owBox = ow_find_box()
 	g_owBits = ow_bits(g_owB)
-	log_amx("[OW] DROP b=%d bits_before=%d", g_owB, g_owBits)
-	amxclient_cmd(g_owB, "drop")
+	log_amx("[OW] DROP b=%d bits_before=%d cls=%s", g_owB, g_owBits, cls)
+	// Extension mode has no Cmd_Argv override, so dod.so reads the engine's last tokenized line,
+	// not amxclient_cmd's arguments: tokenize the same line first or the game sees another command.
+	server_cmd("drop %s", cls)
+	server_exec()
+	amxclient_cmd(g_owB, "drop", cls)
 	set_task(0.5, "ow_touch", 77302)
 }
 
 public ow_touch() {
 	log_amx("[OW] DROPPED b=%d bits_after=%d", g_owB, ow_bits(g_owB))
-	dodx_set_user_origin(g_owB, g_owAOrigin)
-	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, g_owAOrigin[0], g_owAOrigin[1], g_owAOrigin[2])
+	ow_put_b_on_gun()
+	new Float:at[3]
+	dodx_get_user_origin(g_owB, at)
+	log_amx("[OW] TOUCH b=%d at %.0f %.0f %.0f", g_owB, at[0], at[1], at[2])
 	g_owPolls = 0
 	set_task(0.25, "ow_poll", 77302)
 }
 
 public ow_poll() {
-	// Bot AI walks B off the gun; keep it standing on A's body for the whole window.
+	// Bot AI walks B off the gun; keep it standing on the gun for the whole window.
 	new bits = ow_bits(g_owB)
 	if (bits != g_owBits) {
 		log_amx("[OW] BITS b=%d bits=%d", g_owB, bits)
 		g_owBits = bits
 	}
-	if (!g_owPicked && ++g_owPolls < 20) {
-		dodx_set_user_origin(g_owB, g_owAOrigin)
+	if (!g_owPicked && ++g_owPolls < 32) {
+		ow_put_b_on_gun()
 		set_task(0.25, "ow_poll", 77302)
 		return
 	}
 	if (!g_owPicked) {
-		log_amx("[OW] SYNTHETIC no real pickup in 5 s")
+		log_amx("[OW] SYNTHETIC no real pickup in 8 s")
 		// The ledger claims by distance, so the claim must happen on the gun.
-		dodx_set_user_origin(g_owB, g_owAOrigin)
+		ow_put_b_on_gun()
 		if (callfunc_begin("dod_client_weaponpickup", "stats_logging.amxx") == 1) {
 			callfunc_push_int(g_owB)
 			callfunc_push_int(g_owWpn)
@@ -321,4 +413,148 @@ public dod_client_weaponpickup(id, weapon, value) {
 	log_amx("[OW] FWD id=%d wpn=%d value=%d", id, weapon, value)
 	if (value && weapon == g_owWpn)
 		g_owPicked = true
+}
+
+// Door hold on dod_thunder2: the door at hinge (-152 -920 -66) is opened from the north by one
+// bot, which is then stood south of it, in the leaf's closing arc, facing the given yaw. The
+// rotating-door design note (KTP-ReHLDS) models this spot: facing 180 holds, facing 0 does not.
+// The bot opens the door and is the door's activator, so its facing is the one DoorGoUp reads.
+new const Float:DD_HINGE[3] = { -152.0, -920.0, -66.0 }
+new const Float:DD_OPENER[3] = { -124.0, -880.0, -76.0 }
+new const Float:DD_VICTIM[3] = { -111.0, -964.0, -76.0 }
+// Far enough north that the leaf, finishing a swing to +90 once released, clears the bot.
+new const Float:DD_PARK[3] = { -124.0, -820.0, -76.0 }
+#define DD_TASK 77303
+#define DD_SAMPLES 32
+
+new g_ddDoor, g_ddBot, g_ddLeft, Float:g_ddYaw
+
+stock dd_find_door() {
+	for (new e = get_maxplayers() + 1; e < 900; e++) {
+		new ec[32]
+		ec[0] = 0
+		get_entvar(e, var_classname, ec, charsmax(ec))
+		if (!equal(ec, "func_door_rotating"))
+			continue
+		new Float:o[3]
+		get_entvar(e, var_origin, o)
+		if (get_distance_f(o, DD_HINGE) < 2.0)
+			return e
+	}
+	return 0
+}
+
+stock Float:dd_door_yaw() {
+	new Float:a[3]
+	get_entvar(g_ddDoor, var_angles, a)
+	return a[1]
+}
+
+// fixangle stops the engine taking a bot's yaw from its usercmd, and nothing clears it for a
+// bot because no client data is ever sent to one.
+stock dd_face(id, Float:yaw) {
+	new Float:a[3]
+	a[1] = yaw
+	set_entvar(id, var_angles, a)
+	set_entvar(id, var_v_angle, a)
+	set_entvar(id, var_fixangle, 1)
+}
+
+stock dd_put(id, const Float:at[3]) {
+	new Float:o[3], Float:still[3]
+	o[0] = at[0]
+	o[1] = at[1]
+	o[2] = at[2]
+	dodx_set_user_origin(id, o)
+	set_entvar(id, var_velocity, still)
+}
+
+stock dd_release(const reason[]) {
+	if (is_user_connected(g_ddBot)) {
+		set_entvar(g_ddBot, var_fixangle, 0)
+		dd_put(g_ddBot, DD_PARK)
+	}
+	log_amx("[DD] %s", reason)
+}
+
+// RCON reply, so the harness can wait for the bot it added after the changelevel.
+public cmd_door_live() {
+	new players[32], num
+	get_players(players, num, "a")
+	server_print("[DD] LIVE n=%d", num)
+	return PLUGIN_HANDLED
+}
+
+public cmd_door() {
+	new arg[16]
+	read_argv(1, arg, charsmax(arg))
+	g_ddYaw = str_to_float(arg)
+	remove_task(DD_TASK)
+
+	g_ddDoor = dd_find_door()
+	if (!g_ddDoor) {
+		log_amx("[DD] ABORT door not found at the thunder2 hinge")
+		return PLUGIN_HANDLED
+	}
+	new players[32], num
+	get_players(players, num, "a")
+	if (!num) {
+		log_amx("[DD] ABORT need one live player")
+		return PLUGIN_HANDLED
+	}
+	new Float:avel[3]
+	get_entvar(g_ddDoor, var_avelocity, avel)
+	if (floatabs(dd_door_yaw()) > 1.0 || avel[1] != 0.0) {
+		log_amx("[DD] ABORT door not closed door_yaw=%.1f door_avel=%.1f", dd_door_yaw(), avel[1])
+		return PLUGIN_HANDLED
+	}
+
+	g_ddBot = players[0]
+	log_amx("[DD] BEGIN userid=%d door=%d yaw=%.1f", get_user_userid(g_ddBot), g_ddDoor, g_ddYaw)
+	// Walk the bot into the closed leaf from the north, facing south: the touch opens it
+	// away from him, to -90, and makes him the activator.
+	dd_put(g_ddBot, DD_OPENER)
+	dd_face(g_ddBot, -90.0)
+	new Float:push[3]
+	push[1] = -400.0
+	set_entvar(g_ddBot, var_velocity, push)
+	set_task(1.5, "dd_place", DD_TASK)
+	return PLUGIN_HANDLED
+}
+
+public dd_place() {
+	if (!is_user_alive(g_ddBot)) {
+		log_amx("[DD] ABORT the bot died or left")
+		return
+	}
+	new Float:yaw = dd_door_yaw()
+	if (yaw > -85.0) {
+		dd_release("ABORT door did not open to the south side")
+		log_amx("[DD] door_yaw=%.1f", yaw)
+		return
+	}
+	log_amx("[DD] OPENED door_yaw=%.1f", yaw)
+	dd_put(g_ddBot, DD_VICTIM)
+	dd_face(g_ddBot, g_ddYaw)
+	log_amx("[DD] PLACED yaw=%.1f", g_ddYaw)
+	g_ddLeft = DD_SAMPLES
+	set_task(0.5, "dd_sample", DD_TASK)
+}
+
+public dd_sample() {
+	if (!is_user_alive(g_ddBot)) {
+		log_amx("[DD] ABORT the bot died or left")
+		return
+	}
+	new Float:o[3], Float:a[3], Float:davel[3]
+	get_entvar(g_ddBot, var_origin, o)
+	get_entvar(g_ddBot, var_angles, a)
+	get_entvar(g_ddDoor, var_avelocity, davel)
+	log_amx("[DD] SAMPLE door_yaw=%.2f door_avel=%.1f bot=%.1f %.1f %.1f bot_yaw=%.1f",
+		dd_door_yaw(), davel[1], o[0], o[1], o[2], a[1])
+	if (--g_ddLeft > 0) {
+		set_task(0.5, "dd_sample", DD_TASK)
+		return
+	}
+	dd_release("END")
 }

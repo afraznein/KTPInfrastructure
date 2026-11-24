@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+from tests.source_anchors import SQL, assert_in_order, code_text
+
 
 SCRIPT = Path(__file__).parents[2] / "scripts" / "ktp-match-retention.py"
 SPEC = importlib.util.spec_from_file_location("ktp_match_retention", SCRIPT)
@@ -31,7 +33,8 @@ def test_candidate_sql_is_aged_and_fail_closed():
 
 
 def test_apply_deletes_children_before_match_metadata():
-    sql = retention.build_sql(14, apply=True)
+    sql = code_text(retention.build_sql(14, apply=True), flavour=SQL,
+                    origin="ktp-match-retention.build_sql")
     assert "ktp_life_events" in retention.MATCH_TABLES
     assert "DELETE t FROM `ktp_life_events`" in sql
     assert "ktp_assist_events" in retention.MATCH_TABLES
@@ -52,23 +55,28 @@ def test_apply_deletes_children_before_match_metadata():
     assert "DELETE t FROM `ktp_team_score_ingest_conflicts`" in sql
     assert "ktp_team_score_ingest_audits" in retention.MATCH_TABLES
     assert "DELETE t FROM `ktp_team_score_ingest_audits`" in sql
-    last_child = max(sql.index(f"DELETE t FROM `{table}`") for table in retention.MATCH_TABLES)
+    # Two tables are deleted from TWICE (producer context, then legacy), so the
+    # bound is the LAST delete of each child. `index` would have taken the
+    # first and let a legacy delete sit after the parent with nothing red.
+    last_child = max(max(sql.occurrences(f"DELETE t FROM `{table}`"))
+                     for table in retention.MATCH_TABLES)
     parent = sql.index("DELETE t FROM `ktp_matches`")
     assert last_child < parent
     assert "GET_LOCK('ktp_team_score_ledger_v1'" in sql
-    assert sql.index("START TRANSACTION") < sql.index("DELETE t FROM `ktp_team_score_ingest_conflicts`")
-    assert sql.index("DELETE t FROM `ktp_team_score_ingest_conflicts`") < sql.index(
-        "DELETE t FROM `ktp_team_score_observations`"
+    assert_in_order(
+        sql,
+        "START TRANSACTION",
+        "DELETE t FROM `ktp_team_score_ingest_conflicts`",
+        "DELETE t FROM `ktp_team_score_observations`",
+        "DELETE t FROM `ktp_team_score_ingest_manifests`",
+        "COMMIT",
     )
-    assert sql.index("DELETE t FROM `ktp_team_score_observations`") < sql.index(
-        "DELETE t FROM `ktp_team_score_ingest_manifests`"
-    )
-    assert sql.index("DELETE t FROM `ktp_team_score_ingest_manifests`") < sql.index("COMMIT")
     assert "RELEASE_LOCK('ktp_team_score_ledger_v1')" in sql
 
 
 def test_producer_context_has_index_friendly_precedence_over_receipt_context():
-    sql = retention.build_sql(14, apply=True)
+    sql = code_text(retention.build_sql(14, apply=True), flavour=SQL,
+                    origin="ktp-match-retention.build_sql")
     assert retention.PRODUCER_CONTEXT_TABLES == (
         "hlstats_Events_Frags",
         "ktp_damage_events",
@@ -82,10 +90,10 @@ def test_producer_context_has_index_friendly_precedence_over_receipt_context():
             f"DELETE t FROM `{table}` t JOIN purge_match_ids p "
             "ON p.match_id = t.match_id WHERE t.producer_match_id IS NULL;"
         )
-        assert sql.count(f"DELETE t FROM `{table}`") == 2
+        assert len(sql.occurrences(f"DELETE t FROM `{table}`")) == 2
         assert producer_delete in sql
         assert legacy_delete in sql
-        assert sql.index(producer_delete) < sql.index(legacy_delete)
+        assert_in_order(sql, producer_delete, legacy_delete)
         assert f"'{table}:producer_match_id' AS table_name" in sql
         assert f"'{table}:legacy_match_id' AS table_name" in sql
 

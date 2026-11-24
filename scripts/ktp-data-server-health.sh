@@ -131,6 +131,12 @@ CORPUS_GUARD_STALE_SEC="${CORPUS_GUARD_STALE_SEC:-172800}"
 # observation from outside, and this log's mtime is the only thing that separates them.
 HLTV_DRIFT_LOG="${HLTV_DRIFT_LOG:-/var/log/ktp-hltv-api-drift.log}"
 HLTV_DRIFT_STALE_SEC="${HLTV_DRIFT_STALE_SEC:-172800}"
+# The AC migrations-applied check stamps a file only when it reached a verdict, so the
+# stamp's age is the work-done signal. Gated on the timer being installed: it ships
+# uninstalled, and an absent stamp must not page before anyone has turned it on.
+MIGRATIONS_CHECK_TIMER_FILE="${MIGRATIONS_CHECK_TIMER_FILE:-/etc/systemd/system/ktp-migrations-applied-check.timer}"
+MIGRATIONS_CHECK_STAMP="${MIGRATIONS_CHECK_STAMP:-/var/lib/ktp-migrations-applied-check/last-checked}"
+MIGRATIONS_CHECK_STALE_SEC="${MIGRATIONS_CHECK_STALE_SEC:-172800}"
 # Liveness is not reading. The poll loop can iterate while every SSH session
 # fails -- which rewrites state.json on schedule, so the mtime leg above, a
 # systemd watchdog and the cleanup interlock all read healthy while no match
@@ -601,6 +607,24 @@ else
 fi
 # <<< ktp-hltv-api-drift
 
+# >>> ktp-migrations-applied-check — extracted verbatim by tests/unit/test_health_migrations_applied_check.py
+# Keyed on the success stamp, never on the unit's state: a timer that stopped firing and a
+# run that died before checking both leave the unit looking fine. A finding alerts by
+# itself through OnFailure=; this leg is for the run that never happened.
+if [ -f "$MIGRATIONS_CHECK_TIMER_FILE" ]; then
+    if [ ! -f "$MIGRATIONS_CHECK_STAMP" ]; then
+        down+=("ktp-migrations-check-stamp=absent")
+    else
+        migrations_check_epoch=$(stat -c %Y "$MIGRATIONS_CHECK_STAMP" 2>/dev/null || echo 0)
+        if [ "$migrations_check_epoch" -eq 0 ] ||
+           [ $(( $(date +%s) - migrations_check_epoch )) -gt "$MIGRATIONS_CHECK_STALE_SEC" ]; then
+            # Fixed token, never the age: the report is a set-diff.
+            down+=("ktp-migrations-check=stale")
+        fi
+    fi
+fi
+# <<< ktp-migrations-applied-check
+
 # >>> ktp-hltv-liveness-page — extracted verbatim by tests/unit/test_health_liveness_page.py
 # An HLTV page that was detected and could not be delivered. Keyed on the latched
 # epoch, not on the unit being failed: exit 4 clears at the liveness check's next
@@ -647,6 +671,76 @@ precache_freshness() {  # $1 = report glob, $2 = max age seconds, $3 = now epoch
 # <<< ktp-precache-freshness
 precache_item="$(precache_freshness "$PRECACHE_REPORT_GLOB" "$PRECACHE_STALE_SEC" "$(date +%s)")"
 if [ -n "$precache_item" ]; then down+=("$precache_item"); fi
+
+# >>> ktp-run-record-age — extracted verbatim by tests/unit/test_health_run_record_age.py
+# Units wrapped by ktp-run-record.sh write runs/<UTC>.txt, or runs/last-ok.txt, only
+# when a run ENDS, so the newest one's mtime is the work-done signal. A timer that
+# stops is the timer leg's; a run that never ends, or a unit that quietly stops
+# being run, leaves the unit looking fine and is only visible here.
+RUN_RECORD_ROOT="${RUN_RECORD_ROOT:-/var/lib}"
+RUN_RECORD_UNIT_DIR="${RUN_RECORD_UNIT_DIR:-/etc/systemd/system}"
+# unit, newest-record ceiling, unfinished-.part ceiling (seconds). The first is the
+# cadence plus room for one late run; the second is TimeoutStartSec plus the stop
+# window plus slack, since a .part past that means the wrapper never got to promote it.
+# Not listed, each with its own leg above: ktp-render-banlist (three-leg ban-list
+# check) and ktp-migrations-applied-check (its success stamp). One fault, one item.
+# Optional 4th/5th fields: the records subdirectory (default runs) and the ExecStart=
+# pattern that opts the unit in (default ktp-run-record), for a unit that keeps the
+# same dated-file-plus-.part shape with a runner of its own.
+RUN_RECORD_UNITS=(
+    "ktp-weekly-outliers 691200 2700"
+    "ktp-voice-taunts 108000 1500"
+    "ktp-own-weapon-kills 108000 1500"
+    "ktp-install-freshness 108000 1800"
+    "ktp-hlstatsx-ingest-monitor 10800 1800"
+    "ktp-telemetry-export 10800 1500"
+    "ktp-stats-export 3600 1200"
+    # keep-the-prac's unit; its runner writes reports/<UTC>.txt via a .part itself.
+    "ktp-identity-reconcile 691200 1800 reports reconcile-identities-run"
+)
+run_record_age() {  # $1 = unit, $2 = record ceiling, $3 = .part ceiling, $4 = now epoch,
+                    # [$5 = records subdir, $6 = ExecStart= pattern]
+    local unit="$1" runs="$RUN_RECORD_ROOT/$1/${5:-runs}" unit_file="$RUN_RECORD_UNIT_DIR/$1.service"
+    local runner="${6:-ktp-run-record}" newest=0 part=0 f e
+    # Keyed on the directive, not a mention: a comment naming the wrapper is not the wrapper.
+    # Not installed, or installed unwrapped, means nothing writes here yet -- not a fault.
+    grep -qE "^ExecStart=.*${runner}" "$unit_file" 2>/dev/null || return 0
+    for f in "$runs"/*.txt; do
+        # A latest.txt symlink is a pointer, not a run; only the dated files are judged.
+        [ -f "$f" ] && [ ! -L "$f" ] || continue
+        e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+        if [ "$e" -gt "$newest" ]; then newest="$e"; fi
+    done
+    for f in "$runs"/*.txt.part; do
+        [ -f "$f" ] || continue
+        e="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+        if [ "$e" -gt "$part" ]; then part="$e"; fi
+    done
+    # An orphan .part is kept on disk as evidence, so only the LATEST run being one
+    # pages; once a later run ends, the old .part stops reporting and stays readable.
+    if [ "$part" -gt "$newest" ] && [ $(( $4 - part )) -gt "$3" ]; then
+        printf '%s-run-record=unfinished\t%s\n' "$unit" "latest run never finished; .part in $runs"
+    elif [ "$newest" -eq 0 ]; then
+        # A fresh install has written nothing yet; give it one ceiling before calling it.
+        e="$(stat -c %Y "$unit_file" 2>/dev/null || echo 0)"
+        if [ $(( $4 - e )) -gt "$2" ]; then
+            printf '%s-run-record=none\t%s\n' "$unit" "wrapped unit has never written to $runs"
+        fi
+    elif [ $(( $4 - newest )) -gt "$2" ]; then
+        # Fixed token, age only in the note: the report is a set-diff.
+        printf '%s-run-record=stale\t%s\n' "$unit" "newest record $(( ($4 - newest) / 3600 ))h old"
+    fi
+    return 0
+}
+# <<< ktp-run-record-age
+run_record_now="$(date +%s)"
+for _rr in "${RUN_RECORD_UNITS[@]}"; do
+    read -r _rr_unit _rr_max _rr_part _rr_dir _rr_exec <<< "$_rr"
+    while IFS=$'\t' read -r _key _note; do
+        if [ -z "${_key:-}" ]; then continue; fi
+        down+=("$_key"); detail[$_key]="$_note"
+    done <<< "$(run_record_age "$_rr_unit" "$_rr_max" "$_rr_part" "$run_record_now"                  "${_rr_dir:-runs}" "${_rr_exec:-ktp-run-record}")"
+done
 
 # HLTV instance coverage — check each port in the expected set,
 # skipping intentionally-excluded ones.
@@ -1629,6 +1723,111 @@ if wcs_rows=$(weapon_context_scan "$WEAPON_CONTEXT_DIR" "$AC_UPLOADS_DIR" "$now_
 else
     down+=("weapon-context-store=scan-failed")
 fi
+
+# ---- AC review digest: did the backlog reach a person? ----
+# The weekly digest is the only thing that routes the review backlog to anyone,
+# and its cadence marker advances ONLY on a delivered post -- every other
+# outcome rolls it back on purpose, so a late session surfaces at the next tick.
+# One marker value therefore means both "quiet" and "broken", and the service's
+# own log is the only place the two are distinguishable. Its failure line says
+# so in as many words: nobody was told. Nothing read that log on a schedule.
+#
+# Keyed on work NOT done -- a post that was owed and never made. ktp-ac-api is
+# active through all of it, so the unit's state is silent on every case here.
+#
+# The three literals below are the contract with the API's digest service. A
+# reword there has to arrive here too, or this goes blind in the quiet
+# direction; the `loop-silent` leg is the only one that still fires, and only
+# while a post is due. tests/unit/test_health_review_digest.py pins them.
+# >>> ktp-ac-digest — extracted verbatim by tests/unit/test_health_review_digest.py
+AC_DIGEST_UNIT="${AC_DIGEST_UNIT:-ktp-ac-api}"
+AC_DIGEST_MARKER_KEY="${AC_DIGEST_MARKER_KEY:-LastUnreviewedDigestAt}"
+AC_DIGEST_POSTED_LITERAL="${AC_DIGEST_POSTED_LITERAL:-posted unreviewed-review digest}"
+AC_DIGEST_QUIET_LITERAL="${AC_DIGEST_QUIET_LITERAL:-unreviewed digest stayed quiet}"
+AC_DIGEST_FAILED_LITERAL="${AC_DIGEST_FAILED_LITERAL:-did NOT post and nobody was told}"
+# Mirrors the service's own period. The window spans several of its ticks on
+# purpose: a rolled-back marker is retried at the next one, so a broken digest
+# keeps re-logging instead of falling silent, and a window far shorter than the
+# period is still sound. It also keeps the journal floor an easy bar to clear --
+# that journal is size-bounded, not time-bounded, so the floor is derived per
+# run and a window it cannot cover is reported rather than scored.
+AC_DIGEST_PERIOD_HOURS="${AC_DIGEST_PERIOD_HOURS:-168}"
+AC_DIGEST_WINDOW_HOURS="${AC_DIGEST_WINDOW_HOURS:-24}"
+# A digest that owed a post and did not make one is an unrouted week. CLEAR must
+# stay at or above 1 for the same reason the upload-abort leg does: at 0 the
+# mid-band test is true for every count and the item never clears again.
+AC_DIGEST_FAIL_WARN="${AC_DIGEST_FAIL_WARN:-1}"
+AC_DIGEST_FAIL_CLEAR="${AC_DIGEST_FAIL_CLEAR:-1}"
+
+# ac_digest_rows <marker-age-hours> <journal-floor-age-hours>, journal lines on
+# stdin -> key<TAB>value<TAB>note rows. Both ages are arguments rather than read
+# from the clock, so the caller -- and the test -- decide the window.
+#
+# An unreadable marker or a journal that does not reach back across the window
+# is `unmeasurable`, never a clean zero: both answer "no failures found" out of
+# a check that could not have found one.
+ac_digest_rows() {
+    local marker_age=$1 floor_age=$2
+    awk -v marker_age="$marker_age" -v floor_age="$floor_age" \
+        -v window="$AC_DIGEST_WINDOW_HOURS" -v period="$AC_DIGEST_PERIOD_HOURS" \
+        -v posted_lit="$AC_DIGEST_POSTED_LITERAL" -v quiet_lit="$AC_DIGEST_QUIET_LITERAL" \
+        -v failed_lit="$AC_DIGEST_FAILED_LITERAL" '
+        index($0, failed_lit) { failed++; next }
+        index($0, posted_lit) { posted++; next }
+        index($0, quiet_lit)  { quiet++; next }
+        END {
+            if (marker_age !~ /^[0-9]+$/) {
+                printf "ac-review-digest=unmeasurable\t0\tthe digest cadence marker could not be read, so whether a digest is owed is unknown -- not fine\n"
+                exit 0
+            }
+            if (floor_age !~ /^[0-9]+$/ || floor_age + 0 < window + 0) {
+                printf "ac-review-digest=unmeasurable\t0\tthe journal does not reach back across the window, so a quiet result would mean nothing\n"
+                exit 0
+            }
+            if (failed + 0 > 0) {
+                printf "ac-review-digest:failed\t%d\t%d digest tick(s) owed a post, did not make one and said so only in the journal\n", failed, failed
+            }
+            if (marker_age + 0 >= period + 0 && posted + quiet + failed == 0) {
+                printf "ac-review-digest:loop-silent\t1\ta digest is overdue and the service logged no outcome of any kind -- it is not ticking, and it reads as active throughout\n"
+            }
+        }'
+}
+# <<< ktp-ac-digest
+
+# Root socket, same auth as the capture legs. A failed read is its own down item
+# rather than a skip: a dropped marker row would otherwise read as a digest that
+# is simply not due, forever.
+digest_marker_age=$(mysql hlstatsx -N -B -e "
+        SELECT TIMESTAMPDIFF(HOUR,
+                   STR_TO_DATE(LEFT(config_value, 19), '%Y-%m-%dT%H:%i:%s'),
+                   UTC_TIMESTAMP())
+        FROM ktp_ac_config
+        WHERE config_key = '$AC_DIGEST_MARKER_KEY'" 2>/dev/null | head -1 || true)
+# Oldest retained entry, derived per run. -o short-unix so the floor is an epoch
+# and not a locale; head closes the pipe, so this does not read the journal.
+digest_floor_epoch=$(journalctl -o short-unix --no-pager 2>/dev/null | head -1 | awk '{print int($1)}' || true)
+if [[ ${digest_floor_epoch:-} =~ ^[0-9]+$ ]] && [ "$digest_floor_epoch" -gt 0 ]; then
+    digest_floor_age=$(( (now_epoch - digest_floor_epoch) / 3600 ))
+else
+    digest_floor_age=unknown
+fi
+digest_window=$(journalctl -u "$AC_DIGEST_UNIT" --no-pager \
+    --since "${AC_DIGEST_WINDOW_HOURS} hours ago" 2>/dev/null || true)
+
+while IFS=$'\t' read -r _key _val _note; do
+    if [ -z "${_key:-}" ]; then continue; fi
+    echo "[$now_ts] ac-review-digest: $_key ($_note)"
+    case $_key in
+        ac-review-digest:failed)
+            if latched "$_key" "$_val" "$AC_DIGEST_FAIL_WARN" "$AC_DIGEST_FAIL_CLEAR"; then
+                down+=("$_key"); detail[$_key]="$_note"
+            fi
+            ;;
+        *)
+            down+=("$_key"); detail[$_key]="$_note"
+            ;;
+    esac
+done <<< "$(printf '%s\n' "$digest_window" | ac_digest_rows "${digest_marker_age:-unknown}" "$digest_floor_age")"
 
 # ---- Build sorted lists for set comparison ----
 # curr.list: sorted, deduplicated set of currently-down items

@@ -431,8 +431,8 @@ SELECT cm.half, cm.schema_version, cm.capabilities, cm.position_interval,
        UNIX_TIMESTAMP(m.start_time) AS match_start_epoch
 FROM ktp_capture_manifests cm
 LEFT JOIN ktp_matches m
-  ON BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
-WHERE BINARY cm.match_id=BINARY {match}
+  ON m.match_id=cm.match_id AND BINARY m.match_id=BINARY cm.match_id AND m.half=cm.half
+WHERE cm.match_id={match} AND BINARY cm.match_id=BINARY {match}
 ORDER BY cm.half, cm.id
 """)
     health_rows = _rows(db, "capture_health", f"""
@@ -441,7 +441,7 @@ SELECT half, event_type, attempted, enqueued, dropped, emitted,
        correlation_failure_count, sequence_gap_count,
        duplicate_or_reordered_count
 FROM ktp_capture_health
-WHERE BINARY match_id=BINARY {match}
+WHERE match_id={match} AND BINARY match_id=BINARY {match}
 ORDER BY half, event_type
 """)
     observed_halves = {
@@ -495,9 +495,11 @@ SELECT le.half, le.player_id, le.boundary_kind, le.reason, le.team,
            AS game_time
 FROM ktp_life_events le
 JOIN ktp_matches m
-  ON m.server_id=le.server_id AND BINARY m.match_id=BINARY le.match_id
- AND m.half=le.half AND BINARY m.map_name=BINARY le.map_name
-WHERE BINARY le.match_id=BINARY {match} AND le.half>0
+  ON m.server_id=le.server_id
+ AND m.match_id=le.match_id AND BINARY m.match_id=BINARY le.match_id
+ AND m.half=le.half
+ AND m.map_name=le.map_name AND BINARY m.map_name=BINARY le.map_name
+WHERE le.match_id={match} AND BINARY le.match_id=BINARY {match} AND le.half>0
 ORDER BY le.half, le.player_id, le.game_time, le.id
 """)
     life_quality = _life_boundary_quality(

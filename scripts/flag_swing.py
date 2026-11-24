@@ -57,12 +57,60 @@ def _load_map_coefficients() -> dict[str, tuple[float, float]]:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return {str(name): (float(row["flag_coefficient"]),
                             float(row["alive_coefficient"]))
+                for name, row in payload.get("maps", {}).items()
+                if not row.get(FLOOR_MARKER)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def _load_floor_kept_map_coefficients() -> dict[str, tuple[float, float, str]]:
+    """Rows the refit kept from an earlier fit rather than measured this week.
+
+    They live in the live table, but they are not this week's fit, so they rank
+    with the retained rows rather than with the fresh ones.
+    """
+    path = Path(__file__).resolve().parents[1] / "config" / "map_coefficients.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): (float(row["flag_coefficient"]),
+                            float(row["alive_coefficient"]),
+                            str(row.get("kept_from_fitted_at")))
+                for name, row in payload.get("maps", {}).items()
+                if row.get(FLOOR_MARKER)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+FLOOR_MARKER = "kept_by_floor"  # written by scripts/fit_map_coefficients.apply_floor
+MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
+FLOOR_KEPT_MAP_COEFFICIENTS: dict[str, tuple[float, float, str]] = (
+    _load_floor_kept_map_coefficients())
+
+
+def _load_retained_map_coefficients() -> dict[str, tuple[float, float, str]]:
+    """Last fitted row of every map the weekly refit has since dropped.
+
+    The refit rewrites map_coefficients.json wholesale, so a map whose halves
+    leave the training window vanishes from it and would price on the league
+    prior. Kept in a separate file because the refit patch must still apply
+    byte-for-byte. Same failure contract as the live table.
+    """
+    path = (Path(__file__).resolve().parents[1] / "config"
+            / "map_coefficients_retained.json")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {str(name): (float(row["flag_coefficient"]),
+                            float(row["alive_coefficient"]),
+                            str(row["retained_from_commit"]))
                 for name, row in payload.get("maps", {}).items()}
     except (OSError, ValueError, KeyError, TypeError):
         return {}
 
 
-MAP_COEFFICIENTS: dict[str, tuple[float, float]] = _load_map_coefficients()
+RETAINED_MAP_COEFFICIENTS: dict[str, tuple[float, float, str]] = (
+    _load_retained_map_coefficients())
+
+RETAINED_CALIBRATION_PREFIX = "retained_fit:"
 
 # A re-cut of a map inherits its predecessor's fit until it has halves of its own.
 # Without this a new revision drops to the league prior on the week it ships, and
@@ -116,6 +164,16 @@ class FlagSwingConfig:
             inherited = MAP_COEFFICIENT_CARRY_FORWARD.get(name)
             fitted = MAP_COEFFICIENTS.get(inherited) if inherited else None
             calibration = f"carried_forward_from:{inherited}"
+        if fitted is None and name in FLOOR_KEPT_MAP_COEFFICIENTS:
+            flag, alive, kept_from = FLOOR_KEPT_MAP_COEFFICIENTS[name]
+            fitted = (flag, alive)
+            calibration = f"{RETAINED_CALIBRATION_PREFIX}{name}@{kept_from}"
+        if fitted is None and name in RETAINED_MAP_COEFFICIENTS:
+            # Behind the carry-forward: a predecessor's current fit is fresher
+            # than this map's own superseded one.
+            flag, alive, commit = RETAINED_MAP_COEFFICIENTS[name]
+            fitted = (flag, alive)
+            calibration = f"{RETAINED_CALIBRATION_PREFIX}{name}@{commit[:12]}"
         if fitted is None:
             return self
         return replace(self, flag_coefficient=fitted[0],
@@ -274,6 +332,9 @@ def build_flag_swing_shadow(
                        "clock": "producer_game_time"},
         "status": "available",
         "calibration": config.calibration,
+        # A carried row is an old fit, not this week's; say so where it is read.
+        "coefficients_retained": config.calibration.startswith(
+            RETAINED_CALIBRATION_PREFIX),
         "visibility": "private_shadow_only",
         "writes": False,
         "rating_effect": False,

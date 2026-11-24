@@ -227,6 +227,22 @@ sudo install -m 0644 /opt/ktp-reports/KTPInfrastructure/systemd/ktp-reports.time
 sudo systemctl daemon-reload
 ```
 
+⚠️ **Installing the unit does not change its start timeout.** The data server
+carries `/etc/systemd/system/ktp-reports.service.d/10-timeout.conf` with
+`TimeoutStartSec=5400`, and a drop-in outranks the unit — so the bound the repo
+ships is inert until that file is removed. It is untracked here, so nothing in
+this repo reports it either.
+
+```bash
+sudo rm /etc/systemd/system/ktp-reports.service.d/10-timeout.conf   # dir is then empty
+sudo systemctl daemon-reload
+systemctl show ktp-reports.service -p TimeoutStartUSec --value      # must read 10min
+```
+
+**Read the effective value, never the unit file.** `systemctl show` resolves
+drop-ins; a `grep` of `/etc/systemd/system/ktp-reports.service` reported the
+right number for a month while systemd was using 5400.
+
 Dry-run the sync before arming anything. This is the step that catches a
 misplaced or unreadable secret, and it writes nothing:
 
@@ -277,6 +293,7 @@ gone and the match listed.
 | Reports but 0 aggregates | `aggregate` failed; read the second ExecStart in the journal |
 | Both built, site empty | `report_sync` did not push. Almost always the secret |
 | A rating renders negative | Checkout is behind `main`; the display floor is 50 |
+| Journal says only `code=killed` | A timeout. In `/var/log/ktp-report-service.log` the last `ktp-reports step=<name> start` with no matching `end` is the step it killed |
 
 ```bash
 journalctl -u ktp-reports.service -n 50 --no-pager
@@ -376,6 +393,17 @@ Inputs:
 
 There is no date-range scope: `generate --since` only floors discovery, and the
 season floor is read from the installed unit, never typed in.
+
+⚠️ **A corpus-wide regeneration after a schema bump does not fit inside the
+service's `TimeoutStartSec`.** Each tick gets through about ten reports before it is
+killed, every kill posts a `ktp-systemd-alert` embed, and `generate` has no
+batch-size option, so `scope = pending` and the timer only grind through it noisily.
+Work is persisted per report, so nothing is lost; it is just slow and loud. To
+finish it: stop `ktp-reports.timer`, run `generate --since <floor>` once as a
+transient unit (`systemd-run` as `ktpreports`, the same `EnvironmentFile`, working
+directory and `Nice`, no start timeout), then re-enable the timer and start one
+normal tick so `aggregate` and `report_sync` publish the result. Pick a window with
+no live match.
 
 What the job refuses, before running anything:
 

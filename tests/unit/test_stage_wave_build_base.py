@@ -1,11 +1,14 @@
 """The build base a wave records beside each artifact's md5.
 
-Three of eleven fleet artifacts had a build base recorded anywhere, so "has this
-moved since?" could not be answered exactly for the other eight -- and it never
-will be for those, because none of these artifacts is byte-reproducible. `.amxx`
-bakes a per-minute BUILD_TIME and ReHLDS bakes a build-id and `__DATE__`, so
+Most fleet artifacts had no build base recorded anywhere, so "has this moved
+since?" could not be answered exactly for them -- and whether it ever can be
+depends on the artifact class. A compile.sh-built `.amxx` bakes a per-minute
+KTP_BUILD_TIME and ReHLDS bakes a build-id and `__DATE__`, so for those,
 rebuilding candidate commits and comparing md5s returns a MISMATCH for the base
-that actually built the file. Stage time is the only moment it is knowable.
+that actually built the file, and stage time is the only moment it is knowable.
+KTPAMXX's in-tree plugins bake neither, so they do reproduce from their commit
+against the same `amxxpc` -- a recorded base is what keeps that check a
+one-liner.
 
 Nothing here touches the fleet or the network. `stage-wave.py` imports paramiko
 at module scope (and `sys.exit(1)` if it is absent), and the unit lane installs
@@ -150,7 +153,13 @@ def test_status_says_unrecoverable_rather_than_leaving_it_blank(capsys):
     assert wl.main(["status"]) == 0
     out = capsys.readouterr().out
     assert "NOT RECORDED" in out
-    assert "not byte-reproducible" in out
+    # It must say what recovery depends on, not that there is none: this string
+    # is where a reader meets the claim, and "not byte-reproducible" full stop
+    # is false for the in-tree plugin class and talks people out of the one
+    # check that catches a wrong build.
+    assert "depends on the artifact class" in out
+    assert "in-tree plugins rebuild byte-identically" in out
+    assert "not byte-reproducible" not in out
 
 
 def test_status_prints_a_recorded_base(capsys):
@@ -191,10 +200,14 @@ def _gate(monkeypatch, argv, artifacts):
 
     Everything before the gate is stubbed out; anything after it would need the
     network, and none of these cases is expected to get that far.
+    `--allow-unresolved-natives` is in the argv for exactly that reason: the
+    native-resolution gate sits AFTER this one and reads the fleet, so without
+    the skip the two passing cases below reach out over SSH.
     """
     monkeypatch.setattr(sw.ledger, "gate", lambda *a, **k: sw.ledger.GateResult("clear", []))
     monkeypatch.setattr(sw.d2f, "build_artifacts", lambda files, override_remote: artifacts)
-    monkeypatch.setattr(sys, "argv", ["stage-wave.py", "--allow-existing-new", "--dry-run"] + argv)
+    monkeypatch.setattr(sys, "argv", ["stage-wave.py", "--allow-existing-new",
+                                      "--allow-unresolved-natives", "--dry-run"] + argv)
     return sw.main()
 
 

@@ -216,7 +216,7 @@ sees.
 ### Hazards on `/home/dod/distribute/`
 
 - ⛔ **It is a live deploy path.** `ktp-file-distributor.service` pushes any created or changed
-  file to all 24 instances within ~15 s, and **syncs deletions** — a `rm` there removes the file
+  file to all 24 instances (~25 s for one small file, longer for a map batch), and **syncs deletions** — a `rm` there removes the file
   from 24 hosts. Edit outside the tree and copy in (`cat new > file`, never `rm`/`mv`), and keep
   backups somewhere else entirely.
 - ⚠️ **It pushes on change and never back-fills.** A file that is not in `distribute/` is simply

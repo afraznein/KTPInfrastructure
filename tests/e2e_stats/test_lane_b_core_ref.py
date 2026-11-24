@@ -5,11 +5,13 @@ from pathlib import Path
 import pytest
 
 from tests.e2e_stats.artifacts import DEFAULT_SCHEMA_FILES, plan_schema_files
+from tests.e2e_stats.metamod import FLEET_GAMEDLL_CRC32
+from tests.source_anchors import PYTHON, assert_in_order, code_text, pawn_source
 from scripts.lane_b_e2e import (gamerules_clock_preflight,
                                  match_epoch_interval,
                                  persist_preflight_failure,
-                                replay_boot_flag_positions, run_match,
-                                wait_for_match_start_log,
+                                replay_boot_flag_positions, run_exit_code,
+                                run_match, wait_for_match_start_log,
                                 stage_objective_wire_witness, stage_tree)
 
 
@@ -91,8 +93,14 @@ def test_full_lane_builds_test_core_from_the_exact_amxx_checkout():
     assert 'if [ "$CORE_AMXX_SHA" != "$BUNDLE_AMXX_SHA" ]' in workflow
     assert '-v "${PWD}/.github:/work/.github:ro"' in workflow
     assert '-v "${PWD}/sql:/work/sql:ro"' in workflow
-    assert "    default: preprod" in action
-    assert 'REF="${LANEB_REF:-preprod}"' in script
+    # `preprod` is retired on KTPAMXX, so neither side may carry it as a default:
+    # the lane names its ref and the build refuses when nobody does.
+    assert "    default: preprod" not in action
+    assert "required: true" in action
+    assert "inputs.ref == ''" in action
+    assert 'REF="${LANEB_REF:-preprod}"' not in script
+    assert 'REF="${LANEB_REF:-}"' in script
+    assert "will not guess which core to build" in script
     assert "dodx-so-path:" in action
     assert "--dodx-so /work/build/dodx_ktp_i386.so" in workflow
     assert "--amxx-gamedata /work/build/artifacts/gamedata" in workflow
@@ -117,7 +125,12 @@ def test_manual_lane_accepts_and_records_all_four_bundle_refs():
     assert 'ap.add_argument("--artifact-manifest"' in runner
     assert "--require-complete-coverage" in workflow
     assert 'ap.add_argument("--require-complete-coverage"' in runner
-    assert "args.require_complete_coverage and bool(gaps)" in runner
+    # Asked of the behaviour, not of the line: the old text assertion went
+    # stale the moment the gating set stopped being every gap.
+    assert run_exit_code(failures=[], gating_gaps=["cap_break: bot luck"],
+                         require_complete_coverage=True) == 1
+    assert run_exit_code(failures=[], gating_gaps=["cap_break: bot luck"],
+                         require_complete_coverage=False) == 0
 
 
 def test_both_lanes_apply_the_context_migrations_the_daemon_ref_carries():
@@ -189,7 +202,8 @@ def test_full_lane_carries_target_producer_clock_release_gates():
     ):
         assert check in runner
     assert "log_invariants.count_in_match" in runner
-    assert "args.require_complete_coverage and bool(gaps)" in runner
+    assert run_exit_code(failures=[], gating_gaps=["frag_producer_clocks: none"],
+                         require_complete_coverage=True) == 1
 
 
 def test_full_lane_strictly_accounts_for_breakdrive_frag_diagnostics():
@@ -257,13 +271,16 @@ def test_build_refuses_partial_lane_b_core_support():
 
 
 def test_daemon_starts_only_after_hlds_is_rcon_ready():
-    runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    text = (ROOT / "scripts/lane_b_e2e.py").read_text()
+    runner = code_text(text, flavour=PYTHON, origin="lane_b_e2e.py")
 
     ready = 'print(f"server up (attempt {attempt})", flush=True)'
     daemon_start = "daemon.start()"
-    assert runner.count(daemon_start) == 1
-    assert runner.index(ready) < runner.index(daemon_start)
-    assert "failed-attempt rows can neither be ingested" in runner
+    assert len(runner.occurrences(daemon_start)) == 1
+    assert_in_order(runner, ready, daemon_start)
+    # Raw text on purpose: this one IS the rationale comment, and keeping the
+    # reason beside the ordering is what is being pinned.
+    assert "failed-attempt rows can neither be ingested" in text
 
 
 def test_only_static_flag_positions_are_replayed_from_boot(tmp_path):
@@ -360,9 +377,10 @@ class _PreflightHandle:
         return self.output
 
 
-def _preflight(tmp_path, output, *, log_extra="", crc_path="/opt/hlds/dod/dlls/dod.so"):
+def _preflight(tmp_path, output, *, log_extra="",
+               crc_path="/opt/hlds/dod/dlls/dod_i386.so", crc=FLEET_GAMEDLL_CRC32):
     log = tmp_path / "server.log"
-    crc = (f"GameConfig CRC computed server=89ABCDEF ({crc_path})\n"
+    crc = (f"GameConfig CRC computed server={crc} ({crc_path})\n"
            if crc_path is not None else "")
     log.write_text(crc + log_extra)
     handle = _PreflightHandle(output)
@@ -377,7 +395,7 @@ def test_clock_preflight_accepts_exact_server_crc_and_live_clock(tmp_path):
         "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=1195.25 limit=1200.00",
     )
     assert result["status"] == "ok"
-    assert result["server_crc"][0]["path"].endswith("/dod/dlls/dod.so")
+    assert result["server_crc"][0]["path"].endswith("/dod/dlls/dod_i386.so")
 
 
 @pytest.mark.parametrize("output", [
@@ -396,7 +414,7 @@ def test_clock_preflight_fails_closed_on_bad_or_ambiguous_marker(tmp_path, outpu
 def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path):
     marker = "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"
     for message in (
-        'Unable to prove declared mm_gamedll "dlls/dod.so"',
+        'Unable to prove declared mm_gamedll "dlls/dod_i386.so"',
         'Unable to load library "server"',
         'GameConfig CRC mismatch for library "server"',
     ):
@@ -407,6 +425,16 @@ def test_clock_preflight_rejects_warning_missing_crc_and_wrong_library(tmp_path)
     assert _preflight(
         tmp_path, marker, crc_path="/opt/hlds/metamod/metamod.so"
     )["status"] == "pipeline"
+
+
+def test_clock_preflight_rejects_the_stock_game_dll(tmp_path):
+    marker = "KTP_BD_CLOCK_PREFLIGHT gamerules=1 round=10.00 limit=1200.00"
+    stock = _preflight(tmp_path, marker, crc_path="/opt/hlds/dod/dlls/dod.so")
+    assert stock["status"] == "pipeline"
+    assert "dod/dlls/dod_i386.so" in stock["detail"]
+    other = _preflight(tmp_path, marker, crc="1BEDADC8")
+    assert other["status"] == "pipeline"
+    assert "1BEDADC8" in other["detail"] and FLEET_GAMEDLL_CRC32 in other["detail"]
 
 
 def test_wait_for_match_start_log_matches_only_this_match(tmp_path):
@@ -421,19 +449,27 @@ def test_wait_for_match_start_log_matches_only_this_match(tmp_path):
     assert wait_for_match_start_log(log, "mine-TEST", timeout=0.2, poll=0.05)
 
 
+def _run_match_code():
+    """`run_match` with its comments and docstring excluded.
+
+    Nearly half of what `inspect.getsource` returns here is prose, and prose
+    about a step is written above it -- so on raw text a note naming a hook
+    moves that anchor earlier and these orderings hold whatever the code does.
+    """
+    return code_text(inspect.getsource(run_match), PYTHON, "run_match")
+
+
 def test_run_match_waits_on_go_live_before_the_after_live_hook():
-    source = inspect.getsource(run_match)
-    assert source.index("wait_for_match_start_log(") < source.index("after_live()")
+    assert_in_order(_run_match_code(), "wait_for_match_start_log(", "after_live()")
 
 
 def test_clock_preflight_runs_after_config_settle_and_before_play_hooks():
-    source = inspect.getsource(run_match)
-    assert source.index("time.sleep(5.0)") < source.index("after_live()")
-    assert source.index("after_live()") < source.index("before_play()")
+    assert_in_order(_run_match_code(), "time.sleep(5.0)", "after_live()",
+                    "before_play()")
 
 
 def test_clock_preflight_parser_is_bound_to_pawn_producer_and_no_boot_retry():
-    pawn = (ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma").read_text()
+    pawn = pawn_source(ROOT / "tests/e2e_stats/diagnostics/KTPBreakDrive.sma")
     runner = (ROOT / "scripts/lane_b_e2e.py").read_text()
     assert 'register_srvcmd("ktp_bd_clock_preflight"' in pawn
     assert "dodx_has_gamerules()" in pawn

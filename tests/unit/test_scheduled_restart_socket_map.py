@@ -32,6 +32,8 @@ import subprocess
 
 import pytest
 
+from tests.source_anchors import HASH, assert_in_order, code_text
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SCRIPT = os.path.join(_ROOT, "scripts", "ktp-scheduled-restart.sh.example")
 
@@ -47,16 +49,17 @@ COLOR_ORANGE = "16750848"
 @pytest.fixture(scope="module")
 def body():
     with open(SCRIPT, encoding="utf-8") as fh:
-        return fh.read()
+        return code_text(fh.read(), flavour=HASH,
+                         origin="ktp-scheduled-restart.sh.example")
 
 
 def _slice(body, start, end):
-    assert body.count(start) == 1, f"anchor not unique: {start!r}"
-    assert body.count(end) == 1, f"anchor not unique: {end!r}"
-    i = body.index(start)
-    j = body.index(end, i)
-    assert j > i
-    return body[i:j]
+    """Uniqueness and comment exclusion now come from the anchor type.
+
+    The two section delimiters ARE `#` comments and stay usable: an anchor that
+    opens with a comment marker is a deliberate delimiter, not prose about one.
+    """
+    return body.body(start, end)
 
 
 # -- the block is there, and escalates ------------------------------------
@@ -98,8 +101,8 @@ def test_both_a_hit_and_a_blind_tree_force_green_to_orange(body):
 
 
 def test_the_escalation_sits_beside_the_swap_failure_one(body):
-    assert body.index('if [ "$SWAP_FAILED" -gt 0 ]; then\n    FINAL_DESC=') < body.index(ESC_START)
-    assert body.index(ESC_START) < body.index(ESC_END)
+    assert_in_order(body, 'if [ "$SWAP_FAILED" -gt 0 ]; then\n    FINAL_DESC=',
+                    ESC_START, ESC_END)
 
 
 def test_the_sweep_does_not_touch_the_exit_code(body):

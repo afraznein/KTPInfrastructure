@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""KTP fleet deploy verification — Tier 2 first cut.
+"""KTP fleet deploy verification -- Tier 2 first cut.
 
 Catches the 2026-04-21 `.new`-swap-didn't-happen regression class plus its
 neighbors:
-  - .new files lingering after a nightly restart → swap script gap
-  - Plugin/.so hash drift across instances → manual deploy that missed a host
-  - Plugin/.so missing on a host → deploy never reached this region
-  - Extra plugins/.so not in reference → stale leftover from old plugin
+  - .new files lingering after a nightly restart -> swap script gap
+  - Plugin/.so hash drift across instances -> manual deploy that missed a host
+  - Plugin/.so missing on a host -> deploy never reached this region
+  - Extra plugins/.so not in reference -> stale leftover from old plugin
 
 Reference-host design: ATL1:27015 is the canonical baseline. Whatever's
 deployed there (sha256 of every .amxx + .so under addons/ktpamx/{plugins,dlls,
 modules}) is compared against every other instance in the fleet. No external
-baseline manifest to maintain — if ATL1 has a bug, the whole fleet flags
+baseline manifest to maintain -- if ATL1 has a bug, the whole fleet flags
 (self-correcting on the next correct deploy).
 
 Aggregation aligned with ktp-soak-verify's Status enum:
@@ -21,7 +21,7 @@ Aggregation aligned with ktp-soak-verify's Status enum:
 
 This is a POST-activation gate. A deliberately staged `.new` is RED too, on
 every instance including the reference, because a fresh stage and a failed
-swap are the same shape on disk — read the wave ledger before believing a RED
+swap are the same shape on disk -- read the wave ledger before believing a RED
 whose only cause is new_files.
 
 Output: JSON report to --out (or stdout if --out=-). When invoked from
@@ -32,7 +32,7 @@ Usage:
   ktp-verify-deploy [--reference <host>:<port>] [--out report.json]
                     [--scope plugins|dlls|modules|all]
                     [--include-engine]   (also check serverfiles/*.so engine + steam_api)
-                    [--check-runtime]    (also rcon `amx_ktp_versions` on each instance —
+                    [--check-runtime]    (also rcon `amx_ktp_versions` on each instance --
                                           catches "right .amxx on disk, prior version
                                           still loaded because instance hasn't restarted")
 
@@ -52,9 +52,9 @@ Exit codes. 0 and 1 are a verdict ABOUT THE FLEET; anything higher says no
 verdict was reached, and they are distinct because a run that contacted no host
 must not look like a run that found nothing wrong:
   0  GREEN
-  1  not GREEN (red/yellow/unreachable) — a verdict
+  1  not GREEN (red/yellow/unreachable) -- a verdict
   2  fatal: the reference host was unreachable or returned an empty manifest
-  3  the freshness guard refused — raised by ktp_script_freshness, not here,
+  3  the freshness guard refused -- raised by ktp_script_freshness, not here,
      and already documented as 3 in the deploy ledger's verify leg
   4  refused before starting: a required credential is not configured
 
@@ -653,7 +653,11 @@ def verify_fleet(reference: str, scope: str, include_engine: bool,
 # ──────────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    # Whole docstring, not its first paragraph: the exit-code table is the part a
+    # caller has to read to tell "no host was contacted" from "the fleet is not
+    # GREEN", and truncating it left that reachable only by opening the file.
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--reference", default="74.91.121.9:27015",
                     help="<host>:<port> to use as the canonical baseline (default: ATL1)")
     ap.add_argument("--scope", choices=["plugins", "dlls", "modules", "all"], default="all")

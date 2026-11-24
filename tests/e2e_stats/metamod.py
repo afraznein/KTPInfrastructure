@@ -5,13 +5,13 @@
 **Production (extension mode)** — what the fleet runs:
 
     engine  →  addons/extensions.ini  →  ktpamx_i386.so
-    engine  →  liblist.gam gamedll_linux "dlls/dod.so"
+    engine  →  liblist.gam gamedll_linux "dlls/dod_i386.so"
 
 **Bot lane (Metamod)** — what new_bot needs:
 
     engine  →  liblist.gam gamedll_linux "addons/metamod/metamod_i386.so"
     metamod →  plugins.ini  →  ktpamx_i386.so, new_bot_mm.so
-    metamod →  +localinfo mm_gamedll dlls/dod.so  →  the real game DLL
+    metamod →  +localinfo mm_gamedll dlls/dod_i386.so  →  the real game DLL
 
 `ktpamx_i386.so` carries `Meta_Attach`/`Meta_Query`/`Meta_Detach`, so it loads
 either way — AMX Mod X is a Metamod plugin by construction, and KTP simply runs
@@ -52,6 +52,11 @@ EXTENSIONS = "dod/addons/extensions.ini"
 EXTENSIONS_PRISTINE = "dod/addons/extensions.ini.production"
 METAMOD_SO = "dod/addons/metamod/metamod_i386.so"
 PLUGINS_INI = "dod/addons/metamod/plugins.ini"
+
+# The fleet's liblist.gam loads this, not the stock dlls/dod.so beside it.
+FLEET_GAMEDLL = "dlls/dod_i386.so"
+# CRC32 of that file, as KTPAMXX's "GameConfig CRC computed server=" line prints it.
+FLEET_GAMEDLL_CRC32 = "C76CE69D"
 
 # plugins.ini paths are relative to the game dir, matching new_bot's README
 # ("win32 new_bot/new_bot_mm.dll" → the linux form below).
@@ -97,7 +102,7 @@ def _set_gamedll(tree, value: str) -> None:
     tree.write_text(LIBLIST, _GAMEDLL_LINUX.sub(f'gamedll_linux "{value}"', body, count=1))
 
 
-def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = "dlls/dod.so",
+def enable_metamod(tree, *, bot_spec=None, real_gamedll: str = FLEET_GAMEDLL,
                    host_ktpamx: bool = True) -> Topology:
     """Point the engine at Metamod, list ktpamx (+ the bot) as its plugins, and
     disable extension mode so ktpamx is not loaded twice.

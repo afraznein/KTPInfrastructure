@@ -48,7 +48,7 @@ auditctl -l | grep -F ktp-distribute || {
 
 echo
 echo "NOT self-tested on purpose. Any write under $WATCH_DIR -- including a probe"
-echo "file -- is distributed to all 24 instances within ~15s, so there is no"
+echo "file -- is distributed to all 24 instances within a minute, so there is no"
 echo "harmless way to fire this rule. The next real deploy is the test."
 echo
 echo "Read attribution with:"

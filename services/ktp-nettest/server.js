@@ -10,7 +10,10 @@ const { makeBusy } = require('./lib/busy');
 
 const MAX_MB = 25;
 const STALL_MAX_S = 90;          // a stall session is torn down after this, whatever the browser does
+const GATHER_MAX_MS = 5000;      // host candidates only, so gathering is near-instant when it works
 const CHUNK = crypto.randomBytes(64 * 1024);  // incompressible; reused for every download
+// The stall test's pacing clock; client.js says why it runs in a worker.
+const TICK_WORKER = 'setInterval(() => postMessage(0), 10);';
 
 function config(env = process.env) {
   const ports = (env.KTP_NETTEST_UDP_PORTS || '').split('-').map(Number);
@@ -25,6 +28,38 @@ function config(env = process.env) {
     maxStalls: Number(env.KTP_NETTEST_MAX_STALLS || 4),
     maxTransfers: Number(env.KTP_NETTEST_MAX_TRANSFERS || 2),
   };
+}
+
+// The shipped example secret, and anything too short to be a generated one, must not start a
+// node: a node signing with a guessable secret accepts tickets anyone can mint.
+const SECRET_MIN_LEN = 32;
+function startupProblem(cfg) {
+  if (!cfg.region || !cfg.secret) return 'KTP_NETTEST_REGION and KTP_NETTEST_TICKET_SECRET are required';
+  if (/placeholder|replace|changeme/i.test(cfg.secret)) return 'KTP_NETTEST_TICKET_SECRET is still the example placeholder';
+  if (cfg.secret.length < SECRET_MIN_LEN) return `KTP_NETTEST_TICKET_SECRET is shorter than ${SECRET_MIN_LEN} characters`;
+  return null;
+}
+
+const escAttr = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// The page the website frames. Its CSP is the second wall: only this node's own scripts run, they
+// talk only to this node, and only the website may embed it.
+function framePage(origin) {
+  return '<!doctype html><html><head><meta charset="utf-8">' +
+    `<meta name="ktp-parent-origin" content="${escAttr(origin)}">` +
+    '<script src="/client.js"></script><script src="/frame.js"></script></head><body></body></html>';
+}
+const frameCsp = (origin) =>
+  `default-src 'none'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors ${origin}`;
+
+// Browsers hide host candidates behind mDNS .local names that resolve only on the player's LAN.
+// werift starts a multicast-dns responder for them, which throws outside any request and kills the node.
+const isMdnsCandidate = (l) => l.startsWith('a=candidate:') && (l.split(' ')[4] || '').includes('.local');
+function dropMdnsCandidates(sdp) {
+  const lines = sdp.split('\n');
+  if (!lines.some(isMdnsCandidate)) return sdp;
+  // Without end-of-candidates werift waits for the browser's checks and pairs it as peer-reflexive.
+  return lines.filter((l) => !isMdnsCandidate(l) && !l.startsWith('a=end-of-candidates')).join('\n');
 }
 
 function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection = null } = {}) {
@@ -56,11 +91,15 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
     });
     pc.connectionStateChange.subscribe((s) => { if (s === 'failed' || s === 'closed') close(); });
     try {
-      await pc.setRemoteDescription({ type: 'offer', sdp });
+      await pc.setRemoteDescription({ type: 'offer', sdp: dropMdnsCandidates(sdp) });
       await pc.setLocalDescription(await pc.createAnswer());
       // Non-trickle: answer once host candidates are in. Public game hosts need no STUN.
+      // werift swallows a gathering failure and never reaches 'complete', so the wait needs a bound.
       if (pc.iceGatheringState !== 'complete') {
-        await new Promise((ok) => pc.iceGatheringStateChange.subscribe((s) => { if (s === 'complete') ok(); }));
+        await new Promise((ok, no) => {
+          const t = setTimeout(() => no(new Error('ICE gathering did not complete')), GATHER_MAX_MS);
+          pc.iceGatheringStateChange.subscribe((s) => { if (s === 'complete') { clearTimeout(t); ok(); } });
+        });
       }
       return pc.localDescription.sdp;
     } catch (e) { close(); throw e; }
@@ -84,6 +123,12 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
       res.setHeader('access-control-allow-origin', '*');
       return send(res, 200, fs.readFileSync(path.join(__dirname, 'client.js')), 'text/javascript');
     }
+    if (route === 'GET /frame') {
+      res.setHeader('content-security-policy', frameCsp(cfg.origin));
+      return send(res, 200, framePage(cfg.origin), 'text/html; charset=utf-8');
+    }
+    if (route === 'GET /frame.js') return send(res, 200, fs.readFileSync(path.join(__dirname, 'frame.js')), 'text/javascript');
+    if (route === 'GET /tick.js') return send(res, 200, TICK_WORKER, 'text/javascript');
     if (route === 'GET /busy') return send(res, 200, { region: cfg.region, busy: isBusy() });
     if (!['GET /ping', 'GET /down', 'POST /up', 'POST /stall/offer'].includes(route)) return send(res, 404, { error: 'not found' });
 
@@ -121,9 +166,10 @@ function createServer(cfg, { isBusy = makeBusy(cfg.logDirs), RTCPeerConnection =
 
 if (require.main === module) {
   const cfg = config();
-  if (!cfg.region || !cfg.secret) { console.error('KTP_NETTEST_REGION and KTP_NETTEST_TICKET_SECRET are required'); process.exit(2); }
+  const problem = startupProblem(cfg);
+  if (problem) { console.error(problem); process.exit(2); }
   if (!cfg.logDirs.length) console.error('warning: KTP_NETTEST_LOG_DIRS empty, node reports busy (never loads an unknown box)');
   createServer(cfg).listen(cfg.port, cfg.host, () => console.log(`ktp-nettest ${cfg.region} on ${cfg.host}:${cfg.port}`));
 }
 
-module.exports = { createServer, config };
+module.exports = { createServer, config, framePage, frameCsp, startupProblem, dropMdnsCandidates };

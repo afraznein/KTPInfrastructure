@@ -8,20 +8,28 @@ Type=simple
 User=ktpnettest
 Group=ktpnettest
 WorkingDirectory=/opt/ktp-nettest
-# KTP_NETTEST_REGION, KTP_NETTEST_TICKET_SECRET, KTP_NETTEST_LOG_DIRS, KTP_NETTEST_UDP_PORTS
+# KTP_NETTEST_REGION, KTP_NETTEST_TICKET_SECRET, KTP_NETTEST_LOG_DIRS, KTP_NETTEST_UDP_PORTS,
+# KTP_NETTEST_BIND. Template: nettest.env.example. Root-owned, mode 600: it holds the secret.
 EnvironmentFile=/etc/ktp/nettest.env
 ExecStart=/usr/bin/node server.js
 Restart=on-failure
 RestartSec=5
+# Exit 2 is a configuration refusal (missing or placeholder secret): retrying cannot fix it.
+RestartPreventExitStatus=2
 
-# Reads the game logs for the live-match block (the user needs read access to each dod/logs
-# dir, nothing more) and serves sockets. Never writes anywhere.
+# /home is an empty tmpfs, so the game trees (and the rcon password in every dodserver.cfg) are
+# invisible. Only each instance's dod/logs is mounted back, read-only, by the per-host drop-in
+# (ktp-nettest.service.d/logdirs.conf.example). The node never writes anywhere.
+ProtectHome=tmpfs
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
 PrivateDevices=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# AF_NETLINK: werift lists host interfaces via getifaddrs, which fails EAFNOSUPPORT without it.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 # Game servers come first: the node yields CPU and memory to them.
 Nice=10
 MemoryMax=256M

@@ -1,0 +1,97 @@
+# CI install — keeps the ALLOWLISTED scripts in /usr/local/bin on the data server at
+# origin/main, and says loudly what it may not install.
+#
+# Ruled 2026-11-02: CI gets write access to the production script directory, but only
+# through config/ci-install-allowlist.tsv. The workflow is NOT what enforces that:
+#   - it runs on its own runner as an unprivileged user (`ktp-ci`, label
+#     `ktp-ci-install`), never on the root `ktp-tier2` runner, and refuses uid 0;
+#   - its only privilege is config/sudoers.d/ktp-ci-install, one exact command per
+#     allowlisted destination;
+#   - the privileged program fetches main itself and ignores this job's checkout, so
+#     nothing this job does can choose the bytes, the commit or the allowlist.
+# Runbook: docs/runbooks/CI_INSTALL_ALLOWLIST.md.
+#
+# TRIGGERS: push to main, plus manual dispatch to re-run once a refusal is cleared.
+# On-merge rather than dispatch-only because a dispatch-only installer is a person
+# remembering to deploy, which is exactly how merged and running drifted apart. No
+# `paths:` filter: the outside-list job reports on the whole recorded estate, and a
+# merge outside scripts/ can still leave a recorded file stale.
+# Never add `pull_request`: a fork's workflow file would run on this runner.
+#
+# The daily ktp-install-freshness unit stays the independent witness. If this workflow
+# dies, its STALE rows come back there, so a dead installer cannot look like a fresh box.
+
+name: CI Install
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-install
+  cancel-in-progress: false
+
+jobs:
+  install:
+    if: github.repository == 'afraznein/KTPInfrastructure' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, ktp-ci-install]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Refuse to run as root
+        run: |
+          if [ "$(id -u)" -eq 0 ]; then
+            echo "::error::This job is running as root. The allowlist is enforced by sudo, and root bypasses sudo, so installing from here would make the allowlist decoration. Run it only on the unprivileged ktp-ci-install runner."
+            exit 1
+          fi
+          if [ ! -x /usr/local/sbin/ktp-ci-install ]; then
+            echo "::error::/usr/local/sbin/ktp-ci-install is not installed; nothing here can install anything until the operator steps in docs/runbooks/CI_INSTALL_ALLOWLIST.md are done."
+            exit 1
+          fi
+
+      - name: Install allowlisted scripts that are behind main
+        run: |
+          python3 scripts/ktp-ci-install --list --repo . --ref HEAD > "$RUNNER_TEMP/dests"
+          mapfile -t dests < "$RUNNER_TEMP/dests"
+          if [ "${#dests[@]}" -eq 0 ]; then
+            echo "::error::The allowlist lists nothing, so this run could not have installed anything."
+            exit 1
+          fi
+          rc=0
+          for d in "${dests[@]}"; do
+            if ! sudo -n /usr/local/sbin/ktp-ci-install --install "$d"; then
+              echo "::error::$d was not installed (see the line above for why)."
+              rc=1
+            fi
+          done
+          exit "$rc"
+
+      - name: Every allowlisted script is current
+        if: always()
+        run: python3 scripts/ktp-ci-install --check --scope allowlisted --repo . --ref HEAD
+
+  outside-list:
+    # A separate job so a red here (a person owes an install) never reads as the
+    # installer having broken, and the reverse.
+    needs: install
+    if: always() && github.repository == 'afraznein/KTPInfrastructure' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, ktp-ci-install]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Nothing off the allowlist is stale, and nothing recorded was removed upstream
+        run: python3 scripts/ktp-ci-install --check --scope outside --repo . --ref HEAD

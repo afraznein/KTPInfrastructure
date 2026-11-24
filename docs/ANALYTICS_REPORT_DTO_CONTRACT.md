@@ -29,6 +29,8 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.16.0` | 35 | Private tier: each `connection.players[].halves[]` entry is now the sum of that half's 60 s slices (KTPCvarChecker 7.44) and gains `minutes[]` -- per slice `ts`, `span_s`, `pps`, `cmds_pkt`, `msec.{p50,p95,max}`, `arr_ms.{p95,max}`, `drops`, `stale_delta`; `null` when the half arrived as one row. Half `msec`/`arr_ms` p50/p95 become the weighted median of the minutes' percentiles; `max` and every count stay exact. Public block unchanged |
 | `analytics-report-dto-v1.17.0` | 36 | `halves[].minutes` renamed `halves[].slices`: KTPCvarChecker 7.45 flushes every 10 s, not 60, so each row is one 10 s slice aligned to the server's `net:` windows. Same fields per row. Renamed before any consumer read it -- v1.16.0 was merged but never served (the precedent is v1.14.0) |
 | `analytics-report-dto-v1.18.0` | 37 | Private tier: each `connection.players[]` row gains `league_alias` (the player's league alias, from SteamID through the website's `player_steam` -> `player`, status `current`) and `league_registered` (`true` / `false`, or `null` when the registry could not be read or the player has no SteamID). `connection.instruments.league` says which. Name players by `league_alias` where it is set, with `player_name_at_match` beside it; where `league_registered` is `false`, keep the in-game name and mark the player as not a league player (ruled 2026-10-25). The public block is unchanged: it carries no player rows |
+| `analytics-report-dto-v1.19.0` | 41 | Adds top-level `outnumbered_kills` (`outnumbered_kill_v1`) and `fight_clutches` (`fight_clutch_v1`), and `players[].outnumbered_kills` / `players[].fight_clutches` with glossary entries: the two clutch definitions ruled 2026-10-05, shown separately and never summed (see below). `fight_clutch_v1` stops censoring a whole half because one roster member was absent from it; an envelope from before schema 41 reads `unavailable` rather than publish that undercount |
+| `analytics-report-dto-v1.20.0` | 42 | `players[].deaths` becomes the scoreboard's deaths column (frag + teamkill + suicide victims, as DoD counts them and as the fixture box score on the site already did); enemy-only moves to the new `players[].enemy_deaths`, with a glossary entry. Kills and deaths also count a frag inside the cap-out freeze (`match_id` NULL, `producer_match_id` set) that the scoreboard credited. A reader that summed the map pages of the S10 finals read 150 deaths where the fixture page read 158 |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a
@@ -41,6 +43,98 @@ Every v1.1.0 row does.
 The report `schema_version` changes whenever `build_report` output changes, and
 `report_service generate` regenerates every in-season match that has no report
 at the current schema. `report_sync` then inserts those as new rows.
+
+## Who reads these rows
+
+This section is here because the rest of the file describes what the producer
+writes and says nothing about what a consumer does with it — and the four
+exception classes below are only safe to the extent that each consumer handles
+them. It is written off `searse/keep-the-prac` at `main` `1972d07c`
+(2026-11-04); the files and symbols are the stable part, line numbers are not.
+
+The served table is **`ktp.match_report`**, not `public.match_report`.
+`report_sync.supabase()` sends `Accept-Profile: ktp` and `Content-Profile: ktp`
+on every request, so a reader or a hand-run query that omits the schema either
+errors or reads whatever is in `public`.
+
+Rows are **append-only and never updated or deleted**. `report_sync` asks the
+site which `(match_id, report_schema_version, revision)` triples exist and
+POSTs only the missing ones, so a regenerate adds a row beside the old one
+rather than replacing it. Every consumer therefore has to pick a row, and
+picking is where they differ.
+
+**`match_report.contract_version` is not the payload's vintage.** It is the
+module constant `analytics_report_dto.CONTRACT_VERSION`, stamped by
+`sanitize_report` at sync time and never read from the stored report. The
+payload's vintage is `report_schema_version`, which the DTO copies from the
+stored report into `source.report_schema_version`. So a row can read the
+current contract and carry a years-old schema: the contract column records
+which sync-time code wrote the row. Any question about what a payload
+*contains* keys on the schema version; the contract version only says which
+minor's guarantees the writer was promising. The prefix every reader filters on
+is the major, so this does not break them — it does mean a check written
+against the contract string will clear a row whose payload predates the thing
+being checked for.
+
+| Surface | Reader | Query | Picks | Prefix filter |
+|---|---|---|---|---|
+| `/stats/matches` (list) | `getMatchReportSummaries`, `features/public-match-report/data.ts` | `order(id desc).limit(limit * 4)`, default `limit` 200 | first row seen per `match_id`, i.e. the highest `id` | before the pick |
+| `/stats/matches/<id>` (one match) | `getMatchReport`, same file | `eq(match_id).order(id desc).limit(1)` | the highest `id`, unconditionally | **after** the pick |
+| Season stats | `latestReports`, `features/stats/report-aggregate.ts`, fed by `features/stats/report-data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Player page | `latestReports`, `features/players/modern-depth.ts`, fed by `modern-depth-data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Weapons page | `latestReports`, `features/weapons/faction/attribute.ts`, fed by `faction/data.ts` | `in("match_id", …)` — no order, no limit | highest `id` per `match_id` | before the pick |
+| Captain's series proposal | `newer`, `features/ktp/result-report-stats-data.ts` | `in("match_id", …)` — no order, no limit | highest `(report_schema_version, revision, id)` | **none** |
+
+The prefix is the literal `analytics-report-dto-v1.`, declared independently in
+four of those modules. So the additive guarantee is load-bearing in exactly the
+way the top of this file states it: a reader that matches the prefix will be
+handed a row from any v1 minor and must treat an absent block as absent.
+
+Four consequences worth knowing before changing anything here:
+
+- **Three readers fetch every row for every match with no order and no limit**
+  and only then reduce. The reduction is the whole safety story. Moving or
+  dropping `latestReports` would not drop data — it would double-count it: every
+  historical revision of a match would be summed into the season totals, the
+  player's career line and the weapon aggregates alongside the current one.
+- **The list page's fetch is a budget, not a filter.** It reads the 800 highest
+  `id`s in the table with no season or time bound, then reduces to one row per
+  match and keeps 200. Once the table holds more than 800 rows, the matches
+  whose newest row falls outside that window stop appearing — oldest first,
+  silently, with no error on either side. The trigger is the table's total row
+  count, not any one match's revision count.
+- **The one-match page picks before it filters.** If a match's highest-`id` row
+  ever carried a non-`v1.` contract, the page would return nothing at all
+  rather than fall back to the conforming row underneath it, while the list page
+  would still list the match.
+- **The captain's series proposal orders by `(schema_version, revision, id)`
+  and checks no contract version.** That agrees with the other five only while
+  `id` order agrees with schema/revision order. An out-of-order insert — a
+  backfill regenerated at an older schema, say — makes the captain-facing
+  proposal and the public match page read different rows for the same match.
+
+### What the consumers cannot cover
+
+Row multiplicity and the `null`-not-`0` classes below are handled: the table only
+ever accumulates, every reader reduces to one row per match, and a field whose
+producer predates the match is `null` with a per-field coverage counter beside it.
+
+The class none of that reaches is **a value that is present, correctly shaped
+and wrong** — which is exactly the pre-schema-19 `map_control` and
+`progression.flag_differential` described further down. The caveat machinery can
+only ever say that a key is absent because a later schema added it, so an
+inverted half-1 value passes every check a consumer makes and renders. A served
+row below schema 19 is a published match page showing two of its fields
+backwards, and the remedy is `report_service generate` plus `report_sync` for
+those matches, not a website change.
+
+**Open question, deliberately not answered here:** how many contract versions
+and schema versions the site is serving *today*. That is the distinct count over
+the rows these readers pick, one per match — not the number of versions this
+file documents, which is every version ever cut. The two have no reason to
+agree and conflating them has been the standing mistake. It is a single
+read-only query against `ktp.match_report`; this file states the row-picking
+rule it has to replicate.
 
 ## `connection` (v1.13.0, players removed in v1.14.0, `halves` for the private tier in v1.15.0)
 
@@ -212,7 +306,7 @@ compare against:
 
 | check | asserts |
 |---|---|
-| `damage_reconciliation` | the identity above. `WARN`, not `PASS`, when `ktp_match_stats` half=0 carries no damage figure at all -- the daemon writes `NULL` for a half with no ledger rows, so an absent figure is not a cached zero. Also `WARN` when a per-hit row is tagged for a different match: `player_match_fact.sql` filters on `match_id` alone, so such a row is summed into this report and was never in the daemon's accumulators, and the totals cannot settle either way. That it reaches `damage_dealt` at all is a separate defect, named by this check rather than absorbed into a `FAIL` about the totals |
+| `damage_reconciliation` | the identity above. `WARN`, not `PASS`, when `ktp_match_stats` half=0 carries no damage figure at all -- the daemon writes `NULL` for a half with no ledger rows, so an absent figure is not a cached zero. Also `WARN` when a per-hit row is tagged for a different match (`producer_match_id` set and unequal to `match_id`): the ingest total sums the ledger by `match_id` and counts it, while `player_match_fact.sql` treats `producer_match_id` as authoritative and leaves it out of this box score, so the two totals differ by design and a `FAIL` would name the wrong cause. The daemon has written `match_id` from a validated producer tuple since `KTPHLStatsX` `ea42b79`, so such a row is historical or injected, not something current capture produces |
 | `damage_partition_exhaustive` | that no per-hit row reaches no column. The three arms in `player_match_fact.sql` read the teams through `LEFT JOIN roster`, so a hit whose victim is off the roster leaves both `victim.team <> r.team` and `victim.team = r.team` at `NULL`: neither arm fires, the damage lands in no column, and the ingest side counts it. `damage_taken` and `grenade_damage_taken` carry the mirror hole through the attacker |
 
 `damage_balance` is blind to all of this by construction: it compares dealt
@@ -460,6 +554,80 @@ player makes between two of their own life ends within one half.
 `lower_bound: true` means a frag of that player's could not be placed in time,
 so the published streak may be understated by it. `best_streak` is `null` only
 when the player has kills but no life boundary at all in that half.
+
+## `outnumbered_kills` and `fight_clutches` (v1.19.0)
+
+Two stats, ruled 2026-10-05. **Show them separately and never add them
+together**, and do not present either, or both, as one "clutches" total. The
+rare one is what players mean by the word; the common one is the one with
+enough volume to rank. Measured on 40 two-half matches (2026-10-20 onward):
+4,491 outnumbered kills out of 24,763 evaluated (18.1%), against 8 fight
+clutches in 1,489 evaluated windows.
+
+DoD respawns in waves, so a side is never eliminated and the Counter-Strike
+"last alive wins the round" has no direct analogue. Both stats read the life
+ledger (`ktp_life_events`) for who is alive; S9 and earlier have no ledger and
+read `unavailable`.
+
+### `outnumbered_kills`
+
+`definition: outnumbered_kill_v1` (`scripts/outnumbered_kills.py`). An enemy
+kill made while living enemies outnumbered the killer's side by 2 or more.
+
+- Counts the same frags as the box score and `kill_streaks`. Teamkills never
+  count.
+- The state is read just before the kill: a boundary at the kill's own
+  `game_time` has not happened yet, so the victim still counts as alive.
+- Sides are read from the ledger per half, so a halftime swap needs no
+  translation.
+- The killer always counts on their own side, alive or not. A grenade that
+  lands after its thrower died is judged as if they were still standing,
+  rather than as one more player down.
+- Outnumbered: living enemies minus (living teammates + the killer) is at
+  least `parameters.margin` (2).
+- A player with no boundary in the half, or whose first is a later spawn, is
+  not alive. A kill is censored only when a player who must have been alive
+  (first boundary that half is a later death) has no boundary yet, or when
+  the killer's side is unknown.
+
+| Key | Meaning |
+|---|---|
+| `status`, `flags` | `available` / `unavailable`. Flags: `source-not-captured`, `no-life-boundaries`, `no-frag-clock`, `not-in-report` (unavailable); `unordered-frags`, `censored-kills` (available) |
+| `parameters` | `clock`, `state`, `margin`, `killer_counted`, `unknown_liveness` |
+| `coverage` | `kills`, `evaluated`, `censored`, `unordered` (no producer clock and no recoverable victim death) |
+| `rows[]` | Per player per half: `name`, `team`, `half`, `side`, `kills`, `outnumbered_kills`, `lower_bound` |
+| `players[]` | Per player: `name`, `team`, `kills`, `outnumbered_kills` (sum of halves), `by_side`, `lower_bound` |
+
+`lower_bound: true` means a kill of that player's was censored or could not be
+placed in time, so the count may be understated by it. As a rate, divide by
+`kills`, not by matches.
+
+### `fight_clutches`
+
+`definition: fight_clutch_v1` (`scripts/flag_fights.py::build_clutch_shadow`).
+A flag fight (one objective-attempt window) that the player's side won with
+the player as its only living member at the window's close, against 2 or more
+living enemies. The winner is the capturing team on a capture and the
+defenders on a stop.
+
+- Liveness is read at the window's close, from the same ledger.
+- A roster member with no boundary in the half, or whose first is a later
+  spawn, is not alive. A window is censored only when a player who must have
+  been alive has no boundary yet.
+- Before schema 41 one absent roster member censored every window of the half
+  (104 of 1,493 windows on the measured set, against 4 now). A report built
+  before 41 therefore reads `status: unavailable`, flag `not-in-report`.
+
+| Key | Meaning |
+|---|---|
+| `status`, `flags` | `available` / `unavailable` / `timed_metrics_suppressed` (replay source). `flags` carries the producer's caveats |
+| `parameters` | `clock`, `winner`, `min_living_enemies`, `unknown_liveness`, `absent_from_half` |
+| `coverage` | `evaluated_windows`, `censored_windows` |
+| `events[]` | One per clutch: `half`, `flag_name`, `name`, `team`, `against` (living enemies at close), `kind` (`capture` / `stop`) |
+| `players[]` | Players with at least one: `name`, `fight_clutches` |
+
+`players[].fight_clutches` in the box score is `0` for a player the producer
+evaluated and did not credit, and `null` when it could not run.
 
 ## `weapon_sides`
 

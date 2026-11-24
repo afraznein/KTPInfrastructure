@@ -23,6 +23,26 @@ Each check below is one of those, turned into something that fires on the day.
   Reports the delta since the previous run. On the production data server this
   counter is already non-zero, so the fleet is losing lines today.
 - **Halves with no summary rows at all** — the empty-match-id shape.
+- **Halves where the capture streams kept nothing — and *why*.** `daemon_rejected ==
+  daemon_received` on two or more streams of one half: the daemon saw every marker
+  and wrote none. ⚠️ **The loss itself is not news to the estate and this check is
+  not what detects it**: `ktp-data-server-health.sh`'s `capture-half-loss` leg
+  already scored the 2026-10-24 half at *"100% of 5729 position events lost"* and
+  took fourteen keys down at 19:17:09, the hour the half ended. **What nine such
+  halves never carried was a cause.** So the finding prints the half's own marker
+  stamp beside its `ktp_matches` interval, which is where the cause is:
+  `doEvent_KTPMatchStart` upserts on `(match_id, half)` and never refreshes
+  `start_time`, so a (match_id, half) that comes round twice keeps the first run's
+  window and every event-time-gated stream resolves *"found 0 event-time match
+  intervals"*. Two routes reach it — a reused match_id (refused since
+  KTPMatchHandler 0.10.180, fielded) and a half replayed after its own interval was
+  closed, which **nothing refuses today**. It is keyed on the half, not the stream,
+  because the health script's leg reports the worst `(half, event_type)` ratio and
+  one dead half therefore arrives as fourteen keys. ⚠️ The two-stream floor is
+  measured, not chosen: over the whole table (1,713 half-groups) the distribution
+  is 1,704 at zero, exactly one at a single stream, then 4, 5, 5, 10, 11, 12, 12
+  and 13. The lone 1-stream group is a one-second boundary race worth one event,
+  and paging on it would train the reader to ignore the rest.
 - **Summaries short of the events they summarise.** The reverse direction is
   reported as information, not a finding: `recordEvent` only stamps `match_id`
   while the round is live, so freeze-time kills land untagged and the summary
@@ -30,6 +50,16 @@ Each check below is one of those, turned into something that fires on the day.
 - **Second halves far below their own first half** — partial ingest loss leaves
   plausible-looking rows rather than an obvious gap. The LAN's defective halves
   came in at 44%, 59% and 63%; every healthy one sat at 83% or above.
+- **Sequence gaps on `frag_context` and `damage`** — events the producer numbered
+  and the daemon never received, read from `ktp_capture_health.sequence_gap_count`.
+  This leg **warns or pages depending on size**, per `(half, stream)`:
+  a gap of **1–2 events** is a warning (printed with a `??` prefix, exit code
+  unchanged, no alert); **3 or more** is a finding and pages. One or two events out
+  of the 500–700 a half sends is ordinary UDP intake loss — in its first days this
+  leg paged on 7 of 58 runs, every one a `damage` gap of 1–2 — while an ingest
+  backlog loses dozens at once (27 frag and 47 damage lines on 2026-11-10), which
+  still pages. Gaps are not summed across streams or halves. Move the ceiling with
+  `--gap-warn-max N` (default 2; `0` pages on any gap, as before).
 - **The daemon's own health line** (`KTP_HEALTH`), which reports unresolved
   actions and failed SQL writes. Requires KTPHLStatsX ≥ 0.3.5.
   Both counters are process-lifetime and are read as deltas against saved state:
@@ -48,10 +78,24 @@ Each check below is one of those, turned into something that fires on the day.
 
 ```bash
 install -m 755 hlstatsx-ingest-monitor.py /usr/local/bin/
-install -m 644 ktp-hlstatsx-ingest-monitor.{service,timer} /etc/systemd/system/
+install -m 644 systemd/ktp-hlstatsx-ingest-monitor.{service,timer} /etc/systemd/system/
+install -m 644 -D systemd/dropins/ktp-hlstatsx-ingest-monitor.service.d/00-ktp-onfailure-alert.conf \
+  /etc/systemd/system/ktp-hlstatsx-ingest-monitor.service.d/00-ktp-onfailure-alert.conf
 systemctl daemon-reload
 systemctl enable --now ktp-hlstatsx-ingest-monitor.timer
+systemctl show -p OnFailure ktp-hlstatsx-ingest-monitor.service
 ```
+
+The units come from `systemd/`, not the copies sitting beside this README.
+Those are a pre-move pair kept only until one of the two is removed, and that service
+has no `ktp-run-record.sh` wrapping, so its findings die with journald in about two
+days. The `OnFailure` drop-in lives only under `systemd/dropins/` and is what
+carries the Discord path: skip it and the monitor's failures reach nobody, which is
+the failure this monitor exists to catch.
+
+Read the wiring back with `systemctl show -p OnFailure`, never a grep of the unit.
+This unit once claimed the directive in a comment while it was absent, and the grep
+read as wired while its failures went nowhere.
 
 A finding makes the unit fail, which fires the existing `ktp-systemd-alert`
 `OnFailure` wiring and lands in Discord. That delivery path is the point — a
@@ -79,8 +123,10 @@ HLStatsX ingest: 1 finding(s) in the last 90 minutes
   !! summary is SHORT of its events: 1785715972-KTP1 h2 -- 276 frags but only 0 kills recorded
 ```
 
-Findings are prefixed `!!` and set exit 1. Lines without the prefix are context
-and never fail the unit.
+Findings are prefixed `!!` and set exit 1. Warnings are prefixed `??`: they are
+printed even under `--quiet` and land in the journal and run record, but they never
+fail the unit, so they do not page. Lines with neither prefix are context and never
+fail the unit either.
 
 ⚠️ A half that ended in the last 10 minutes is deliberately not checked. Without
 that settle window every live match reports as broken the instant a half ends.

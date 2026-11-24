@@ -146,12 +146,19 @@ def _identity(row: Mapping[str, Any], role: str) -> dict[str, Any]:
     }
 
 
-def _liveness_lookup(life_boundaries: Sequence[dict[str, Any]]):
+def _liveness_lookup(life_boundaries: Sequence[dict[str, Any]], *,
+                     roster_view: bool = False):
     """alive_at(half, pid, t) from the physical life-boundary feed.
 
     Returns True/False when the last boundary at or before t decides it,
     None when the player has no boundary yet in that half — callers censor
     on None rather than guess.
+
+    roster_view is for callers that ask about every roster member rather
+    than one known participant: a player with no boundary in the half was
+    not in it, and one whose first boundary is a later `start` had not
+    spawned, so both read False. Only a first boundary that is a later
+    `end` (alive, but unrecorded) stays None.
     """
     by_player: dict[tuple[int, int], list[tuple[float, str]]] = {}
     for row in life_boundaries:
@@ -168,10 +175,12 @@ def _liveness_lookup(life_boundaries: Sequence[dict[str, Any]]):
     def alive_at(half: int, pid: int, at: float) -> bool | None:
         events = by_player.get((half, pid))
         if not events:
-            return None
+            return False if roster_view else None
         state: bool | None = None
         for when, kind in events:
             if when > at:
+                if state is None and roster_view:
+                    return None if kind == "end" else False
                 break
             state = kind == "start"
         return state
@@ -195,8 +204,12 @@ def build_clutch_shadow(
     A clutch is a fight whose winning side (capturing team on a capture,
     the defenders on a stop) has exactly one member alive at window end
     against at least ``_CLUTCH_MIN_ENEMIES`` living enemies. Liveness is
-    reconstructed from the physical life-boundary feed; a window where any
-    roster member's state is unknown at close is censored, never guessed.
+    reconstructed from the physical life-boundary feed; a window where a
+    player who must have been alive has no boundary yet is censored, never
+    guessed. A roster member absent from the half is not alive in it.
+
+    Ruled 2026-10-05 for publication as its own stat, beside and never
+    summed with outnumbered_kill_v1 (scripts/outnumbered_kills.py).
     """
     envelope: dict[str, Any] = {
         "definition": "fight_clutch_v1",
@@ -206,9 +219,10 @@ def build_clutch_shadow(
             "winner": "capturing_team_on_capture_else_defenders",
             "min_living_enemies": _CLUTCH_MIN_ENEMIES,
             "unknown_liveness": "window_censored",
+            "absent_from_half": "not_alive",
         },
         "status": "available",
-        "visibility": "private_shadow_only",
+        "visibility": "public_dto",
         "writes": False,
         "rating_effect": False,
         "caveats": [],
@@ -233,7 +247,7 @@ def build_clutch_shadow(
         envelope["caveats"].append("No combat roster supplied.")
         return envelope
 
-    alive_at = _liveness_lookup(life_boundaries)
+    alive_at = _liveness_lookup(life_boundaries, roster_view=True)
 
     counts: dict[int, int] = {}
     for window in windows:

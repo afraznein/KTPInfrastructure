@@ -70,7 +70,9 @@ scripts/build_resgen.sh              # clones + builds at the pinned 2.0.3 tag
 export KTP_RESGEN=~/.cache/ktp/resgen/bin/resgen
 ```
 
-Then, per map:
+Then, per map, from a clone at current `origin/main`. ⛔ Never build from `/opt/ktp-infra` on the data
+server: it is not auto-pulled and lags by hundreds of commits, so its builder predates #735 and emits a
+`.res` without the map's custom HUD icons.
 
 ```bash
 python scripts/build_map_bundle.py /path/to/dod_newmap_b1.bsp \
@@ -123,7 +125,9 @@ BSP strings and reports assets that are not on disk. Exit 1 means at least one
 
 `/home/dod/distribute/` on the data server is a **live deploy path**.
 `ktp-file-distributor.service` pushes anything created or changed there to all 24
-instances within about 15 seconds.
+instances in about 25 seconds for one small file (a 5 s debounce, then ~18-21 s of
+SFTP fan-out; a seven-file map batch took 82 s). Poll every instance's md5 until it
+converges; one early sweep reports a half-deployed fleet.
 
 - ⛔ **It syncs deletions.** An `rm` in `distribute/` removes the file from all 24.
   Never `rm` or `mv` there; write with `cat new > file`, and keep backups outside
@@ -158,6 +162,19 @@ rollout), so the assets must also be on the FastDL docroot.
 A map does not need a restart to become playable — but nothing here should be
 taken as licence to restart anything. **Never restart a game server without
 explicit permission.**
+
+⛔ **Deploy the FILES first and `ktp_maps.ini` LAST.** The distributor pushes on
+change and reaches the fleet in sweeps rather than atomically — the
+`dod_catania_a05` deploy took about three to cover all 24 (12 → 18 → 24). Writing
+the ini first makes the map selectable on hosts that do not have it yet, so a
+`.changemap` can land a player on a map their server cannot load. Assert every
+destination **absent** before writing, and write with `cat src > dest`.
+
+⚠️ **Put a new entry under REMAINING MAPS, alphabetically, unless it is genuinely
+on the schedule — not in the seasonal block.** `.changemap` lists maps in file
+order, so an entry in the seasonal block reads to players as a scheduled map. A
+pre-alpha or a one-off test map belongs in the alphabetical section.
+`type = competitive` is the normal value; `practice` is for aim maps.
 
 ## 5. Verify after deploying
 
