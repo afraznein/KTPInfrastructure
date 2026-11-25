@@ -107,11 +107,22 @@ CAPTURE_LOSS_MIN_STREAMS = 2
 FOUND0_REASON = "found 0 event-time match intervals"
 FOUND0_MAX_ROWS = 50
 FOUND0_MAX_STREAMS = 3
-# frag_context and damage are the streams a lost UDP line cannot be re-derived for;
+# frag and damage are the streams a lost UDP line cannot be re-derived for;
 # sequence_gap_count is the gaps still open when the health row was written.
-GAP_STREAMS = ("frag_context", "damage")
+# The kill stream's health rows are `frag`; `frag_context` is the marker's log
+# verb, not a health stream, and watching it checks nothing.
+GAP_STREAMS = ("frag", "damage")
+# The health stream whose `emitted` is the producer's count of kills in the half.
+# It equals the game log's non-teamkill kill lines, so emitted minus the half's
+# hlstats_Events_Frags rows is kills the daemon never stored.
+KILL_STREAM = "frag"
 # A stray event or two per half is ordinary UDP intake loss; a backlog loses dozens.
+# The kill-loss leg shares this ceiling: same transport, same per-half tolerance.
 GAP_WARN_MAX = 2
+# A watched stream with no health rows at all over this long, while other streams
+# have them, is a wrong name or a producer that stopped emitting it. Either way
+# every check keyed on it passes vacuously. A week spans every match night.
+STREAM_PRESENCE_DAYS = 7
 # A match is finished when every half has an end_time and the last one has
 # settled -- and, if only one half exists, when that longer settle has passed.
 FINISHED = """
@@ -207,32 +218,37 @@ def check_missing_halves(db: str, since: int, findings: list[str]) -> None:
 def check_aggregate_vs_events(db: str, since: int, findings: list[str],
                               info_only: list[str]) -> None:
     """The summary and the events it summarises should agree. When they do not,
-    one of the two pipelines stopped and only this comparison can tell."""
+    one of the two pipelines stopped and only this comparison can tell.
+
+    Selects halves that ENDED in the window and counts each one whole. Windowing
+    the frag rows by eventTime instead clips any half that started before the
+    window, and the clipped count then reads as a summary running ahead.
+    """
     rows = q(db, """
-        SELECT f.match_id, f.half, f.frags, IFNULL(s.kills, 0)
-        FROM (SELECT match_id, half, COUNT(*) frags FROM hlstats_Events_Frags
-              WHERE match_id IS NOT NULL AND half > 0
-                AND eventTime > NOW() - INTERVAL %d MINUTE
-              GROUP BY match_id, half) f
-        LEFT JOIN (SELECT match_id, half, SUM(kills) kills FROM ktp_match_stats
-                   WHERE half > 0 GROUP BY match_id, half) s
-          ON s.match_id {c} = f.match_id {c} AND s.half = f.half
-        JOIN ktp_matches m
-          ON m.match_id {c} = f.match_id {c} AND m.half = f.half
-        WHERE f.frags <> IFNULL(s.kills, 0)
-          AND {finished}
-    """.format(c=COLL, finished=FINISHED.format(settle=SETTLE_MINUTES, single=SINGLE_HALF_SETTLE_MINUTES)) % since)
+        SELECT m.match_id, m.half,
+               (SELECT COUNT(*) FROM hlstats_Events_Frags f
+                 WHERE f.match_id = m.match_id {c} AND f.half = m.half) frags,
+               (SELECT IFNULL(SUM(s.kills), 0) FROM ktp_match_stats s
+                 WHERE s.match_id = m.match_id AND s.half = m.half) kills
+        FROM (SELECT match_id, half FROM ktp_matches
+              WHERE half > 0 AND end_time IS NOT NULL
+                AND end_time > NOW() - INTERVAL {since} MINUTE
+              GROUP BY match_id, half) m
+        WHERE {finished}
+        HAVING frags <> kills
+    """.format(c=COLL, since=int(since),
+               finished=FINISHED.format(settle=SETTLE_MINUTES, single=SINGLE_HALF_SETTLE_MINUTES)))
     for mid, half, frags, kills in rows:
         frags, kills = int(frags), int(kills)
         if frags > kills:
             findings.append("summary is SHORT of its events: %s h%s -- %d frags but only "
                             "%d kills recorded" % (mid, half, frags, kills))
-        else:
-            # recordEvent only stamps match_id while the round is live, so freeze-time
-            # kills land untagged and the summary legitimately runs ahead of the tagged
-            # frag rows. Report it, but it is not the failure this monitor is for.
-            info_only.append("summary ahead of tagged events (freeze-time kills are "
-                             "untagged): %s h%s -- %d frags, %d kills" % (mid, half, frags, kills))
+        elif frags < kills:
+            # recordEvent only stamps match_id while the round is live, so a kill
+            # outside a live round lands untagged and the summary can run ahead.
+            info_only.append("summary ahead of tagged events (kills outside a live "
+                             "round are untagged): %s h%s -- %d frags, %d kills"
+                             % (mid, half, frags, kills))
 
 
 def check_half_ratio(db: str, since: int, findings: list[str]) -> None:
@@ -397,7 +413,7 @@ def check_capture_partial_rejection(db: str, since: int, findings: list[str]) ->
 
 def check_capture_sequence_gaps(db: str, since: int, findings: list[str],
                                 warnings: list[str], warn_max: int = GAP_WARN_MAX) -> None:
-    """frag_context or damage events the producer emitted and the daemon never got.
+    """frag or damage events the producer emitted and the daemon never got.
 
     A gap of at most warn_max events on a (half, stream) is a warning; more pages.
     """
@@ -424,6 +440,75 @@ def check_capture_sequence_gaps(db: str, since: int, findings: list[str],
             "gap(s), %s emitted / %s received. Those events never reached the "
             "daemon (UDP intake loss), and the backlog that drops them usually "
             "drops kill lines too -- check hlstats_Events_Frags for this half." % (mid, half, sid, etype, gaps, emitted, received))
+
+
+def check_watched_streams_present(db: str, findings: list[str], info: list[str],
+                                  days: int = STREAM_PRESENCE_DAYS) -> None:
+    """Every stream a check is keyed on must exist, or that check passes on nothing."""
+    rows = q(db, """
+        SELECT event_type, COUNT(*) FROM ktp_capture_health
+        WHERE event_time > NOW() - INTERVAL %d DAY
+        GROUP BY event_type
+    """ % int(days))
+    seen = {etype: int(n) for etype, n in rows}
+    total = sum(seen.values())
+    if not total:
+        # No capture at all is a quiet week or a dead producer, not a wrong name, and
+        # the other checks have nothing to read either; say so rather than pass.
+        info.append("capture health: no rows in %d days, watched stream names not "
+                    "verified" % days)
+        return
+    for stream in sorted(set(GAP_STREAMS) | {KILL_STREAM}):
+        if seen.get(stream, 0):
+            continue
+        findings.append(
+            "monitor MISCONFIGURED: watched stream '%s' has 0 ktp_capture_health rows "
+            "in %d days while %d other stream(s) wrote %d -- the name is wrong or the "
+            "producer stopped emitting it, and every check keyed on it is passing on "
+            "nothing. Streams present: %s." % (stream, days, len(seen), total,
+                                               ", ".join(sorted(seen))))
+
+
+def check_kill_loss(db: str, since: int, findings: list[str], warnings: list[str],
+                    info: list[str], warn_max: int = GAP_WARN_MAX) -> None:
+    """Kills the producer emitted that never became a frag row.
+
+    A resent capture marker cannot restore the kill line itself, and a lost kill
+    line need not leave a sequence gap open, so the gap leg misses these. Same
+    ceiling as the gap leg: up to warn_max per half warns, more pages.
+    """
+    rows = q(db, """
+        SELECT h.server_id, h.match_id, h.half, h.emitted,
+               (SELECT COUNT(*) FROM hlstats_Events_Frags f
+                 WHERE f.match_id = h.match_id {c} AND f.half = h.half) frags
+        FROM (SELECT server_id, match_id, half, SUM(emitted) emitted
+              FROM ktp_capture_health
+              WHERE event_type = '{stream}' AND match_id <> '' AND half > 0
+                AND event_time > NOW() - INTERVAL {since} MINUTE
+                AND event_time <= NOW() - INTERVAL {settle} MINUTE
+              GROUP BY server_id, match_id, half) h
+        ORDER BY h.server_id, h.match_id, h.half
+    """.format(c=COLL, stream=KILL_STREAM, since=int(since), settle=SETTLE_MINUTES))
+    for sid, mid, half, emitted, frags in rows:
+        emitted, frags = int(emitted), int(frags)
+        lost = emitted - frags
+        if lost < 0:
+            info.append("more frag rows than kills emitted: %s h%s on server %s -- %d "
+                        "emitted, %d frag rows" % (mid, half, sid, emitted, frags))
+            continue
+        if lost == 0:
+            continue
+        if lost <= warn_max:
+            warnings.append(
+                "kill loss (small, not paged): %s h%s on server %s -- %d kill(s) "
+                "emitted, %d frag rows, %d lost" % (mid, half, sid, emitted, frags, lost))
+            continue
+        findings.append(
+            "KILL LOSS: %s h%s on server %s -- the producer emitted %d kills and "
+            "hlstats_Events_Frags holds %d for the half, so %d were never stored. "
+            "Those kills and deaths are missing from career and skill data; the "
+            "game log on the host still has the lines." % (mid, half, sid, emitted,
+                                                          frags, lost))
 
 
 def check_unresolved_actions(findings: list[str], info: list[str]) -> None:
@@ -545,8 +630,8 @@ def main() -> int:
                                    "(LAN deploys, where servers and daemon share a host)")
     ap.add_argument("--quiet", action="store_true", help="print only findings and warnings")
     ap.add_argument("--gap-warn-max", type=int, default=GAP_WARN_MAX,
-                    help="largest per-half sequence gap that warns instead of paging "
-                         "(default %d)" % GAP_WARN_MAX)
+                    help="largest per-half sequence gap or kill loss that warns "
+                         "instead of paging (default %d)" % GAP_WARN_MAX)
     args = ap.parse_args()
 
     findings: list[str] = []
@@ -560,6 +645,8 @@ def main() -> int:
     check_capture_total_loss(args.db, args.since, findings)
     check_capture_partial_rejection(args.db, args.since, findings)
     check_capture_sequence_gaps(args.db, args.since, findings, warnings, args.gap_warn_max)
+    check_kill_loss(args.db, args.since, findings, warnings, info, args.gap_warn_max)
+    check_watched_streams_present(args.db, findings, info)
     check_unresolved_actions(findings, info)
     if args.logs:
         check_logs_against_db(args.db, args.logs, args.since, findings)

@@ -43,14 +43,17 @@ Each check below is one of those, turned into something that fires on the day.
   is 1,704 at zero, exactly one at a single stream, then 4, 5, 5, 10, 11, 12, 12
   and 13. The lone 1-stream group is a one-second boundary race worth one event,
   and paging on it would train the reader to ignore the rest.
-- **Summaries short of the events they summarise.** The reverse direction is
+- **Summaries short of the events they summarise.** Each half that *ended* in the
+  window is counted over its whole span, by `match_id` and `half`. Counting frag
+  rows by `eventTime` instead clipped every half that started before the window,
+  and the clipped count read as a summary running ahead of its events (two false
+  lines on 2026-11-24, 157 of 379 and 231 of 306). The reverse direction is
   reported as information, not a finding: `recordEvent` only stamps `match_id`
-  while the round is live, so freeze-time kills land untagged and the summary
-  legitimately runs ahead.
+  while the round is live, so a kill outside a live round lands untagged.
 - **Second halves far below their own first half** — partial ingest loss leaves
   plausible-looking rows rather than an obvious gap. The LAN's defective halves
   came in at 44%, 59% and 63%; every healthy one sat at 83% or above.
-- **Sequence gaps on `frag_context` and `damage`** — events the producer numbered
+- **Sequence gaps on `frag` and `damage`** — events the producer numbered
   and the daemon never received, read from `ktp_capture_health.sequence_gap_count`.
   This leg **warns or pages depending on size**, per `(half, stream)`:
   a gap of **1–2 events** is a warning (printed with a `??` prefix, exit code
@@ -60,6 +63,22 @@ Each check below is one of those, turned into something that fires on the day.
   backlog loses dozens at once (27 frag and 47 damage lines on 2026-11-10), which
   still pages. Gaps are not summed across streams or halves. Move the ceiling with
   `--gap-warn-max N` (default 2; `0` pages on any gap, as before).
+- **Kill loss.** Per half, the `frag` health row's `emitted` (the producer's kill
+  count, which equals the game log's non-teamkill kill lines) minus that half's
+  `hlstats_Events_Frags` rows. A resent capture marker does not restore the kill
+  line, and a lost kill need not leave a sequence gap open, so the gap leg misses
+  these: over the 14 days to 2026-11-24, 6 of the 10 halves that lost 3 or more
+  kills showed no open frag gap. Same ceiling as the gap leg and the same flag:
+  1–2 lost kills in a half warn, 3 or more page. Over those 14 days 234 of 295
+  halves lost none, 50 lost 1–2, 10 lost 3 or more (3–31) and one held 2 more
+  rows than it emitted: about the rate the damage leg pages at. Halves that ended in the last 10 minutes wait for the next
+  run, because frag rows flush on a 30-second queue. More rows than kills emitted
+  is printed as context.
+- **Watched stream names.** Every stream a check is keyed on must have
+  `ktp_capture_health` rows in the last 7 days whenever any stream does, or the
+  run reports a misconfiguration. The gap leg watched `frag_context`, a name no
+  health row has ever carried, and passed silently on it; this is the guard that
+  would have said so.
 - **The daemon's own health line** (`KTP_HEALTH`), which reports unresolved
   actions and failed SQL writes. Requires KTPHLStatsX ≥ 0.3.5.
   Both counters are process-lifetime and are read as deltas against saved state:
