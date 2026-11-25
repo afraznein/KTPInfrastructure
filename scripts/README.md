@@ -511,7 +511,9 @@ Findings print with a `!!` prefix and set exit 1, which fails the systemd unit a
 |---|---|
 | UDP `RcvbufErrors` delta | log lines dropped before the daemon saw them — the only evidence that exists |
 | Half with no summary rows | the empty-match-id shape that lost the 2026 LAN's Grand Final half |
-| Summary short of its events | aggregation stopped while ingest continued |
+| Summary short of its events | aggregation stopped while ingest continued (whole halves that ended in the window) |
+| Kill loss | frag-stream `emitted` minus the half's frag rows; 1-2 warns, 3+ pages (`--gap-warn-max`) |
+| Watched stream names | a watched capture stream with 0 rows in 7 days while others have rows |
 | Half 2 far below half 1 | partial ingest loss, which leaves plausible rows rather than a gap |
 | Daemon `KTP_HEALTH` line | unresolved actions, failed writes (needs KTPHLStatsX ≥ 0.3.5) |
 | `--logs` log-vs-database | everything, but only where servers and daemon share a host (LAN) |

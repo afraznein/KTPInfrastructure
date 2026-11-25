@@ -154,10 +154,10 @@ def _gap_row(gaps, stream="damage"):
 
 def test_any_open_frag_or_damage_gap_reports():
     """The measured 2026-11-10 backlog half still pages: the positive control."""
-    findings, warnings, _ = _gaps([[11, "1794365828-NY1", 1, "frag_context", 27, 332, 305]])
+    findings, warnings, _ = _gaps([[11, "1794365828-NY1", 1, "frag", 27, 332, 305]])
     assert len(findings) == 1 and warnings == []
     f = findings[0]
-    assert "frag_context still has 27 open gap(s)" in f
+    assert "frag still has 27 open gap(s)" in f
     assert "332 emitted / 305 received" in f
 
 
@@ -181,13 +181,13 @@ def test_a_three_event_gap_pages():
 
 
 def test_frag_gaps_take_the_same_threshold():
-    findings, warnings, _ = _gaps([_gap_row(2, "frag_context"), _gap_row(3, "frag_context")])
+    findings, warnings, _ = _gaps([_gap_row(2, "frag"), _gap_row(3, "frag")])
     assert len(warnings) == 1 and len(findings) == 1
-    assert "frag_context" in findings[0]
+    assert "frag still has 3 open gap(s)" in findings[0]
 
 
 def test_the_threshold_is_per_half_and_stream_not_summed():
-    rows = [_gap_row(2, "damage"), _gap_row(2, "frag_context")]
+    rows = [_gap_row(2, "damage"), _gap_row(2, "frag")]
     findings, warnings, _ = _gaps(rows)
     assert findings == [] and len(warnings) == 2
 
@@ -206,7 +206,7 @@ def test_a_zero_gap_row_does_not_report():
 
 def test_the_gap_query_is_scoped_to_frag_and_damage():
     _, _, sql = _gaps([])
-    assert "event_type IN ('frag_context', 'damage')" in sql
+    assert "event_type IN ('frag', 'damage')" in sql
     assert "sequence_gap_count > 0" in sql
     assert "INTERVAL 90 MINUTE" in sql
 
