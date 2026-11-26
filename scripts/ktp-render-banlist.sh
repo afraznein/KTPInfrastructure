@@ -4,7 +4,7 @@
 # Source of truth is the AC API. This only transports.
 #
 # /home/dod/distribute IS A LIVE DEPLOY PATH -- the watcher pushes anything that
-# appears there to all 24 instances within ~15s, including files you did not mean to
+# appears there to all 24 instances in about half a minute, including files you did not mean to
 # leave behind (a sed backup and sed's own temp file were both replicated fleet-wide
 # on 2026-08-06). So: build and validate entirely OUTSIDE the tree, and put exactly
 # one finished file in, atomically.
