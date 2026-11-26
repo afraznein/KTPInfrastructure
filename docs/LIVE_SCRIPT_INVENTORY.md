@@ -190,7 +190,7 @@ DRIFT 1, TEMPLATED 2, EXTERNAL 5, MATCH 116.
 - `/usr/local/bin/ktp-perf-rollup` `9bc872e1` = `KTPInfrastructure:scripts/ktp-perf-rollup.py` @ `1ea13102c7` SUPERSEDED
 - `/usr/local/bin/ktp-post-reboot-verify.sh` `9fdebeab` = `KTPInfrastructure:scripts/ktp-post-reboot-verify.sh` @ `1545ceac6f`
 - `/usr/local/bin/ktp-precache-audit` `608d24de` = `KTPInfrastructure:scripts/precache_audit.py` @ `fd9dd147e9` SUPERSEDED
-- `/usr/local/bin/ktp-render-banlist.sh` `87750f7a` = `KTPInfrastructure:scripts/ktp-render-banlist.sh` @ `9a29f71952`
+- `/usr/local/bin/ktp-render-banlist.sh` `de416342` = `KTPInfrastructure:scripts/ktp-render-banlist.sh` @ `6fb2f5214a`
 - `/usr/local/bin/ktp-restore-test.sh` `50e2ef66` = `KTPInfrastructure:scripts/ktp-restore-test.sh` @ `cb35963bcd`
 - `/usr/local/bin/ktp-scheduled-kernel-reboot.sh` `9f5c6332` = `KTPInfrastructure:scripts/ktp-scheduled-kernel-reboot.sh` @ `b182ad4c23` SUPERSEDED
 - `/usr/local/bin/ktp-soak-verify` `46545923` = `KTPInfrastructure:scripts/ktp-soak-verify.py` @ `a26727c372` SUPERSEDED
