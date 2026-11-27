@@ -33,7 +33,7 @@ from scripts.outnumbered_kills import COVERAGE_KEYS as OUTNUMBERED_COVERAGE
 from scripts.outnumbered_kills import DEFINITION as OUTNUMBERED_DEFINITION
 from scripts.outnumbered_kills import DEFINITION_VERSION as OUTNUMBERED_DEFINITION_VERSION
 
-CONTRACT_VERSION = "analytics-report-dto-v1.20.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
+CONTRACT_VERSION = "analytics-report-dto-v1.21.0"  # docs/ANALYTICS_REPORT_DTO_CONTRACT.md
 
 # hlstatsx DATETIMEs are naive league-local time: the data server runs
 # America/New_York. The website column is timestamptz, which reads a naive
@@ -295,6 +295,10 @@ def sanitize_report(report: dict) -> dict:
             {"name": _name(p.get("player_name_at_match")),
              "team": p.get("team"), "team_name": p.get("team_name")}
             | {k: _num(p.get(k)) for k in PLAYER_FIELDS}
+            # Outside PLAYER_FIELDS on purpose: playtime is the denominator
+            # for a rate, not a performance, so it gets no fill bar and no
+            # match-best star in box_score_scale.
+            | {"observed_seconds": _num(p.get("observed_seconds"))}
             for p in report.get("players") or []
         ],
         "weapons": [
@@ -603,7 +607,16 @@ FIELD_GLOSSARY = {
                                "compare the two numbers directly."},
     "observed_seconds": {"unit": "seconds",
                          "what": "Seconds the player was actually observed "
-                                 "in the match."},
+                                 "in the match. In players[], each half's "
+                                 "first-to-last position sample, summed, so "
+                                 "a sub who played one half reads about half "
+                                 "the match; divide a count by it for a "
+                                 "per-minute rate that does not penalise "
+                                 "him.",
+                         "caveat": "In players[], null when the player was "
+                                   "never sampled -- unknown, not zero. The "
+                                   "accumulation block falls back to the "
+                                   "match duration instead."},
     "participation_percent": {"unit": "percent_0_100",
                               "what": "observed_seconds as a percentage of "
                                       "match duration, 0 to 100."},

@@ -14,5 +14,5 @@ SELECT match_id, player_id, 0 AS half, team, CAST('' AS CHAR(64)) AS flag_name,
        joined_at AS event_time
 FROM ktp_match_players WHERE 0;
 CREATE TABLE IF NOT EXISTS ktp_position_samples AS
-SELECT match_id, player_id, 0 AS half
+SELECT match_id, player_id, 0 AS half, joined_at AS event_time
 FROM ktp_match_players WHERE 0;

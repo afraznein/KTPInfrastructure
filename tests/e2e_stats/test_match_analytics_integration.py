@@ -248,6 +248,8 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
         "aggregate_sample_count": 12,
     }
     assert all("position_samples" not in player for player in report["players"])
+    # One sample per player: sampled, so a measured 0 s span, not unknown.
+    assert [player["observed_seconds"] for player in report["players"]] == [0] * 12
     assert sum(player["kills"] for player in report["players"]) == 12
     assert sum(player["damage_dealt"] for player in report["players"]) == 1080
     assert sum(player["damage_taken"] for player in report["players"]) == 1080
@@ -349,7 +351,7 @@ def test_contract_fixture_generates_complete_private_report(tmp_path):
             assert player["damage_per_life"] is None
     # Literal on purpose: a bump regenerates the whole corpus, so it should
     # cost a deliberate edit here rather than tracking the constant silently.
-    assert report["schema_version"] == 42
+    assert report["schema_version"] == 43
     # Migration 054 is not in this fixture: the death-group block says the
     # columns are absent and carries no numbers at all.
     assert report["death_group"]["status"] == "unavailable"

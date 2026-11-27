@@ -1,4 +1,4 @@
-"""KTPR v2 shadow blend (Tier 3, definition v1).
+"""KTPR v2 shadow blend (Tier 3, definition v2).
 
 An HLTV-style composite: per-match z-scores of four components — attributed
 flag swing, KAST-F, per-life output, and fast multikills — combined with
@@ -19,12 +19,51 @@ class KtprV2Config:
     kast_weight: float = 0.25
     output_weight: float = 0.25
     multikill_weight: float = 0.1
+    # Divisor floor for the per-minute count components. A rate over a
+    # minute of play is noise, so a 60 s cameo is divided as if he played
+    # this long -- floored, not excluded: he still played. Same 300 s the
+    # accumulation impact index gates on (accumulation_v3).
+    minimum_observed_seconds: float = 300.0
 
     def validate(self) -> None:
         weights = (self.swing_weight, self.kast_weight,
                    self.output_weight, self.multikill_weight)
         if any(w < 0 for w in weights) or not any(weights):
             raise ValueError("KTPR v2 weights must be >= 0 and not all zero")
+        if not self.minimum_observed_seconds > 0:
+            raise ValueError("KTPR v2 minimum_observed_seconds must be > 0")
+
+
+def _observed_minutes(ids, box, floor_seconds) -> dict[int, float] | None:
+    """Each player's divisor for the count components, or None.
+
+    Operator ruling 2026-11-27: a sub who played one half must not rate as
+    half a player, and an overtime match must not inflate everyone's counts.
+    `multikill` and `swing` are raw counts, so they grow with time played;
+    `output` and `kast_f` are already rates and are left alone.
+
+    None when no player in the match has an observed time (a match before
+    position samples, or a legacy archive): the counts stay raw, exactly as
+    definition v1 rated them -- dividing by a guessed constant would change
+    nothing but the claim.
+
+    A player with no observed time in a match where others have one is
+    divided by the full match (his row's `duration_seconds`, else the longest
+    observed player). That is the largest divisor he could have, so an
+    unmeasured player can never be inflated by the normalisation.
+    """
+    known = {pid: float(box[pid]["observed_seconds"]) for pid in ids
+             if box[pid].get("observed_seconds") is not None}
+    if not known:
+        return None
+    longest = max(known.values())
+    minutes = {}
+    for pid in ids:
+        seconds = known.get(pid)
+        if seconds is None:
+            seconds = float(box[pid].get("duration_seconds") or 0) or longest
+        minutes[pid] = max(seconds, floor_seconds) / 60.0
+    return minutes
 
 
 def _z_scores(values: dict[int, float]) -> dict[int, float]:
@@ -164,12 +203,17 @@ def build_ktpr_v2_shadow(
     weight redistributed over the rest — a missing feed must not read as a
     zero performance. If every component is missing, the blend is
     unavailable.
+
+    `multikill` and `swing` are divided by each player's observed minutes
+    (`players[].observed_seconds`) before z-scoring -- see _observed_minutes
+    for the unknown-time and floor rules. z-scores are scale-invariant, so a
+    match where everyone was observed equally rates exactly as v1 did.
     """
     config = config or KtprV2Config()
     config.validate()
     envelope: dict[str, Any] = {
         "definition": "ktpr_v2_blend_v1",
-        "definition_version": 1,
+        "definition_version": 2,
         "parameters": {**asdict(config),
                        "normalization": "per_match_z_scores"},
         "status": "available",
@@ -190,6 +234,9 @@ def build_ktpr_v2_shadow(
 
     ids = [int(p["player_id"]) for p in players]
     box = {int(p["player_id"]): p for p in players}
+    minutes = _observed_minutes(ids, box, config.minimum_observed_seconds)
+    envelope["parameters"]["count_components_per"] = (
+        "observed_minute" if minutes else "match_no_observed_time")
 
     components: dict[str, dict[int, float]] = {}
     output = {}
@@ -207,7 +254,8 @@ def build_ktpr_v2_shadow(
         if "fast_2k" in row:
             multikills[pid] = (float(row.get("fast_2k") or 0)
                                + 2.0 * float(row.get("fast_3k") or 0)
-                               + 4.0 * float(row.get("fast_4k_plus") or 0))
+                               + 4.0 * float(row.get("fast_4k_plus") or 0)
+                               ) / (minutes[pid] if minutes else 1.0)
     if multikills:
         components["multikill"] = multikills
     if flag_fight_players:
@@ -217,7 +265,10 @@ def build_ktpr_v2_shadow(
         if kast:
             components["kast_f"] = kast
     if flag_swing_players:
+        # A swing row outside the box score is never z-scored, so its
+        # missing divisor is moot.
         swing = {int(p["player_id"]): float(p["attributed_swing"])
+                 / (minutes or {}).get(int(p["player_id"]), 1.0)
                  for p in flag_swing_players
                  if p.get("attributed_swing") is not None}
         if swing:
@@ -237,6 +288,11 @@ def build_ktpr_v2_shadow(
          for name in used}
     envelope["class_swing_adjustment"] = _apply_class_swing_offsets(
         z, ids, class_of, class_swing_offsets)
+    if minutes and envelope["class_swing_adjustment"]["applied"]:
+        envelope["caveats"].append(
+            "Class swing offsets were fitted on per-match swing (definition "
+            "v1); this match's swing is per observed minute. Refit owed once "
+            "reports regenerate at the per-minute definition.")
     envelope["components_used"] = sorted(used)
     envelope["players"] = [
         {

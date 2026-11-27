@@ -31,6 +31,7 @@ meaning is not obvious from their names.
 | `analytics-report-dto-v1.18.0` | 37 | Private tier: each `connection.players[]` row gains `league_alias` (the player's league alias, from SteamID through the website's `player_steam` -> `player`, status `current`) and `league_registered` (`true` / `false`, or `null` when the registry could not be read or the player has no SteamID). `connection.instruments.league` says which. Name players by `league_alias` where it is set, with `player_name_at_match` beside it; where `league_registered` is `false`, keep the in-game name and mark the player as not a league player (ruled 2026-10-25). The public block is unchanged: it carries no player rows |
 | `analytics-report-dto-v1.19.0` | 41 | Adds top-level `outnumbered_kills` (`outnumbered_kill_v1`) and `fight_clutches` (`fight_clutch_v1`), and `players[].outnumbered_kills` / `players[].fight_clutches` with glossary entries: the two clutch definitions ruled 2026-10-05, shown separately and never summed (see below). `fight_clutch_v1` stops censoring a whole half because one roster member was absent from it; an envelope from before schema 41 reads `unavailable` rather than publish that undercount |
 | `analytics-report-dto-v1.20.0` | 42 | `players[].deaths` becomes the scoreboard's deaths column (frag + teamkill + suicide victims, as DoD counts them and as the fixture box score on the site already did); enemy-only moves to the new `players[].enemy_deaths`, with a glossary entry. Kills and deaths also count a frag inside the cap-out freeze (`match_id` NULL, `producer_match_id` set) that the scoreboard credited. A reader that summed the map pages of the S10 finals read 150 deaths where the fixture page read 158 |
+| `analytics-report-dto-v1.21.0` | 43 | Adds `players[].observed_seconds`: seconds the player was observed (each half's first-to-last position sample, summed), `null` when never sampled, with a glossary entry. Not in `box_score_scale`: it is a denominator, not a performance. `ratings.ktpr_v2` moves to `definition_version` 2 -- its `multikill` and `swing` components are per observed minute (see below), and `parameters` gains `minimum_observed_seconds` and `count_components_per` |
 Minor versions only add keys. A consumer that matches the
 `analytics-report-dto-v1.` prefix keeps working; one that needs the new blocks
 checks for them, because a v1.0.0 row never has them. A breaking change is a
@@ -690,6 +691,29 @@ field actually is:
 The season aggregate (`report_service aggregate`) carries its own
 `display_scale`: `rating` and `sos_rating` are `floored_index` with the same
 numbers, and `se` is `raw_z_score` (a spread in z units, not rescaled).
+
+### Per-minute count components (`definition_version` 2, schema 43)
+
+Operator ruling 2026-11-27: a player who subbed in for part of a match is not
+penalised, and overtime does not inflate. `multikill` and `swing` are counts,
+so from v2 each is divided by the player's observed minutes
+(`players[].observed_seconds` / 60) before z-scoring; `output` and `kast_f`
+are already rates and are unchanged. `parameters.count_components_per` says
+which rule the match got:
+
+- `observed_minute`: divided. The divisor is floored at
+  `parameters.minimum_observed_seconds` (300) -- a rate over a minute of play
+  is noise, so a cameo is floored, not dropped. A player with no observed time
+  in a match where others have one is divided by the full match, the largest
+  divisor he could have.
+- `match_no_observed_time`: no player was sampled (a match before position
+  samples), so counts stay raw, exactly as v1.
+
+z-scores are scale-invariant, so a match where every player was observed for
+the same time rates exactly as v1 did. A season mixes v1 and v2 rows until
+reports regenerate; `definition_versions` on the aggregate lists both. The
+class swing offsets (`config/class_swing_offsets.json`) were fitted on v1
+swing and are owed a refit once reports regenerate at schema 43.
 
 ## `lane_analytics.depth_profiles`
 

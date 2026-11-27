@@ -155,7 +155,12 @@ weapon_totals AS (
     GROUP BY playerId, half
 ),
 presence AS (
-    SELECT player_id, half, COUNT(*) AS position_samples
+    -- observed_seconds as player_match_fact.sql: first-to-last sample, NULL
+    -- for a half the player was never sampled in (the roster x halves row
+    -- exists anyway, so row presence is not presence).
+    SELECT player_id, half, COUNT(*) AS position_samples,
+           TIMESTAMPDIFF(SECOND, MIN(event_time), MAX(event_time))
+               AS observed_seconds
     FROM ktp_position_samples
     WHERE match_id = {{MATCH_ID}} AND half > 0
     GROUP BY player_id, half
@@ -187,7 +192,8 @@ SELECT
     CASE WHEN pc.breaks_covered THEN COALESCE(b.cap_breaks, 0) END AS cap_breaks,
     COALESCE(w.shots, 0) AS shots,
     COALESCE(w.hits, 0) AS hits,
-    COALESCE(p.position_samples, 0) AS position_samples
+    COALESCE(p.position_samples, 0) AS position_samples,
+    p.observed_seconds
 FROM roster r
 CROSS JOIN halves h
 JOIN producer_coverage pc ON pc.half = h.half
