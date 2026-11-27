@@ -76,6 +76,10 @@ def build_player_halves(
             "team": _int(r.get("team")),
             "half": _int(r.get("half")),
             "duration_seconds": duration,
+            # Seconds this player was sampled in the half; None is unknown,
+            # and a replay's sample clock is not the match's.
+            "observed_seconds": (r.get("observed_seconds")
+                                 if temporal_valid else None),
             **values,
             "damage_differential": (dealt - taken
                                     if dealt is not None and taken is not None else None),

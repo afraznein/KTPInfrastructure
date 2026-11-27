@@ -236,6 +236,21 @@ class Sanitize(unittest.TestCase):
         self.assertEqual(player["grenade_damage_taken"], 50)
         self.assertEqual(player["points_per_minute"], 0.48)
 
+    def test_observed_seconds_published_but_not_a_box_score_bar(self):
+        """The site divides by it for kills per 40; playtime is not a
+        performance, so it earns no fill bar or match-best star."""
+        from scripts.analytics_report_dto import FIELD_GLOSSARY
+        rep = internal_report()
+        rep["players"][0]["observed_seconds"] = 1190
+        dto = sanitize_report(rep)
+        assert_sanitized(dto)
+        self.assertEqual(dto["players"][0]["observed_seconds"], 1190)
+        self.assertIn("observed_seconds", FIELD_GLOSSARY)
+        self.assertNotIn("observed_seconds", dto["box_score_scale"]["fields"])
+        # Unknown stays unknown.
+        self.assertIsNone(
+            sanitize_report(internal_report())["players"][0]["observed_seconds"])
+
     def test_ratings_block_provisional_and_named(self):
         r = sanitize_report(internal_report())["ratings"]
         self.assertTrue(r["provisional"])
@@ -477,7 +492,7 @@ class Sanitize(unittest.TestCase):
         self.assertEqual((ph["status"], ph["rows"]), ("unavailable", []))
 
     def test_contract_is_v1_14_0(self):
-        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.20.0")
+        self.assertEqual(CONTRACT_VERSION, "analytics-report-dto-v1.21.0")
 
     def test_connection_block_publishes_the_box_and_never_a_player(self):
         rep = internal_report()

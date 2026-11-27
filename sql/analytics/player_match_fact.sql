@@ -187,9 +187,20 @@ weapon_totals AS (
     GROUP BY st.playerId
 ),
 position_coverage AS (
-    SELECT player_id, COUNT(*) AS position_samples
-    FROM ktp_position_samples
-    WHERE match_id = {{MATCH_ID}} AND half > 0
+    -- observed_seconds: first-to-last sample per half, summed. Samples are
+    -- written only while alive, so COUNT * cadence would miss every respawn;
+    -- the span keeps it and still catches a sub who joined mid-half. NULL
+    -- (no samples) is unknown, never 0.
+    SELECT player_id, SUM(position_samples) AS position_samples,
+           SUM(half_seconds) AS observed_seconds
+    FROM (
+        SELECT player_id, COUNT(*) AS position_samples,
+               TIMESTAMPDIFF(SECOND, MIN(event_time), MAX(event_time))
+                   AS half_seconds
+        FROM ktp_position_samples
+        WHERE match_id = {{MATCH_ID}} AND half > 0
+        GROUP BY player_id, half
+    ) per_half
     GROUP BY player_id
 )
 SELECT
@@ -229,6 +240,7 @@ SELECT
     COALESCE(w.shots, 0) AS shots,
     COALESCE(w.hits, 0) AS hits,
     COALESCE(p.position_samples, 0) AS position_samples,
+    p.observed_seconds,
     CASE WHEN COALESCE(dth.deaths, 0) = 0 THEN NULL
          ELSE ROUND(COALESCE(k.kills, 0) / dth.deaths, 3) END AS kd_ratio,
     CASE WHEN COALESCE(dth.deaths, 0) = 0 OR NOT pc.assists_covered THEN NULL
